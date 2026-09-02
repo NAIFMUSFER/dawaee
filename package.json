@@ -1,0 +1,36 @@
+{
+  "name": "dawaee",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dawaee (دوائي) — Medication Reminder, Family Care & Adherence Platform",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/worker"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "npm run build -w @dawaee/shared && npm run build -w @dawaee/core && npm run build -w @dawaee/api && npm run build -w @dawaee/worker",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:unit": "vitest run packages",
+    "test:int": "vitest run apps/api",
+    "test:watch": "vitest",
+    "lint": "eslint . --ext .ts,.tsx",
+    "db:migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "dev:api": "npm run dev -w @dawaee/api",
+    "dev:worker": "npm run dev -w @dawaee/worker"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

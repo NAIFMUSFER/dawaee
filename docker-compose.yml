@@ -1,0 +1,76 @@
+# Local development stack: database, API, worker.
+#
+# `docker compose up` gives a working system with mock providers — no SMS,
+# WhatsApp, push or OCR credentials required. Set the real ones in `.env` to
+# take any single integration live; the others keep recording to their mocks.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: dawaee
+    ports: ['5432:5432']
+    volumes:
+      - dawaee-db:/var/lib/postgresql/data
+      # Migrations run in filename order on first boot.
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d dawaee']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DAWAEE_APP_PASSWORD: ${DAWAEE_APP_PASSWORD:-devpass}
+      DAWAEE_WORKER_PASSWORD: ${DAWAEE_WORKER_PASSWORD:-devpass}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./db:/db:ro
+    # Roles and grants are applied out of band so no password is ever committed.
+    entrypoint: ['/bin/sh', '-c', 'sh /scripts/db-bootstrap-roles.sh dawaee']
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      APP: api
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8080
+      DATABASE_URL: postgres://dawaee_app:${DAWAEE_APP_PASSWORD:-devpass}@db:5432/dawaee
+      JWT_SECRET: ${JWT_SECRET:-local_development_secret_at_least_48_characters_long_0123456789}
+      IP_HASH_SALT: ${IP_HASH_SALT:-local-dev-salt}
+      OTP_DEBUG_ECHO: ${OTP_DEBUG_ECHO:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+      STORAGE_PROVIDER: local
+    ports: ['8080:8080']
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    build:
+      context: .
+      target: runtime
+    environment:
+      APP: worker
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://dawaee_worker:${DAWAEE_WORKER_PASSWORD:-devpass}@db:5432/dawaee
+      JWT_SECRET: ${JWT_SECRET:-local_development_secret_at_least_48_characters_long_0123456789}
+      IP_HASH_SALT: ${IP_HASH_SALT:-local-dev-salt}
+      WORKER_TICK_SECONDS: ${WORKER_TICK_SECONDS:-60}
+      STORAGE_PROVIDER: local
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  dawaee-db:

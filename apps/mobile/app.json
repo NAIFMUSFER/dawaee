@@ -1,0 +1,73 @@
+{
+  "expo": {
+    "name": "دوائي Dawaee",
+    "slug": "dawaee",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "dawaee",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.dawaee.mobile",
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
+        "NSCameraUsageDescription": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
+        "NSPhotoLibraryUsageDescription": "لاختيار صورة الدواء من مكتبة الصور.",
+        "NSMicrophoneUsageDescription": "لتأكيد أخذ الدواء بالصوت.",
+        "NSFaceIDUsageDescription": "لحماية بياناتك الصحية عند فتح التطبيق.",
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "app.dawaee.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#0E7A6E"
+      },
+      "permissions": [
+        "CAMERA",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "POST_NOTIFICATIONS",
+        "USE_BIOMETRIC"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-localization",
+      [
+        "expo-notifications",
+        {
+          "color": "#0E7A6E",
+          "defaultChannel": "medication-critical"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "لحماية بياناتك الصحية عند فتح التطبيق."
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "http://localhost:8080"
+    }
+  }
+}

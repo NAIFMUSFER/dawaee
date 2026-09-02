@@ -1,0 +1,20 @@
+{
+  "name": "@dawaee/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@dawaee/api": "*",
+    "@dawaee/core": "*",
+    "@dawaee/shared": "*",
+    "pg": "^8.13.1",
+    "pino": "^9.5.0"
+  }
+}
