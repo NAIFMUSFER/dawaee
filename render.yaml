@@ -9,24 +9,32 @@
 # Nothing sensitive lives in this file.
 
 databases:
+  # Matches the instance already created in the workspace, so the blueprint
+  # links to it instead of trying to create a second one with the same name.
+  #
+  # NOTE: the `free` plan expires 30 days after creation (2026-10-03 for the
+  # current instance) and takes no backups. Move to `basic-256mb` before any
+  # real patient data is entered.
   - name: dawaee-db
-    databaseName: dawaee
-    user: dawaee_owner
-    plan: basic-256mb
+    databaseName: dawaee_db
+    user: dawaee_db_user
+    plan: free
+    region: frankfurt
     postgresMajorVersion: "16"
-    ipAllowList: []          # private network only
+    ipAllowList: []          # private network only — never opened to the internet
 
 services:
   - type: web
     name: dawaee-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free               # free web services sleep after 15 min idle
     region: frankfurt        # closest Render region to Saudi Arabia
     healthCheckPath: /health
     autoDeployTrigger: commit
-    # Migrations run before the new version takes traffic.
-    preDeployCommand: ./scripts/migrate.sh
+    # Migrations do NOT run here: Render only allows preDeployCommand on paid
+    # instances. They run on the worker instead (see below), and this service
+    # fails its health check until the schema it needs exists.
     envVars:
       - key: APP
         value: api
@@ -38,6 +46,12 @@ services:
         fromDatabase: { name: dawaee-db, property: connectionString }
       - key: DATABASE_SSL
         value: "no-verify"
+      # The connection string above belongs to the database owner. Requests are
+      # served as `dawaee_app`, which owns nothing and cannot bypass RLS.
+      - key: DATABASE_ROLE
+        value: dawaee_app
+      - key: DATABASE_ROLE_PASSWORD
+        fromService: { type: worker, name: dawaee-worker, envVarKey: DAWAEE_APP_PASSWORD }
       - key: JWT_SECRET
         generateValue: true
       - key: IP_HASH_SALT
@@ -99,9 +113,12 @@ services:
     name: dawaee-worker
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: starter            # background workers have no free plan on Render
     region: frankfurt
     autoDeployTrigger: commit
+    # Schema migrations for the whole system run here, before this deploy goes
+    # live. Keep them on a paid instance — free instances cannot run them.
+    preDeployCommand: ./scripts/migrate.sh
     envVars:
       - key: APP
         value: worker
@@ -113,6 +130,18 @@ services:
         fromDatabase: { name: dawaee-db, property: connectionString }
       - key: DATABASE_SSL
         value: "no-verify"
+      # These two are generated here and nowhere else: scripts/migrate.sh runs
+      # on this service and is what sets the roles' passwords in Postgres, so
+      # the value Render generates and the value in the database are the same
+      # by construction. The API reads DAWAEE_APP_PASSWORD from this service.
+      - key: DAWAEE_APP_PASSWORD
+        generateValue: true
+      - key: DAWAEE_WORKER_PASSWORD
+        generateValue: true
+      - key: DATABASE_ROLE
+        value: dawaee_worker
+      - key: DATABASE_ROLE_PASSWORD
+        fromService: { type: worker, name: dawaee-worker, envVarKey: DAWAEE_WORKER_PASSWORD }
       # Shared with the API so both sign and verify the same tokens.
       - key: JWT_SECRET
         fromService: { type: web, name: dawaee-api, envVarKey: JWT_SECRET }

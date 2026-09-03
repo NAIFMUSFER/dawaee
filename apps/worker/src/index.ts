@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 
 if (process.env.WORKER_ENABLED !== 'false' && import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    // eslint-disable-next-line no-console
+     
     console.error('fatal worker error:', err);
     process.exit(1);
   });

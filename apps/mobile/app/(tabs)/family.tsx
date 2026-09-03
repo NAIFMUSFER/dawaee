@@ -194,7 +194,7 @@ function OwnerView({
   onCall: (() => void) | null;
   primaryName: string | null;
 }) {
-  const { t, bidi } = useI18n();
+  const { t } = useI18n();
   const theme = useTheme();
 
   return (
@@ -359,7 +359,7 @@ function CaregiverCard({
 function CaregiverSelfView({
   you, patientName, busy, onLeave,
 }: { you: CaregiverView | null; patientName: string; busy: boolean; onLeave: (() => void) | null }) {
-  const { t, bidi } = useI18n();
+  const { t } = useI18n();
   const theme = useTheme();
 
   if (!you) {

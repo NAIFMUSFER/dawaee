@@ -8,7 +8,9 @@
 FROM node:22-bookworm-slim AS base
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+# `postgresql-client` is here for scripts/migrate.sh, which the deploy runs
+# before the new version takes traffic.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------- deps

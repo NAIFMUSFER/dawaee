@@ -18,10 +18,35 @@ let son: TestUser;
 let daughter: TestUser;
 let doseId: string;
 
-/** 20:00 Riyadh on the test date is 17:00Z. */
+/**
+ * The scenario needs a date inside the materialization window, which starts at
+ * today. Pinning a literal date makes the suite pass on the day it is written
+ * and fail every day after, so the date is derived from the real clock:
+ * tomorrow in Riyadh, which is always materialized and always in the future.
+ */
+const RIYADH = 'Asia/Riyadh';
+const riyadhParts = (d: Date) => {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: RIYADH, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const [y, mo, da] = f.format(d).split('-').map(Number) as [number, number, number];
+  return { y, mo, da };
+};
+const SCENARIO = riyadhParts(new Date(Date.now() + 24 * 60 * 60 * 1000));
+const iso = (p: { y: number; mo: number; da: number }) =>
+  `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.da).padStart(2, '0')}`;
+const NEXT = riyadhParts(new Date(Date.now() + 48 * 60 * 60 * 1000));
+const SCENARIO_DATE = iso(SCENARIO);
+const NEXT_DATE = iso(NEXT);
+// The schedule starts ON the scenario day. Starting it earlier would leave
+// real doses due before 19:59, and the first tick would escalate those instead
+// of the one the scenario is about.
+const START_DATE = SCENARIO_DATE;
+
+/** Riyadh is UTC+3 year round, so 20:00 local on the scenario date is 17:00Z. */
 const at = (riyadhHHMM: string) => {
   const [hh, mm] = riyadhHHMM.split(':').map(Number) as [number, number];
-  return new Date(Date.UTC(2026, 8, 2, hh - 3, mm, 0));
+  return new Date(Date.UTC(SCENARIO.y, SCENARIO.mo - 1, SCENARIO.da, hh - 3, mm, 0));
 };
 
 async function acceptInvite(inviter: TestUser, invitee: TestUser, permissions: string[], priority: number) {
@@ -89,10 +114,10 @@ beforeAll(async () => {
     method: 'POST', url: '/v1/medications', headers: authHeaders(patient),
     payload: {
       patientProfileId: patient.profileId, name: 'Panadol', form: 'tablet',
-      strengthValue: 500, strengthUnit: 'mg', foodInstruction: 'after_food', startDate: '2026-09-01',
+      strengthValue: 500, strengthUnit: 'mg', foodInstruction: 'after_food', startDate: START_DATE,
       schedule: {
         rule: { kind: 'fixed_times', times: ['20:00'] },
-        doseQuantity: 1, doseUnit: 'tablet', startDate: '2026-09-01',
+        doseQuantity: 1, doseUnit: 'tablet', startDate: START_DATE,
         lateAfterMinutes: 15, missedAfterMinutes: 180,
       },
       stock: { trackingEnabled: true, initialQuantity: 30, unit: 'tablet' },
@@ -101,7 +126,7 @@ beforeAll(async () => {
   expect(med.statusCode).toBe(200);
 
   const doses = await h.app.inject({
-    method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=2026-09-02&to=2026-09-02`,
+    method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=${SCENARIO_DATE}&to=${SCENARIO_DATE}`,
     headers: authHeaders(patient),
   });
   doseId = doses.json().doses[0].id;
@@ -114,14 +139,14 @@ afterAll(async () => {
 
 describe('brief §17 / §66 — escalation walks outward and stops on confirmation', () => {
   it('19:59 — nothing has been sent', async () => {
-    h.setWorkerNow(at('19:59'));
+    h.setNow(at('19:59'));
     await h.tick();
     expect(h.push.sent).toHaveLength(0);
     expect(h.whatsapp.sent).toHaveLength(0);
   });
 
   it('20:00 — stage 1 notifies the patient, and nobody else', async () => {
-    h.setWorkerNow(at('20:00'));
+    h.setNow(at('20:00'));
     await h.tick();
     expect(h.push.sent).toHaveLength(1);
     expect(h.push.sent[0]!.token).toBe('ExponentPushToken[patient-device]');
@@ -131,20 +156,20 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   });
 
   it('20:05 — no duplicate for the same stage', async () => {
-    h.setWorkerNow(at('20:05'));
+    h.setNow(at('20:05'));
     await h.tick();
     expect(h.push.sent).toHaveLength(1);
   });
 
   it('20:10 — stage 2 sends a second patient reminder, still no family', async () => {
-    h.setWorkerNow(at('20:10'));
+    h.setNow(at('20:10'));
     await h.tick();
     expect(h.push.sent).toHaveLength(2);
     expect(h.whatsapp.sent).toHaveLength(0);
   });
 
   it('20:30 — stage 3 reaches the PRIMARY caregiver on WhatsApp only', async () => {
-    h.setWorkerNow(at('20:30'));
+    h.setNow(at('20:30'));
     await h.tick();
     expect(h.whatsapp.sent).toHaveLength(1);
     const msg = h.whatsapp.sent[0]!;
@@ -165,7 +190,7 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   });
 
   it('21:00 — the secondary caregiver is NOT contacted', async () => {
-    h.setWorkerNow(at('21:00'));
+    h.setNow(at('21:00'));
     await h.tick();
     // Still exactly the one WhatsApp message from 20:30.
     expect(h.whatsapp.sent).toHaveLength(1);
@@ -173,7 +198,7 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   });
 
   it('22:00 — and stays quiet afterwards', async () => {
-    h.setWorkerNow(at('22:00'));
+    h.setNow(at('22:00'));
     await h.tick();
     expect(h.whatsapp.sent).toHaveLength(1);
     expect(h.push.sent).toHaveLength(2);
@@ -193,7 +218,7 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
 describe('caregiver visibility of the outcome', () => {
   it('lets the son see adherence but not the medication list', async () => {
     const adherence = await h.app.inject({
-      method: 'GET', url: `/v1/adherence?profileId=${patient.profileId}&from=2026-09-02&to=2026-09-02`,
+      method: 'GET', url: `/v1/adherence?profileId=${patient.profileId}&from=${SCENARIO_DATE}&to=${SCENARIO_DATE}`,
       headers: authHeaders(son),
     });
     expect(adherence.statusCode).toBe(200);
@@ -214,7 +239,7 @@ describe('escalation is suppressed correctly', () => {
   it('does not escalate a snoozed dose, and resumes afterwards', async () => {
     // A fresh dose on the following day.
     const doses = await h.app.inject({
-      method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=2026-09-03&to=2026-09-03`,
+      method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=${NEXT_DATE}&to=${NEXT_DATE}`,
       headers: authHeaders(patient),
     });
     const tomorrow = doses.json().doses[0];
@@ -223,8 +248,8 @@ describe('escalation is suppressed correctly', () => {
     const pushBefore = h.push.sent.length;
     const waBefore = h.whatsapp.sent.length;
 
-    const snoozeAt = new Date(Date.UTC(2026, 8, 3, 17, 0, 0));
-    h.setWorkerNow(snoozeAt);
+    const snoozeAt = new Date(Date.UTC(NEXT.y, NEXT.mo - 1, NEXT.da, 17, 0, 0));
+    h.setNow(snoozeAt);
     await h.tick();
     expect(h.push.sent.length).toBe(pushBefore + 1);
 
@@ -245,12 +270,12 @@ describe('escalation is suppressed correctly', () => {
     });
 
     // 30 minutes in, the family would normally be told. It is snoozed, so no.
-    h.setWorkerNow(new Date(snoozeAt.getTime() + 30 * 60_000));
+    h.setNow(new Date(snoozeAt.getTime() + 30 * 60_000));
     await h.tick();
     expect(h.whatsapp.sent.length).toBe(waBefore);
 
     // Once the snooze lapses, escalation resumes exactly where it left off.
-    h.setWorkerNow(new Date(snoozeAt.getTime() + 70 * 60_000));
+    h.setNow(new Date(snoozeAt.getTime() + 70 * 60_000));
     await h.tick();
     expect(h.whatsapp.sent.length).toBeGreaterThan(waBefore);
   });

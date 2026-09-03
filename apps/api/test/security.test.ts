@@ -141,7 +141,6 @@ describe('patient A cannot reach patient B', () => {
 });
 
 describe('caregiver permission scope', () => {
-  let relationshipId: string;
 
   it('grants nothing before the invitation is accepted', async () => {
     const invite = await h.app.inject({
@@ -152,7 +151,6 @@ describe('caregiver permission scope', () => {
       },
     });
     expect(invite.statusCode).toBe(200);
-    relationshipId = invite.json().relationshipId;
 
     const peek = await h.app.inject({
       method: 'GET', url: `/v1/today?profileId=${alice.profileId}`, headers: authHeaders(son),

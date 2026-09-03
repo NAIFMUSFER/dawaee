@@ -6,6 +6,7 @@ import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { profileIdForMedication, requireProfileAccess } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
+import { now as serverNow } from '../lib/clock.js';
 
 /**
  * Stock, refills and the run-out forecast.
@@ -58,7 +59,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
         },
         sources,
         defaultThresholdDays: prefs[0]?.low_stock_threshold_days ?? 7,
-        now: new Date(),
+        now: serverNow(),
         timezone: access.profileTimezone,
       });
 
@@ -150,7 +151,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
-      const access = await requireProfileAccess(tx, userId, profileId, 'update_stock');
+      await requireProfileAccess(tx, userId, profileId, 'update_stock');
 
       const { rows: current } = await tx.query<{ remaining_quantity: string | null; unit: string }>(
         `SELECT remaining_quantity, unit::text AS unit FROM medication_stock WHERE medication_id = $1 FOR UPDATE`,
@@ -167,14 +168,14 @@ export function registerStockRoutes(app: FastifyInstance): void {
           `UPDATE medication_stock
               SET remaining_quantity = $2, last_refill_at = $3, low_stock_notified_at = NULL
             WHERE medication_id = $1`,
-          [medicationId, after, body.refilledAt ?? new Date()],
+          [medicationId, after, body.refilledAt ?? serverNow()],
         );
       } else {
         await tx.query(
           `INSERT INTO medication_stock
              (medication_id, patient_profile_id, unit, initial_quantity, remaining_quantity, last_refill_at)
            VALUES ($1,$2,$3::dose_unit,$4,$4,$5)`,
-          [medicationId, profileId, body.unit, body.quantityAdded, body.refilledAt ?? new Date()],
+          [medicationId, profileId, body.unit, body.quantityAdded, body.refilledAt ?? serverNow()],
         );
       }
 
@@ -185,7 +186,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
          RETURNING id, refilled_at`,
         [
           medicationId, profileId, body.quantityAdded, body.unit, body.pharmacy ?? null,
-          body.cost ?? null, body.note ?? null, body.refilledAt ?? new Date(), userId,
+          body.cost ?? null, body.note ?? null, body.refilledAt ?? serverNow(), userId,
         ],
       );
       await tx.query(
@@ -242,7 +243,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
             trackingEnabled: row.tracking_enabled,
             lowStockThresholdDays: row.low_stock_threshold_days,
           },
-          sources, defaultThresholdDays: defaultThreshold, now: new Date(), timezone: access.profileTimezone,
+          sources, defaultThresholdDays: defaultThreshold, now: serverNow(), timezone: access.profileTimezone,
         });
         if (forecast?.isLow) low.push({ medicationId: row.id, medicationName: row.name, unit: row.unit, forecast });
       }

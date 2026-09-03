@@ -4,6 +4,7 @@ import { requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { requireProfileAccess, requireProfileOwner } from '../services/access-service.js';
+import { now as serverNow } from '../lib/clock.js';
 
 /**
  * Post-dose notes and optional health measurements.
@@ -102,7 +103,7 @@ export function registerNoteRoutes(app: FastifyInstance): void {
          RETURNING id, measured_at`,
         [
           profileId, body.type, body.valuePrimary, body.valueSecondary ?? null, body.unit,
-          body.measuredAt ?? new Date(), body.doseOccurrenceId ?? null, body.note ?? null, userId,
+          body.measuredAt ?? serverNow(), body.doseOccurrenceId ?? null, body.note ?? null, userId,
         ],
       );
       return { measurement: { id: rows[0]!.id, measuredAt: rows[0]!.measured_at } };

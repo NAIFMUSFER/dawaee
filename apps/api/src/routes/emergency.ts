@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { AppError, ERROR_CODES, updateEmergencyCardSchema } from '@dawaee/shared';
+import { ERROR_CODES, updateEmergencyCardSchema } from '@dawaee/shared';
 import { requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly, withTransaction } from '../lib/db.js';
 import { randomToken, sha256 } from '../lib/crypto.js';

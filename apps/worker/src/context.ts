@@ -1,6 +1,7 @@
 import pg from 'pg';
 import pino from 'pino';
 import { loadConfig, type Config } from '@dawaee/api/config';
+import { withRole } from '@dawaee/api/lib/db';
 import { buildProviders, type Providers } from '@dawaee/api/providers';
 
 /**
@@ -37,10 +38,23 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
   const pool =
     overrides?.pool ??
     new pg.Pool({
-      connectionString: process.env.WORKER_DATABASE_URL ?? config.DATABASE_URL,
+      connectionString: withRole(
+        process.env.WORKER_DATABASE_URL ?? config.DATABASE_URL,
+        process.env.WORKER_DATABASE_ROLE ?? config.DATABASE_ROLE,
+        process.env.WORKER_DATABASE_PASSWORD ?? config.DATABASE_ROLE_PASSWORD,
+      ),
       max: 5,
       idleTimeoutMillis: 30_000,
       statement_timeout: 30_000,
+      // Managed Postgres refuses plaintext connections; without this the
+      // worker fails to connect while the API (which already sets it) works,
+      // which is a confusing way to find out.
+      ssl:
+        config.DATABASE_SSL === 'true'
+          ? { rejectUnauthorized: true }
+          : config.DATABASE_SSL === 'no-verify'
+            ? { rejectUnauthorized: false }
+            : undefined,
     });
 
   return {

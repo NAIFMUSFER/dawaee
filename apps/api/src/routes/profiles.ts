@@ -9,6 +9,7 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { listAccessibleProfiles, loadProfileAccess, requireProfileOwner } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
 import { rematerializeSchedule, scheduleFromRow } from '../services/materializer.js';
+import { now as serverNow } from '../lib/clock.js';
 
 export function registerProfileRoutes(app: FastifyInstance): void {
   app.addHook('preHandler', async (req) => {
@@ -236,7 +237,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const access = await requireProfileOwner(tx, userId, profileId);
-      const detection = detectTimezoneChange(access.profileTimezone, deviceTimezone, new Date());
+      const detection = detectTimezoneChange(access.profileTimezone, deviceTimezone, serverNow());
       if (!detection.changed) return { changed: false };
 
       const { rows } = await tx.query(
@@ -259,7 +260,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const { profileId } = req.params as { profileId: string };
     const body = applyTravelDecisionSchema.parse({ ...(req.body as object), patientProfileId: profileId });
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const access = await requireProfileOwner(tx, userId, profileId);

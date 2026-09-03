@@ -1,6 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
+/**
+ * Dates are derived from the real clock rather than pinned, because the
+ * materializer only builds a window around today: a literal date passes on the
+ * day it is written and silently rots afterwards. `d(n)` is n days from today
+ * in Riyadh, so every case below keeps its intended past/future relationship.
+ */
+const RIYADH = 'Asia/Riyadh';
+const BASE = (() => {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: RIYADH, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const [y, mo, da] = f.format(new Date()).split('-').map(Number) as [number, number, number];
+  return Date.UTC(y, mo - 1, da);
+})();
+const d = (offsetDays: number): string =>
+  new Date(BASE + offsetDays * 86_400_000).toISOString().slice(0, 10);
+
 let h: Harness;
 let user: TestUser;
 let medicationId: string;
@@ -20,10 +37,10 @@ beforeAll(async () => {
     method: 'POST', url: '/v1/medications', headers: authHeaders(user),
     payload: {
       patientProfileId: user.profileId, name: 'Panadol', form: 'tablet',
-      strengthValue: 500, strengthUnit: 'mg', startDate: '2026-09-01',
+      strengthValue: 500, strengthUnit: 'mg', startDate: d(-2),
       schedule: {
         rule: { kind: 'fixed_times', times: ['08:00', '14:00', '22:00'] },
-        doseQuantity: 1, doseUnit: 'tablet', startDate: '2026-09-01',
+        doseQuantity: 1, doseUnit: 'tablet', startDate: d(-2),
       },
       stock: { trackingEnabled: true, initialQuantity: 30, unit: 'tablet' },
     },
@@ -36,7 +53,7 @@ afterAll(async () => {
 
 describe('dose actions', () => {
   it('confirms, snoozes and skips distinct doses', async () => {
-    const doses = await doseIds('2026-09-10', '2026-09-12');
+    const doses = await doseIds(d(7), d(9));
     const [a, b, c] = doses;
 
     const taken = await h.app.inject({
@@ -61,7 +78,7 @@ describe('dose actions', () => {
   });
 
   it('refuses to record the same dose twice', async () => {
-    const doses = await doseIds('2026-09-13', '2026-09-13');
+    const doses = await doseIds(d(10), d(10));
     const dose = doses[0]!;
     await h.app.inject({
       method: 'POST', url: `/v1/doses/${dose.id}/taken`, headers: authHeaders(user),
@@ -76,7 +93,7 @@ describe('dose actions', () => {
   });
 
   it('rejects a low-confidence voice confirmation and accepts a confident one', async () => {
-    const doses = await doseIds('2026-09-14', '2026-09-14');
+    const doses = await doseIds(d(11), d(11));
     const low = await h.app.inject({
       method: 'POST', url: `/v1/doses/${doses[0]!.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: 'evt-voice-low', method: 'voice', voiceConfidence: 0.4 },
@@ -92,7 +109,7 @@ describe('dose actions', () => {
   });
 
   it('undoes a confirmation inside the window and restores stock', async () => {
-    const doses = await doseIds('2026-09-15', '2026-09-15');
+    const doses = await doseIds(d(12), d(12));
     const dose = doses[0]!;
 
     const before = await h.app.inject({
@@ -116,7 +133,7 @@ describe('dose actions', () => {
   });
 
   it('caps repeated snoozing', async () => {
-    const doses = await doseIds('2026-09-11', '2026-09-11');
+    const doses = await doseIds(d(8), d(8));
     const dose = doses[1]!;
     let last = 0;
     for (let i = 0; i < 7; i++) {
@@ -132,13 +149,13 @@ describe('dose actions', () => {
 
 describe('offline replay', () => {
   it('applies a batch of queued actions and reports each result', async () => {
-    const doses = await doseIds('2026-09-08', '2026-09-09');
+    const doses = await doseIds(d(5), d(6));
     const payload = {
       deviceId: 'offline-device-1',
       actions: [
-        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: '2026-09-08T05:03:00.000Z', clientEventId: 'off-batch-1' },
-        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: '2026-09-08T11:00:00.000Z', clientEventId: 'off-batch-2', reason: 'nausea' },
-        { type: 'snoozed', doseOccurrenceId: doses[2]!.id, at: '2026-09-08T19:00:00.000Z', clientEventId: 'off-batch-3', minutes: 20 },
+        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' },
+        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: `${d(5)}T11:00:00.000Z`, clientEventId: 'off-batch-2', reason: 'nausea' },
+        { type: 'snoozed', doseOccurrenceId: doses[2]!.id, at: `${d(5)}T19:00:00.000Z`, clientEventId: 'off-batch-3', minutes: 20 },
       ],
     };
 
@@ -151,12 +168,12 @@ describe('offline replay', () => {
   });
 
   it('is idempotent when the device retries the whole batch', async () => {
-    const doses = await doseIds('2026-09-08', '2026-09-09');
+    const doses = await doseIds(d(5), d(6));
     const payload = {
       deviceId: 'offline-device-1',
       actions: [
-        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: '2026-09-08T05:03:00.000Z', clientEventId: 'off-batch-1' },
-        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: '2026-09-08T11:00:00.000Z', clientEventId: 'off-batch-2', reason: 'nausea' },
+        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' },
+        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: `${d(5)}T11:00:00.000Z`, clientEventId: 'off-batch-2', reason: 'nausea' },
       ],
     };
     const res = await h.app.inject({
@@ -174,12 +191,12 @@ describe('offline replay', () => {
     });
     const qtyBefore = before.json().stock.remainingQuantity;
 
-    const doses = await doseIds('2026-09-08', '2026-09-08');
+    const doses = await doseIds(d(5), d(5));
     await h.app.inject({
       method: 'POST', url: '/v1/doses/sync', headers: authHeaders(user),
       payload: {
         deviceId: 'offline-device-1',
-        actions: [{ type: 'taken', doseOccurrenceId: doses[0]!.id, at: '2026-09-08T05:03:00.000Z', clientEventId: 'off-batch-1' }],
+        actions: [{ type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' }],
       },
     });
 
@@ -190,15 +207,15 @@ describe('offline replay', () => {
   });
 
   it('fails one bad action without losing the good ones', async () => {
-    const doses = await doseIds('2026-09-16', '2026-09-16');
+    const doses = await doseIds(d(13), d(13));
     const res = await h.app.inject({
       method: 'POST', url: '/v1/doses/sync', headers: authHeaders(user),
       payload: {
         deviceId: 'offline-device-2',
         actions: [
-          { type: 'taken', doseOccurrenceId: doses[0]!.id, at: '2026-09-16T05:00:00.000Z', clientEventId: 'mix-ok-1' },
-          { type: 'taken', doseOccurrenceId: '00000000-0000-4000-8000-000000000000', at: '2026-09-16T05:00:00.000Z', clientEventId: 'mix-bad-1' },
-          { type: 'taken', doseOccurrenceId: doses[1]!.id, at: '2026-09-16T11:00:00.000Z', clientEventId: 'mix-ok-2' },
+          { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(13)}T05:00:00.000Z`, clientEventId: 'mix-ok-1' },
+          { type: 'taken', doseOccurrenceId: '00000000-0000-4000-8000-000000000000', at: `${d(13)}T05:00:00.000Z`, clientEventId: 'mix-bad-1' },
+          { type: 'taken', doseOccurrenceId: doses[1]!.id, at: `${d(13)}T11:00:00.000Z`, clientEventId: 'mix-ok-2' },
         ],
       },
     });
@@ -212,7 +229,7 @@ describe('offline replay', () => {
 describe('missed doses and safety', () => {
   it('derives missed status from the clock even when the row is stale', async () => {
     const res = await h.app.inject({
-      method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=2026-09-01&to=2026-09-02`,
+      method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=${d(-2)}&to=${d(-1)}`,
       headers: authHeaders(user),
     });
     // These are in the past relative to the test clock.
@@ -222,7 +239,7 @@ describe('missed doses and safety', () => {
 
   it('offers no corrective dosing advice anywhere in a dose payload', async () => {
     const res = await h.app.inject({
-      method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=2026-09-01&to=2026-09-30`,
+      method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=${d(-2)}&to=${d(27)}`,
       headers: authHeaders(user),
     });
     const body = res.body.toLowerCase();
@@ -236,7 +253,7 @@ describe('missed doses and safety', () => {
 describe('adherence', () => {
   it('summarises with the non-diagnostic disclaimer attached', async () => {
     const res = await h.app.inject({
-      method: 'GET', url: `/v1/adherence?profileId=${user.profileId}&from=2026-09-01&to=2026-09-30`,
+      method: 'GET', url: `/v1/adherence?profileId=${user.profileId}&from=${d(-2)}&to=${d(27)}`,
       headers: authHeaders(user),
     });
     expect(res.statusCode).toBe(200);

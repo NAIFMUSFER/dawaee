@@ -12,6 +12,7 @@ import {
 } from '../services/access-service.js';
 import { diffFields, recordAudit } from '../services/audit-service.js';
 import { cancelFutureDoses, materializeSchedule, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
+import { now as serverNow } from '../lib/clock.js';
 
 const MEDICATION_COLUMNS = `
   m.id, m.patient_profile_id, m.name, m.brand_name, m.generic_name, m.form::text AS form,
@@ -129,7 +130,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
                 rule: s.rule, doseQuantity: Number(s.dose_quantity), doseUnit: s.dose_unit, active: s.active,
               })),
               defaultThresholdDays: defaultThreshold,
-              now: new Date(),
+              now: serverNow(),
               timezone: access.profileTimezone,
             })
           : null;
@@ -193,7 +194,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
   app.post('/v1/medications', async (req) => {
     const body = createMedicationSchema.parse(req.body);
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, body.patientProfileId, 'add_medication');
@@ -310,7 +311,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { medicationId } = req.params as { medicationId: string };
     const body = updateMedicationSchema.parse(req.body);
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
@@ -401,7 +402,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { medicationId } = req.params as { medicationId: string };
     const { force } = req.query as { force?: string };
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
@@ -443,7 +444,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { medicationId } = req.params as { medicationId: string };
     const body = createScheduleSchema.parse(req.body);
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
@@ -476,7 +477,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { scheduleId } = req.params as { scheduleId: string };
     const body = updateScheduleSchema.parse(req.body);
     const { userId } = currentUser(req);
-    const now = new Date();
+    const now = serverNow();
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);

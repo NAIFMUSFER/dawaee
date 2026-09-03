@@ -15,8 +15,29 @@ import type { ErrorCode } from '@dawaee/shared';
  *    localized message
  */
 
+/**
+ * Where the API lives.
+ *
+ * `EXPO_PUBLIC_API_URL` wins when set. An explicitly empty value means
+ * same-origin, which is what a web deployment serving the app and the API from
+ * one host wants. Otherwise fall back to the value baked into app.json.
+ */
+const CONFIGURED = process.env.EXPO_PUBLIC_API_URL
+  ?? (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl
+  ?? 'http://localhost:8080';
+
 const BASE_URL: string =
-  (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ?? 'http://localhost:8080';
+  CONFIGURED === '' && typeof window !== 'undefined' ? window.location.origin : CONFIGURED;
+
+/**
+ * Preview mode.
+ *
+ * Set at build time. When on, requests are served by an in-memory backend that
+ * runs the REAL domain engines over sample data, so the published preview can
+ * be walked through without a server behind it. It is never enabled in a
+ * normal build, and the UI states plainly that the data is sample data.
+ */
+export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
 
 const ACCESS_KEY = 'dawaee.accessToken';
 const REFRESH_KEY = 'dawaee.refreshToken';
@@ -50,6 +71,11 @@ let refreshInFlight: Promise<boolean> | null = null;
 let onUnauthenticated: (() => void) | null = null;
 
 export async function loadStoredSession(): Promise<boolean> {
+  if (DEMO_MODE) {
+    accessToken = 'demo';
+    refreshToken = 'demo';
+    return true;
+  }
   const [a, r] = await Promise.all([AsyncStorage.getItem(ACCESS_KEY), AsyncStorage.getItem(REFRESH_KEY)]);
   accessToken = a;
   refreshToken = r;
@@ -133,6 +159,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+  }
+
+  if (DEMO_MODE) {
+    const { handleDemoRequest, DemoUnavailable } = await import('./demo-backend.js');
+    // A small delay keeps loading states honest rather than making the preview
+    // feel unrealistically instant.
+    await new Promise((r) => setTimeout(r, 120));
+    try {
+      return handleDemoRequest(method, url.pathname, url.searchParams, body) as T;
+    } catch (err) {
+      if (err instanceof DemoUnavailable) {
+        throw new ApiError('provider_unavailable', 503, 'This step needs the server, which is not attached to the preview.');
+      }
+      throw err;
+    }
   }
 
   const send = async (): Promise<Response> => {

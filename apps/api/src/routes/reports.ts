@@ -5,6 +5,7 @@ import { requireUuid } from '../lib/params.js';
 import { withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { requireProfileAccess } from '../services/access-service.js';
+import { now as serverNow } from '../lib/clock.js';
 
 /**
  * Reports.
@@ -28,7 +29,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
   ) {
     return withUserReadOnly(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, profileId, 'view_reports');
-      const now = new Date();
+      const now = serverNow();
 
       const { rows } = await tx.query(
         `SELECT d.id, d.medication_id, d.status, d.scheduled_at, d.scheduled_local_date,
@@ -158,7 +159,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const { endDate } = req.query as { endDate?: string };
     const profileId = requireUuid((req.query as { profileId?: string }).profileId, 'profileId');
     const { userId } = currentUser(req);
-    const to = endDate ?? localDateInZone(new Date(), 'Asia/Riyadh');
+    const to = endDate ?? localDateInZone(serverNow(), 'Asia/Riyadh');
     return buildReport(userId, profileId, addDays(to, -6), to, 'family');
   });
 
@@ -216,7 +217,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
         const { rows } = await tx.query(sql, [profileId]);
         tables[name] = rows;
       }
-      return { exportedAt: new Date().toISOString(), profileId, data: tables };
+      return { exportedAt: serverNow().toISOString(), profileId, data: tables };
     });
   });
 }

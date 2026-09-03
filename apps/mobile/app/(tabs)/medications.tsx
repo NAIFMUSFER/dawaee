@@ -25,7 +25,7 @@ type Filter = 'active' | 'paused' | 'all';
 const ACTIONABLE: ReadonlySet<DoseView['status']> = new Set(['upcoming', 'due', 'pending_confirmation', 'snoozed']);
 
 export default function MedicationsScreen() {
-  const { t, formatNumber, formatTime, formatDate, formatMeasure } = useI18n();
+  const { t, formatTime, formatDate, formatMeasure } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
 

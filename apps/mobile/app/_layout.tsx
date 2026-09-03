@@ -5,9 +5,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View } from 'react-native';
 import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
-import { Loading } from '@/components/ui';
+import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
 import { configureCategories, configureChannels } from '@/notifications';
+import { DEMO_MODE } from '@/api/client';
 
 /**
  * Root layout.
@@ -34,6 +35,13 @@ function Shell() {
       calendar={preferences.calendarSystem}
     >
       <StatusBar style="dark" />
+      {DEMO_MODE ? (
+        <PreviewBanner
+          label={preferences.locale === 'en'
+            ? 'Interface preview — sample data, no server attached'
+            : 'معاينة الواجهة — بيانات تجريبية، بدون خادم'}
+        />
+      ) : null}
       {ready ? (
         <Stack
           screenOptions={{

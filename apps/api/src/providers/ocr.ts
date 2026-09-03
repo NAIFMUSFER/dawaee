@@ -16,7 +16,7 @@ import type { Config } from '../config.js';
 const STRENGTH_RE = /(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|g|ml|iu|%)\b/i;
 const BARCODE_RE = /\b(\d{8}|\d{12,14})\b/;
 const EXPIRY_RE =
-  /\b(?:exp(?:iry|\.|ires)?|صلاحية|ينتهي|انتهاء)\s*[:.]?\s*(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\d{4}[-/]\d{2})/i;
+  /\b(?:exp(?:iry|\.|ires)?|صلاحية|ينتهي|انتهاء)\s*[:.]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}[-/]\d{2})/i;
 const FORM_KEYWORDS: Array<[RegExp, string]> = [
   [/\b(tablet|tablets|tab|caplet)\b|أقراص|قرص|حبوب|حبة/i, 'tablet'],
   [/\b(capsule|caps)\b|كبسول/i, 'capsule'],
@@ -118,7 +118,7 @@ export function parsePrescriptionText(rawText: string, providerName: string): Pr
   }
 
   const prescriber = rawText.match(/(?:dr\.?|doctor|د\.|الدكتور|طبيب)\s*([^\n,]{2,60})/i);
-  const issued = rawText.match(/\b(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})\b/);
+  const issued = rawText.match(/\b(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})\b/);
 
   return {
     provider: providerName,

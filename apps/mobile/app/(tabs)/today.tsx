@@ -2,14 +2,15 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Banner, Button, Card, EmptyState, Loading, Row, SafetyNote, SectionTitle, Txt } from '@/components/ui';
+import { Banner, Button, Card, EmptyState, Loading, SafetyNote, SectionTitle, Txt } from '@/components/ui';
 import { DoseCard } from '@/components/DoseCard';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
-import { cacheSchedule, enqueue, flushQueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
+import type { CachedSchedule } from '@/storage/offline-queue';
+import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
 import { inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 
@@ -21,6 +22,54 @@ import { SnoozeSheet } from '@/components/SnoozeSheet';
  *  - "Taken" is applied locally first and queued, so it never fails
  *  - local notifications are rebuilt from the same cache on every load
  */
+/** The calendar date in the profile's own zone, not the device's. */
+function localDateIn(timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Widens a cached dose back into the shape the screen renders.
+ *
+ * The cache deliberately stores only what Today displays, so the fields the
+ * server would send but this screen never reads are filled with honest empties
+ * rather than invented values — nothing here is presented to the patient as if
+ * it came from the server.
+ */
+function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
+  return {
+    id: d.id,
+    medicationId: '',
+    scheduleId: '',
+    scheduledAt: d.scheduledAt,
+    scheduledLocalDate: d.scheduledLocalDate,
+    scheduledLocalTime: d.scheduledLocalTime,
+    scheduledTimezone: '',
+    doseQuantity: d.doseQuantity,
+    doseUnit: d.doseUnit as DoseView['doseUnit'],
+    status: d.status as DoseView['status'],
+    minutesLate: null,
+    snoozedUntil: null,
+    snoozeCount: 0,
+    confirmedAt: null,
+    escalationStage: 0,
+    medication: {
+      name: d.medicationName,
+      form: 'tablet',
+      imageKey: null,
+      strengthValue: null,
+      strengthUnit: null,
+      foodInstruction: d.foodInstruction as DoseView['medication']['foodInstruction'],
+      instructions: null,
+    },
+  };
+}
+
 export default function TodayScreen() {
   const { t, formatDate } = useI18n();
   const theme = useTheme();
@@ -64,15 +113,24 @@ export default function TodayScreen() {
         const cached = await readCachedSchedule(activeProfile.id);
         if (cached && !data) {
           // Render from cache: a missing network must not blank the screen a
-          // patient relies on.
+          // patient relies on. Actions taken while offline are still sitting
+          // in the queue, so they are applied on top — otherwise a dose the
+          // patient just confirmed would reappear as still due, and they
+          // could take it twice.
+          const queued = await readQueue();
+          const merged = applyQueuedToCache(cached, queued);
+          const localDate = localDateIn(cached.timezone);
+          const views = merged.doses.map(cachedDoseToView);
           setData({
-            profileId: cached.profileId,
-            localDate: new Date().toISOString().slice(0, 10),
-            timezone: cached.timezone,
-            serverTime: cached.cachedAt,
-            next: null,
-            today: [],
-            prefetch: [],
+            profileId: merged.profileId,
+            localDate,
+            timezone: merged.timezone,
+            serverTime: merged.cachedAt,
+            next:
+              views.find((d) => d.status === 'upcoming' || d.status === 'due' || d.status === 'pending_confirmation') ??
+              null,
+            today: views.filter((d) => d.scheduledLocalDate === localDate),
+            prefetch: views.filter((d) => d.scheduledLocalDate > localDate),
             prefetchDays: 7,
           });
         }
@@ -93,7 +151,7 @@ export default function TodayScreen() {
   }, [t]);
 
   const act = useCallback(
-    async (dose: DoseView, action: 'taken' | 'skip', minutes?: number) => {
+    async (dose: DoseView, action: 'taken' | 'skip') => {
       setBusyDoseId(dose.id);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();

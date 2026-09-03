@@ -327,4 +327,27 @@ export function SafetyNote({ textKey }: { textKey: 'adherence.disclaimer' | 'rep
   );
 }
 
+/**
+ * States plainly that this build is a preview with sample data. Rendered by
+ * the root layout above every screen, because a person showing this to someone
+ * else must never have to explain that the numbers are not real.
+ */
+export function PreviewBanner({ label }: { label: string }) {
+  const theme = useTheme();
+  return (
+    <View
+      accessibilityRole="alert"
+      style={{
+        backgroundColor: theme.colors.warning100,
+        paddingHorizontal: theme.spacing.md,
+        paddingVertical: theme.spacing.xs,
+        borderBottomWidth: theme.hairline,
+        borderBottomColor: theme.colors.warning500,
+      }}
+    >
+      <Txt variant="caption" weight="medium" color={theme.colors.warning700} align="center">{label}</Txt>
+    </View>
+  );
+}
+
 export const styles = StyleSheet.create({ flex: { flex: 1 } });

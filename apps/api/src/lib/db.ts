@@ -23,11 +23,26 @@ pg.types.setTypeParser(1083, (v) => v.slice(0, 5)); // time -> HH:mm
 
 let pool: pg.Pool | null = null;
 
+/**
+ * Returns `connectionString` with its user and password replaced.
+ *
+ * Exported because the worker needs the same swap for its own role, and the
+ * two must not drift. Encoding matters: a generated password can contain
+ * characters that are not URL-safe.
+ */
+export function withRole(connectionString: string, role?: string, password?: string): string {
+  if (!role || !password) return connectionString;
+  const url = new URL(connectionString);
+  url.username = encodeURIComponent(role);
+  url.password = encodeURIComponent(password);
+  return url.toString();
+}
+
 export function getPool(): pg.Pool {
   if (pool) return pool;
   const cfg = loadConfig();
   pool = new Pool({
-    connectionString: cfg.DATABASE_URL,
+    connectionString: withRole(cfg.DATABASE_URL, cfg.DATABASE_ROLE, cfg.DATABASE_ROLE_PASSWORD),
     max: cfg.DATABASE_POOL_MAX,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
@@ -42,7 +57,7 @@ export function getPool(): pg.Pool {
     query_timeout: 20_000,
   });
   pool.on('error', (err) => {
-    // eslint-disable-next-line no-console
+     
     console.error({ err: err.message }, 'idle postgres client error');
   });
   return pool;

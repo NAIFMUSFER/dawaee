@@ -8,6 +8,7 @@ import { loadConfig } from '../src/config.js';
 import type { MockSmsProvider, MockWhatsAppProvider, MockPushProvider } from '../src/providers/index.js';
 import { createWorkerContext, type WorkerContext } from '../../worker/src/context.js';
 import { runTick } from '../../worker/src/index.js';
+import { resetClockSource, setClockSource } from '../src/lib/clock.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -19,6 +20,14 @@ export interface Harness {
   worker: WorkerContext;
   /** Lets a test drive the clock the worker sees. */
   setWorkerNow: (d: Date) => void;
+  /**
+   * Lets a test drive the clock the API sees, so a scenario can place the
+   * server at the moment it is about. Moving both clocks together is what
+   * makes a timed scenario (late confirmation, expiry, escalation) assertable.
+   */
+  setServerNow: (d: Date) => void;
+  /** Moves the API and worker clocks together. */
+  setNow: (d: Date) => void;
   tick: () => ReturnType<typeof runTick>;
   close: () => Promise<void>;
 }
@@ -59,8 +68,16 @@ export async function startHarness(): Promise<Harness> {
     setWorkerNow: (d) => {
       workerNow = d;
     },
+    setServerNow: (d) => {
+      setClockSource(() => d);
+    },
+    setNow: (d) => {
+      workerNow = d;
+      setClockSource(() => d);
+    },
     tick: () => runTick(worker),
     close: async () => {
+      resetClockSource();
       await app.close();
       await worker.pool.end().catch(() => undefined);
       await closePool();

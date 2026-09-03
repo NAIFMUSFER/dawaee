@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeRule, dosesPerDay, expandSchedule, isCycleDayOn } from '../src/schedule.js';
-import { localTimeInZone } from '../src/time.js';
 import { makeSchedule } from './helpers.js';
 
-const RIYADH = 'Asia/Riyadh';
 const win = (from: string, to: string) => ({ from: new Date(from), to: new Date(to) });
 
 describe('fixed_times', () => {

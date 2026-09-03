@@ -14,6 +14,15 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: z.enum(['true', 'false', 'no-verify']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  // Managed providers hand out one connection string, and it belongs to the
+  // database owner. The owner is exactly the identity that must never serve a
+  // request: every RLS policy in migration 0008 is written `TO dawaee_app`, so
+  // connecting as the owner would either bypass the policies or (with FORCE
+  // ROW LEVEL SECURITY, which is what we set) match none of them and read
+  // nothing. These two settings swap the credentials in DATABASE_URL for the
+  // least-privileged role before the pool is opened.
+  DATABASE_ROLE: z.string().min(1).optional(),
+  DATABASE_ROLE_PASSWORD: z.string().min(1).optional(),
 
   // 32+ bytes of entropy, base64 or hex. Rotating this invalidates all tokens.
   JWT_SECRET: z.string().min(32),
