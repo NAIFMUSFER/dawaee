@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { AppError, ERROR_CODES } from '@dawaee/shared';
 import type { StorageProvider, UploadTicket } from './types.js';
 import type { Config } from '../config.js';
 
@@ -190,5 +191,44 @@ export class S3StorageProvider implements StorageProvider {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok && res.status !== 404) throw new Error(`object delete failed with ${res.status}`);
+  }
+}
+
+/**
+ * No object storage configured.
+ *
+ * Photos of a medication box are one feature, not the whole system. Refusing
+ * to start without them would mean reminders, adherence and the care circle
+ * are all unavailable because nobody has created a bucket yet — so instead
+ * this provider starts, names itself honestly to /health/ready, and refuses
+ * only the operations that actually need a bucket. Writing to local disk in
+ * production stays refused: an image on an ephemeral filesystem disappears
+ * without telling anyone, which is worse than a clear error.
+ */
+export class UnconfiguredStorageProvider implements StorageProvider {
+  readonly name = 'unconfigured';
+
+  private refuse(): never {
+    throw new AppError(
+      ERROR_CODES.PROVIDER_UNAVAILABLE,
+      503,
+      'Image storage is not configured on this deployment.',
+    );
+  }
+
+  createUploadTicket(): Promise<UploadTicket> {
+    this.refuse();
+  }
+
+  createReadUrl(): Promise<string> {
+    this.refuse();
+  }
+
+  getObject(): Promise<Buffer> {
+    this.refuse();
+  }
+
+  deleteObject(): Promise<void> {
+    this.refuse();
   }
 }

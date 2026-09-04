@@ -13,17 +13,48 @@ BEGIN
     -- LOGIN because the API connects as this role directly; the password is
     -- set out of band by the deploy (scripts/db-bootstrap-roles.sh), never
     -- committed here.
-    CREATE ROLE dawaee_app LOGIN NOBYPASSRLS;
+    --
+    -- SUPERUSER and BYPASSRLS are off by default and are deliberately NOT
+    -- named here: touching either attribute — even to turn it off — requires
+    -- the caller to be a superuser, and on managed Postgres the role running
+    -- migrations is not one. The assertion below is what actually guarantees
+    -- the property, and it holds however the role came to exist.
+    CREATE ROLE dawaee_app LOGIN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dawaee_worker') THEN
-    CREATE ROLE dawaee_worker LOGIN NOBYPASSRLS;
+    CREATE ROLE dawaee_worker LOGIN;
   END IF;
 END $$;
 
--- Idempotent: re-running migrations against a cluster where these roles
--- already exist must still converge on the intended attributes.
-ALTER ROLE dawaee_app LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-ALTER ROLE dawaee_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+-- The security claim this whole file rests on is that neither application role
+-- can step around row-level security. Assert it rather than set it: ALTER ROLE
+-- on these attributes needs privileges the migration runner does not have on
+-- managed Postgres, and an assertion is the stronger check anyway — it holds
+-- however the role came to exist, including if someone granted it something
+-- later. If either role could bypass RLS, every policy below would be
+-- decorative, and a migration that fails loudly beats a deployment that
+-- silently serves every patient's rows to everyone.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(format('%s(%s)', rolname,
+           concat_ws(',',
+             CASE WHEN rolsuper      THEN 'SUPERUSER'  END,
+             CASE WHEN rolbypassrls  THEN 'BYPASSRLS'  END,
+             CASE WHEN rolcreaterole THEN 'CREATEROLE' END,
+             CASE WHEN rolcreatedb   THEN 'CREATEDB'   END)), ', ')
+    INTO bad
+  FROM pg_roles
+  WHERE rolname IN ('dawaee_app', 'dawaee_worker')
+    AND (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb);
+
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION
+      'application role(s) hold privileges they must not have: %', bad
+      USING HINT = 'These roles must be plain LOGIN roles. Revoke the listed attributes, then re-run.';
+  END IF;
+END $$;
 
 GRANT USAGE ON SCHEMA public, app TO dawaee_app, dawaee_worker;
 
@@ -77,6 +108,38 @@ REVOKE EXECUTE ON FUNCTION app.owns_profile(uuid), app.caregives_profile(uuid),
 GRANT EXECUTE ON FUNCTION app.owns_profile(uuid), app.caregives_profile(uuid),
   app.can_read_profile(uuid), app.has_permission(uuid, text),
   app.current_user_id(), app.try_job_lock(text) TO dawaee_app, dawaee_worker;
+
+-- ------------------------------------------- the definer functions' own reach
+--
+-- A SECURITY DEFINER function runs as the role that owns it — here, the role
+-- that runs migrations, which also owns the tables. Under FORCE ROW LEVEL
+-- SECURITY the owner is NOT exempt, so on any cluster where that role is not a
+-- superuser (which is every managed Postgres, including the deployment target)
+-- these predicates would read zero rows and deny every request — the API would
+-- come up healthy and show each patient an empty account.
+--
+-- So the exemption the predicates need is granted explicitly, as policies for
+-- that one role, on only the tables they actually read. Enumerated this way it
+-- shows up in `pg_policies` and can be reviewed; as a superuser's implicit
+-- bypass it was invisible and happened to differ between laptop and
+-- production. `dawaee_app` is unaffected: it is not this role, and every
+-- policy below still applies to it in full.
+DO $$
+DECLARE
+  t text;
+  owner_role text := current_user;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users', 'patient_profiles', 'caregiver_relationships',
+    'auth_sessions', 'auth_otp_challenges', 'medications', 'emergency_cards'
+  ]
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_definer', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON %I TO %I USING (true) WITH CHECK (true)',
+      t || '_definer', t, owner_role);
+  END LOOP;
+END $$;
 
 -- ------------------------------------------------------------------ users
 
@@ -305,9 +368,48 @@ REVOKE ALL ON auth_otp_challenges FROM dawaee_app;
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO dawaee_app, dawaee_worker;
 
--- The worker runs system jobs across every patient, so it bypasses the
--- per-user predicates by design — but it is a SEPARATE role with a separate
--- credential, and it is never used to serve an HTTP request.
+-- The worker runs system jobs across every patient — materializing schedules,
+-- sending reminders, marking doses missed — so it needs to see rows belonging
+-- to everyone. It is a SEPARATE role with a separate credential, and it is
+-- never used to serve an HTTP request.
+--
+-- That reach is granted as explicit per-table POLICIES rather than the
+-- BYPASSRLS role attribute, for two reasons. Setting BYPASSRLS requires
+-- superuser, which the migration runner is not on managed Postgres — so the
+-- attribute approach simply does not deploy. And policies are the better
+-- design regardless: the worker's reach is enumerated table by table and
+-- visible in `pg_policies`, instead of being an invisible property of the
+-- role that silently applies to every table anyone adds later.
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO dawaee_worker;
 REVOKE UPDATE, DELETE ON audit_logs FROM dawaee_worker;
-ALTER ROLE dawaee_worker BYPASSRLS;
+
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'users', 'patient_profiles', 'user_preferences', 'consents', 'push_tokens',
+    'auth_sessions', 'medications', 'prescriptions', 'medication_stock',
+    'stock_transactions', 'refill_events', 'medication_schedules',
+    'dose_occurrences', 'dose_events', 'symptom_notes', 'health_measurements',
+    'caregiver_relationships', 'caregiver_notification_rules',
+    'escalation_policies', 'notification_deliveries', 'emergency_cards',
+    'travel_prompts', 'stored_objects', 'audit_logs'
+  ]
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_worker_read', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_worker_insert', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_worker_update', t);
+    -- SELECT/INSERT/UPDATE only: the table grants above already withhold
+    -- DELETE, so a job can never erase a patient's history.
+    EXECUTE format(
+      'CREATE POLICY %I ON %I FOR SELECT TO dawaee_worker USING (true)',
+      t || '_worker_read', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON %I FOR INSERT TO dawaee_worker WITH CHECK (true)',
+      t || '_worker_insert', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON %I FOR UPDATE TO dawaee_worker USING (true) WITH CHECK (true)',
+      t || '_worker_update', t);
+  END LOOP;
+END $$;

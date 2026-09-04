@@ -1,16 +1,57 @@
 #!/usr/bin/env bash
-# Applies migrations, then the role grants. Idempotent: every migration is
-# written to converge, so re-running a deploy is safe.
+# Applies pending migrations, then the role grants.
+#
+# This runs on EVERY deploy, so "already applied" has to be a normal outcome
+# rather than an error. A ledger table records what has run; each file is
+# applied at most once, inside a single transaction, and its checksum is
+# stored so an edit to a migration that has already shipped is caught here
+# instead of becoming a silent difference between two environments.
 set -euo pipefail
 : "${DATABASE_URL:?DATABASE_URL is required}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "applying migrations…"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename   text PRIMARY KEY,
+  checksum   text NOT NULL,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);
+SQL
+
+applied="$(psql "$DATABASE_URL" -tAF'|' -c 'SELECT filename, checksum FROM schema_migrations')"
+
+pending=0
 for f in "$ROOT"/db/migrations/*.sql; do
-  echo "  $(basename "$f")"
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+  base="$(basename "$f")"
+  sum="$(md5sum "$f" | cut -d' ' -f1)"
+  prior="$(printf '%s\n' "$applied" | awk -F'|' -v n="$base" '$1 == n { print $2 }')"
+
+  if [ -n "$prior" ]; then
+    if [ "$prior" != "$sum" ]; then
+      echo "ERROR: $base was already applied but its contents have changed." >&2
+      echo "       Migrations are immutable once shipped — add a new file instead." >&2
+      exit 1
+    fi
+    continue
+  fi
+
+  echo "  applying $base"
+  # --single-transaction so a failure part-way leaves nothing behind, and so
+  # the ledger row and the migration itself commit together or not at all.
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q --single-transaction \
+    -f "$f" \
+    -c "INSERT INTO schema_migrations (filename, checksum) VALUES ('$base', '$sum')"
+  pending=$((pending + 1))
 done
 
+if [ "$pending" -eq 0 ]; then
+  echo "no pending migrations"
+else
+  echo "applied $pending migration(s)"
+fi
+
+# Role passwords and grants are re-applied every deploy on purpose: they are
+# environment state, not schema, and the values live only in the environment.
 if [ -n "${DAWAEE_APP_PASSWORD:-}" ] && [ -n "${DAWAEE_WORKER_PASSWORD:-}" ]; then
   echo "applying role grants…"
   DB_NAME="$(psql "$DATABASE_URL" -tAc 'select current_database()')"

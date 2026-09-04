@@ -78,6 +78,27 @@ jobs:
             exit 1
           fi
 
+      # Production runs migrations as an ordinary database owner, never a
+      # superuser. That difference has already hidden two failures that only
+      # appear on deploy, so CI reproduces it: a non-superuser owner, a fresh
+      # database, migrations applied twice (the second run must be a no-op),
+      # and the RLS probe against the result.
+      - name: Migrations as a non-superuser owner
+        run: |
+          set -euo pipefail
+          psql -d postgres -c "CREATE ROLE ci_owner LOGIN CREATEDB CREATEROLE PASSWORD 'ciownerpw'"
+          psql -d postgres -c "CREATE DATABASE dawaee_ci OWNER ci_owner"
+          export DATABASE_URL="postgres://ci_owner:ciownerpw@127.0.0.1:5433/dawaee_ci"
+          export DAWAEE_APP_PASSWORD=cipass DAWAEE_WORKER_PASSWORD=cipass
+          ./scripts/migrate.sh
+          ./scripts/migrate.sh | tee /tmp/second.txt
+          grep -q 'no pending migrations' /tmp/second.txt || { echo "::error::re-running migrations was not a no-op"; exit 1; }
+          psql -d dawaee_ci -f db/seed/rls_probe.sql | tee /tmp/rls-ci.txt
+          if grep -q '^ FAIL' /tmp/rls-ci.txt; then
+            echo "::error::row-level security probe failed on a non-superuser-owned database"
+            exit 1
+          fi
+
       - name: Unit and integration tests
         run: npm test
 

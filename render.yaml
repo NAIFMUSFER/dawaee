@@ -48,10 +48,18 @@ services:
         value: "no-verify"
       # The connection string above belongs to the database owner. Requests are
       # served as `dawaee_app`, which owns nothing and cannot bypass RLS.
+      #
+      # Every shared secret is generated HERE and read by the worker. It has to
+      # be one-directional: two services that each read a value from the other
+      # form a cycle Render cannot resolve.
       - key: DATABASE_ROLE
         value: dawaee_app
       - key: DATABASE_ROLE_PASSWORD
-        fromService: { type: worker, name: dawaee-worker, envVarKey: DAWAEE_APP_PASSWORD }
+        generateValue: true
+      # The worker's own database password. Generated here for the same reason,
+      # used by the worker's pool and by the pre-deploy that sets it in Postgres.
+      - key: DAWAEE_WORKER_PASSWORD
+        generateValue: true
       - key: JWT_SECRET
         generateValue: true
       - key: IP_HASH_SALT
@@ -130,18 +138,18 @@ services:
         fromDatabase: { name: dawaee-db, property: connectionString }
       - key: DATABASE_SSL
         value: "no-verify"
-      # These two are generated here and nowhere else: scripts/migrate.sh runs
-      # on this service and is what sets the roles' passwords in Postgres, so
-      # the value Render generates and the value in the database are the same
-      # by construction. The API reads DAWAEE_APP_PASSWORD from this service.
+      # scripts/migrate.sh runs on this service and is what sets both roles'
+      # passwords in Postgres. It reads them from the API rather than generating
+      # them, so the value Render hands each service and the value in the
+      # database are the same by construction.
       - key: DAWAEE_APP_PASSWORD
-        generateValue: true
+        fromService: { type: web, name: dawaee-api, envVarKey: DATABASE_ROLE_PASSWORD }
       - key: DAWAEE_WORKER_PASSWORD
-        generateValue: true
+        fromService: { type: web, name: dawaee-api, envVarKey: DAWAEE_WORKER_PASSWORD }
       - key: DATABASE_ROLE
         value: dawaee_worker
       - key: DATABASE_ROLE_PASSWORD
-        fromService: { type: worker, name: dawaee-worker, envVarKey: DAWAEE_WORKER_PASSWORD }
+        fromService: { type: web, name: dawaee-api, envVarKey: DAWAEE_WORKER_PASSWORD }
       # Shared with the API so both sign and verify the same tokens.
       - key: JWT_SECRET
         fromService: { type: web, name: dawaee-api, envVarKey: JWT_SECRET }

@@ -34,7 +34,7 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
       storage: providers.storage.name,
     };
     const mocked = Object.entries(integrations)
-      .filter(([, name]) => name === 'mock' || name === 'local')
+      .filter(([, name]) => name === 'mock' || name === 'local' || name === 'unconfigured')
       .map(([k]) => k);
 
     const healthy = Object.values(checks).every((c) => c.ok);
