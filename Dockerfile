@@ -45,6 +45,10 @@ COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/
 COPY db ./db
 COPY scripts ./scripts
+# The web build, served from this same origin. A browser build hosted anywhere
+# else cannot call this API: static hosts forbid cross-origin fetch outright,
+# so the request never leaves the page and CORS cannot rescue it.
+COPY apps/api/public ./apps/api/public
 
 # Development dependencies are not shipped.
 RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force

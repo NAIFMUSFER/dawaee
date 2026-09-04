@@ -27,7 +27,7 @@ const looksLikeEmail = (value: string) => value.includes('@');
 export default function SignUpScreen() {
   const { t } = useI18n();
   const theme = useTheme();
-  const { signInWithTokens } = useApp();
+  const { signInWithTokens, preferences } = useApp();
 
   const [name, setName] = useState('');
   const [identifier, setIdentifier] = useState('');
@@ -45,7 +45,9 @@ export default function SignUpScreen() {
         ...(looksLikeEmail(typed) ? { email: typed.toLowerCase() } : { phone: typed }),
         displayName: name.trim(),
         password,
-        locale: 'ar',
+        // The language chosen on the first screen, not a hardcoded default:
+        // it is the account's locale from the first notification onward.
+        locale: preferences.locale,
         deviceId: await getDeviceId(),
       });
       await signInWithTokens(tokens);

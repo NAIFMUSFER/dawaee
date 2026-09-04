@@ -12,6 +12,9 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/node_modules/**',
+      // Metro's output, checked in so the API can serve it. Generated code,
+      // not source — linting it says nothing about this project.
+      'apps/api/public/**',
       'apps/mobile/.expo/**',
       'apps/mobile/android/**',
       'apps/mobile/ios/**',

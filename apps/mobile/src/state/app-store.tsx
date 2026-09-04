@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as Localization from 'expo-localization';
 import type { Locale } from '@dawaee/shared';
-import { api, clearSession, getDeviceId, loadStoredSession, setUnauthenticatedHandler, storeSession } from '../api/client.js';
+import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
 import type { ProfileSummary } from '../api/types.js';
 import { flushQueue, queueSize } from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
@@ -175,15 +175,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Optimistic: accessibility changes must feel instant to someone who
       // enabled them because the text was too small to read.
       setState((s) => ({ ...s, preferences: { ...s.preferences, ...patch } }));
+      if (patch.locale) {
+        const { restartRequired } = applyNativeDirection(patch.locale);
+        setState((s) => ({ ...s, restartRequiredForRtl: restartRequired }));
+      }
+
+      // The language screen runs before anyone has an account. There is no
+      // server-side "me" to write to yet, and calling anyway earned a 401 that
+      // the old catch-all below read as "offline" — so choosing Arabic raised
+      // an offline banner on a perfectly healthy connection. The choice is
+      // kept locally and travels with the sign-up request instead.
+      if (!isSignedIn()) return;
+
       try {
         const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
-        if (patch.locale) {
-          const { restartRequired } = applyNativeDirection(patch.locale);
-          setState((s) => ({ ...s, restartRequiredForRtl: restartRequired }));
-        }
         setState((s) => ({ ...s, preferences: { ...s.preferences, ...res.preferences } }));
-      } catch {
-        setState((s) => ({ ...s, offline: true }));
+      } catch (err) {
+        // Only a request that never reached the server means offline. A
+        // rejection from the server is a different failure and must not put
+        // the whole app into its cached-data mode.
+        if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
       }
     },
     syncNow,

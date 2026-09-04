@@ -155,12 +155,20 @@ export function registerAuthRoutes(app: FastifyInstance, providers: Providers): 
     const passwordHash = await hashNewPassword(body.password, body.locale, phone ?? email ?? undefined);
 
     const result = await withTransaction(async (tx) => {
-      const { rows } = await tx.query<{ user_id: string; created: boolean }>(
+      const { rows } = await tx.query<{ user_id: string; created: boolean; self_profile_id: string | null }>(
         'SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
         [phone, email, body.displayName.trim(), passwordHash, body.locale],
       );
       const row = rows[0]!;
       if (!row.created) return { taken: true as const };
+
+      // A new account without its own patient profile is unusable: every
+      // screen needs one, and the app would sit on a loading spinner rather
+      // than report anything. Refuse the registration instead of handing back
+      // a session to a half-built account.
+      if (!row.self_profile_id) {
+        throw new AppError(ERROR_CODES.INTERNAL, 500, 'Account setup did not complete.');
+      }
 
       const session = await createSession(tx, row.user_id, {
         deviceId: body.deviceId,

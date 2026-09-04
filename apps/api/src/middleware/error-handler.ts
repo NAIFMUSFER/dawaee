@@ -2,6 +2,7 @@ import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from
 import { ZodError } from 'zod';
 import { AppError, ERROR_CODES, type ApiErrorBody } from '@dawaee/shared';
 import { isPgError, PG_ERRORS } from '../lib/db.js';
+import { hasWebBundle, sendWebBundle } from '../routes/web-app.js';
 
 /**
  * One place that decides what the outside world learns about a failure.
@@ -59,6 +60,18 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
 
     const statusCode = (err as FastifyError).statusCode;
+
+    // Rate limiting is thrown, not returned, and its payload is not a
+    // FastifyError. Naming it here means the caller is told to slow down —
+    // with the Retry-After the plugin has already set on the reply — rather
+    // than being handed the generic message below.
+    if (statusCode === 429) {
+      req.log.info({ requestId }, 'rate limited');
+      return reply.status(429).send({
+        error: { code: ERROR_CODES.RATE_LIMITED, message: 'Too many requests. Please slow down.', requestId },
+      } satisfies ApiErrorBody);
+    }
+
     if (statusCode && statusCode < 500) {
       return reply.status(statusCode).send({
         error: { code: ERROR_CODES.VALIDATION_FAILED, message: err.message, requestId },
@@ -71,9 +84,18 @@ export function registerErrorHandler(app: FastifyInstance): void {
     } satisfies ApiErrorBody);
   });
 
-  app.setNotFoundHandler((req, reply) =>
-    reply.status(404).send({
+  app.setNotFoundHandler((req, reply) => {
+    // The web app routes on history paths, so a refresh on /today or a shared
+    // link to /medications arrives here. Those must return the app, not a JSON
+    // 404 — but only for a browser asking for a document, and never for a path
+    // the API owns, so a mistyped endpoint still fails honestly.
+    const wantsDocument = String(req.headers.accept ?? '').includes('text/html');
+    const isApiPath = req.url.startsWith('/v1') || req.url.startsWith('/health');
+    if (req.method === 'GET' && wantsDocument && !isApiPath && hasWebBundle()) {
+      return sendWebBundle(reply);
+    }
+    return reply.status(404).send({
       error: { code: ERROR_CODES.NOT_FOUND, message: 'Route not found', requestId: req.id },
-    } satisfies ApiErrorBody),
-  );
+    } satisfies ApiErrorBody);
+  });
 }

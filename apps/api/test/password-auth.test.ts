@@ -15,8 +15,24 @@ let h: Harness;
 
 const DEVICE = { deviceId: 'device-password-tests', deviceName: 'Test' };
 
+/**
+ * Each call comes from its own address.
+ *
+ * Registration is rate limited per caller, which is correct in production and
+ * wrong for a suite: without this the sixth `it` in the file starts failing
+ * because of what the first five did, and the failure looks like a bug in
+ * whatever that sixth test was checking. The limit itself is asserted
+ * deliberately further down.
+ */
+let caller = 0;
+const fromNewAddress = () => `10.0.${Math.floor(caller / 250)}.${(caller++ % 250) + 1}`;
+
 const register = (payload: Record<string, unknown>) =>
-  h.app.inject({ method: 'POST', url: '/v1/auth/register', payload: { ...DEVICE, ...payload } });
+  h.app.inject({
+    method: 'POST', url: '/v1/auth/register',
+    remoteAddress: fromNewAddress(),
+    payload: { ...DEVICE, ...payload },
+  });
 
 const login = (identifier: string, password: string) =>
   h.app.inject({
@@ -54,6 +70,50 @@ describe('registration', () => {
     expect(res.json().isNewUser).toBe(true);
   });
 
+  /**
+   * The registration that shipped created the user row and nothing else. The
+   * API answered 200, the app stored the tokens, and then every screen sat on
+   * a loading spinner forever, because a profile is what medications, doses
+   * and reminders all hang from. An account is not created until it is usable.
+   */
+  it('creates the account with its own patient profile and preferences', async () => {
+    const res = await register({
+      phone: '0566000009', displayName: 'سارة', password: 'correct horse battery',
+    });
+    expect(res.statusCode).toBe(200);
+    const token = res.json().accessToken as string;
+
+    const profiles = await h.app.inject({
+      method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${token}` },
+    });
+    expect(profiles.statusCode).toBe(200);
+    const list = profiles.json().profiles as Array<{ isSelf: boolean; displayName: string }>;
+    expect(list).toHaveLength(1);
+    expect(list[0]?.isSelf).toBe(true);
+    expect(list[0]?.displayName).toBe('سارة');
+
+    // Preferences too — the locale chosen at sign-up is what every reminder
+    // and notification is written in from the first dose onward.
+    const me = await h.app.inject({
+      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.json().preferences.locale).toBe('ar');
+  });
+
+  it('carries the chosen language onto the new account', async () => {
+    const res = await register({
+      email: 'english@example.com', displayName: 'Sara', password: 'correct horse battery',
+      locale: 'en',
+    });
+    expect(res.statusCode).toBe(200);
+    const me = await h.app.inject({
+      method: 'GET', url: '/v1/me',
+      headers: { authorization: `Bearer ${res.json().accessToken}` },
+    });
+    expect(me.json().user.locale).toBe('en');
+    expect(me.json().preferences.locale).toBe('en');
+  });
+
   it('creates an account with an email instead of a phone', async () => {
     const res = await register({
       email: 'Naif@Example.com', displayName: 'Naif', password: 'correct horse battery',
@@ -82,6 +142,33 @@ describe('registration', () => {
   it('requires a phone or an email — not neither', async () => {
     const res = await register({ displayName: 'Nobody', password: 'correct horse battery' });
     expect(res.statusCode).toBe(400);
+  });
+
+  /**
+   * The limit answered 500 "an unexpected error occurred" for its entire
+   * existence: the plugin throws its payload, that payload carried no status,
+   * and the error handler treated it as a crash. A client cannot back off from
+   * a 500, and a person told the server is broken tries again immediately —
+   * which is exactly the traffic the limit exists to stop.
+   */
+  it('says it is rate limiting, rather than reporting a crash', async () => {
+    const address = '10.99.99.99';
+    const attempt = (n: number) =>
+      h.app.inject({
+        method: 'POST', url: '/v1/auth/register',
+        remoteAddress: address,
+        payload: { ...DEVICE, phone: `05670000${String(n).padStart(2, '0')}`,
+          displayName: 'x', password: 'correct horse battery' },
+      });
+
+    let limited: Awaited<ReturnType<typeof attempt>> | null = null;
+    for (let n = 0; n < 12 && !limited; n++) {
+      const res = await attempt(n);
+      if (res.statusCode !== 200) limited = res;
+    }
+
+    expect(limited?.statusCode).toBe(429);
+    expect(limited?.json().error.code).toBe('rate_limited');
   });
 });
 

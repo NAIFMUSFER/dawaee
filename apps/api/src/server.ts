@@ -10,6 +10,7 @@ import { registerErrorHandler } from './middleware/error-handler.js';
 import { attachRequestContext } from './middleware/context.js';
 import { buildProviders, type Providers } from './providers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerWebAppRoutes } from './routes/web-app.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
@@ -64,7 +65,13 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     // Rate limit per authenticated user where possible, falling back to IP, so
     // one abusive account cannot lock out a shared network (a hospital, a home).
     keyGenerator: (req) => req.auth?.userId ?? req.ip,
+    // `statusCode` is not decoration. The object this returns is thrown, and
+    // without a status on it the error handler saw an unrecognised object and
+    // answered 500 "an unexpected error occurred" — so every rate-limited
+    // caller, including a client that should have backed off after too many
+    // sign-in attempts, was told the server had broken instead.
     errorResponseBuilder: () => ({
+      statusCode: 429,
       error: { code: ERROR_CODES.RATE_LIMITED, message: 'Too many requests. Please slow down.' },
     }),
   });
@@ -90,6 +97,9 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAdminRoutes(scope);
     registerWebhookRoutes(scope, providers);
   });
+
+  await registerWebAppRoutes(app);
+
 
   return { app, providers };
 }
