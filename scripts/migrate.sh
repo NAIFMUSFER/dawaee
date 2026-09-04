@@ -10,6 +10,52 @@ set -euo pipefail
 : "${DATABASE_URL:?DATABASE_URL is required}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ---------------------------------------------------------------- adoption
+#
+# A database can carry schema objects with no ledger only one way: a migration
+# run that predates the ledger, which by definition ended in failure part-way
+# through (a successful one would have created the ledger). Such a database is
+# in an unknown state — some files applied, one applied halfway — and the
+# migrations are not written to be re-runnable, so continuing would fail on the
+# first `CREATE TYPE` and keep failing on every deploy after.
+#
+# The guard is what makes clearing it safe: this fires ONLY when the ledger is
+# absent AND every table present is empty. A database anyone has actually used
+# has either a ledger or rows, so it takes the refusal path instead and a human
+# decides. Once a deploy succeeds the ledger exists and this can never run again.
+NEEDS_ADOPTION="$(psql "$DATABASE_URL" -tAc "
+  SELECT CASE
+    WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN 'ledger'
+    WHEN NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname IN ('public','app')) THEN 'empty'
+    ELSE 'orphan'
+  END")"
+
+if [ "$NEEDS_ADOPTION" = "orphan" ]; then
+  echo "found schema objects but no migration ledger — checking whether any data exists…"
+  ROWS="$(psql "$DATABASE_URL" -tAc "
+    SELECT COALESCE(sum(cnt), 0) FROM (
+      SELECT (xpath('/row/c/text()',
+               query_to_xml(format('SELECT count(*) AS c FROM %I.%I', schemaname, tablename),
+                            false, true, '')))[1]::text::bigint AS cnt
+      FROM pg_tables WHERE schemaname IN ('public', 'app')
+    ) t")"
+
+  if [ "${ROWS:-0}" -gt 0 ]; then
+    echo "ERROR: this database has $ROWS row(s) but no migration ledger." >&2
+    echo "       That combination cannot be resolved automatically without risking data." >&2
+    echo "       Inspect it, then either back it up and drop the schema, or backfill" >&2
+    echo "       schema_migrations with the files already applied." >&2
+    exit 1
+  fi
+
+  echo "no data present — clearing the partial schema so migrations can apply cleanly"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
+DROP SCHEMA IF EXISTS app CASCADE;
+DROP SCHEMA IF EXISTS public CASCADE;
+CREATE SCHEMA public;
+SQL
+fi
+
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE TABLE IF NOT EXISTS schema_migrations (
   filename   text PRIMARY KEY,
