@@ -12,7 +12,7 @@
 shared with the worker via `fromService`, so both processes sign and verify the
 same tokens.
 
-Migrations run in `preDeployCommand`, before the new version takes traffic. Every
+Migrations run in the WORKER's `preDeployCommand`, before the new version takes traffic — Render only permits pre-deploy commands on paid instances, and the API runs on the free plan. Every
 migration is written to converge, so a re-run is safe.
 
 ### Required before the first deploy
@@ -92,7 +92,7 @@ per-patient JSON export, which is also the PDPL data-access mechanism.
 
 | Component | Render plan | Notes |
 |---|---|---|
-| PostgreSQL | `basic-256mb` | Fine for early users; scale on connection count |
+| PostgreSQL | Supabase free (Frankfurt) | Reached through the session-mode pooler on port 5432 — Render is IPv4-only and Supabase's direct endpoint is IPv6 on the free tier. Scale on connection count. |
 | API | `starter` | One instance handles the reminder read load comfortably |
 | Worker | `starter` | One is enough; more gives redundancy |
 

@@ -8,21 +8,6 @@
 # Every secret is `sync: false`: Render prompts for it once and stores it.
 # Nothing sensitive lives in this file.
 
-databases:
-  # Matches the instance already created in the workspace, so the blueprint
-  # links to it instead of trying to create a second one with the same name.
-  #
-  # NOTE: the `free` plan expires 30 days after creation (2026-10-03 for the
-  # current instance) and takes no backups. Move to `basic-256mb` before any
-  # real patient data is entered.
-  - name: dawaee-db
-    databaseName: dawaee_db
-    user: dawaee_db_user
-    plan: free
-    region: frankfurt
-    postgresMajorVersion: "16"
-    ipAllowList: []          # private network only — never opened to the internet
-
 services:
   - type: web
     name: dawaee-api
@@ -42,8 +27,11 @@ services:
         value: production
       - key: PORT
         value: "8080"
+      # Supplied, not derived from a Render database: Postgres is hosted on
+      # Supabase. Use the session-mode pooler (port 5432) — Render is IPv4-only
+      # and Supabase's direct endpoint is IPv6 on the free tier.
       - key: DATABASE_URL
-        fromDatabase: { name: dawaee-db, property: connectionString }
+        sync: false
       - key: DATABASE_SSL
         value: "no-verify"
       # The connection string above belongs to the database owner. Requests are
@@ -55,17 +43,17 @@ services:
       - key: DATABASE_ROLE
         value: dawaee_app
       - key: DATABASE_ROLE_PASSWORD
-        generateValue: true
+        sync: false
       # The worker's own database password. Generated here for the same reason,
       # used by the worker's pool and by the pre-deploy that sets it in Postgres.
       - key: DAWAEE_WORKER_PASSWORD
-        generateValue: true
+        sync: false
       # Render's generated values are shorter than the 48 characters the config
       # requires in production, so this is supplied rather than generated.
       - key: JWT_SECRET
         sync: false
       - key: IP_HASH_SALT
-        generateValue: true
+        sync: false
       - key: PUBLIC_APP_URL
         sync: false
       - key: CORS_ORIGINS
@@ -136,27 +124,34 @@ services:
         value: production
       - key: WORKER_TICK_SECONDS
         value: "60"
+      # Supplied, not derived from a Render database: Postgres is hosted on
+      # Supabase. Use the session-mode pooler (port 5432) — Render is IPv4-only
+      # and Supabase's direct endpoint is IPv6 on the free tier.
       - key: DATABASE_URL
-        fromDatabase: { name: dawaee-db, property: connectionString }
+        sync: false
       - key: DATABASE_SSL
         value: "no-verify"
       # scripts/migrate.sh runs on this service and is what sets both roles'
       # passwords in Postgres. It reads them from the API rather than generating
       # them, so the value Render hands each service and the value in the
       # database are the same by construction.
+      # Supplied rather than cross-referenced: a `fromService` link resolves the
+      # value the blueprint generated, not one set afterwards, so an operator
+      # rotating a secret on the API would silently leave the worker on the old
+      # one — and the worker is what writes these into Postgres.
       - key: DAWAEE_APP_PASSWORD
-        fromService: { type: web, name: dawaee-api, envVarKey: DATABASE_ROLE_PASSWORD }
+        sync: false
       - key: DAWAEE_WORKER_PASSWORD
-        fromService: { type: web, name: dawaee-api, envVarKey: DAWAEE_WORKER_PASSWORD }
+        sync: false
       - key: DATABASE_ROLE
         value: dawaee_worker
       - key: DATABASE_ROLE_PASSWORD
-        fromService: { type: web, name: dawaee-api, envVarKey: DAWAEE_WORKER_PASSWORD }
+        sync: false
       # Shared with the API so both sign and verify the same tokens.
       - key: JWT_SECRET
-        fromService: { type: web, name: dawaee-api, envVarKey: JWT_SECRET }
+        sync: false
       - key: IP_HASH_SALT
-        fromService: { type: web, name: dawaee-api, envVarKey: IP_HASH_SALT }
+        sync: false
       - key: PUBLIC_APP_URL
         sync: false
       - key: SMS_PROVIDER
