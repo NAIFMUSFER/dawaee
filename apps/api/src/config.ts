@@ -5,6 +5,28 @@ import { z } from 'zod';
  * secret must stop the process, never fall back to a default that would ship
  * an insecure build to production.
  */
+/**
+ * Booleans from the environment.
+ *
+ * `z.coerce.boolean()` is JavaScript's `Boolean()`, and `Boolean('false')` is
+ * `true` — so every non-empty string, including the word "false", becomes true.
+ * That is the opposite of what an operator writing `TRUST_PROXY=false` means,
+ * and it fails in the most dangerous direction: a debug or trust flag someone
+ * deliberately turned off stays on.
+ */
+const envBoolean = (defaultValue: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((raw) => {
+      if (raw === undefined) return defaultValue;
+      const v = raw.trim().toLowerCase();
+      if (v === '') return defaultValue;
+      if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+      if (['0', 'false', 'no', 'off'].includes(v)) return false;
+      return defaultValue;
+    });
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().default(8080),
@@ -34,10 +56,10 @@ const schema = z.object({
   OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
   /** Development convenience: echo the OTP in the response. Refused in production. */
-  OTP_DEBUG_ECHO: z.coerce.boolean().default(false),
+  OTP_DEBUG_ECHO: envBoolean(false),
 
   CORS_ORIGINS: z.string().default(''),
-  TRUST_PROXY: z.coerce.boolean().default(true),
+  TRUST_PROXY: envBoolean(true),
   /** Salt for hashing IPs in the audit log — we never store a raw address. */
   IP_HASH_SALT: z.string().min(8).default('dawaee-dev-salt'),
 

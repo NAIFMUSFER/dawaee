@@ -60,8 +60,10 @@ services:
       # used by the worker's pool and by the pre-deploy that sets it in Postgres.
       - key: DAWAEE_WORKER_PASSWORD
         generateValue: true
+      # Render's generated values are shorter than the 48 characters the config
+      # requires in production, so this is supplied rather than generated.
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: IP_HASH_SALT
         generateValue: true
       - key: PUBLIC_APP_URL
