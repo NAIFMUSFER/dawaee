@@ -23,12 +23,34 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # absent AND every table present is empty. A database anyone has actually used
 # has either a ledger or rows, so it takes the refusal path instead and a human
 # decides. Once a deploy succeeds the ledger exists and this can never run again.
+# The ledger being PRESENT is not enough to call a database healthy: this
+# script creates it before applying anything, so a run that failed on its first
+# migration leaves an empty ledger next to a half-applied schema. What marks a
+# database as adopted is a ledger with at least one row in it.
 NEEDS_ADOPTION="$(psql "$DATABASE_URL" -tAc "
   SELECT CASE
-    WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN 'ledger'
-    WHEN NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname IN ('public','app')) THEN 'empty'
+    WHEN COALESCE((SELECT count(*) FROM schema_migrations), 0) > 0 THEN 'ledger'
+    WHEN NOT EXISTS (
+      SELECT 1 FROM pg_tables
+      WHERE schemaname IN ('public', 'app') AND tablename <> 'schema_migrations'
+    ) THEN 'empty'
     ELSE 'orphan'
-  END")"
+  END
+  FROM (SELECT 1) _
+  WHERE true")"
+
+# `count(*) FROM schema_migrations` aborts if the table does not exist, which is
+# itself the 'no ledger' case — fall back rather than treating it as an error.
+if [ -z "$NEEDS_ADOPTION" ]; then
+  NEEDS_ADOPTION="$(psql "$DATABASE_URL" -tAc "
+    SELECT CASE
+      WHEN NOT EXISTS (
+        SELECT 1 FROM pg_tables
+        WHERE schemaname IN ('public', 'app') AND tablename <> 'schema_migrations'
+      ) THEN 'empty'
+      ELSE 'orphan'
+    END")"
+fi
 
 if [ "$NEEDS_ADOPTION" = "orphan" ]; then
   echo "found schema objects but no migration ledger — checking whether any data exists…"
@@ -37,7 +59,8 @@ if [ "$NEEDS_ADOPTION" = "orphan" ]; then
       SELECT (xpath('/row/c/text()',
                query_to_xml(format('SELECT count(*) AS c FROM %I.%I', schemaname, tablename),
                             false, true, '')))[1]::text::bigint AS cnt
-      FROM pg_tables WHERE schemaname IN ('public', 'app')
+      FROM pg_tables
+      WHERE schemaname IN ('public', 'app') AND tablename <> 'schema_migrations'
     ) t")"
 
   if [ "${ROWS:-0}" -gt 0 ]; then
