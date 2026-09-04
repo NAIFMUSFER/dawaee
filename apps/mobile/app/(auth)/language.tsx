@@ -20,7 +20,10 @@ export default function LanguageScreen() {
 
   const choose = async (locale: Locale) => {
     await updatePreferences({ locale });
-    router.push('/(auth)/phone');
+    // Password sign-in rather than the one-time code: neither SMS nor WhatsApp
+    // can deliver a code in Saudi Arabia without a commercial registration, so
+    // the code path stays built but unreachable until that exists.
+    router.push('/(auth)/sign-in');
   };
 
   return (

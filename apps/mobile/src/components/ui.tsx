@@ -170,7 +170,8 @@ export function Button({
 }
 
 export function Field({
-  label, value, onChangeText, placeholder, keyboardType, hint, error, secureTextEntry, autoFocus, maxLength, multiline,
+  label, value, onChangeText, placeholder, keyboardType, hint, error, secureTextEntry, autoFocus,
+  maxLength, multiline, autoCapitalize, autoCorrect,
 }: {
   label: string;
   value: string;
@@ -183,6 +184,13 @@ export function Field({
   autoFocus?: boolean;
   maxLength?: number;
   multiline?: boolean;
+  /**
+   * Matters for identifiers and passwords: a mobile keyboard capitalises the
+   * first letter by default, which turns a typed email or password into one
+   * that does not match — and the person cannot see why.
+   */
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  autoCorrect?: boolean;
 }) {
   const theme = useTheme();
   const { isRtl } = useI18n();
@@ -196,6 +204,8 @@ export function Field({
         placeholderTextColor={theme.colors.ink300}
         keyboardType={keyboardType}
         secureTextEntry={secureTextEntry}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={autoCorrect}
         autoFocus={autoFocus}
         maxLength={maxLength}
         multiline={multiline}
