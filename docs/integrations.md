@@ -104,3 +104,33 @@ STORAGE_SECRET_ACCESS_KEY=...
 Private buckets only. SigV4 presigning is done in-process, so no AWS SDK is
 pulled into the runtime image. Production refuses to boot on
 `STORAGE_PROVIDER=local`.
+
+## Login codes over WhatsApp (Saudi Arabia)
+
+SMS is not a usable login channel in Saudi Arabia without a commercial
+registration. Long codes and short codes are not offered there at all, the only
+route is an alphanumeric Sender ID, and that must be registered against a CR —
+Twilio additionally states it cannot register Sender IDs for brands based in
+Saudi Arabia, because reselling domestic traffic is prohibited.
+
+WhatsApp has no equivalent gate: the Cloud API sends on Meta's platform rather
+than through a local operator, and an unverified business portfolio can already
+reach 250 unique recipients per rolling 24 hours.
+
+Set `OTP_CHANNEL=whatsapp` with `WHATSAPP_PROVIDER=meta_cloud`. Config refuses
+that combination if the provider is still the mock, so the channel cannot be
+switched on against a recording stub by accident.
+
+### The template
+
+Create one AUTHENTICATION-category template named `dawaee_login_code`, in Arabic
+and English, with a **Copy code** button.
+
+The code is sent twice — in the body and again as the button's parameter. That
+is a platform requirement, not a quirk: the button copy is what WhatsApp places
+on the clipboard, so a message built with only the body renders perfectly and
+copies nothing.
+
+Nothing else travels in this message: no medication name, no patient name, no
+health information of any kind. A login message appears in a chat list preview
+on a phone that may be shared or lost.

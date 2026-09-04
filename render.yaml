@@ -59,7 +59,12 @@ services:
       - key: CORS_ORIGINS
         sync: false
       - key: OTP_DEBUG_ECHO
-        value: "false"
+        value: ""
+      # Saudi A2P SMS requires an alphanumeric Sender ID registered against a
+      # commercial registration, and long/short codes are unavailable there —
+      # so WhatsApp is the login channel that can be switched on by config.
+      - key: OTP_CHANNEL
+        value: whatsapp
       # --- providers: leave unset to keep the recording mocks ---
       - key: SMS_PROVIDER
         value: mock

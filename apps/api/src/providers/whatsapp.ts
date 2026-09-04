@@ -40,9 +40,7 @@ export class MetaCloudWhatsAppProvider implements WhatsAppProvider {
       template: {
         name: message.templateName,
         language: { code: message.languageCode },
-        components: message.parameters.length
-          ? [{ type: 'body', parameters: message.parameters.map((text) => ({ type: 'text', text })) }]
-          : [],
+        components: buildComponents(message),
       },
     };
 
@@ -132,7 +130,38 @@ export class MockWhatsAppProvider implements WhatsAppProvider {
  * be submitted and approved before use; these identifiers must match what is
  * registered in the WhatsApp Manager. Placeholders are positional.
  */
+/**
+ * An authentication template carries its code in two places; every other
+ * template carries only positional body parameters.
+ */
+function buildComponents(message: WhatsAppTemplateMessage): unknown[] {
+  const components: unknown[] = [];
+
+  if (message.parameters.length) {
+    components.push({
+      type: 'body',
+      parameters: message.parameters.map((text) => ({ type: 'text', text })),
+    });
+  }
+
+  if (message.authenticationCode) {
+    components.push({
+      type: 'button',
+      sub_type: 'copy_code',
+      index: '0',
+      parameters: [{ type: 'text', text: message.authenticationCode }],
+    });
+  }
+
+  return components;
+}
+
 export const WHATSAPP_TEMPLATES = {
+  /**
+   * AUTHENTICATION category. {{1}} is the login code, and the same code must
+   * be passed as `authenticationCode` for the copy button.
+   */
+  loginCode: 'dawaee_login_code',
   /** {{1}} patient name, {{2}} medication, {{3}} scheduled time */
   doseUnconfirmed: 'dawaee_dose_unconfirmed',
   /** {{1}} patient, {{2}} scheduled, {{3}} taken, {{4}} missed, {{5}} adherence % */

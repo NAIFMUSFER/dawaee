@@ -28,6 +28,16 @@ export interface WhatsAppTemplateMessage {
   languageCode: string;
   /** Positional body parameters, matching the approved template. */
   parameters: string[];
+  /**
+   * One-time password for an AUTHENTICATION-category template.
+   *
+   * WhatsApp requires the code to appear TWICE in the payload — once in the
+   * body, and again as the copy-code button's parameter — and it is the button
+   * copy that is actually placed on the user's clipboard. Sending only the body
+   * produces a message that renders correctly and copies nothing, which is the
+   * kind of failure nobody notices until a patient cannot log in.
+   */
+  authenticationCode?: string;
 }
 
 export interface WhatsAppProvider {

@@ -11,6 +11,7 @@ import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
 import type { Providers } from '../providers/index.js';
+import { WHATSAPP_TEMPLATES } from '../providers/index.js';
 
 export function registerAuthRoutes(app: FastifyInstance, providers: Providers): void {
   const cfg = loadConfig();
@@ -38,9 +39,25 @@ export function registerAuthRoutes(app: FastifyInstance, providers: Providers): 
         ? `رمز التحقق لتطبيق دوائي: ${issued.code}\nصالح لمدة ${cfg.OTP_TTL_MINUTES} دقائق.`
         : `Your Dawaee verification code is ${issued.code}. Valid for ${cfg.OTP_TTL_MINUTES} minutes.`;
 
-    const result = await providers.sms.send(phone, smsBody);
+    // The code never travels with anything else. A login message carries no
+    // medication name, no patient name, nothing about health — on WhatsApp it
+    // would otherwise sit in a chat list preview on a shared or lost phone.
+    const result =
+      cfg.OTP_CHANNEL === 'whatsapp'
+        ? await providers.whatsapp.sendTemplate({
+            to: phone,
+            templateName: WHATSAPP_TEMPLATES.loginCode,
+            languageCode: body.locale === 'ar' ? 'ar' : 'en',
+            parameters: [issued.code],
+            authenticationCode: issued.code,
+          })
+        : await providers.sms.send(phone, smsBody);
+
     if (!result.ok) {
-      req.log.error({ errorCode: result.errorCode, provider: providers.sms.name }, 'OTP delivery failed');
+      req.log.error(
+        { errorCode: result.errorCode, channel: cfg.OTP_CHANNEL },
+        'OTP delivery failed',
+      );
     }
 
     return {

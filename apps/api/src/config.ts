@@ -57,6 +57,15 @@ const schema = z.object({
   OTP_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(5),
   /** Development convenience: echo the OTP in the response. Refused in production. */
   OTP_DEBUG_ECHO: envBoolean(false),
+  /**
+   * Where the login code is delivered.
+   *
+   * WhatsApp is the practical default for Saudi Arabia: A2P SMS there requires
+   * an alphanumeric Sender ID registered against a commercial registration, and
+   * long and short codes are not available at all — so SMS cannot be turned on
+   * by configuration alone the way WhatsApp can.
+   */
+  OTP_CHANNEL: z.enum(['sms', 'whatsapp']).default('sms'),
 
   CORS_ORIGINS: z.string().default(''),
   TRUST_PROXY: envBoolean(true),
@@ -123,6 +132,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
     if (cfg.WHATSAPP_PROVIDER === 'meta_cloud' && !cfg.WHATSAPP_ACCESS_TOKEN) {
       throw new Error('WHATSAPP_ACCESS_TOKEN is required when WHATSAPP_PROVIDER=meta_cloud');
+    }
+    if (cfg.OTP_CHANNEL === 'whatsapp' && cfg.WHATSAPP_PROVIDER !== 'meta_cloud') {
+      throw new Error('OTP_CHANNEL=whatsapp requires WHATSAPP_PROVIDER=meta_cloud');
     }
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
