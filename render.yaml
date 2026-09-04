@@ -1,3 +1,19 @@
+# A NOTE ABOUT `sync: false`, WHICH IS LOAD-BEARING HERE
+#
+# Pushing to main triggers a Blueprint sync, and a sync re-asserts every literal
+# value in this file over whatever the services currently hold. That is fine for
+# things this file genuinely owns. It is dangerous for two kinds of setting:
+#
+#  - Anything environment-specific. `DATABASE_ROLE` carries the Supabase pooler
+#    tenant suffix, which belongs to one project and cannot be written here.
+#  - Anything that decides whether real messages are sent. A literal
+#    `WHATSAPP_PROVIDER: mock` in this file will silently downgrade a live
+#    integration back to a recording stub on the next push, and nothing will
+#    look broken — reminders will simply stop reaching people.
+#
+# Both classes are `sync: false`: supplied once per environment, and left alone
+# by every later sync. This already happened once, taking both services down.
+
 # Render blueprint.
 #
 # Two services on one image: the HTTP API and the reminder worker. They must
@@ -41,7 +57,7 @@ services:
       # be one-directional: two services that each read a value from the other
       # form a cycle Render cannot resolve.
       - key: DATABASE_ROLE
-        value: dawaee_app
+        sync: false
       - key: DATABASE_ROLE_PASSWORD
         sync: false
       # The worker's own database password. Generated here for the same reason,
@@ -64,10 +80,10 @@ services:
       # commercial registration, and long/short codes are unavailable there —
       # so WhatsApp is the login channel that can be switched on by config.
       - key: OTP_CHANNEL
-        value: whatsapp
+        sync: false
       # --- providers: leave unset to keep the recording mocks ---
       - key: SMS_PROVIDER
-        value: mock
+        sync: false
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN
@@ -79,7 +95,7 @@ services:
       - key: UNIFONIC_SENDER_ID
         sync: false
       - key: WHATSAPP_PROVIDER
-        value: mock
+        sync: false
       - key: WHATSAPP_PHONE_NUMBER_ID
         sync: false
       - key: WHATSAPP_ACCESS_TOKEN
@@ -89,11 +105,11 @@ services:
       - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
         sync: false
       - key: PUSH_PROVIDER
-        value: mock
+        sync: false
       - key: EXPO_ACCESS_TOKEN
         sync: false
       - key: OCR_PROVIDER
-        value: mock
+        sync: false
       - key: GOOGLE_VISION_API_KEY
         sync: false
       - key: AZURE_DI_ENDPOINT
@@ -102,7 +118,7 @@ services:
         sync: false
       # Local disk storage is refused at boot in production.
       - key: STORAGE_PROVIDER
-        value: r2
+        sync: false
       - key: STORAGE_BUCKET
         sync: false
       - key: STORAGE_ENDPOINT
@@ -149,7 +165,7 @@ services:
       - key: DAWAEE_WORKER_PASSWORD
         sync: false
       - key: DATABASE_ROLE
-        value: dawaee_worker
+        sync: false
       - key: DATABASE_ROLE_PASSWORD
         sync: false
       # Shared with the API so both sign and verify the same tokens.
@@ -160,15 +176,15 @@ services:
       - key: PUBLIC_APP_URL
         sync: false
       - key: SMS_PROVIDER
-        value: mock
+        sync: false
       - key: WHATSAPP_PROVIDER
-        value: mock
+        sync: false
       - key: PUSH_PROVIDER
-        value: mock
+        sync: false
       - key: OCR_PROVIDER
-        value: mock
+        sync: false
       - key: STORAGE_PROVIDER
-        value: r2
+        sync: false
       - key: STORAGE_BUCKET
         sync: false
       - key: STORAGE_ENDPOINT
