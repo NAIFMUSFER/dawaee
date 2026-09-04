@@ -12,6 +12,11 @@ export const ERROR_CODES = {
   OTP_INVALID: 'otp_invalid',
   OTP_EXPIRED: 'otp_expired',
   OTP_TOO_MANY_ATTEMPTS: 'otp_too_many_attempts',
+  /** Wrong identifier or wrong password — deliberately indistinguishable. */
+  INVALID_CREDENTIALS: 'invalid_credentials',
+  ACCOUNT_LOCKED: 'account_locked',
+  WEAK_PASSWORD: 'weak_password',
+  IDENTIFIER_TAKEN: 'identifier_taken',
   INVITATION_EXPIRED: 'invitation_expired',
   INVITATION_INVALID: 'invitation_invalid',
   INVITATION_ALREADY_USED: 'invitation_already_used',

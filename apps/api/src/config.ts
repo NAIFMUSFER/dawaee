@@ -66,6 +66,15 @@ const schema = z.object({
    * by configuration alone the way WhatsApp can.
    */
   OTP_CHANNEL: z.enum(['sms', 'whatsapp']).default('sms'),
+  /**
+   * Password sign-in.
+   *
+   * On by default because it is the only route that does not depend on someone
+   * else's approval: SMS needs a Sender ID registered against a commercial
+   * registration, and WhatsApp authentication templates need Meta business
+   * verification. Turn it off once a verified second factor is available.
+   */
+  PASSWORD_LOGIN_ENABLED: envBoolean(true),
 
   CORS_ORIGINS: z.string().default(''),
   TRUST_PROXY: envBoolean(true),

@@ -56,6 +56,40 @@ export const verifyOtpSchema = z.object({
   deviceName: z.string().max(120).optional(),
 });
 
+/**
+ * Sign-in with a password.
+ *
+ * One `identifier` field rather than separate phone and email inputs: the
+ * person typing knows what they registered with, and making them classify it
+ * first is a question the server can answer for itself.
+ */
+export const passwordLoginSchema = z.object({
+  identifier: z.string().min(3).max(320),
+  password: z.string().min(1).max(200),
+  deviceId: z.string().min(8).max(128),
+  deviceName: z.string().max(120).optional(),
+});
+
+export const registerSchema = z
+  .object({
+    phone: phoneInput.optional(),
+    email: z.string().email().max(320).optional(),
+    displayName: z.string().min(1).max(120),
+    password: z.string().min(10).max(200),
+    locale: z.enum(LOCALES).default('ar'),
+    deviceId: z.string().min(8).max(128),
+    deviceName: z.string().max(120).optional(),
+  })
+  .refine((v) => Boolean(v.phone ?? v.email), {
+    message: 'A phone number or an email address is required',
+    path: ['phone'],
+  });
+
+export const setPasswordSchema = z.object({
+  currentPassword: z.string().max(200).optional(),
+  newPassword: z.string().min(10).max(200),
+});
+
 export const refreshSchema = z.object({ refreshToken: z.string().min(20).max(512) });
 
 export const registerPushTokenSchema = z.object({
@@ -414,6 +448,9 @@ export const paginationQuery = z.object({
   cursor: z.string().max(256).optional(),
 });
 
+export type PasswordLoginInput = z.infer<typeof passwordLoginSchema>;
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type SetPasswordInput = z.infer<typeof setPasswordSchema>;
 export type RequestOtpInput = z.infer<typeof requestOtpSchema>;
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
 export type CreateMedicationInput = z.infer<typeof createMedicationSchema>;

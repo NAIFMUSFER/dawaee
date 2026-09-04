@@ -1,12 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, ERROR_CODES, registerPushTokenSchema, requestOtpSchema, refreshSchema, verifyOtpSchema, t,
+  AppError, ERROR_CODES, passwordLoginSchema, registerPushTokenSchema, registerSchema,
+  requestOtpSchema, refreshSchema, setPasswordSchema, verifyOtpSchema, t,
 } from '@dawaee/shared';
 import { loadConfig } from '../config.js';
 import { withTransaction, withUser } from '../lib/db.js';
 import { maskPhone, normalizePhone } from '../lib/crypto.js';
 import { assertOtpVerified, checkOtp, issueOtp, OTP_RESEND_COOLDOWN_SECONDS } from '../auth/otp-service.js';
 import { assertRotated, createSession, revokeSession, rotateSessionAttempt } from '../auth/session-service.js';
+import {
+  assertLogin, attemptPasswordLogin, hashNewPassword, passwordLoginEnabled,
+} from '../auth/password-service.js';
+import { verifyPassword } from '../lib/password.js';
 import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
@@ -121,6 +126,175 @@ export function registerAuthRoutes(app: FastifyInstance, providers: Providers): 
       refreshExpiresAt: result.session.refreshExpiresAt.toISOString(),
       isNewUser: result.isNewUser,
     };
+  });
+
+
+  // ------------------------------------------------------------- password
+
+  /**
+   * Create an account with a password.
+   *
+   * Reachable by phone, by email, or by both. SMS and WhatsApp both turned out
+   * to need a commercial registration before they can carry a login code, and
+   * a password needs nobody's approval.
+   */
+  app.post('/v1/auth/register', {
+    config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
+  }, async (req) => {
+    if (!passwordLoginEnabled()) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, 403, 'Password sign-in is disabled.');
+    }
+    const body = registerSchema.parse(req.body);
+
+    const phone = body.phone ? normalizePhone(body.phone) : null;
+    if (body.phone && !phone) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
+    }
+    const email = body.email ? body.email.trim().toLowerCase() : null;
+
+    const passwordHash = await hashNewPassword(body.password, body.locale, phone ?? email ?? undefined);
+
+    const result = await withTransaction(async (tx) => {
+      const { rows } = await tx.query<{ user_id: string; created: boolean }>(
+        'SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
+        [phone, email, body.displayName.trim(), passwordHash, body.locale],
+      );
+      const row = rows[0]!;
+      if (!row.created) return { taken: true as const };
+
+      const session = await createSession(tx, row.user_id, {
+        deviceId: body.deviceId,
+        deviceName: body.deviceName ?? null,
+        userAgent: req.headers['user-agent'] ?? null,
+        ipHash: req.ipHash,
+      });
+      await recordAudit(tx, {
+        actorUserId: row.user_id,
+        patientProfileId: null,
+        action: 'auth.register',
+        entityType: 'user',
+        entityId: row.user_id,
+        requestId: req.id,
+        ipHash: req.ipHash,
+        newValue: { method: 'password', deviceId: body.deviceId },
+      });
+      return { taken: false as const, userId: row.user_id, session };
+    });
+
+    if (result.taken) {
+      // Registration is the one place this cannot be hidden — the account
+      // genuinely cannot be created twice. Sign-in stays uniform.
+      throw new AppError(ERROR_CODES.IDENTIFIER_TAKEN, 409, t(body.locale, 'auth.identifierTaken'));
+    }
+
+    return {
+      accessToken: await signAccessToken(result.userId, result.session.sessionId, false),
+      refreshToken: result.session.refreshToken,
+      expiresIn: accessTokenTtlSeconds(),
+      refreshExpiresAt: result.session.refreshExpiresAt.toISOString(),
+      isNewUser: true,
+    };
+  });
+
+  /** Sign in with phone-or-email and a password. */
+  app.post('/v1/auth/login', {
+    config: { rateLimit: { max: 12, timeWindow: '10 minutes' } },
+  }, async (req) => {
+    if (!passwordLoginEnabled()) {
+      throw new AppError(ERROR_CODES.FORBIDDEN, 403, 'Password sign-in is disabled.');
+    }
+    const body = passwordLoginSchema.parse(req.body);
+    const locale = req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar';
+
+    // A typed identifier may be a local-format phone, an E.164 phone, or an
+    // email. Normalize the phone shape and let the lookup try both.
+    const typed = body.identifier.trim();
+    const asPhone = normalizePhone(typed);
+    const identifier = asPhone ?? typed.toLowerCase();
+
+    // The attempt (and its failure counter) commits before anything is refused.
+    const attempt = await withTransaction((tx) => attemptPasswordLogin(tx, identifier, body.password));
+    assertLogin(attempt, locale);
+
+    const session = await withTransaction(async (tx) => {
+      const created = await createSession(tx, attempt.userId, {
+        deviceId: body.deviceId,
+        deviceName: body.deviceName ?? null,
+        userAgent: req.headers['user-agent'] ?? null,
+        ipHash: req.ipHash,
+      });
+      await recordAudit(tx, {
+        actorUserId: attempt.userId,
+        patientProfileId: null,
+        action: 'auth.login',
+        entityType: 'user',
+        entityId: attempt.userId,
+        requestId: req.id,
+        ipHash: req.ipHash,
+        newValue: { method: 'password', deviceId: body.deviceId },
+      });
+      return created;
+    });
+
+    const { rows } = await withUser(attempt.userId, (tx) =>
+      tx.query<{ is_admin: boolean }>('SELECT is_admin FROM users WHERE id = $1', [attempt.userId]));
+
+    return {
+      accessToken: await signAccessToken(attempt.userId, session.sessionId, rows[0]?.is_admin ?? false),
+      refreshToken: session.refreshToken,
+      expiresIn: accessTokenTtlSeconds(),
+      refreshExpiresAt: session.refreshExpiresAt.toISOString(),
+      isNewUser: false,
+    };
+  });
+
+  /**
+   * Set or change a password.
+   *
+   * An account that has one must prove it. An account that has none — created
+   * back when the only way in was a one-time code — can set one from an
+   * authenticated session, which is proof enough.
+   */
+  app.post('/v1/auth/password', {
+    preHandler: authenticate,
+    config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
+  }, async (req) => {
+    const body = setPasswordSchema.parse(req.body);
+    const { userId } = currentUser(req);
+    const locale = req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar';
+
+    const existing = await withTransaction(async (tx) => {
+      const { rows } = await tx.query<{ password_hash: string | null }>(
+        'SELECT password_hash FROM app.find_user_for_password_login($1)',
+        [userId],
+      );
+      return rows[0]?.password_hash ?? null;
+    });
+
+    if (existing) {
+      const ok = body.currentPassword ? await verifyPassword(body.currentPassword, existing) : false;
+      if (!ok) {
+        throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.currentPasswordWrong'));
+      }
+    }
+
+    const hash = await hashNewPassword(body.newPassword, locale);
+    await withTransaction(async (tx) => {
+      await tx.query('SELECT app.set_password($1,$2)', [userId, hash]);
+      await recordAudit(tx, {
+        actorUserId: userId,
+        patientProfileId: null,
+        action: existing ? 'auth.password_changed' : 'auth.password_set',
+        entityType: 'user',
+        entityId: userId,
+        requestId: req.id,
+        ipHash: req.ipHash,
+      });
+    });
+
+    // Changing a password does not end other sessions here; that is a separate
+    // deliberate action so a patient mid-dose is never logged out unexpectedly.
+    return { updated: true };
   });
 
   app.post('/v1/auth/refresh', {
