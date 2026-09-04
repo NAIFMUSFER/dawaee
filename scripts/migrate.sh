@@ -27,29 +27,25 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # script creates it before applying anything, so a run that failed on its first
 # migration leaves an empty ledger next to a half-applied schema. What marks a
 # database as adopted is a ledger with at least one row in it.
-NEEDS_ADOPTION="$(psql "$DATABASE_URL" -tAc "
-  SELECT CASE
-    WHEN COALESCE((SELECT count(*) FROM schema_migrations), 0) > 0 THEN 'ledger'
-    WHEN NOT EXISTS (
-      SELECT 1 FROM pg_tables
-      WHERE schemaname IN ('public', 'app') AND tablename <> 'schema_migrations'
-    ) THEN 'empty'
-    ELSE 'orphan'
-  END
-  FROM (SELECT 1) _
-  WHERE true")"
+# Asked in steps rather than one query: `count(*) FROM schema_migrations`
+# fails to parse when the table does not exist, which is exactly the case this
+# is trying to detect — and under `set -e` that aborts the deploy instead of
+# falling through. `to_regclass` answers safely for a table that may not exist.
+if [ "$(psql "$DATABASE_URL" -tAc "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
+  LEDGER_ROWS="$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM schema_migrations')"
+else
+  LEDGER_ROWS=0
+fi
+OTHER_TABLES="$(psql "$DATABASE_URL" -tAc "
+  SELECT count(*) FROM pg_tables
+   WHERE schemaname IN ('public','app') AND tablename <> 'schema_migrations'")"
 
-# `count(*) FROM schema_migrations` aborts if the table does not exist, which is
-# itself the 'no ledger' case — fall back rather than treating it as an error.
-if [ -z "$NEEDS_ADOPTION" ]; then
-  NEEDS_ADOPTION="$(psql "$DATABASE_URL" -tAc "
-    SELECT CASE
-      WHEN NOT EXISTS (
-        SELECT 1 FROM pg_tables
-        WHERE schemaname IN ('public', 'app') AND tablename <> 'schema_migrations'
-      ) THEN 'empty'
-      ELSE 'orphan'
-    END")"
+if [ "${LEDGER_ROWS:-0}" -gt 0 ]; then
+  NEEDS_ADOPTION=ledger
+elif [ "${OTHER_TABLES:-0}" -eq 0 ]; then
+  NEEDS_ADOPTION=empty
+else
+  NEEDS_ADOPTION=orphan
 fi
 
 if [ "$NEEDS_ADOPTION" = "orphan" ]; then
