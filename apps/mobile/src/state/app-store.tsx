@@ -3,9 +3,10 @@ import * as Localization from 'expo-localization';
 import type { Locale } from '@dawaee/shared';
 import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
 import type { ProfileSummary } from '../api/types.js';
-import { flushQueue, queueSize } from '../storage/offline-queue.js';
+import { flushQueue, purgeLocalCaches, queueSize, setCacheOwner } from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications } from '../notifications/index.js';
+import { destroyCacheKey } from '../storage/cache-key.js';
 
 /**
  * Application state: who is signed in, which patient profile is selected, and
@@ -117,6 +118,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
 
+  /**
+   * The latest state, readable from a callback that was memoised before it.
+   *
+   * `signOut` is built once by `useMemo` and therefore closes over the state of
+   * the render that created it — which at that point had no user. It needs the
+   * id of the person signing out in order to destroy THEIR encryption key, so
+   * it reads through this ref rather than through the stale closure.
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const loadMe = useCallback(async () => {
     const me = await api.get<{
       user: { id: string; displayName: string; phoneE164: string | null };
@@ -124,6 +136,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }>('/v1/me');
     const profilesRes = await api.get<{ profiles: ProfileSummary[] }>('/v1/profiles');
     if (!mounted.current) return;
+
+    // Bind local encrypted storage to this account BEFORE any cache read or
+    // write can happen. Every slot is keyed and encrypted per user, so this is
+    // what keeps two people sharing a phone out of each other's medication
+    // history — and it must be set before the first `readQueue`, not after.
+    setCacheOwner(me.user.id);
 
     const { restartRequired } = applyNativeDirection(me.preferences.locale);
     setState((s) => ({
@@ -200,6 +218,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await cancelAllLocalNotifications().catch(() => undefined);
       await api.post('/v1/auth/logout').catch(() => undefined);
       await clearSession();
+
+      // Destroy the local medication cache and the key that opens it, in that
+      // order and both best effort. Either one alone is sufficient — ciphertext
+      // without a key is noise — so both failing is what it would take for
+      // anything to survive, and the sweep runs again on the next sign-in.
+      const previousUserId = stateRef.current.user?.id ?? null;
+      await purgeLocalCaches(previousUserId).catch(() => undefined);
+      if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
+      setCacheOwner(null);
+
       setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
     },
     refreshProfiles: loadMe,

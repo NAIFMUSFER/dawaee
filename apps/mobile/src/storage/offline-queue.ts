@@ -1,5 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, NetworkError } from '../api/client.js';
+import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js';
+import type { CacheSlot } from './secure-cache.js';
 
 /**
  * The offline queue.
@@ -11,8 +12,44 @@ import { api, NetworkError } from '../api/client.js';
  * same dose twice or decrement the medication box twice.
  */
 
-const QUEUE_KEY = 'dawaee.offlineQueue';
-const CACHE_KEY = 'dawaee.todayCache';
+/**
+ * Both of these held plain text until now: the queue is a list of dose
+ * confirmations naming dose ids and times, and the cache is the medication
+ * name, quantity, unit and schedule for the day — enough to infer a diagnosis
+ * from a stolen phone. They are encrypted per account now; see
+ * ./secure-cache.ts for the migration and ./crypto.ts for the threat model.
+ *
+ * The names below are the LEGACY plaintext keys. Nothing writes them any more;
+ * they exist so the migration can find what earlier builds left behind.
+ */
+const QUEUE_SLOT: CacheSlot = { plaintextKey: 'dawaee.offlineQueue' };
+const CACHE_SLOT: CacheSlot = { plaintextKey: 'dawaee.todayCache' };
+export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT];
+
+/**
+ * Who the stored data belongs to.
+ *
+ * Set at sign-in and cleared at sign-out. Every read and write is scoped to it,
+ * so User B signing in on a shared phone cannot reach User A's cache even if
+ * cleanup failed: different storage key, different encryption key.
+ *
+ * Null means "nobody is signed in", and in that state nothing is read from or
+ * written to disk at all — a queued dose action with no owner has nowhere
+ * legitimate to go.
+ */
+let currentUserId: string | null = null;
+
+export function setCacheOwner(userId: string | null): void {
+  currentUserId = userId;
+}
+
+/** Raised when a dose action could not be persisted. Carries no medication data. */
+export class QueuePersistFailed extends Error {
+  constructor(readonly reason: string) {
+    super(`the action could not be saved on this device (${reason})`);
+    this.name = 'QueuePersistFailed';
+  }
+}
 
 export type QueuedAction =
   | { type: 'taken'; doseOccurrenceId: string; at: string; clientEventId: string }
@@ -24,8 +61,29 @@ export function newClientEventId(): string {
   return `evt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * The queue, decrypted.
+ *
+ * Order is preserved exactly: the value is one JSON array, so encryption is
+ * applied to the whole list rather than per entry and there is no reordering
+ * to get wrong. Every field a replay depends on — clientEventId, the action
+ * type, doseOccurrenceId, the `at` timestamp, snooze minutes — round-trips
+ * unchanged, because nothing is transformed on the way in or out.
+ *
+ * Unreadable ciphertext returns an empty queue rather than throwing: a patient
+ * opening the app must not meet a crash because a cache entry was corrupted.
+ * The consequence — unsent actions lost — is the documented key-loss behaviour,
+ * and it is bounded by the fact that anything the server already accepted is
+ * not in here.
+ */
 export async function readQueue(): Promise<QueuedAction[]> {
-  const raw = await AsyncStorage.getItem(QUEUE_KEY);
+  if (!currentUserId) return [];
+  let raw: string | null;
+  try {
+    raw = await readSlot(QUEUE_SLOT, currentUserId);
+  } catch {
+    return [];
+  }
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as QueuedAction[];
@@ -35,8 +93,19 @@ export async function readQueue(): Promise<QueuedAction[]> {
   }
 }
 
+/**
+ * Persist the queue, or fail loudly.
+ *
+ * There is deliberately no plaintext fallback. A dose confirmation that cannot
+ * be stored securely is reported to the caller so the UI can tell the patient
+ * it did not save — which is recoverable — rather than written in the clear,
+ * which silently reinstates the vulnerability on exactly the devices where the
+ * secure path is broken.
+ */
 async function writeQueue(actions: QueuedAction[]): Promise<void> {
-  await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(actions.slice(-500)));
+  if (!currentUserId) throw new QueuePersistFailed('signed out');
+  const result = await writeSlot(QUEUE_SLOT, currentUserId, JSON.stringify(actions.slice(-500)));
+  if (!result.ok) throw new QueuePersistFailed(result.reason);
 }
 
 export async function enqueue(action: QueuedAction): Promise<void> {
@@ -109,11 +178,21 @@ export interface CachedSchedule {
  * data plan.
  */
 export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
-  await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  if (!currentUserId) return;
+  // Unlike the queue, a failure here is survivable and silent by design: the
+  // cache is a copy of what the server already holds, so losing it costs a
+  // network round trip, not a dose.
+  await writeSlot(CACHE_SLOT, currentUserId, JSON.stringify(cache));
 }
 
 export async function readCachedSchedule(profileId: string): Promise<CachedSchedule | null> {
-  const raw = await AsyncStorage.getItem(CACHE_KEY);
+  if (!currentUserId) return null;
+  let raw: string | null;
+  try {
+    raw = await readSlot(CACHE_SLOT, currentUserId);
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as CachedSchedule;
@@ -121,6 +200,21 @@ export async function readCachedSchedule(profileId: string): Promise<CachedSched
   } catch {
     return null;
   }
+}
+
+/**
+ * Forget everything cached on this device.
+ *
+ * Sweeps by prefix, so it removes caches belonging to accounts that are not
+ * the current one — which is the case that matters, because the id of a
+ * previous user is exactly what the current session does not have.
+ */
+export async function purgeLocalCaches(userId: string | null): Promise<void> {
+  if (userId) {
+    await clearSlot(QUEUE_SLOT, userId);
+    await clearSlot(CACHE_SLOT, userId);
+  }
+  await purgeAllSlots(ALL_SLOTS);
 }
 
 /** Applies a queued action to the cached view so the UI updates instantly offline. */
