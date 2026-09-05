@@ -9,6 +9,7 @@ import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
 import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
+import { AppLockGate } from '@/security/AppLockGate';
 
 /**
  * Root layout.
@@ -85,13 +86,22 @@ function Shell() {
         />
       ) : null}
       {ready ? (
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: PALETTE.background },
-            animation: 'slide_from_right',
-          }}
-        />
+        // The lock wraps the router, not individual screens. `appLockEnabled`
+        // was previously written and displayed by the settings screen and
+        // enforced nowhere — anyone holding the unlocked phone could read the
+        // full medication history of a patient who had been told it was
+        // protected. Placed here, every route renders underneath it, including
+        // ones opened by a deep link or a notification tap that never pass
+        // through a screen that could have done the checking.
+        <AppLockGate>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: PALETTE.background },
+              animation: 'slide_from_right',
+            }}
+          />
+        </AppLockGate>
       ) : (
         <View style={{ flex: 1, backgroundColor: PALETTE.background, justifyContent: 'center' }}>
           <Loading />
