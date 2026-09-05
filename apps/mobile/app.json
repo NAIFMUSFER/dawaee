@@ -85,6 +85,7 @@
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#F2F6F5"
-    }
+    },
+    "owner": "naif789"
   }
 }
