@@ -77,6 +77,18 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
   return { itemsProcessed: enqueued };
 }
 
+/**
+ * The expiry window is a PATIENT-LOCAL one.
+ *
+ * `expiry_date` is the date printed on the box, in the patient's own calendar.
+ * `current_date` is the date in the database session's zone (`Etc/UTC` in every
+ * environment here), so for a patient west of UTC the window opened and closed
+ * a day early — and the lost warning was the one on the actual expiry day,
+ * because the lower bound had already gone false.
+ *
+ * The instant comes from the caller rather than the database so the job has one
+ * clock rather than two.
+ */
 async function enqueueExpiryWarnings(client: PoolClient, now: Date): Promise<number> {
   const { rows } = await client.query(
     `SELECT m.id, m.name, m.expiry_date, m.patient_profile_id, pp.timezone,
@@ -89,8 +101,10 @@ async function enqueueExpiryWarnings(client: PoolClient, now: Date): Promise<num
        LEFT JOIN user_preferences up ON up.user_id = u.id
       WHERE m.status IN ('active','paused')
         AND m.expiry_date IS NOT NULL
-        AND m.expiry_date <= current_date + (COALESCE(up.expiry_warning_days, 30) || ' days')::interval
-        AND m.expiry_date >= current_date`,
+        AND m.expiry_date <= ($1::timestamptz AT TIME ZONE pp.timezone)::date
+              + (COALESCE(up.expiry_warning_days, 30) || ' days')::interval
+        AND m.expiry_date >= ($1::timestamptz AT TIME ZONE pp.timezone)::date`,
+    [now],
   );
 
   let count = 0;

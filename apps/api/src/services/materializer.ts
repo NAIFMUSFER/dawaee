@@ -178,6 +178,22 @@ export async function loadSchedulesNeedingMaterialization(
 ): Promise<MedicationSchedule[]> {
   const threshold = new Date(now.getTime() + (MATERIALIZE_HORIZON_DAYS - 3) * 86_400_000);
   const { rows } = await tx.query(
+    /**
+     * `s.end_date` is a patient-local calendar date, so it is compared against
+     * the schedule's OWN local date derived from the caller's instant — not
+     * `current_date`, which is the date in the database session's zone
+     * (`Etc/UTC` everywhere here).
+     *
+     * For a schedule west of UTC the UTC date rolls over first, so
+     * `end_date >= current_date` goes false while the patient is still on the
+     * final day. This filter is what decides whether a schedule gets topped up,
+     * so a schedule dropped here stops being materialized with the last day's
+     * doses possibly not yet generated.
+     *
+     * Using `now` rather than the database clock also removes the second
+     * dependency: two sources of "today" that can disagree under clock skew, in
+     * a job whose other half already works from `now`.
+     */
     `SELECT s.id, s.medication_id, s.patient_profile_id, s.rule, s.rule_kind::text AS rule_kind,
             s.dose_quantity, s.dose_unit::text AS dose_unit, s.timezone, s.start_date, s.end_date,
             s.missed_after_minutes, s.late_after_minutes, s.active, s.created_by
@@ -186,11 +202,11 @@ export async function loadSchedulesNeedingMaterialization(
       WHERE s.active
         AND s.rule_kind <> 'as_needed'
         AND m.status = 'active'
-        AND (s.end_date IS NULL OR s.end_date >= current_date)
+        AND (s.end_date IS NULL OR s.end_date >= ($3::timestamptz AT TIME ZONE s.timezone)::date)
         AND (s.materialized_through IS NULL OR s.materialized_through < $1)
       ORDER BY s.materialized_through NULLS FIRST
       LIMIT $2`,
-    [threshold, limit],
+    [threshold, limit, now],
   );
   return rows.map(scheduleFromRow);
 }

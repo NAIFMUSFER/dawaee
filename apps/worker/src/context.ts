@@ -68,10 +68,31 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
  * instances never process the same tick and the admin panel can answer "did
  * the reminder job run?" without touching medical rows.
  */
+/**
+ * A job that finished with some of its work failing is NOT a successful run.
+ *
+ * P8-2 was a cleanup that had never once completed and said nothing about it
+ * for the life of the deployment. P10-3 made each housekeeping step fail on its
+ * own so one broken step no longer aborts the rest — but per-step isolation
+ * only removes the collateral damage, it does not make the fault visible. A job
+ * that swallows step failures and then records `succeeded = true` recreates the
+ * exact condition P8-2 was about, one level down: an operator reading `job_runs`
+ * sees clean successes while a retention class silently never runs.
+ *
+ * So a job may report partial failure by returning `failures`, and this records
+ * the run as failed with the failing steps named. The steps that DID succeed
+ * still commit — the isolation is the point — and the next scheduled tick
+ * retries the failed class, because nothing marks a step as done.
+ */
+export interface JobFailure {
+  step: string;
+  error: string;
+}
+
 export async function runJob<T>(
   ctx: WorkerContext,
   jobName: string,
-  fn: (client: pg.PoolClient) => Promise<{ itemsProcessed: number; result?: T }>,
+  fn: (client: pg.PoolClient) => Promise<{ itemsProcessed: number; result?: T; failures?: JobFailure[] }>,
 ): Promise<{ ran: boolean; itemsProcessed: number; result?: T }> {
   const client = await ctx.pool.connect();
   const startedAt = new Date();
@@ -85,13 +106,26 @@ export async function runJob<T>(
     }
 
     const outcome = await fn(client);
+    const failures = outcome.failures ?? [];
     await client.query(
-      `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, items_processed)
-       VALUES ($1,$2,now(),true,$3)`,
-      [jobName, startedAt, outcome.itemsProcessed],
+      `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, items_processed, error_message, metadata)
+       VALUES ($1,$2,now(),$3,$4,$5,$6)`,
+      [
+        jobName, startedAt, failures.length === 0, outcome.itemsProcessed,
+        failures.length === 0 ? null
+          : `${failures.length} step(s) failed: ${failures.map((f) => f.step).join(', ')}`.slice(0, 500),
+        // Step names and error text only. No row contents, so an operator can
+        // see WHICH retention class is broken without the log carrying PHI.
+        JSON.stringify(failures.length ? { failedSteps: failures } : {}),
+      ],
     );
     await client.query('COMMIT');
-    if (outcome.itemsProcessed > 0) {
+    if (failures.length > 0) {
+      ctx.log.error(
+        { job: jobName, items: outcome.itemsProcessed, failedSteps: failures.map((f) => f.step) },
+        'job completed with failed steps; they will be retried on the next tick',
+      );
+    } else if (outcome.itemsProcessed > 0) {
       ctx.log.info({ job: jobName, items: outcome.itemsProcessed }, 'job completed');
     }
     return { ran: true, ...outcome };

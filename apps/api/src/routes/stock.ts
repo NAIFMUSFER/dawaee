@@ -257,13 +257,17 @@ export function registerStockRoutes(app: FastifyInstance): void {
       }
 
       const { rows: expiring } = await tx.query(
+        // Against the profile's own calendar date, not `current_date` (the
+        // database session's, i.e. UTC): "expiring within 30 days" is a
+        // statement about the patient's calendar, and the two disagree by a day
+        // for part of every day.
         `SELECT id, name, expiry_date
            FROM medications
           WHERE patient_profile_id = $1 AND status IN ('active','paused')
             AND expiry_date IS NOT NULL
-            AND expiry_date <= current_date + ($2 || ' days')::interval
+            AND expiry_date <= ($3::timestamptz AT TIME ZONE $4)::date + ($2 || ' days')::interval
           ORDER BY expiry_date`,
-        [profileId, String(expiryDays)],
+        [profileId, String(expiryDays), serverNow(), access.profileTimezone],
       );
 
       return {
