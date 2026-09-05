@@ -167,12 +167,17 @@ async function refreshAccessToken(): Promise<RefreshResult> {
   if (!refreshToken) return 'rejected';
   if (refreshInFlight) return refreshInFlight;
 
+  // The exact token this attempt presents, captured before the await so the
+  // recovery below can tell "storage still holds what I sent" from "another
+  // context has already moved on".
+  const presented = refreshToken;
+
   refreshInFlight = (async () => {
     try {
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        body: JSON.stringify({ refreshToken: presented }),
       });
       if (!res.ok) {
         /**
@@ -186,7 +191,44 @@ async function refreshAccessToken(): Promise<RefreshResult> {
          * be unreachable" is not a security property, and because a process
          * restart mid-refresh can produce exactly this shape.
          */
-        if (res.status === 409) return 'superseded';
+        /**
+         * 409 REFRESH_SUPERSEDED — another execution context already rotated
+         * this token.
+         *
+         * The in-memory single-flight above covers concurrent callers inside
+         * ONE runtime, and that is the only concurrency this app actually has:
+         * there is no TaskManager task, no headless handler and no background
+         * fetch, so notification actions run in the app's own runtime. What it
+         * does NOT cover is a SEQUENTIAL restart — Android reclaiming the
+         * process, or a cold launch from a notification action — where a
+         * previous process rotated and this one starts holding the old token.
+         *
+         * Recovery, in order:
+         *   1. never re-present the token that was just refused, and
+         *   2. re-read what is actually persisted now.
+         *
+         * If storage has moved on, another context won and wrote the newer
+         * pair: adopt it and carry on. If storage still holds the token that
+         * was just refused, there is no winner to recover from — the rotation
+         * happened but its result was lost — so end the session cleanly.
+         *
+         * Retrying the refused token is the one thing that must not happen. It
+         * would work for a moment and then, once the server's 30-second race
+         * window closed, be classified as theft and revoke the whole device —
+         * turning a lost write into a forced sign-out with a security event
+         * attached to it.
+         */
+        if (res.status === 409) {
+          const stored = await readSession().catch(() => null);
+          if (stored && stored.refreshToken !== presented) {
+            accessToken = stored.accessToken;
+            refreshToken = stored.refreshToken;
+            return 'ok';
+          }
+          await clearSession();
+          onUnauthenticated?.();
+          return 'rejected';
+        }
 
         await clearSession();
         onUnauthenticated?.();

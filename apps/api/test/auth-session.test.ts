@@ -1146,22 +1146,129 @@ describe('P9-4 — disabling an account stops it at once', () => {
   });
 
   /**
-   * Checking at read time rather than revoking rows makes the state reversible:
-   * an account disabled by mistake is restored without forcing everyone to sign
-   * in again, and with no cleanup to get wrong.
+   * P9-5 — re-enabling must NOT resurrect anything.
+   *
+   * The read-time check alone made disablement reversible, which defeats it as
+   * a compromise response: an attacker's stolen credentials would come back to
+   * life the moment the operator re-enabled an account the user had already
+   * remediated. Disabling now revokes every session permanently; re-enabling
+   * permits new authentication only.
    */
-  it('re-enabling restores sessions that are still live', async () => {
+  it('re-enabling does NOT resurrect the old credentials', async () => {
     const user = await signIn(h, '+966500003006');
     const s = await login(user.phone, 'device-dis-f-0001');
     const headers = { authorization: `Bearer ${s.accessToken}` };
 
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(200);
+
     await disable(user.userId);
     expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(401);
+    expect((await refresh(s.refreshToken)).statusCode).not.toBe(200);
 
     await enable(user.userId);
+
+    // F and G: the ORIGINAL credentials stay dead.
     expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode,
-      're-enabling did not restore a live session').toBe(200);
-    expect((await refresh(s.refreshToken)).statusCode).toBe(200);
+      'a pre-disable access token was resurrected').toBe(401);
+    expect((await refresh(s.refreshToken)).statusCode,
+      'a pre-disable refresh token was resurrected').not.toBe(200);
+
+    // H and I: the account itself works again, via a fresh authentication.
+    const fresh = await login(user.phone, 'device-dis-f-0002');
+    expect((await h.app.inject({
+      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${fresh.accessToken}` },
+    })).statusCode, 're-enabling did not restore the account').toBe(200);
+    expect((await refresh(fresh.refreshToken)).statusCode).toBe(200);
+  });
+
+  it('revokes the session rows themselves, not just the read path', async () => {
+    const user = await signIn(h, '+966500003008');
+    await login(user.phone, 'device-dis-h-0001');
+    const live = async () => (await sessions(user.userId)).filter((x) => x.revoked_at === null).length;
+
+    expect(await live()).toBeGreaterThan(0);
+    await disable(user.userId);
+    expect(await live(), 'sessions were only hidden, not revoked').toBe(0);
+    await enable(user.userId);
+    expect(await live(), 're-enable un-revoked rows').toBe(0);
+  });
+
+  it('deactivates push tokens too, so a disabled account stops being reminded', async () => {
+    const user = await signIn(h, '+966500003009');
+    const s = await login(user.phone, 'device-dis-i-0001');
+    await h.app.inject({
+      method: 'POST', url: '/v1/devices/push-token',
+      headers: { authorization: `Bearer ${s.accessToken}` },
+      payload: { token: 'ExponentPushToken[disabled-x]', platform: 'ios', deviceId: 'device-dis-i-0001' },
+    });
+    const active = async () => {
+      const { rows } = await owner.query<{ n: string }>(
+        'SELECT count(*) AS n FROM push_tokens WHERE user_id=$1 AND active', [user.userId],
+      );
+      return Number(rows[0]!.n);
+    };
+    expect(await active()).toBeGreaterThan(0);
+    await disable(user.userId);
+    expect(await active(), 'a disabled account kept receiving reminders').toBe(0);
+    await enable(user.userId);
+  });
+
+  it('two devices are both permanently revoked, and neither resurrects', async () => {
+    const user = await signIn(h, '+966500003010');
+    const one = await login(user.phone, 'device-dis-j-0001');
+    const two = await login(user.phone, 'device-dis-j-0002');
+
+    await disable(user.userId);
+    await enable(user.userId);
+
+    for (const [i, s] of [one, two].entries()) {
+      expect((await h.app.inject({
+        method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${s.accessToken}` },
+      })).statusCode, `device ${i} access token resurrected`).toBe(401);
+      expect((await refresh(s.refreshToken)).statusCode,
+        `device ${i} refresh token resurrected`).not.toBe(200);
+    }
+  });
+
+  /**
+   * Idempotence. Repeated writes while already disabled must not do further
+   * work, and must not disturb a session created after a re-enable.
+   */
+  it('re-disabling is idempotent and does not touch later sessions', async () => {
+    const user = await signIn(h, '+966500003011');
+    await login(user.phone, 'device-dis-k-0001');
+    await disable(user.userId);
+    // Writing the column again while already disabled.
+    await owner.query("UPDATE users SET disabled_at = now() WHERE id=$1", [user.userId]);
+    await owner.query("UPDATE users SET disabled_at = now() - interval '1 hour' WHERE id=$1", [user.userId]);
+    await enable(user.userId);
+
+    const fresh = await login(user.phone, 'device-dis-k-0002');
+    // A no-op write on an ENABLED account must not revoke the new session.
+    await owner.query('UPDATE users SET display_name = display_name WHERE id=$1', [user.userId]);
+    expect((await h.app.inject({
+      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${fresh.accessToken}` },
+    })).statusCode, 'an unrelated UPDATE revoked a live session').toBe(200);
+  });
+
+  it('the trigger fires on the transition only, and is not PUBLIC-executable', async () => {
+    const { rows: trg } = await owner.query<{ tgname: string; def: string }>(
+      `SELECT t.tgname, pg_get_triggerdef(t.oid) AS def
+         FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+        WHERE c.relname='users' AND t.tgname='users_revoke_sessions_on_disable'`,
+    );
+    expect(trg, 'the disable trigger is missing').toHaveLength(1);
+    expect(trg[0]!.def).toMatch(/AFTER UPDATE OF disabled_at/);
+    // Postgres lower-cases and re-parenthesises the WHEN clause when it renders it.
+    expect(trg[0]!.def.toLowerCase()).toMatch(/old\.disabled_at is null.*new\.disabled_at is not null/);
+
+    const { rows: fn } = await owner.query<{ proconfig: string[] | null; acl: string | null }>(
+      `SELECT p.proconfig, array_to_string(p.proacl,',') AS acl
+         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='app' AND p.proname='revoke_sessions_on_disable'`,
+    );
+    expect((fn[0]!.proconfig ?? []).join(',')).toMatch(/search_path=/);
+    expect(fn[0]!.acl ?? '', 'EXECUTE granted to PUBLIC').not.toMatch(/(^|,)=X\//);
   });
 });
 

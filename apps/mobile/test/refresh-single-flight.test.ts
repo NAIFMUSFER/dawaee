@@ -169,12 +169,16 @@ describe('twenty simultaneous callers produce one refresh', () => {
  * never erase what a winning one stored.
  */
 describe('a superseded refresh never erases the winner’s session', () => {
+  /**
+   * The loser holds R1; the winner has already written R2 to the keychain.
+   * Erasing there would destroy the only valid session on the device.
+   */
   it('does not clear storage on 409 REFRESH_SUPERSEDED', async () => {
-    // The winner has already written R2 to the keychain.
-    await client.storeSession({ accessToken: 'A2', refreshToken: 'R2' });
-    expect(JSON.parse(secure.get('dawaee.session.v1')!).refreshToken).toBe('R2');
+    // This runtime is still on R1...
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    // ...while the winner's R2 is what is actually persisted.
+    secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
 
-    // A straggler now loses the race and is told it was superseded.
     refreshResponder = () => ({
       status: 409, body: { error: { code: 'refresh_superseded', message: 'superseded' } },
     });
@@ -186,7 +190,7 @@ describe('a superseded refresh never erases the winner’s session', () => {
     const stored = secure.get('dawaee.session.v1');
     expect(stored, 'the loser wiped the stored session').toBeTruthy();
     expect(JSON.parse(stored!).refreshToken, "the loser erased the winner's token").toBe('R2');
-    expect(signedOut, 'a superseded refresh signalled a sign-out').toBe(0);
+    expect(signedOut, 'a recoverable race signalled a sign-out').toBe(0);
   });
 
   it('still clears on a genuine 401, so a dead session does not linger', async () => {
@@ -199,5 +203,95 @@ describe('a superseded refresh never erases the winner’s session', () => {
     refreshResponder = () => { throw new Error('offline'); };
     await client.api.get('/v1/doses').catch(() => undefined);
     expect(secure.get('dawaee.session.v1'), 'an offline blip cleared the session').toBeTruthy();
+  });
+});
+
+/**
+ * Cross-context recovery.
+ *
+ * EXECUTION CONTEXT INVENTORY, established rather than assumed. A grep of
+ * apps/mobile for TaskManager, defineTask, registerTaskAsync, BackgroundFetch
+ * and headless handlers finds none: the only notification path is
+ * `addNotificationResponseReceivedListener` plus `getLastNotificationResponseAsync`,
+ * and both run in the app's own JS runtime. So the lock-screen Taken/Skip/Snooze
+ * action does NOT create a second concurrent runtime — the in-memory
+ * single-flight above covers it.
+ *
+ * What is NOT covered is a SEQUENTIAL restart: Android reclaiming the process,
+ * or a cold launch from a notification action, where a previous process rotated
+ * and this one starts holding the old token. Web is covered by construction —
+ * P1 made browser sessions memory-only, so two tabs never share a persisted
+ * token to race over.
+ *
+ * These tests use two independent client module instances to stand in for two
+ * runtimes sharing one keychain.
+ */
+describe('a second runtime that starts holding the old token', () => {
+  it('adopts the winner’s session instead of retrying the dead token', async () => {
+    // Context A won and persisted R2. This runtime still holds R1.
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+
+    refreshResponder = () => ({
+      status: 409, body: { error: { code: 'refresh_superseded', message: 'superseded' } },
+    });
+    let signedOut = 0;
+    client.setUnauthenticatedHandler(() => { signedOut += 1; });
+
+    await client.api.get('/v1/doses').catch(() => undefined);
+
+    // It presented R1 exactly once and never again.
+    const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
+    expect(presented, 'the refused token was re-presented').toEqual(['R1']);
+    // The winner's session survives and was adopted.
+    expect(JSON.parse(secure.get('dawaee.session.v1')!).refreshToken).toBe('R2');
+    expect(signedOut, 'a recoverable race signalled a sign-out').toBe(0);
+  });
+
+  it('uses the adopted token for the next call', async () => {
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+    refreshResponder = () => ({ status: 409, body: { error: { code: 'refresh_superseded' } } });
+
+    await client.api.get('/v1/doses').catch(() => undefined);
+
+    // A later refresh presents R2, not R1.
+    refreshResponder = () => ({ status: 200, body: { accessToken: 'A3', refreshToken: 'R3' } });
+    calls = [];
+    await client.api.get('/v1/doses').catch(() => undefined);
+    const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
+    expect(presented, 'the stale token was presented again').not.toContain('R1');
+  });
+
+  /**
+   * The failure the audit called out by name: never replay the refused token
+   * until the server's grace window closes and classifies it as theft.
+   */
+  it('does not replay the refused token when there is nothing to recover', async () => {
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    refreshResponder = () => ({ status: 409, body: { error: { code: 'refresh_superseded' } } });
+    let signedOut = 0;
+    client.setUnauthenticatedHandler(() => { signedOut += 1; });
+
+    // Three separate attempts, as three screens might make.
+    for (let i = 0; i < 3; i++) await client.api.get('/v1/doses').catch(() => undefined);
+
+    const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
+    expect(presented.filter((t) => t === 'R1').length,
+      'the refused token was replayed — it would become reuse_detected').toBe(1);
+    expect(signedOut, 'an unrecoverable race did not end the session').toBe(1);
+    expect(secure.get('dawaee.session.v1'), 'a dead token was left on disk').toBeUndefined();
+  });
+
+  it('survives a restart after a superseded response', async () => {
+    // Winner persisted R2; this runtime restarts and loads from storage.
+    secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+    expect(await client.loadStoredSession()).toBe(true);
+
+    refreshResponder = () => ({ status: 200, body: { accessToken: 'A3', refreshToken: 'R3' } });
+    calls = [];
+    await client.api.get('/v1/doses').catch(() => undefined);
+    const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
+    expect(presented, 'the restart did not pick up the persisted session').toEqual(['R2']);
   });
 });
