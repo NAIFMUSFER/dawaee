@@ -78,7 +78,10 @@
       ]
     ],
     "extra": {
-      "apiBaseUrl": "https://dawaee-api.onrender.com"
+      "apiBaseUrl": "https://dawaee-api.onrender.com",
+      "eas": {
+        "projectId": "a7d1638b-045d-4fa3-957f-22d818c51abd"
+      }
     },
     "icon": "./assets/icon.png",
     "splash": {
