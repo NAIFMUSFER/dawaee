@@ -62,7 +62,7 @@ function toStatus(s: AppStateStatus): AppStatus {
 
 export function AppLockGate({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
-  const { preferences, signedIn, ready, signOut } = useApp();
+  const { preferences, signedIn, ready, signOut, credentialVerifiedAt } = useApp();
   const pathname = usePathname();
 
   const [state, dispatch] = useReducer(lockReducer, INITIAL_LOCK_STATE);
@@ -89,20 +89,29 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   }, [effective, state, enabled]);
 
   /**
-   * A fresh sign-in clears the lock for this session.
+   * The recovery path, and the only thing besides a biometric that opens the
+   * lock. The app is unsafe without it: preferences live on the server, so a
+   * patient whose sensor has failed would sign out, sign back in, and be locked
+   * out again by the very setting they were trying to escape — permanently
+   * unable to open their own medication schedule on a working phone.
    *
-   * This is the recovery path, and the app is unsafe without it: preferences
-   * live on the server, so a patient whose sensor has failed would sign out,
-   * sign back in with their password, and be locked out again by the very
-   * setting they were trying to escape — permanently unable to open their own
-   * medication schedule on a working phone. A password is a stronger factor
-   * than a device biometric, so presenting one is sufficient.
+   * It watches `credentialVerifiedAt`, which the app store sets in exactly one
+   * place: after the server accepted a password. It does NOT watch `signedIn`,
+   * and that is the whole point. The first draft did, and `signedIn` also flips
+   * from false to true when a refresh token read from storage is exchanged for
+   * a session during the cold-start bootstrap — with nobody present and no
+   * credential asked for. That version cleared the lock on every single launch,
+   * which is to say it enforced nothing while appearing to. A stored session, a
+   * silent token refresh, a route change and a restored process are all
+   * insufficient here by construction: none of them touch this value.
    */
-  const wasSignedIn = useRef(signedIn);
+  const seenCredential = useRef(credentialVerifiedAt);
   useEffect(() => {
-    if (signedIn && !wasSignedIn.current) dispatch({ type: 'signedIn' });
-    wasSignedIn.current = signedIn;
-  }, [signedIn]);
+    if (credentialVerifiedAt !== null && credentialVerifiedAt !== seenCredential.current) {
+      seenCredential.current = credentialVerifiedAt;
+      dispatch({ type: 'credentialVerified' });
+    }
+  }, [credentialVerifiedAt]);
 
   useEffect(() => {
     const sub = RNAppState.addEventListener('change', (next) => {
@@ -149,7 +158,8 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     [effective, preferences.appLockAreas, verifyArea],
   );
 
-  // The paramedic card is never covered — see isLockExemptPath.
+  // Nothing is exempt, including `/e/<token>` — see isLockExemptPath for the
+  // audit that removed the one exemption this gate used to carry.
   const exempt = isLockExemptPath(pathname ?? '');
   const phase = exempt ? 'unlocked' : effective.phase;
 

@@ -63,6 +63,24 @@ export interface AppState {
   offline: boolean;
   pendingSyncCount: number;
   restartRequiredForRtl: boolean;
+  /**
+   * When a password was last presented and accepted, epoch ms; null if none has
+   * been in this process.
+   *
+   * Deliberately NOT the same thing as `signedIn`, and the distinction is a
+   * security boundary rather than bookkeeping. `signedIn` becomes true whenever
+   * a session exists — including the cold-start path, where a refresh token
+   * read from storage is exchanged for a session with nobody present. The app
+   * lock's recovery route must require an actual credential, so it watches this
+   * and not `signedIn`; the first draft watched `signedIn` and, because a
+   * restored session flips it from false to true, the lock cleared itself on
+   * every cold start and enforced nothing at all.
+   *
+   * Set in exactly one place: `signInWithTokens`, which both auth screens call
+   * immediately after the server accepted a password. Silent token refresh does
+   * not touch it.
+   */
+  credentialVerifiedAt: number | null;
 }
 
 export interface AppActions {
@@ -93,6 +111,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     offline: false,
     pendingSyncCount: 0,
     restartRequiredForRtl: false,
+    credentialVerifiedAt: null,
   });
 
   const mounted = useRef(true);
@@ -161,7 +180,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     signInWithTokens: async (tokens) => {
       await storeSession(tokens);
       await loadMe();
-      setState((s) => ({ ...s, ready: true }));
+      // The only place `credentialVerifiedAt` is ever set. Both auth screens
+      // call this immediately after the server accepted a password, so it marks
+      // a fresh credential and nothing else — not a restored session, not a
+      // silent refresh, not a route change. The app lock's recovery route keys
+      // off it for exactly that reason.
+      setState((s) => ({ ...s, ready: true, credentialVerifiedAt: Date.now() }));
     },
     signOut: async () => {
       // Deactivate this device FIRST, while the token still authorises it.

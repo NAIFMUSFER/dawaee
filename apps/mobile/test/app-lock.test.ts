@@ -106,7 +106,68 @@ describe('leaving the foreground', () => {
   });
 });
 
-describe('nobody can be trapped behind it', () => {
+/**
+ * The grace window is a security policy with named exceptions, so each
+ * exception is asserted rather than described. Every case below references
+ * RELOCK_GRACE_MS rather than the literal, so changing the policy fails
+ * exactly the cases the change affects.
+ */
+describe('the re-lock grace window applies where policy says and nowhere else', () => {
+  it('is granted only to a background round trip shorter than the window', () => {
+    let s = lockReducer(unlocked(), { type: 'appStatus', status: 'background', now: 0 });
+    s = lockReducer(s, { type: 'appStatus', status: 'active', now: RELOCK_GRACE_MS - 1 });
+    expect(s.phase).toBe('unlocked');
+  });
+
+  it('expires exactly at the window, not a millisecond later', () => {
+    let s = lockReducer(unlocked(), { type: 'appStatus', status: 'background', now: 0 });
+    s = lockReducer(s, { type: 'appStatus', status: 'active', now: RELOCK_GRACE_MS });
+    expect(s.phase).toBe('locked');
+  });
+
+  /**
+   * A launch enters through `configure`, never through `appStatus`. However
+   * recently the app was last open, a fresh process is locked with no window —
+   * the case where the phone has been taken and relaunched.
+   */
+  it('gives a cold start no grace at all', () => {
+    const s = lockReducer(INITIAL_LOCK_STATE, { type: 'configure', enabled: true });
+    expect(s.phase).toBe('locked');
+    expect(s.backgroundedAt).toBeNull();
+    // And a subsequent 'active' — which is what a launch reports — must not
+    // find a window to honour.
+    expect(lockReducer(s, { type: 'appStatus', status: 'active', now: 1 }).phase).toBe('locked');
+  });
+
+  it('gives no grace when the lock is switched on', () => {
+    const on = lockReducer(unlocked(), { type: 'configure', enabled: false });
+    const s = lockReducer(on, { type: 'configure', enabled: true });
+    expect(s.phase).toBe('locked');
+  });
+
+  /**
+   * A manual device lock reaches the app as a plain `background` — neither
+   * platform distinguishes it through AppState — so it receives the same
+   * window. Asserted rather than left implicit, because it is an accepted risk
+   * and a reader should find it stated, not infer it: getting back within the
+   * window requires passing the phone's own lock screen first.
+   */
+  it('treats a manual device lock like any other background, by documented policy', () => {
+    let s = lockReducer(unlocked(), { type: 'appStatus', status: 'background', now: 0 });
+    expect(s.phase).toBe('covered');
+    s = lockReducer(s, { type: 'appStatus', status: 'active', now: RELOCK_GRACE_MS + 1 });
+    expect(s.phase).toBe('locked');
+  });
+
+  it('keeps the window a single named constant rather than a literal', () => {
+    const src = readFileSync(join(ROOT, 'apps/mobile/src/security/lock-state.ts'), 'utf8');
+    const body = src.slice(src.indexOf('export function lockReducer'));
+    expect(body).toContain('RELOCK_GRACE_MS');
+    expect(body).not.toMatch(/10_000|10000/);
+  });
+});
+
+describe('nobody can be trapped behind it, and nothing weaker than a password gets out', () => {
   /**
    * Preferences live on the server, so a patient whose sensor has failed would
    * sign out, sign back in with their password, and be locked out again by the
@@ -114,11 +175,67 @@ describe('nobody can be trapped behind it', () => {
    * medication schedule from a phone that works. A password is a stronger
    * factor than a device biometric.
    */
-  it('lets a password sign-in through', () => {
+  it('lets a freshly verified password through', () => {
     let s = lockReducer(INITIAL_LOCK_STATE, { type: 'configure', enabled: true });
     expect(s.phase).toBe('locked');
-    s = lockReducer(s, { type: 'signedIn' });
+    s = lockReducer(s, { type: 'credentialVerified' });
     expect(s.phase).toBe('unlocked');
+  });
+
+  /**
+   * The bypass this whole item exists to rule out, and it was real: the first
+   * implementation dispatched the escape on the `signedIn` flag. `signedIn`
+   * also flips false → true during the cold-start bootstrap, when a refresh
+   * token read from storage is exchanged for a session with nobody present —
+   * so the lock cleared itself on every launch and enforced nothing.
+   *
+   * The reducer has no event a restored session could dispatch. This asserts
+   * the wiring that guarantees it: the gate must key off `credentialVerifiedAt`
+   * and must not key off `signedIn`, and the store must set that value in
+   * exactly one place — after the server accepted a password.
+   */
+  it('cannot be opened by a session restored from storage', () => {
+    const gate = readFileSync(join(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
+
+    expect(gate, 'the escape keys off a fresh credential').toContain(
+      "dispatch({ type: 'credentialVerified' })",
+    );
+    // The dispatch must be guarded by the credential timestamp, never by the
+    // session flag.
+    const guard = gate.slice(
+      gate.indexOf('const seenCredential'),
+      gate.indexOf("dispatch({ type: 'credentialVerified' })"),
+    );
+    expect(guard).toContain('credentialVerifiedAt');
+    expect(guard, 'the session flag must not gate the escape').not.toContain('signedIn');
+  });
+
+  it('marks a fresh credential in exactly one place, and that place is a password sign-in', () => {
+    const store = readFileSync(join(ROOT, 'apps/mobile/src/state/app-store.tsx'), 'utf8');
+    const sets = [...store.matchAll(/credentialVerifiedAt:\s*Date\.now\(\)/g)];
+    expect(sets, 'exactly one assignment of a real timestamp').toHaveLength(1);
+
+    // ...and it sits inside signInWithTokens, which both auth screens call
+    // immediately after the server accepted a password.
+    const start = store.indexOf('signInWithTokens: async');
+    const end = store.indexOf('signOut: async');
+    expect(start).toBeGreaterThan(-1);
+    const body = store.slice(start, end);
+    expect(body).toContain('credentialVerifiedAt: Date.now()');
+
+    // The bootstrap that restores a stored session must not set it.
+    const bootstrap = store.slice(store.indexOf('const hasSession = await loadStoredSession'), start);
+    expect(bootstrap).not.toContain('credentialVerifiedAt');
+  });
+
+  it('is called only from the two screens that post a password', () => {
+    for (const screen of ['sign-in', 'sign-up']) {
+      const src = readFileSync(join(ROOT, `apps/mobile/app/(auth)/${screen}.tsx`), 'utf8');
+      const call = src.indexOf('signInWithTokens(tokens)');
+      expect(call, `${screen} calls it`).toBeGreaterThan(-1);
+      // The tokens it passes came from an auth POST in the same function.
+      expect(src.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/(login|register)'/);
+    }
   });
 
   it('drops the lock entirely when the patient turns it off', () => {
@@ -126,16 +243,45 @@ describe('nobody can be trapped behind it', () => {
     s = lockReducer(s, { type: 'configure', enabled: false });
     expect(s).toEqual(INITIAL_LOCK_STATE);
   });
+});
+
+/**
+ * The emergency card route used to be exempt from the lock. Auditing what it
+ * renders ended that: with the patient's flags on it displays their name,
+ * allergies, blood type, the free-text conditions note, every active
+ * medication with its strength, and each emergency contact's name, relation
+ * and phone number — PHI and PII on a route that asks for no authorization.
+ */
+describe('no route is exempt, least of all the one that renders PHI', () => {
+  it('exempts nothing', () => {
+    for (const p of ['/e/abc123', '/e', '/today', '/settings/emergency', '/reports/adherence']) {
+      expect(isLockExemptPath(p), p).toBe(false);
+    }
+  });
+
+  it('the gate holds no second exemption of its own', () => {
+    const gate = readFileSync(join(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
+    // One call site, one source of truth. A new `pathname === '/x'` branch in
+    // the gate is how an exemption comes back without anyone noticing.
+    expect([...gate.matchAll(/isLockExemptPath\(/g)], 'exactly one call site').toHaveLength(1);
+    expect(gate).not.toMatch(/pathname\s*===\s*'/);
+    expect(gate).not.toMatch(/pathname\?*\.?startsWith\(/);
+  });
 
   /**
-   * The paramedic view exists to be read while the owner cannot verify
-   * anything. Gating it behind the owner's fingerprint removes its only
-   * purpose, and discloses nothing the scanned URL does not already disclose.
+   * The disclosure this route can make, pinned so that widening it is a test
+   * failure rather than a quiet change. Every one of these fields reaches the
+   * screen with no authenticated authorization; the only gate is the patient's
+   * own per-field include flags, which default to false.
    */
-  it('never covers the emergency card', () => {
-    expect(isLockExemptPath('/e/abc123')).toBe(true);
-    expect(isLockExemptPath('/today')).toBe(false);
-    expect(isLockExemptPath('/settings/emergency')).toBe(false);
+  it('still renders each PHI field it was audited for, so the finding stays true', () => {
+    const screen = readFileSync(join(ROOT, 'apps/mobile/app/e/[token].tsx'), 'utf8');
+    for (const field of [
+      'patientName', 'allergies', 'bloodType', 'conditionsNote', 'medications',
+      'emergencyContacts', 'phoneE164',
+    ]) {
+      expect(screen, `renders ${field}`).toContain(field);
+    }
   });
 });
 
