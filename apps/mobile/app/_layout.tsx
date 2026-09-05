@@ -7,7 +7,7 @@ import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels } from '@/notifications';
+import { configureCategories, configureChannels, syncPushRegistration } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 
 /**
@@ -18,12 +18,31 @@ import { DEMO_MODE } from '@/api/client';
  * right language and direction — no flash of English in an Arabic app.
  */
 function Shell() {
-  const { ready, preferences } = useApp();
+  const { ready, preferences, signedIn, deviceId } = useApp();
 
   useEffect(() => {
     void configureChannels();
     void configureCategories(preferences.locale);
   }, [preferences.locale]);
+
+  /**
+   * Tell the server which device to reach.
+   *
+   * This is the step that was missing entirely: a token was obtainable but
+   * never sent, so `push_tokens` stayed empty and every escalation ended at
+   * the dispatcher with `no_active_device` — the reminder chain stopping one
+   * move short of an actual phone. Runs on every signed-in start because the
+   * OS can reissue a token at any time, and a stale one is a missed dose that
+   * nothing reports.
+   *
+   * Failure is deliberately quiet here: web and simulators cannot receive
+   * push at all, and a refused permission is the patient's choice. The
+   * settings screen is where that state is reported, not a toast at launch.
+   */
+  useEffect(() => {
+    if (!signedIn || !deviceId) return;
+    void syncPushRegistration(deviceId).catch(() => undefined);
+  }, [signedIn, deviceId]);
 
   // The provider wraps the loading state too. Components as basic as the
   // spinner reach for the theme, and the theme is direction-aware — rendering

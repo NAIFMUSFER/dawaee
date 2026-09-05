@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
+import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { t } from '@dawaee/shared';
@@ -175,13 +177,60 @@ export async function rescheduleLocalNotifications(
   return { scheduled, failed, exactAlarmsUnavailable };
 }
 
+/**
+ * The device's Expo push token, or null if this device cannot receive one.
+ *
+ * `projectId` is not optional in a standalone build. Expo's SDK can infer it
+ * while running under Expo Go, and cannot once the app is built for the store —
+ * where it throws instead, which is exactly the environment a patient runs.
+ * It is read from the manifest so there is one place it is configured.
+ */
 export async function registerPushToken(): Promise<string | null> {
   const N = await load();
   if (!N) return null;
   try {
-    const token = await N.getExpoPushTokenAsync();
+    const projectId =
+      (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId
+      ?? Constants.easConfig?.projectId;
+    const token = await N.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
     return token.data;
   } catch {
     return null;
   }
+}
+
+/**
+ * Asks for permission, obtains a token, and tells the server about it.
+ *
+ * Nothing called this before. The token was fetched by a function no screen
+ * invoked and returned to nobody, so `push_tokens` stayed empty, and the
+ * dispatcher's honest `no_active_device` was the end of every escalation —
+ * the whole reminder chain terminated one step before a phone. It is called
+ * on every start of a signed-in session, because a token can be reissued by
+ * the OS at any time and a stale one is a silently missed dose.
+ *
+ * Returns false when this device simply cannot receive push (web, a simulator,
+ * a refused permission). That is a real state the settings screen reports, not
+ * an error to swallow.
+ */
+export async function syncPushRegistration(deviceId: string): Promise<boolean> {
+  const N = await load();
+  if (!N) return false;
+
+  const settings = await N.getPermissionsAsync();
+  const granted = settings.granted
+    || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL
+    || (await requestPermission());
+  if (!granted) return false;
+
+  const token = await registerPushToken();
+  if (!token) return false;
+
+  await api.post('/v1/devices/push-token', {
+    token,
+    platform: Platform.OS === 'ios' ? 'ios' : 'android',
+    deviceId,
+    appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
+  });
+  return true;
 }
