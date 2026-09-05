@@ -35,6 +35,16 @@ const schema = z.object({
 
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: z.enum(['true', 'false', 'no-verify']).default('false'),
+  /**
+   * The operator's database CA, inline PEM or a file path (not both).
+   *
+   * Supabase documents that verify-full requires their CA certificate from the
+   * project dashboard, so an endpoint that does not chain to a publicly trusted
+   * root needs this set. No certificate is embedded in this repository: a CA
+   * bundle committed to source is a trust anchor nobody rotates.
+   */
+  DATABASE_CA_CERT: z.string().optional(),
+  DATABASE_CA_CERT_FILE: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
   // Managed providers hand out one connection string, and it belongs to the
   // database owner. The owner is exactly the identity that must never serve a
@@ -119,6 +129,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
+    }
+    // Fails the boot rather than the audit. `no-verify` accepts any
+    // certificate from anyone, which leaves an active attacker between Render
+    // and Supabase reading and rewriting every query in a database of
+    // medication records — and holding the owner password the connection
+    // string carries.
+    if (cfg.DATABASE_SSL !== 'true') {
+      throw new Error(
+        `DATABASE_SSL must be "true" in production (got "${cfg.DATABASE_SSL}"); ` +
+        'certificate verification cannot be disabled for a production database',
+      );
     }
   }
 

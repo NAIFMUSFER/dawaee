@@ -49,7 +49,17 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL
-        value: "no-verify"
+        # Full certificate verification. Never "no-verify": that accepts any
+        # certificate from anyone, so anything able to answer for the database
+        # host reads and rewrites every query. The service refuses to boot if
+        # this is anything else in production.
+        value: "true"
+      # Supabase documents that verify-full needs their CA (Database Settings ▸
+      # SSL Configuration). Set this to that PEM if the endpoint does not chain
+      # to a publicly trusted root; leave unset to use the system trust store.
+      # sync: false — the value is supplied in the dashboard, not committed.
+      - key: DATABASE_CA_CERT
+        sync: false
       # The connection string above belongs to the database owner. Requests are
       # served as `dawaee_app`, which owns nothing and cannot bypass RLS.
       #
@@ -124,7 +134,17 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL
-        value: "no-verify"
+        # Full certificate verification. Never "no-verify": that accepts any
+        # certificate from anyone, so anything able to answer for the database
+        # host reads and rewrites every query. The service refuses to boot if
+        # this is anything else in production.
+        value: "true"
+      # Supabase documents that verify-full needs their CA (Database Settings ▸
+      # SSL Configuration). Set this to that PEM if the endpoint does not chain
+      # to a publicly trusted root; leave unset to use the system trust store.
+      # sync: false — the value is supplied in the dashboard, not committed.
+      - key: DATABASE_CA_CERT
+        sync: false
       # scripts/migrate.sh runs on this service and is what sets both roles'
       # passwords in Postgres. It reads them from the API rather than generating
       # them, so the value Render hands each service and the value in the

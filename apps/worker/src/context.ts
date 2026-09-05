@@ -2,6 +2,7 @@ import pg from 'pg';
 import pino from 'pino';
 import { loadConfig, type Config } from '@dawaee/api/config';
 import { withRole } from '@dawaee/api/lib/db';
+import { databaseTlsOptions } from '@dawaee/api/lib/db-tls';
 import { buildProviders, type Providers } from '@dawaee/api/providers';
 
 /**
@@ -46,15 +47,11 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
       max: 5,
       idleTimeoutMillis: 30_000,
       statement_timeout: 30_000,
-      // Managed Postgres refuses plaintext connections; without this the
-      // worker fails to connect while the API (which already sets it) works,
-      // which is a confusing way to find out.
-      ssl:
-        config.DATABASE_SSL === 'true'
-          ? { rejectUnauthorized: true }
-          : config.DATABASE_SSL === 'no-verify'
-            ? { rejectUnauthorized: false }
-            : undefined,
+      // The SAME policy object the API uses, from the same function. The
+      // worker holds the same credentials and reads the same medication rows,
+      // so a weaker connection here would simply move the vulnerability rather
+      // than remove it — and two copies of the rule is how that happens.
+      ssl: databaseTlsOptions(config),
     });
 
   return {

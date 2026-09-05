@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { createHash } from 'node:crypto';
 import { loadConfig } from '../config.js';
+import { databaseTlsOptions } from './db-tls.js';
 
 const { Pool } = pg;
 
@@ -46,12 +47,10 @@ export function getPool(): pg.Pool {
     max: cfg.DATABASE_POOL_MAX,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl:
-      cfg.DATABASE_SSL === 'true'
-        ? { rejectUnauthorized: true }
-        : cfg.DATABASE_SSL === 'no-verify'
-          ? { rejectUnauthorized: false }
-          : undefined,
+    // One shared policy for the API and the worker — see ./db-tls.ts. Two
+    // copies of this ternary is how one service ends up verifying and the
+    // other not.
+    ssl: databaseTlsOptions(cfg),
     // A runaway query must not hold a connection hostage.
     statement_timeout: 15_000,
     query_timeout: 20_000,

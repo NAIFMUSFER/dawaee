@@ -12,6 +12,10 @@ const base = {
   JWT_SECRET: 'x'.repeat(64),
   IP_HASH_SALT: 'not-the-dev-salt',
   STORAGE_PROVIDER: 'r2',
+  // A production boot now also requires verified database TLS. This fixture is
+  // about the boolean parsing above, so it satisfies that guard rather than
+  // working around it — see db-tls.test.ts for the guard's own coverage.
+  DATABASE_SSL: 'true',
 } as NodeJS.ProcessEnv;
 
 const load = (extra: NodeJS.ProcessEnv) => {
