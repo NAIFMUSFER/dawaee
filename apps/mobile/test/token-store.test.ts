@@ -28,23 +28,42 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
     getItem: async (k: string) => async_.get(k) ?? null,
     setItem: async (k: string, v: string) => { async_.set(k, v); },
     removeItem: async (k: string) => { async_.delete(k); },
-    multiRemove: async (keys: string[]) => { for (const k of keys) async_.delete(k); },
+    multiRemove: async (keys: string[]) => {
+      // Cleanup can fail — storage full, a platform quirk. When it does, the
+      // legacy values stay exactly where they are, which is the case item 4
+      // exists to prove is still safe.
+      if (legacyDeleteFails) throw new Error('AsyncStorage unavailable');
+      for (const k of keys) async_.delete(k);
+    },
     multiSet: async (pairs: [string, string][]) => { for (const [k, v] of pairs) async_.set(k, v); },
   },
 }));
 
 vi.mock('react-native', () => ({ Platform: { get OS() { return platform; } } }));
 
+/** Every option object the store passed, so the accessibility policy is checkable. */
+const optionsSeen: Array<{ op: string; options: unknown }> = [];
+/** Stands in for the native constant. Its identity is what gets asserted. */
+const AFU_DEVICE_ONLY = Symbol('AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY');
+let legacyDeleteFails = false;
+
 vi.mock('expo-secure-store', () => ({
-  getItemAsync: async (k: string) => {
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: AFU_DEVICE_ONLY,
+  WHEN_UNLOCKED: Symbol('WHEN_UNLOCKED'),
+  getItemAsync: async (k: string, options?: unknown) => {
+    optionsSeen.push({ op: 'get', options });
     if (secureFails === 'read') throw new Error('keychain unavailable');
     return secure.get(k) ?? null;
   },
-  setItemAsync: async (k: string, v: string) => {
+  setItemAsync: async (k: string, v: string, options?: unknown) => {
+    optionsSeen.push({ op: 'set', options });
     if (secureFails === 'write') throw new Error('keychain unavailable');
     secure.set(k, v);
   },
-  deleteItemAsync: async (k: string) => { secure.delete(k); },
+  deleteItemAsync: async (k: string, options?: unknown) => {
+    optionsSeen.push({ op: 'delete', options });
+    secure.delete(k);
+  },
 }));
 
 const store = await import('../src/api/token-store.js');
@@ -56,7 +75,9 @@ const SECURE_KEY = 'dawaee.session.v1';
 beforeEach(() => {
   async_.clear();
   secure.clear();
+  optionsSeen.length = 0;
   secureFails = 'no';
+  legacyDeleteFails = false;
   platform = 'ios';
 });
 
@@ -245,6 +266,122 @@ describe('the pair is written and read as one value', () => {
   });
 });
 
+/**
+ * The rotation failure boundary, end to end.
+ *
+ * The server revokes the presented token INSIDE the rotation — migration 0011,
+ * `app.rotate_session`: `UPDATE auth_sessions SET revoked_at = now(),
+ * replaced_by = new_id WHERE id = s.id`. So by the time R2 reaches the client,
+ * R1 is already dead. Worse than dead: presenting R1 again takes the
+ * `revoked_at IS NOT NULL` branch, which returns `reuse_detected` and revokes
+ * EVERY session on that device. Restoring R1 after a failed write would
+ * therefore not merely fail to authenticate — it would sign the user out of
+ * every session they have on that phone and record a theft event.
+ *
+ * So a failed write of R2 must leave nothing behind that names R1.
+ */
+describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
+  it('destroys the stored R1 rather than keeping it', async () => {
+    // The client is holding R1, persisted from an earlier sign-in.
+    await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    expect(secure.get(SECURE_KEY)).toContain('R1');
+
+    // The server rotated R1 -> R2 and answered. The write of R2 now fails.
+    secureFails = 'write';
+    await expect(store.writeSession({ accessToken: 'A2', refreshToken: 'R2' })).rejects.toThrow();
+
+    // This is the client's recovery, exactly as client.ts performs it.
+    secureFails = 'no';
+    await store.clearStoredSession();
+
+    // Nothing on disk names either token. The next launch is a sign-in.
+    expect(secure.size).toBe(0);
+    expect([...async_.keys()]).toEqual([]);
+    expect(await store.readSession()).toBeNull();
+  });
+
+  it('leaves no legacy copy of R1 to be adopted on the next launch', async () => {
+    // The nastiest shape: a device that upgraded, still has the pre-migration
+    // copy of R1 in AsyncStorage, and now fails to persist R2.
+    legacy('A1', 'R1');
+    await store.readSession();          // migrates R1 into the keychain
+    secureFails = 'write';
+    await expect(store.writeSession({ accessToken: 'A2', refreshToken: 'R2' })).rejects.toThrow();
+    secureFails = 'no';
+    await store.clearStoredSession();
+
+    expect(await store.readSession(), 'R1 must not come back').toBeNull();
+    expect(JSON.stringify([...async_.entries()])).not.toContain('R1');
+    expect(JSON.stringify([...secure.entries()])).not.toContain('R1');
+  });
+
+  it('proves the server revokes the presented token during rotation', () => {
+    const sql = readFileSync(join(ROOT, 'db/migrations/0011_auth_plane.sql'), 'utf8');
+    const fn = sql.slice(sql.indexOf('CREATE OR REPLACE FUNCTION app.rotate_session'));
+    expect(fn).toContain('UPDATE auth_sessions SET revoked_at = now(), replaced_by = new_id');
+    // ...and that replaying it is treated as theft, not as a retry.
+    expect(fn).toContain("'reuse_detected'");
+  });
+});
+
+/**
+ * Item 4: cleanup can fail, repeatedly, and the system must stay correct.
+ * Deletion of the legacy keys is best effort by design — the tokens are
+ * already secure by the time it runs — so a permanent failure must never
+ * promote the stale plaintext copy back to authoritative.
+ */
+describe('a legacy delete that keeps failing never makes the stale copy win', () => {
+  it('still loads the NEW keychain session while cleanup fails', async () => {
+    secure.set(SECURE_KEY, JSON.stringify({ accessToken: 'NEW_A', refreshToken: 'NEW_R' }));
+    legacy('STALE_A', 'STALE_R');
+    legacyDeleteFails = true;
+
+    const got = await store.readSession();
+    expect(got).toEqual({ accessToken: 'NEW_A', refreshToken: 'NEW_R' });
+    // The cleanup did fail, and the stale values are demonstrably still there.
+    expect(async_.get(LEGACY_REFRESH)).toBe('STALE_R');
+    // The keychain was not touched by them.
+    expect(secure.get(SECURE_KEY)).not.toContain('STALE');
+  });
+
+  it('survives the failure repeating on every launch', async () => {
+    secure.set(SECURE_KEY, JSON.stringify({ accessToken: 'NEW_A', refreshToken: 'NEW_R' }));
+    legacy('STALE_A', 'STALE_R');
+    legacyDeleteFails = true;
+
+    for (let launch = 0; launch < 5; launch++) {
+      expect(await store.readSession(), `launch ${launch}`).toEqual({
+        accessToken: 'NEW_A', refreshToken: 'NEW_R',
+      });
+    }
+    expect(secure.get(SECURE_KEY)).not.toContain('STALE');
+  });
+
+  it('cleans up the moment deletion starts working again', async () => {
+    secure.set(SECURE_KEY, JSON.stringify({ accessToken: 'NEW_A', refreshToken: 'NEW_R' }));
+    legacy('STALE_A', 'STALE_R');
+    legacyDeleteFails = true;
+    await store.readSession();
+    expect(async_.size).toBe(2);
+
+    legacyDeleteFails = false;
+    await store.readSession();
+    expect([...async_.keys()]).toEqual([]);
+  });
+
+  it('does not let a failing cleanup break sign-out', async () => {
+    await store.writeSession({ accessToken: 'A', refreshToken: 'R' });
+    legacy('STALE_A', 'STALE_R');
+    legacyDeleteFails = true;
+
+    // Must not throw — a failure here would trap someone in a session they are
+    // trying to leave.
+    await expect(store.clearStoredSession()).resolves.toBeUndefined();
+    // The credential that actually authenticates is gone.
+    expect(secure.size).toBe(0);
+  });
+});
+
 describe('signing out leaves nothing behind', () => {
   it('removes the keychain entry and both legacy keys', async () => {
     await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
@@ -292,6 +429,78 @@ describe('failure is closed, never quietly downgraded', () => {
       const src = readFileSync(join(ROOT, 'apps/mobile', f), 'utf8');
       expect(src, `${f} logs`).not.toMatch(/console\.(log|warn|error|debug|info)\(/);
     }
+  });
+});
+
+/**
+ * The keychain accessibility class, asserted rather than left to the library
+ * default — which is WHEN_UNLOCKED, and WHEN_UNLOCKED is wrong here. The
+ * reminder's "Taken" and "Skip" buttons are handled without opening the app,
+ * from the lock screen; that handler posts to the API and needs the token
+ * while the screen is locked. Under WHEN_UNLOCKED the read returns nothing at
+ * exactly that moment, the confirmation silently fails, the dose is recorded as
+ * missed and the family is alerted.
+ */
+describe('every keychain call states its accessibility class', () => {
+  const classOf = (op: string) =>
+    optionsSeen.filter((o) => o.op === op).map((o) => (o.options as { keychainAccessible?: unknown })?.keychainAccessible);
+
+  it('writes with AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY', async () => {
+    await store.writeSession({ accessToken: 'A', refreshToken: 'R' });
+    expect(classOf('set')).toEqual([AFU_DEVICE_ONLY]);
+  });
+
+  it('reads with the same class', async () => {
+    await store.readSession();
+    expect(classOf('get')).toEqual([AFU_DEVICE_ONLY]);
+  });
+
+  it('deletes with the same class', async () => {
+    await store.clearStoredSession();
+    expect(classOf('delete')).toEqual([AFU_DEVICE_ONLY]);
+  });
+
+  it('never leaves a call to the library default', async () => {
+    await store.writeSession({ accessToken: 'A', refreshToken: 'R' });
+    await store.readSession();
+    await store.clearStoredSession();
+    expect(optionsSeen.length).toBeGreaterThan(2);
+    for (const { op, options } of optionsSeen) {
+      expect((options as { keychainAccessible?: unknown })?.keychainAccessible, op).toBe(AFU_DEVICE_ONLY);
+    }
+  });
+
+  /**
+   * No biometric binding is configured, and none is claimed. Setting
+   * requireAuthentication would put a system prompt in front of every token
+   * read — including the lock-screen "Taken" button — and Expo documents that
+   * it blocks the JS thread. User presence is enforced by the App Lock instead.
+   */
+  it('does not configure requireAuthentication anywhere', () => {
+    const src = readFileSync(join(ROOT, 'apps/mobile/src/api/token-store.ts'), 'utf8');
+    expect(src).not.toMatch(/requireAuthentication:\s*true/);
+    for (const { options } of optionsSeen) {
+      expect(options).not.toHaveProperty('requireAuthentication');
+    }
+  });
+});
+
+/**
+ * Android Auto Backup copies app data to the user's Google Drive. Two things
+ * would have travelled: the Keystore-encrypted preferences (ciphertext whose
+ * key cannot leave the device, so not directly exploitable) and — the actual
+ * defect — the legacy AsyncStorage database, which is plaintext SQLite holding
+ * a working refresh token on any device that had not yet run the migration.
+ */
+describe('Android backup cannot carry credential material off the device', () => {
+  const app = JSON.parse(readFileSync(join(ROOT, 'apps/mobile/app.json'), 'utf8')) as {
+    expo: { android?: { allowBackup?: boolean } };
+  };
+
+  it('disables Auto Backup explicitly rather than relying on a default', () => {
+    // Expo's default is true when the key is absent, so absence is a failure.
+    expect(app.expo.android).toHaveProperty('allowBackup');
+    expect(app.expo.android?.allowBackup).toBe(false);
   });
 });
 

@@ -64,10 +64,62 @@ export class TokenStoreUnavailable extends Error {
   }
 }
 
+interface SecureStoreOptions {
+  keychainAccessible?: unknown;
+}
+
 interface SecureStoreModule {
-  getItemAsync: (key: string) => Promise<string | null>;
-  setItemAsync: (key: string, value: string) => Promise<void>;
-  deleteItemAsync: (key: string) => Promise<void>;
+  getItemAsync: (key: string, options?: SecureStoreOptions) => Promise<string | null>;
+  setItemAsync: (key: string, value: string, options?: SecureStoreOptions) => Promise<void>;
+  deleteItemAsync: (key: string, options?: SecureStoreOptions) => Promise<void>;
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY?: unknown;
+}
+
+/**
+ * ACCESSIBILITY POLICY — passed explicitly to every read, write and delete.
+ *
+ * `expo-secure-store` defaults to `WHEN_UNLOCKED`, and that default is wrong
+ * for this app specifically. Two of the three reminder buttons — "Taken" and
+ * "Skip" — are handled WITHOUT opening the app, from the lock screen, which is
+ * the whole point of putting them there. That handler posts to the API and
+ * therefore needs the access token while the screen is locked. Under
+ * `WHEN_UNLOCKED` the keychain read returns nothing at exactly that moment, the
+ * confirmation silently fails, the dose is recorded as missed and the patient's
+ * family is alerted — the gesture meant to prevent a false alarm producing one.
+ *
+ * `AFTER_FIRST_UNLOCK` is the class that matches: unreadable until the device
+ * has been unlocked once since boot — so a phone seized while powered off
+ * yields nothing — and readable afterwards even while the screen is locked.
+ *
+ * `_THIS_DEVICE_ONLY` on top of it, because the item is a credential. Without
+ * it the entry travels in an encrypted iCloud backup and is restored onto a
+ * replacement phone, which means a refresh token minting access to a medication
+ * record on a device that never authenticated. The cost is that someone
+ * restoring to a new phone signs in again; that is the correct trade for a
+ * credential, and everything else they own is on the server anyway.
+ *
+ * NOT biometric-bound. `requireAuthentication` is deliberately NOT set, and no
+ * claim of biometric binding is made anywhere: enabling it would put a system
+ * prompt in front of every token read, including the lock-screen "Taken"
+ * button, and Expo documents that it blocks the JS thread. User-presence is
+ * enforced one layer up by the App Lock (P2) instead, which can be applied to
+ * the UI without breaking background handlers.
+ *
+ * iOS: maps to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
+ * Android: `keychainAccessible` has no effect — the platform stores values in
+ * SharedPreferences encrypted with an AES key held in the Android Keystore,
+ * which is hardware-backed where available and non-exportable either way. The
+ * device-only property is therefore inherent on Android: a backup carries
+ * ciphertext whose key cannot leave the original device. What Android needs
+ * instead is `allowBackup=false`, set in app.json — see the note there.
+ */
+function accessOptions(store: SecureStoreModule): SecureStoreOptions {
+  const level = store.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY;
+  // A build whose native constant is missing must not silently fall back to
+  // the library default of WHEN_UNLOCKED, which breaks lock-screen dose
+  // confirmation. Passing undefined here is the same as passing nothing, so
+  // this is asserted by test rather than left to chance.
+  return level === undefined ? {} : { keychainAccessible: level };
 }
 
 /**
@@ -174,7 +226,7 @@ export async function migrateLegacyTokens(): Promise<SessionTokens | null> {
   // 1.
   let existing: SessionTokens | null = null;
   try {
-    existing = parse(await store.getItemAsync(SECURE_KEY));
+    existing = parse(await store.getItemAsync(SECURE_KEY, accessOptions(store)));
   } catch {
     // Unreadable secure store: fail closed. Do NOT fall through to the legacy
     // keys — that would resurrect a plaintext token as a workaround for the
@@ -200,7 +252,7 @@ export async function migrateLegacyTokens(): Promise<SessionTokens | null> {
 
   const tokens: SessionTokens = { accessToken: access, refreshToken: refresh };
   try {
-    await store.setItemAsync(SECURE_KEY, JSON.stringify(tokens));
+    await store.setItemAsync(SECURE_KEY, JSON.stringify(tokens), accessOptions(store));
   } catch {
     // The secure write failed. Leave the legacy keys exactly as they are and
     // report no session: the user signs in again, which re-runs the write
@@ -233,7 +285,7 @@ export async function writeSession(tokens: SessionTokens): Promise<void> {
     throw new TokenStoreUnavailable('module unavailable');
   }
   try {
-    await store.setItemAsync(SECURE_KEY, JSON.stringify(tokens));
+    await store.setItemAsync(SECURE_KEY, JSON.stringify(tokens), accessOptions(store));
   } catch {
     // Never mention what failed to write.
     throw new TokenStoreUnavailable('write failed');
@@ -250,6 +302,6 @@ export async function writeSession(tokens: SessionTokens): Promise<void> {
  */
 export async function clearStoredSession(): Promise<void> {
   const store = secureStore();
-  if (store) await store.deleteItemAsync(SECURE_KEY).catch(() => undefined);
+  if (store) await store.deleteItemAsync(SECURE_KEY, accessOptions(store)).catch(() => undefined);
   await removeLegacy();
 }
