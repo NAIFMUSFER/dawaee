@@ -34,6 +34,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
         `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at,
                 p.locale AS pref_locale, p.numeral_system, p.calendar_system, p.elderly_mode,
                 p.text_scale, p.high_contrast, p.voice_reminders_enabled, p.voice_confirmation_enabled,
+                p.show_medication_in_notifications,
                 p.app_lock_enabled, p.app_lock_areas, p.quiet_hours_start, p.quiet_hours_end,
                 p.default_snooze_minutes, p.low_stock_threshold_days, p.expiry_warning_days
            FROM users u LEFT JOIN user_preferences p ON p.user_id = u.id
@@ -62,6 +63,9 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           highContrast: u.high_contrast ?? false,
           voiceRemindersEnabled: u.voice_reminders_enabled ?? false,
           voiceConfirmationEnabled: u.voice_confirmation_enabled ?? false,
+          // Default false on a row that predates the column, so a missing value
+          // is the private setting rather than the disclosing one.
+          showMedicationInNotifications: u.show_medication_in_notifications ?? false,
           appLockEnabled: u.app_lock_enabled ?? false,
           appLockAreas: u.app_lock_areas ?? [],
           quietHoursStart: u.quiet_hours_start, quietHoursEnd: u.quiet_hours_end,
@@ -127,7 +131,8 @@ export function registerProfileRoutes(app: FastifyInstance): void {
            quiet_hours_end = COALESCE($13, user_preferences.quiet_hours_end),
            default_snooze_minutes = COALESCE($14, user_preferences.default_snooze_minutes),
            low_stock_threshold_days = COALESCE($15, user_preferences.low_stock_threshold_days),
-           expiry_warning_days = COALESCE($16, user_preferences.expiry_warning_days)
+           expiry_warning_days = COALESCE($16, user_preferences.expiry_warning_days),
+           show_medication_in_notifications = COALESCE($17, user_preferences.show_medication_in_notifications)
          RETURNING *`,
         [
           userId, body.locale ?? null, body.numeralSystem ?? null, body.calendarSystem ?? null,
@@ -136,6 +141,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           body.appLockEnabled ?? null, body.appLockAreas ?? null,
           body.quietHoursStart ?? null, body.quietHoursEnd ?? null,
           body.defaultSnoozeMinutes ?? null, body.lowStockThresholdDays ?? null, body.expiryWarningDays ?? null,
+          body.showMedicationInNotifications ?? null,
         ],
       );
       return { preferences: rows[0] };

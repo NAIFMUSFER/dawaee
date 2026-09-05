@@ -3,7 +3,7 @@ import {
   consecutiveMissed, DEFAULT_ESCALATION_STAGES, escalationDedupeKey, evaluateEscalation,
   localTimeInZone, type CaregiverContext, type EscalationRecipient,
 } from '@dawaee/core';
-import { t, type EscalationStage, type Locale, type NotificationChannel } from '@dawaee/shared';
+import { caregiverMissedText, reminderText, t, type EscalationStage, type Locale, type NotificationChannel } from '@dawaee/shared';
 import type { WorkerContext } from '../context.js';
 
 /**
@@ -30,6 +30,7 @@ interface OpenDoseRow {
   late_after_minutes: number;
   missed_after_minutes: number;
   medication_name: string;
+  show_medication: boolean;
   food_instruction: string;
   profile_timezone: string;
   profile_name: string;
@@ -49,12 +50,18 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
             m.name AS medication_name, m.food_instruction::text AS food_instruction,
             pp.timezone AS profile_timezone, pp.display_name AS profile_name,
             COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
-            u.phone_e164 AS patient_phone, COALESCE(u.locale,'ar') AS patient_locale
+            u.phone_e164 AS patient_phone, COALESCE(u.locale,'ar') AS patient_locale,
+            -- The patient's own disclosure choice governs the push body too.
+            -- COALESCE to false so a row predating the column, or a patient
+            -- with no preferences row at all, gets the private text — the
+            -- default has to be private on every path, not only the happy one.
+            COALESCE(up.show_medication_in_notifications, false) AS show_medication
        FROM dose_occurrences d
        JOIN medication_schedules s ON s.id = d.schedule_id
        JOIN medications m ON m.id = d.medication_id
        JOIN patient_profiles pp ON pp.id = d.patient_profile_id
        LEFT JOIN users u ON u.id = COALESCE(pp.linked_user_id, pp.owner_user_id)
+       LEFT JOIN user_preferences up ON up.user_id = u.id
       WHERE d.status IN ('upcoming','due','pending_confirmation','snoozed')
         AND d.scheduled_at <= $1
         -- Nothing older than a day: a dose that far past is history, and
@@ -256,18 +263,34 @@ async function enqueueNotification(
   const food = t(locale, foodKey);
 
   const isPatient = recipient.kind === 'patient';
+  /**
+   * The patient's disclosure choice, applied server-side.
+   *
+   * The same flag the phone uses, read from the same column, and applied to
+   * the caregiver copy as well — it is the patient's medication being named,
+   * so it is the patient's decision, and the caregiver's lock screen is
+   * outside this app's control either way.
+   *
+   * When false, the medication name never enters `body`, never reaches the
+   * push provider, and is never written to notification_deliveries below.
+   */
+  const showMedication = dose.show_medication === true;
   const title = isPatient ? t(locale, 'reminder.title') : t(locale, 'caregiver.alertTitle');
   const body = isPatient
     ? stageIndex === 0
-      ? t(locale, food ? 'reminder.bodyWithFood' : 'reminder.body', {
-          medication: dose.medication_name, dose: doseText, time: scheduledLocal, food,
-        })
-      : t(locale, 'reminder.repeat', { medication: dose.medication_name, time: scheduledLocal })
-    // Caregiver copy carries the minimum needed to act: who, what, when,
-    // unconfirmed. No diagnosis, no dosage rationale.
-    : t(locale, 'caregiver.missedAlert', {
-        patient: dose.profile_name, medication: dose.medication_name, time: scheduledLocal,
-      });
+      ? reminderText({
+          locale, showMedication, medicationName: dose.medication_name,
+          doseText, time: scheduledLocal, food,
+        }).body
+      : showMedication
+        ? t(locale, 'reminder.repeat', { medication: dose.medication_name, time: scheduledLocal })
+        : t(locale, 'reminder.repeatPrivate', { time: scheduledLocal })
+    // Caregiver copy carries the minimum needed to act: who, when, unconfirmed
+    // — and the medication only if the patient allows it.
+    : caregiverMissedText({
+        locale, showMedication, patientName: dose.profile_name,
+        medicationName: dose.medication_name, time: scheduledLocal,
+      }).body;
 
   const { rowCount } = await client.query(
     `INSERT INTO notification_deliveries
@@ -296,7 +319,11 @@ async function enqueueNotification(
         // Action buttons the notification renders on the lock screen.
         actions: isPatient ? ['taken', 'snooze', 'skip'] : [],
         patientName: dose.profile_name,
-        medicationName: dose.medication_name,
+        // Withheld from the stored payload as well when disclosure is off.
+        // notification_deliveries rows are read back by the dispatcher and by
+        // anyone with database access; leaving the name here would keep the
+        // PHI in the system while the visible text pretended otherwise.
+        ...(showMedication ? { medicationName: dose.medication_name } : {}),
         scheduledLocalTime: scheduledLocal,
       }),
       dedupeKey,

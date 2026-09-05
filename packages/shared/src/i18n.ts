@@ -70,6 +70,16 @@ export const MESSAGES = {
     'reminder.title': '💊 تذكير بالدواء',
     'reminder.body': '{medication} — {dose}. الموعد {time}.',
     'reminder.bodyWithFood': '{medication} — {dose} {food}. الموعد {time}.',
+    // The default body. Deliberately still says WHAT to do and WHEN, because a
+    // notification an elderly patient cannot act on is not a privacy win.
+    'reminder.bodyPrivate': 'حان وقت جرعتك — {time}. افتح التطبيق لمعرفة التفاصيل.',
+    'reminder.voicePrivate': 'حان وقت جرعة الدواء.',
+    'reminder.repeatPrivate': 'تذكير مرة أخرى: جرعة {time} لم يتم تأكيدها بعد.',
+    'caregiver.missedAlertPrivate': 'لم يؤكد {patient} جرعة {time} بعد.',
+    'settings.notificationPrivacy': 'تفاصيل الدواء في الإشعارات',
+    'settings.notificationPrivacyHint': 'افتراضياً لا يظهر اسم الدواء ولا الجرعة في الإشعار، حتى لا يقرأهما من ينظر إلى شاشة هاتفك.',
+    'settings.showMedicationInNotifications': 'أظهر اسم الدواء والجرعة',
+    'settings.showMedicationWarning': 'عند التفعيل سيظهر اسم دوائك وجرعتك على شاشة القفل، ويمكن لأي شخص ينظر إلى هاتفك قراءتهما.',
     'reminder.repeat': 'تذكير مرة أخرى: {medication} في {time} لم يتم تأكيده بعد.',
     'reminder.voice': 'حان موعد دواء {medication}. {dose} {food}.',
 
@@ -1012,6 +1022,14 @@ export const MESSAGES = {
     'reminder.title': '💊 Medication Reminder',
     'reminder.body': '{medication} — {dose}. Scheduled {time}.',
     'reminder.bodyWithFood': '{medication} — {dose} {food}. Scheduled {time}.',
+    'reminder.bodyPrivate': 'A dose is due — {time}. Open the app for details.',
+    'reminder.voicePrivate': 'A medication dose is due.',
+    'reminder.repeatPrivate': 'Reminder: the {time} dose is still unconfirmed.',
+    'caregiver.missedAlertPrivate': '{patient} has not confirmed their {time} dose.',
+    'settings.notificationPrivacy': 'Medication details in notifications',
+    'settings.notificationPrivacyHint': 'By default the medication name and dose are not shown in notifications, so nobody glancing at your screen can read them.',
+    'settings.showMedicationInNotifications': 'Show medication name and dose',
+    'settings.showMedicationWarning': 'When on, your medication name and dose appear on the lock screen and can be read by anyone who glances at your phone.',
     'reminder.repeat': 'Reminder: {medication} at {time} is still unconfirmed.',
     'reminder.voice': 'It is time for your {medication}. {dose} {food}.',
 

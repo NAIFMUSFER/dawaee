@@ -205,6 +205,40 @@ export default function NotificationSettingsScreen() {
           </View>
         )}
 
+        {/*
+          Placed high, immediately under the delivery status, rather than in a
+          sub-page. A privacy control nobody finds protects nobody, and this one
+          is the difference between a lock screen that names a diagnosis and one
+          that does not. The default is off; the switch is what turns disclosure
+          ON, and the warning under it says plainly what that means.
+        */}
+        <SectionTitle>{t('settings.notificationPrivacy')}</SectionTitle>
+        <Txt variant="bodySmall" color={theme.colors.ink500}>
+          {t('settings.notificationPrivacyHint')}
+        </Txt>
+        <Card>
+          <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
+            <View style={{ flex: 1, gap: theme.spacing.xs }}>
+              <Txt variant={theme.elderlyMode ? 'h3' : 'bodyLarge'} weight="medium">
+                {t('settings.showMedicationInNotifications')}
+              </Txt>
+              {preferences.showMedicationInNotifications ? (
+                <Txt variant="bodySmall" color={theme.colors.warning700}>
+                  {t('settings.showMedicationWarning')}
+                </Txt>
+              ) : null}
+            </View>
+            <Switch
+              value={preferences.showMedicationInNotifications}
+              onValueChange={(next) => void updatePreferences({ showMedicationInNotifications: next })}
+              accessibilityRole="switch"
+              accessibilityLabel={t('settings.showMedicationInNotifications')}
+              accessibilityHint={t('settings.showMedicationWarning')}
+              trackColor={{ false: theme.colors.ink200, true: theme.colors.primary500 }}
+            />
+          </Row>
+        </Card>
+
         <SectionTitle>{t('notifications.snoozeTitle')}</SectionTitle>
         <Row gap={theme.spacing.sm} wrap>
           {SNOOZE_OPTIONS.map((minutes) => (

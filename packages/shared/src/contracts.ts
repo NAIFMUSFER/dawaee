@@ -154,6 +154,14 @@ export const updatePreferencesSchema = z.object({
   textScale: z.number().min(0.85).max(2).optional(),
   highContrast: z.boolean().optional(),
   voiceRemindersEnabled: z.boolean().optional(),
+  /**
+   * Name the medication and dose in notification text.
+   *
+   * Default false everywhere. Governs the local notification, the worker's push
+   * body, and what is written into notification_queue — one flag, so a patient
+   * who turns it off cannot still be named by the server.
+   */
+  showMedicationInNotifications: z.boolean().optional(),
   voiceConfirmationEnabled: z.boolean().optional(),
   appLockEnabled: z.boolean().optional(),
   appLockAreas: z.array(z.enum(['history', 'caregivers', 'personal', 'reports', 'emergency'])).optional(),

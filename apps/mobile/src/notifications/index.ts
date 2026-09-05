@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
-import { t } from '@dawaee/shared';
+import { reminderText, t } from '@dawaee/shared';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
@@ -104,7 +104,13 @@ export async function configureChannels(): Promise<void> {
     importance: N.AndroidImportance.MAX,
     sound: 'default',
     vibrationPattern: [0, 400, 200, 400],
-    lockscreenVisibility: N.AndroidNotificationVisibility.PUBLIC,
+    // PRIVATE, not PUBLIC. Android then shows the app's name on the lock
+    // screen and withholds the text until the phone is unlocked, at which
+    // point the shade shows it in full — so the elderly-accessibility cost is
+    // close to zero while the "phone face-up on a desk" disclosure is closed.
+    // This is independent of the patient's opt-in and applies in both modes,
+    // because it costs nothing in the mode that has nothing to hide.
+    lockscreenVisibility: N.AndroidNotificationVisibility.PRIVATE,
     bypassDnd: false,
     enableVibrate: true,
     showBadge: true,
@@ -190,7 +196,7 @@ export interface ScheduleResult {
 export async function rescheduleLocalNotifications(
   doses: DoseView[],
   locale: Locale,
-  opts: { voiceEnabled?: boolean } = {},
+  opts: { voiceEnabled?: boolean; showMedication?: boolean } = {},
 ): Promise<ScheduleResult> {
   const N = await load();
   if (!N) return { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
@@ -208,9 +214,15 @@ export async function rescheduleLocalNotifications(
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
 
     const food = t(locale, `food.${dose.medication.foodInstruction}` as never);
-    const body = t(locale, food ? 'reminder.bodyWithFood' : 'reminder.body', {
-      medication: dose.medication.name,
-      dose: `${dose.doseQuantity} ${dose.doseUnit}`,
+    // One shared builder with the worker — see packages/shared/reminder-text.
+    // Two implementations meant a patient could switch the setting off, watch
+    // their local notifications go generic, and still be named by every push
+    // the server sent.
+    const text = reminderText({
+      locale,
+      showMedication: opts.showMedication,
+      medicationName: dose.medication.name,
+      doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
       time: dose.scheduledLocalTime,
       food,
     });
@@ -218,15 +230,16 @@ export async function rescheduleLocalNotifications(
     try {
       await N.scheduleNotificationAsync({
         content: {
-          title: t(locale, 'reminder.title'),
-          body,
+          title: text.title,
+          body: text.body,
           data: { doseId: dose.id, medicationId: dose.medicationId, kind: 'dose_reminder' },
           sound: 'default',
           categoryIdentifier: MEDICATION_CATEGORY_ID,
           interruptionLevel: 'timeSensitive',
-          ...(opts.voiceEnabled ? { subtitle: t(locale, 'reminder.voice', {
-            medication: dose.medication.name, dose: `${dose.doseQuantity} ${dose.doseUnit}`, food,
-          }) } : {}),
+          // The spoken line follows the SAME flag: saying a drug name aloud in
+          // a room is a wider disclosure than printing it on a screen, so it
+          // cannot be the looser of the two settings.
+          ...(opts.voiceEnabled ? { subtitle: text.voice } : {}),
         },
         trigger: {
           type: N.SchedulableTriggerInputTypes.DATE,
@@ -306,4 +319,46 @@ export async function syncPushRegistration(deviceId: string): Promise<boolean> {
     appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
   });
   return true;
+}
+
+/**
+ * Rebuild the scheduled reminders from the encrypted local cache.
+ *
+ * Exists because the text of a notification is baked in when it is scheduled —
+ * the operating system holds the rendered string, not a template — and
+ * reminders are created up to a week ahead. Without this, a patient who turns
+ * medication detail OFF keeps receiving named reminders for days from
+ * notifications created before they changed their mind, and reasonably
+ * concludes the privacy setting does nothing.
+ *
+ * Reads the cache rather than the network so it works on a phone with no
+ * signal, which is the same phone the offline reminder schedule exists for.
+ * The doses are unchanged; only the wording is rebuilt.
+ */
+export async function rebuildRemindersFromCache(
+  profileId: string | null,
+  locale: Locale,
+  opts: { voiceEnabled?: boolean; showMedication?: boolean },
+): Promise<ScheduleResult> {
+  const empty: ScheduleResult = { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
+  if (!profileId) return empty;
+
+  const { readCachedSchedule } = await import('../storage/offline-queue.js');
+  const cache = await readCachedSchedule(profileId);
+  if (!cache) return empty;
+
+  return rescheduleLocalNotifications(
+    cache.doses.map((d) => ({
+      id: d.id,
+      scheduledAt: d.scheduledAt,
+      scheduledLocalTime: d.scheduledLocalTime,
+      status: d.status,
+      doseQuantity: d.doseQuantity,
+      doseUnit: d.doseUnit,
+      medicationId: '',
+      medication: { name: d.medicationName, foodInstruction: d.foodInstruction },
+    })) as unknown as DoseView[],
+    locale,
+    opts,
+  );
 }

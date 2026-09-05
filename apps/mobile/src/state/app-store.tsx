@@ -5,7 +5,7 @@ import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkE
 import type { ProfileSummary } from '../api/types.js';
 import { flushQueue, purgeLocalCaches, queueSize, setCacheOwner } from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
-import { cancelAllLocalNotifications } from '../notifications/index.js';
+import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
 
 /**
@@ -26,6 +26,7 @@ export interface Preferences {
   highContrast: boolean;
   voiceRemindersEnabled: boolean;
   voiceConfirmationEnabled: boolean;
+  showMedicationInNotifications: boolean;
   appLockEnabled: boolean;
   appLockAreas: string[];
   quietHoursStart: string | null;
@@ -44,6 +45,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   highContrast: false,
   voiceRemindersEnabled: false,
   voiceConfirmationEnabled: false,
+  // Private by default. A patient opts in to being named on their lock screen.
+  showMedicationInNotifications: false,
   appLockEnabled: false,
   appLockAreas: [],
   quietHoursStart: null,
@@ -237,7 +240,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updatePreferences: async (patch) => {
       // Optimistic: accessibility changes must feel instant to someone who
       // enabled them because the text was too small to read.
+      const before = stateRef.current.preferences;
       setState((s) => ({ ...s, preferences: { ...s.preferences, ...patch } }));
+
+      /**
+       * A change to what notifications may say has to reach the notifications
+       * that are ALREADY scheduled.
+       *
+       * Reminders are built up to a week ahead and their text is baked in at
+       * scheduling time — the OS holds the rendered string, not a template. So
+       * a patient who turns disclosure off would keep receiving named
+       * reminders for days, from notifications created before they changed
+       * their mind, and would reasonably conclude the setting does nothing.
+       * Rebuilding from the cached window works offline and keeps the same
+       * doses; only the wording changes.
+       */
+      const disclosureChanged =
+        (patch.showMedicationInNotifications !== undefined
+          && patch.showMedicationInNotifications !== before.showMedicationInNotifications)
+        || (patch.voiceRemindersEnabled !== undefined
+          && patch.voiceRemindersEnabled !== before.voiceRemindersEnabled);
+      if (disclosureChanged) {
+        const next = { ...before, ...patch };
+        void rebuildRemindersFromCache(
+          stateRef.current.activeProfile?.id ?? null,
+          next.locale,
+          {
+            voiceEnabled: next.voiceRemindersEnabled,
+            showMedication: next.showMedicationInNotifications,
+          },
+        ).catch(() => undefined);
+      }
       if (patch.locale) {
         const { restartRequired } = applyNativeDirection(patch.locale);
         setState((s) => ({ ...s, restartRequiredForRtl: restartRequired }));
