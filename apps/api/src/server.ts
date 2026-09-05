@@ -22,7 +22,6 @@ import { registerNoteRoutes } from './routes/notes.js';
 import { registerUploadRoutes } from './routes/uploads.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerAdminRoutes } from './routes/admin.js';
-import { registerWebhookRoutes } from './routes/webhooks.js';
 
 export interface BuiltServer {
   app: FastifyInstance;
@@ -84,18 +83,17 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
 
   registerHealthRoutes(app, providers);
   await app.register(async (scope) => {
-    registerAuthRoutes(scope, providers);
+    registerAuthRoutes(scope);
     registerProfileRoutes(scope);
     registerMedicationRoutes(scope);
     registerDoseRoutes(scope);
     registerStockRoutes(scope);
-    registerCaregiverRoutes(scope, providers);
+    registerCaregiverRoutes(scope);
     registerEmergencyRoutes(scope);
     registerNoteRoutes(scope);
     registerUploadRoutes(scope, providers);
     registerReportRoutes(scope);
     registerAdminRoutes(scope);
-    registerWebhookRoutes(scope, providers);
   });
 
   await registerWebAppRoutes(app);

@@ -7,7 +7,7 @@
 #  - Anything environment-specific. `DATABASE_ROLE` carries the Supabase pooler
 #    tenant suffix, which belongs to one project and cannot be written here.
 #  - Anything that decides whether real messages are sent. A literal
-#    `WHATSAPP_PROVIDER: mock` in this file will silently downgrade a live
+#    `PUSH_PROVIDER: mock` in this file will silently downgrade a live
 #    integration back to a recording stub on the next push, and nothing will
 #    look broken — reminders will simply stop reaching people.
 #
@@ -76,34 +76,7 @@ services:
         sync: false
       - key: OTP_DEBUG_ECHO
         value: ""
-      # Saudi A2P SMS requires an alphanumeric Sender ID registered against a
-      # commercial registration, and long/short codes are unavailable there —
-      # so WhatsApp is the login channel that can be switched on by config.
-      - key: OTP_CHANNEL
-        sync: false
       # --- providers: leave unset to keep the recording mocks ---
-      - key: SMS_PROVIDER
-        sync: false
-      - key: TWILIO_ACCOUNT_SID
-        sync: false
-      - key: TWILIO_AUTH_TOKEN
-        sync: false
-      - key: TWILIO_FROM
-        sync: false
-      - key: UNIFONIC_APP_SID
-        sync: false
-      - key: UNIFONIC_SENDER_ID
-        sync: false
-      - key: WHATSAPP_PROVIDER
-        sync: false
-      - key: WHATSAPP_PHONE_NUMBER_ID
-        sync: false
-      - key: WHATSAPP_ACCESS_TOKEN
-        sync: false
-      - key: WHATSAPP_APP_SECRET
-        sync: false
-      - key: WHATSAPP_WEBHOOK_VERIFY_TOKEN
-        sync: false
       - key: PUSH_PROVIDER
         sync: false
       - key: EXPO_ACCESS_TOKEN
@@ -174,10 +147,6 @@ services:
       - key: IP_HASH_SALT
         sync: false
       - key: PUBLIC_APP_URL
-        sync: false
-      - key: SMS_PROVIDER
-        sync: false
-      - key: WHATSAPP_PROVIDER
         sync: false
       - key: PUSH_PROVIDER
         sync: false

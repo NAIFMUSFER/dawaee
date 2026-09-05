@@ -17,7 +17,7 @@ const th = { lateAfterMinutes: 15, missedAfterMinutes: 180 };
 const caregiver = (
   id: string,
   priority: number,
-  channels: NotificationChannel[] = ['whatsapp', 'push'],
+  channels: NotificationChannel[] = ['push'],
   overrides: Partial<CaregiverContext> = {},
 ): CaregiverContext => ({
   relationship: {
@@ -37,7 +37,6 @@ const caregiver = (
     quietHoursEnd: null,
     enabled: true,
   })),
-  whatsappConsented: true,
   ...overrides,
 });
 
@@ -56,8 +55,8 @@ const occurrence = (o: Partial<DoseOccurrence> = {}) =>
 const STAGES: EscalationStage[] = [
   { afterMinutes: 0, target: 'patient', channels: ['push', 'local'] },
   { afterMinutes: 10, target: 'patient', channels: ['push', 'local'] },
-  { afterMinutes: 30, target: 'primary_caregiver', channels: ['whatsapp'] },
-  { afterMinutes: 60, target: 'secondary_caregivers', channels: ['whatsapp'] },
+  { afterMinutes: 30, target: 'primary_caregiver', channels: ['push'] },
+  { afterMinutes: 60, target: 'secondary_caregivers', channels: ['push'] },
 ];
 
 function input(over: Partial<EvaluateEscalationInput> = {}): EvaluateEscalationInput {
@@ -99,7 +98,7 @@ describe('brief §17 / §66 — the full escalation scenario', () => {
     expect(d.stageIndex).toBe(2);
     expect(d.recipients).toHaveLength(1);
     expect(d.recipients[0]!.relationshipId).toBe('son');
-    expect(d.recipients[0]!.channels).toEqual(['whatsapp']);
+    expect(d.recipients[0]!.channels).toEqual(['push']);
   });
 
   it('20:35 patient confirms → escalation completes and NO further alert goes out', () => {
@@ -177,21 +176,31 @@ describe('caregiver eligibility', () => {
     expect(d.recipients).toHaveLength(0);
   });
 
-  it('blocks WhatsApp entirely without patient consent', () => {
-    const noConsent = caregiver('son', 1, ['whatsapp'], { whatsappConsented: false });
-    const d = evaluateEscalation(input({ now: at('20:30'), caregivers: [noConsent], occurrence: occurrence({ escalationStage: 2 }) }));
+  /**
+   * WhatsApp and SMS were removed as channels — both need a Saudi commercial
+   * registration before a single message can be sent. The database enum still
+   * carries the values, so a stage or a rule could still name one; the engine
+   * must never select a channel it cannot deliver on, because a caregiver
+   * "notified" over a dead channel is worse than one never notified at all.
+   */
+  it('never selects a channel the system cannot send on', () => {
+    const withDeadChannel = caregiver('son', 1, ['whatsapp' as NotificationChannel]);
+    const d = evaluateEscalation(input({
+      now: at('20:30'), caregivers: [withDeadChannel],
+      occurrence: occurrence({ escalationStage: 2 }),
+    }));
     expect(d.recipients).toHaveLength(0);
   });
 
   it('honours a "never" notification rule', () => {
-    const never = caregiver('son', 1, ['whatsapp']);
+    const never = caregiver('son', 1, ['push']);
     never.rules[0]!.mode = 'never';
     const d = evaluateEscalation(input({ now: at('20:30'), caregivers: [never], occurrence: occurrence({ escalationStage: 2 }) }));
     expect(d.recipients).toHaveLength(0);
   });
 
   it('holds a "consecutive_missed" caregiver until the streak is reached', () => {
-    const streaky = caregiver('son', 1, ['whatsapp']);
+    const streaky = caregiver('son', 1, ['push']);
     streaky.rules[0]!.mode = 'consecutive_missed';
     streaky.rules[0]!.consecutiveMissedThreshold = 2;
 
@@ -207,7 +216,7 @@ describe('caregiver eligibility', () => {
   });
 
   it('excludes digest-only caregivers from real-time escalation', () => {
-    const digest = caregiver('son', 1, ['whatsapp']);
+    const digest = caregiver('son', 1, ['push']);
     digest.rules[0]!.mode = 'daily_summary';
     const d = evaluateEscalation(input({ now: at('20:30'), caregivers: [digest], occurrence: occurrence({ escalationStage: 2 }) }));
     expect(d.recipients).toHaveLength(0);
@@ -223,10 +232,10 @@ describe('caregiver eligibility', () => {
 
 describe('idempotency', () => {
   it('builds a stable dedupe key per occurrence, stage, recipient and channel', () => {
-    const r = { kind: 'caregiver' as const, userId: 'u1', phoneE164: null, relationshipId: 'rel1', channels: ['whatsapp' as const], displayName: 'Son' };
-    expect(escalationDedupeKey('dose-1', 2, r, 'whatsapp')).toBe('esc:dose-1:2:u1:whatsapp');
-    expect(escalationDedupeKey('dose-1', 2, r, 'whatsapp')).toBe(escalationDedupeKey('dose-1', 2, r, 'whatsapp'));
-    expect(escalationDedupeKey('dose-1', 3, r, 'whatsapp')).not.toBe(escalationDedupeKey('dose-1', 2, r, 'whatsapp'));
+    const r = { kind: 'caregiver' as const, userId: 'u1', phoneE164: null, relationshipId: 'rel1', channels: ['push' as const], displayName: 'Son' };
+    expect(escalationDedupeKey('dose-1', 2, r, 'push')).toBe('esc:dose-1:2:u1:push');
+    expect(escalationDedupeKey('dose-1', 2, r, 'push')).toBe(escalationDedupeKey('dose-1', 2, r, 'push'));
+    expect(escalationDedupeKey('dose-1', 3, r, 'push')).not.toBe(escalationDedupeKey('dose-1', 2, r, 'push'));
   });
 });
 

@@ -56,11 +56,7 @@ async function main(): Promise<void> {
   ctx.log.info(
     {
       tickSeconds,
-      providers: {
-        push: ctx.providers.push.name,
-        whatsapp: ctx.providers.whatsapp.name,
-        sms: ctx.providers.sms.name,
-      },
+      providers: { push: ctx.providers.push.name },
     },
     'dawaee worker started',
   );

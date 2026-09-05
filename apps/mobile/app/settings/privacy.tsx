@@ -47,8 +47,9 @@ interface ConsentRow {
 }
 
 const CONSENT_ROWS: ConsentRow[] = [
-  { type: 'whatsapp_notifications', labelKey: 'whatsapp.title', hintKey: 'privacy.whatsappHint' },
-  { type: 'sms_notifications', labelKey: 'privacy.sms', hintKey: 'privacy.smsHint' },
+  // No WhatsApp or SMS rows: neither channel exists. Asking someone to consent
+  // to a channel that cannot carry a message is a consent that means nothing,
+  // and a toggle that changes nothing is worse than an absent one.
   { type: 'ocr_image_processing', labelKey: 'privacy.ocr', hintKey: 'privacy.ocrHint' },
   { type: 'caregiver_data_sharing', labelKey: 'privacy.caregiverSharing', hintKey: 'privacy.caregiverSharingHint' },
   { type: 'analytics', labelKey: 'privacy.analytics', hintKey: 'privacy.analyticsHint' },

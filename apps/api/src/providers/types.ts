@@ -17,40 +17,6 @@ export interface SendResult {
   retryable?: boolean;
 }
 
-export interface SmsProvider {
-  readonly name: string;
-  send(to: string, body: string): Promise<SendResult>;
-}
-
-export interface WhatsAppTemplateMessage {
-  to: string;
-  templateName: string;
-  languageCode: string;
-  /** Positional body parameters, matching the approved template. */
-  parameters: string[];
-  /**
-   * One-time password for an AUTHENTICATION-category template.
-   *
-   * WhatsApp requires the code to appear TWICE in the payload — once in the
-   * body, and again as the copy-code button's parameter — and it is the button
-   * copy that is actually placed on the user's clipboard. Sending only the body
-   * produces a message that renders correctly and copies nothing, which is the
-   * kind of failure nobody notices until a patient cannot log in.
-   */
-  authenticationCode?: string;
-}
-
-export interface WhatsAppProvider {
-  readonly name: string;
-  /**
-   * Business-initiated messages outside a 24-hour customer service window MUST
-   * use an approved template — this is a WhatsApp Platform rule, not a choice.
-   * Medication alerts are always business-initiated, so only this path exists.
-   */
-  sendTemplate(message: WhatsAppTemplateMessage): Promise<SendResult>;
-  verifyWebhookSignature(rawBody: string, signatureHeader: string | undefined): boolean;
-}
-
 export interface PushMessage {
   token: string;
   title: string;

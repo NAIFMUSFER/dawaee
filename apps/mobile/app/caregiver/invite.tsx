@@ -21,15 +21,24 @@ import {
  * checkboxes, but the checkboxes stay one tap away because "my nurse, but she
  * cannot delete anything" is a real request.
  *
- * The link is always shown at the end: SMS and WhatsApp delivery can fail
- * quietly, and a patient sitting next to their daughter would rather just hand
- * her the link.
+ * The link is always shown at the end because the patient is the one who
+ * sends it. The app cannot: both channels it could have used need a Saudi
+ * commercial registration first. A patient sitting next to their daughter
+ * would rather just hand her the link anyway.
  */
 
 const PRESET_KEYS = ['observer', 'family', 'nurse', 'emergency_only'] as const;
 type PresetKey = (typeof PRESET_KEYS)[number];
 
-const CHANNELS = ['sms', 'whatsapp', 'link', 'qr'] as const;
+/**
+ * How the invitation reaches the caregiver.
+ *
+ * The app does not send it. Both channels it could have sent on — SMS and
+ * WhatsApp — need a Saudi commercial registration before a single message
+ * leaves, so the patient forwards the link or shows the code themselves, over
+ * whichever messenger they already use.
+ */
+const CHANNELS = ['link', 'qr'] as const;
 type InviteChannel = (typeof CHANNELS)[number];
 
 const PRIORITIES: ReadonlyArray<{ value: number; labelKey: 'invite.priorityFirst' | 'invite.priorityBackup' | 'invite.priorityLast' }> = [
@@ -44,17 +53,12 @@ const CHANGE_PERMISSIONS: readonly CaregiverPermission[] = [
 const VIEW_PERMISSIONS = CAREGIVER_PERMISSIONS.filter((p) => !CHANGE_PERMISSIONS.includes(p));
 
 const INVITE_EXPIRY_HOURS = 72;
-const CONSENT_VERSION = '1.0';
-
-interface MeResponse {
-  consents: Array<{ type: string; granted: boolean }>;
-}
 
 interface InviteResponse {
   relationshipId: string;
   expiresAt: string;
   invitationLink: string;
-  delivery: { channel: string; ok: boolean; error?: string };
+  invitationMessage: string;
 }
 
 function presetPermissions(key: PresetKey): CaregiverPermission[] {
@@ -76,9 +80,8 @@ export default function InviteCaregiverScreen() {
   const [permissions, setPermissions] = useState<CaregiverPermission[]>(presetPermissions('family'));
   const [customising, setCustomising] = useState(false);
   const [priority, setPriority] = useState(1);
-  const [channel, setChannel] = useState<InviteChannel>('sms');
+  const [channel, setChannel] = useState<InviteChannel>('link');
 
-  const [needsWhatsappConsent, setNeedsWhatsappConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<{ name?: string; phone?: string }>({});
@@ -106,32 +109,10 @@ export default function InviteCaregiverScreen() {
   };
 
   /**
-   * WhatsApp delivery is gated on a recorded consent. Checking before the
+   * Checking before the
    * invite means the patient reads what they are agreeing to, rather than
    * meeting a 428 after filling in the form.
    */
-  const ensureWhatsappConsent = useCallback(async (): Promise<boolean> => {
-    const me = await api.get<MeResponse>('/v1/me');
-    const granted = me.consents.some((c) => c.type === 'whatsapp_notifications' && c.granted);
-    if (!granted) setNeedsWhatsappConsent(true);
-    return granted;
-  }, []);
-
-  const grantWhatsappConsent = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.put('/v1/me/consents', {
-        type: 'whatsapp_notifications', granted: true, version: CONSENT_VERSION,
-      });
-      setNeedsWhatsappConsent(false);
-    } catch (err) {
-      if (err instanceof NetworkError) setOffline(true);
-      else setError(describe(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [describe, setOffline]);
 
   const submit = useCallback(async () => {
     if (!activeProfile) return;
@@ -152,10 +133,6 @@ export default function InviteCaregiverScreen() {
     setBusy(true);
     setError(null);
     try {
-      if (channel === 'whatsapp' && !(await ensureWhatsappConsent())) {
-        setBusy(false);
-        return;
-      }
       const res = await api.post<InviteResponse>('/v1/caregivers/invite', {
         patientProfileId: activeProfile.id,
         invitedName: name.trim(),
@@ -169,12 +146,11 @@ export default function InviteCaregiverScreen() {
       setResult(res);
     } catch (err) {
       if (err instanceof NetworkError) setOffline(true);
-      else if (err instanceof ApiError && err.code === 'consent_required') setNeedsWhatsappConsent(true);
       else setError(describe(err));
     } finally {
       setBusy(false);
     }
-  }, [activeProfile, channel, describe, ensureWhatsappConsent, name, permissions, phone, priority, role, setOffline, t]);
+  }, [activeProfile, channel, describe, name, permissions, phone, priority, role, setOffline, t]);
 
   const copyLink = useCallback((link: string) => {
     Clipboard.setString(link);
@@ -201,8 +177,6 @@ export default function InviteCaregiverScreen() {
           <Txt variant="body" color={theme.colors.ink700}>
             {t('invite.createdBody', { name: name.trim(), hours: formatNumber(INVITE_EXPIRY_HOURS) })}
           </Txt>
-
-          {!result.delivery.ok ? <Banner tone="warning" title={t('invite.deliveryFailed')} /> : null}
 
           <Card>
             <Txt variant="caption" color={theme.colors.ink500}>{t('invite.copyLink')}</Txt>
@@ -239,20 +213,6 @@ export default function InviteCaregiverScreen() {
         </Row>
 
         {error ? <Banner tone="danger" title={error} /> : null}
-
-        {needsWhatsappConsent ? (
-          <Card>
-            <Txt variant="h3" weight="bold">{t('whatsapp.consentTitle')}</Txt>
-            <Txt variant="body" color={theme.colors.ink700}>{t('whatsapp.consent')}</Txt>
-            <Txt variant="caption" color={theme.colors.ink500}>{t('whatsapp.consentRequired')}</Txt>
-            <Button label={t('whatsapp.agree')} loading={busy} onPress={() => void grantWhatsappConsent()} />
-            <Button
-              label={t('common.notNow')}
-              tone="ghost"
-              onPress={() => { setNeedsWhatsappConsent(false); setChannel('sms'); }}
-            />
-          </Card>
-        ) : null}
 
         <Field
           label={t('invite.name')}
@@ -367,7 +327,6 @@ export default function InviteCaregiverScreen() {
           label={t('invite.send')}
           size="large"
           loading={busy}
-          disabled={needsWhatsappConsent}
           onPress={() => void submit()}
           testID="invite-send"
         />

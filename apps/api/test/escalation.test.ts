@@ -7,7 +7,7 @@ import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type Te
  *
  *   20:00  patient notified
  *   20:10  second reminder
- *   20:30  WhatsApp to the primary caregiver
+ *   20:30  the primary caregiver is notified
  *   20:35  patient confirms
  *   21:00  NO further escalation
  */
@@ -17,6 +17,15 @@ let patient: TestUser;
 let son: TestUser;
 let daughter: TestUser;
 let doseId: string;
+
+const PATIENT_DEVICE = 'ExponentPushToken[patient-device]';
+const SON_DEVICE = 'ExponentPushToken[son-device]';
+const DAUGHTER_DEVICE = 'ExponentPushToken[daughter-device]';
+
+/** What has been sent to one person's device, which is how "who" is asserted. */
+const sentTo = (token: string) => h.push.sent.filter((m) => m.token === token);
+/** Anything that reached the family at all, whichever caregiver it went to. */
+const sentToFamily = () => sentTo(SON_DEVICE).length + sentTo(DAUGHTER_DEVICE).length;
 
 /**
  * The scenario needs a date inside the materialization window, which starts at
@@ -72,30 +81,27 @@ beforeAll(async () => {
   son = await signIn(h, '0533000002');
   daughter = await signIn(h, '0533000003');
 
-  // WhatsApp alerts require explicit patient consent before they can be enabled.
-  await h.app.inject({
-    method: 'PUT', url: '/v1/me/consents', headers: authHeaders(patient),
-    payload: { type: 'whatsapp_notifications', granted: true, version: '1.0' },
-  });
-
   const sonRel = await acceptInvite(patient, son, ['view_adherence', 'receive_notifications'], 1);
   const daughterRel = await acceptInvite(patient, daughter, ['view_adherence', 'receive_notifications'], 5);
 
   for (const rel of [sonRel, daughterRel]) {
     await h.app.inject({
       method: 'PUT', url: `/v1/caregivers/${rel}/notification-rules`, headers: authHeaders(patient),
-      payload: { channel: 'whatsapp', mode: 'missed_only', enabled: true },
-    });
-    await h.app.inject({
-      method: 'PUT', url: `/v1/caregivers/${rel}/notification-rules`, headers: authHeaders(patient),
       payload: { channel: 'push', mode: 'missed_only', enabled: true },
     });
   }
 
-  await h.app.inject({
-    method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(patient),
-    payload: { token: 'ExponentPushToken[patient-device]', platform: 'ios', deviceId: 'patient-device-1' },
-  });
+  // Every participant registers a device, because push is the only channel
+  // there is: a caregiver with no registered device cannot be reached at all,
+  // and the tokens are what tell the assertions below WHO was contacted.
+  for (const [who, token] of [
+    [patient, PATIENT_DEVICE], [son, SON_DEVICE], [daughter, DAUGHTER_DEVICE],
+  ] as const) {
+    await h.app.inject({
+      method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(who),
+      payload: { token, platform: 'ios', deviceId: `${token}-1` },
+    });
+  }
 
   await h.app.inject({
     method: 'PUT', url: `/v1/escalation-policy?profileId=${patient.profileId}`, headers: authHeaders(patient),
@@ -104,8 +110,8 @@ beforeAll(async () => {
       stages: [
         { afterMinutes: 0, target: 'patient', channels: ['push'] },
         { afterMinutes: 10, target: 'patient', channels: ['push'] },
-        { afterMinutes: 30, target: 'primary_caregiver', channels: ['whatsapp'] },
-        { afterMinutes: 60, target: 'secondary_caregivers', channels: ['whatsapp'] },
+        { afterMinutes: 30, target: 'primary_caregiver', channels: ['push'] },
+        { afterMinutes: 60, target: 'secondary_caregivers', channels: ['push'] },
       ],
     },
   });
@@ -142,17 +148,18 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
     h.setNow(at('19:59'));
     await h.tick();
     expect(h.push.sent).toHaveLength(0);
-    expect(h.whatsapp.sent).toHaveLength(0);
   });
 
   it('20:00 — stage 1 notifies the patient, and nobody else', async () => {
     h.setNow(at('20:00'));
     await h.tick();
-    expect(h.push.sent).toHaveLength(1);
-    expect(h.push.sent[0]!.token).toBe('ExponentPushToken[patient-device]');
+    expect(sentTo(PATIENT_DEVICE)).toHaveLength(1);
     expect(h.push.sent[0]!.priority).toBe('high');
     expect(h.push.sent[0]!.body).toContain('Panadol');
-    expect(h.whatsapp.sent).toHaveLength(0);
+    // The family is not told anything yet. This is the whole point of the
+    // ladder: a patient who is simply slow must not summon their children.
+    expect(sentTo(SON_DEVICE)).toHaveLength(0);
+    expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
 
   it('20:05 — no duplicate for the same stage', async () => {
@@ -164,19 +171,17 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   it('20:10 — stage 2 sends a second patient reminder, still no family', async () => {
     h.setNow(at('20:10'));
     await h.tick();
-    expect(h.push.sent).toHaveLength(2);
-    expect(h.whatsapp.sent).toHaveLength(0);
+    expect(sentTo(PATIENT_DEVICE)).toHaveLength(2);
+    expect(sentTo(SON_DEVICE)).toHaveLength(0);
+    expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
 
-  it('20:30 — stage 3 reaches the PRIMARY caregiver on WhatsApp only', async () => {
+  it('20:30 — stage 3 reaches the PRIMARY caregiver, and only them', async () => {
     h.setNow(at('20:30'));
     await h.tick();
-    expect(h.whatsapp.sent).toHaveLength(1);
-    const msg = h.whatsapp.sent[0]!;
-    expect(msg.templateName).toBe('dawaee_dose_unconfirmed');
-    expect(msg.to).toBe('+966533000002'); // the son, priority 1
-    // The message carries who / what / when and nothing more.
-    expect(msg.parameters).toEqual([expect.any(String), 'Panadol', '20:00']);
+    // The son is priority 1. The daughter is priority 5 and hears nothing yet.
+    expect(sentTo(SON_DEVICE)).toHaveLength(1);
+    expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
 
   it('20:35 — the patient confirms, and escalation completes', async () => {
@@ -192,16 +197,18 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   it('21:00 — the secondary caregiver is NOT contacted', async () => {
     h.setNow(at('21:00'));
     await h.tick();
-    // Still exactly the one WhatsApp message from 20:30.
-    expect(h.whatsapp.sent).toHaveLength(1);
-    expect(h.whatsapp.sent.map((m) => m.to)).not.toContain('+966533000003');
+    // Still exactly the one message to the son from 20:30, and nothing at all
+    // to the daughter: confirmation stops the ladder where it stood.
+    expect(sentTo(SON_DEVICE)).toHaveLength(1);
+    expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
 
   it('22:00 — and stays quiet afterwards', async () => {
     h.setNow(at('22:00'));
     await h.tick();
-    expect(h.whatsapp.sent).toHaveLength(1);
-    expect(h.push.sent).toHaveLength(2);
+    expect(sentTo(SON_DEVICE)).toHaveLength(1);
+    expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
+    expect(sentTo(PATIENT_DEVICE)).toHaveLength(2);
   });
 
   it('records the escalation in the dose event trail', async () => {
@@ -245,13 +252,13 @@ describe('escalation is suppressed correctly', () => {
     const tomorrow = doses.json().doses[0];
     expect(tomorrow).toBeTruthy();
 
-    const pushBefore = h.push.sent.length;
-    const waBefore = h.whatsapp.sent.length;
+    const patientBefore = sentTo(PATIENT_DEVICE).length;
+    const familyBefore = sentToFamily();
 
     const snoozeAt = new Date(Date.UTC(NEXT.y, NEXT.mo - 1, NEXT.da, 17, 0, 0));
     h.setNow(snoozeAt);
     await h.tick();
-    expect(h.push.sent.length).toBe(pushBefore + 1);
+    expect(sentTo(PATIENT_DEVICE).length).toBe(patientBefore + 1);
 
     const snooze = await h.app.inject({
       method: 'POST', url: `/v1/doses/${tomorrow.id}/snooze`, headers: authHeaders(patient),
@@ -272,11 +279,14 @@ describe('escalation is suppressed correctly', () => {
     // 30 minutes in, the family would normally be told. It is snoozed, so no.
     h.setNow(new Date(snoozeAt.getTime() + 30 * 60_000));
     await h.tick();
-    expect(h.whatsapp.sent.length).toBe(waBefore);
+    expect(sentToFamily()).toBe(familyBefore);
 
     // Once the snooze lapses, escalation resumes exactly where it left off.
     h.setNow(new Date(snoozeAt.getTime() + 70 * 60_000));
     await h.tick();
-    expect(h.whatsapp.sent.length).toBeGreaterThan(waBefore);
+    // Whichever caregiver the ladder has reached by then — at 70 minutes late
+    // it is the secondary — the point is that suppression ended rather than
+    // permanently cancelled the escalation.
+    expect(sentToFamily()).toBeGreaterThan(familyBefore);
   });
 });

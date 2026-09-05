@@ -7,7 +7,7 @@ import { authenticate, requireAdmin } from '../middleware/context.js';
  *
  * Deliberately narrow: system health, delivery failures and job outcomes. It
  * exposes NO medication names, no patient names and no health data — an
- * operator debugging a failed WhatsApp send does not need to know what the
+ * operator debugging a failed notification does not need to know what the
  * medication was, and giving them that access would make every support
  * engineer a holder of medical records.
  */

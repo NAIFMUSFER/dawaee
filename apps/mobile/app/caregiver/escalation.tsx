@@ -32,7 +32,7 @@ import type { EscalationStage, NotificationChannel } from '@dawaee/shared';
 type StageTarget = EscalationStage['target'];
 
 const PATIENT_CHANNELS: readonly NotificationChannel[] = ['push', 'local'];
-const CAREGIVER_CHANNELS: readonly NotificationChannel[] = ['push', 'whatsapp', 'sms'];
+const CAREGIVER_CHANNELS: readonly NotificationChannel[] = ['push'];
 const TARGETS: readonly StageTarget[] = ['patient', 'primary_caregiver', 'secondary_caregivers', 'all_caregivers'];
 const MAX_STAGES = 8;
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -58,7 +58,7 @@ const PRESET_LABEL: Record<PresetKey, 'escalation.immediately' | 'escalation.aft
 const patientStage = (afterMinutes: number): EscalationStage =>
   ({ afterMinutes, target: 'patient', channels: ['push', 'local'] });
 const caregiverStage = (afterMinutes: number, target: StageTarget): EscalationStage =>
-  ({ afterMinutes, target, channels: ['whatsapp', 'push'] });
+  ({ afterMinutes, target, channels: ['push'] });
 
 /**
  * Every preset keeps the patient's own reminder at minute 0 and a repeat at

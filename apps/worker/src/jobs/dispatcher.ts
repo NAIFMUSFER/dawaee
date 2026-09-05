@@ -1,6 +1,5 @@
 import type { PoolClient } from 'pg';
-import type { Locale } from '@dawaee/shared';
-import { WHATSAPP_TEMPLATES, type PushMessage } from '@dawaee/api/providers';
+import type { PushMessage } from '@dawaee/api/providers';
 import type { WorkerContext } from '../context.js';
 
 /**
@@ -99,17 +98,17 @@ async function sendOne(ctx: WorkerContext, client: PoolClient, row: DeliveryRow)
   switch (row.channel) {
     case 'push':
       return sendPush(ctx, client, row);
-    case 'whatsapp':
-      return sendWhatsApp(ctx, row);
-    case 'sms':
-      return sendSms(ctx, row);
     case 'local':
     case 'in_app':
       // Local notifications are scheduled by the device from its cached
       // prefetch window; the server records the intent but sends nothing.
       return { ok: true, provider: 'device_local' };
     default:
-      return { ok: false, provider: 'unknown', errorCode: 'unsupported_channel', retryable: false };
+      // Includes 'whatsapp' and 'sms', which the database enum still carries.
+      // A row queued for a channel this deployment cannot send on fails once,
+      // permanently, and says why — it is never retried and never silently
+      // reported as delivered.
+      return { ok: false, provider: 'none', errorCode: 'unsupported_channel', retryable: false };
   }
 }
 
@@ -163,39 +162,3 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
       };
 }
 
-async function sendWhatsApp(ctx: WorkerContext, row: DeliveryRow): Promise<SendOutcome> {
-  if (!row.recipient_phone_e164) {
-    return { ok: false, provider: ctx.providers.whatsapp.name, errorCode: 'no_phone', retryable: false };
-  }
-  const locale = (row.locale === 'en' ? 'en' : 'ar') as Locale;
-  const p = row.payload as { patientName?: string; medicationName?: string; scheduledLocalTime?: string };
-
-  // Business-initiated messages must use an approved template; the parameters
-  // are positional and must match what is registered in WhatsApp Manager.
-  const result = await ctx.providers.whatsapp.sendTemplate({
-    to: row.recipient_phone_e164,
-    templateName: row.kind === 'low_stock' ? WHATSAPP_TEMPLATES.lowStock
-      : row.kind === 'daily_summary' ? WHATSAPP_TEMPLATES.dailySummary
-        : WHATSAPP_TEMPLATES.doseUnconfirmed,
-    languageCode: locale === 'ar' ? 'ar' : 'en',
-    parameters: [p.patientName ?? '', p.medicationName ?? '', p.scheduledLocalTime ?? ''],
-  });
-
-  return {
-    ok: result.ok, provider: ctx.providers.whatsapp.name,
-    providerMessageId: result.providerMessageId,
-    errorCode: result.errorCode, errorDetail: result.errorDetail, retryable: result.retryable,
-  };
-}
-
-async function sendSms(ctx: WorkerContext, row: DeliveryRow): Promise<SendOutcome> {
-  if (!row.recipient_phone_e164) {
-    return { ok: false, provider: ctx.providers.sms.name, errorCode: 'no_phone', retryable: false };
-  }
-  const result = await ctx.providers.sms.send(row.recipient_phone_e164, `${row.title ?? ''}\n${row.body ?? ''}`.trim());
-  return {
-    ok: result.ok, provider: ctx.providers.sms.name,
-    providerMessageId: result.providerMessageId,
-    errorCode: result.errorCode, errorDetail: result.errorDetail, retryable: result.retryable,
-  };
-}

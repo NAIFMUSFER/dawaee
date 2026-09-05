@@ -172,13 +172,7 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
   const { rows } = await client.query(
     `SELECT cr.id, cr.caregiver_user_id, cr.invited_phone_e164, cr.invited_name,
             cr.status::text AS status, cr.permissions, cr.escalation_priority,
-            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone,
-            EXISTS (
-              SELECT 1 FROM consents c
-               JOIN patient_profiles p ON p.id = cr.patient_profile_id
-               WHERE c.user_id = COALESCE(p.linked_user_id, p.owner_user_id)
-                 AND c.type = 'whatsapp_notifications' AND c.granted
-            ) AS whatsapp_consented
+            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone
        FROM caregiver_relationships cr
        LEFT JOIN users u ON u.id = cr.caregiver_user_id
       WHERE cr.patient_profile_id = $1 AND cr.status = 'active'
@@ -213,7 +207,6 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
         quietHoursEnd: x.quiet_hours_end,
         enabled: x.enabled,
       })),
-    whatsappConsented: r.whatsapp_consented,
   }));
 }
 

@@ -29,11 +29,13 @@ const CHANGE_PERMISSIONS: readonly CaregiverPermission[] = [
 const VIEW_PERMISSIONS = CAREGIVER_PERMISSIONS.filter((p) => !CHANGE_PERMISSIONS.includes(p));
 
 /** The two channels a caregiver can be reached on outside the app. */
-const RULE_CHANNELS = ['push', 'whatsapp'] as const;
+// Push is the only channel that can carry a caregiver alert. WhatsApp and SMS
+// both need a Saudi commercial registration before a single message is sent,
+// so neither is offered as a rule a caregiver can configure and then wait on.
+const RULE_CHANNELS = ['push'] as const;
 type RuleChannel = (typeof RULE_CHANNELS)[number];
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
-const CONSENT_VERSION = '1.0';
 const MIN_PRIORITY = 1;
 const MAX_PRIORITY = 20;
 
@@ -98,11 +100,10 @@ export default function CaregiverDetailScreen() {
 
   const [permissions, setPermissions] = useState<CaregiverPermission[]>([]);
   const [priority, setPriority] = useState(MIN_PRIORITY);
-  const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE, whatsapp: EMPTY_RULE });
+  const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
   /** Set when the server answered 428: the rule waiting for a consent grant. */
-  const [consentPendingFor, setConsentPendingFor] = useState<RuleChannel | null>(null);
 
   const describe = useCallback((err: unknown): string => {
     if (!(err instanceof ApiError)) return t('error.internal_error');
@@ -124,7 +125,7 @@ export default function CaregiverDetailScreen() {
       if (found) {
         setPermissions(found.permissions);
         setPriority(found.escalationPriority);
-        setRules({ push: ruleFrom(found, 'push'), whatsapp: ruleFrom(found, 'whatsapp') });
+        setRules({ push: ruleFrom(found, 'push') });
       }
       setError(null);
       setOffline(false);
@@ -185,35 +186,15 @@ export default function CaregiverDetailScreen() {
         quietHoursEnd: timeOrNull(rule.quietHoursEnd),
         enabled: rule.enabled,
       });
-      setConsentPendingFor(null);
       setNotice(t('notify.saved'));
       await load();
     } catch (err) {
       if (err instanceof NetworkError) setOffline(true);
-      else if (err instanceof ApiError && err.code === 'consent_required') setConsentPendingFor(channel);
       else setError(describe(err));
     } finally {
       setSavingChannel(null);
     }
   }, [caregiver, describe, load, setOffline, t]);
-
-  /** Grant the consent the 428 asked for, then finish the save that triggered it. */
-  const grantConsentAndRetry = useCallback(async () => {
-    const channel = consentPendingFor;
-    if (!channel) return;
-    setSavingChannel(channel);
-    setError(null);
-    try {
-      await api.put('/v1/me/consents', { type: 'whatsapp_notifications', granted: true, version: CONSENT_VERSION });
-    } catch (err) {
-      if (err instanceof NetworkError) setOffline(true);
-      else setError(describe(err));
-      setSavingChannel(null);
-      return;
-    }
-    setSavingChannel(null);
-    await saveRule(channel, rules[channel]);
-  }, [consentPendingFor, describe, rules, saveRule, setOffline]);
 
   const revoke = useCallback(() => {
     if (!caregiver) return;
@@ -354,20 +335,6 @@ export default function CaregiverDetailScreen() {
         ) : null}
 
         <SectionTitle>{t('notify.title')}</SectionTitle>
-        {consentPendingFor ? (
-          <Card>
-            <Txt variant="h3" weight="bold">{t('whatsapp.consentTitle')}</Txt>
-            <Txt variant="body" color={theme.colors.ink700}>{t('whatsapp.consent')}</Txt>
-            <Txt variant="caption" color={theme.colors.ink500}>{t('whatsapp.consentRequired')}</Txt>
-            <Button
-              label={t('whatsapp.agree')}
-              loading={savingChannel === consentPendingFor}
-              onPress={() => void grantConsentAndRetry()}
-            />
-            <Button label={t('common.notNow')} tone="ghost" onPress={() => setConsentPendingFor(null)} />
-          </Card>
-        ) : null}
-
         {RULE_CHANNELS.map((channel) => (
           <ChannelRuleCard
             key={channel}

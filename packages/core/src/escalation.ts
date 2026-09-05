@@ -16,8 +16,8 @@ import { isWithinQuietHours, localTimeInZone, minutesToMs } from './time.js';
 export const DEFAULT_ESCALATION_STAGES: EscalationStage[] = [
   { afterMinutes: 0, target: 'patient', channels: ['push', 'local'] },
   { afterMinutes: 10, target: 'patient', channels: ['push', 'local'] },
-  { afterMinutes: 30, target: 'primary_caregiver', channels: ['whatsapp', 'push'] },
-  { afterMinutes: 60, target: 'secondary_caregivers', channels: ['whatsapp', 'push'] },
+  { afterMinutes: 30, target: 'primary_caregiver', channels: ['push'] },
+  { afterMinutes: 60, target: 'secondary_caregivers', channels: ['push'] },
 ];
 
 export interface EscalationRecipient {
@@ -62,7 +62,6 @@ export interface CaregiverContext {
     enabled: boolean;
   }>;
   /** Set false when the patient has not consented to WhatsApp for this profile. */
-  whatsappConsented: boolean;
 }
 
 export interface EvaluateEscalationInput {
@@ -197,9 +196,6 @@ function channelAllowed(
   consecutiveMissedCount: number,
   patientLocalTime: LocalTime,
 ): boolean {
-  // WhatsApp requires explicit, revocable patient consent — no consent, no send.
-  if (channel === 'whatsapp' && !caregiver.whatsappConsented) return false;
-
   const rule = caregiver.rules.find((r) => r.channel === channel);
   // No rule configured for this channel means the caregiver never opted into it.
   if (!rule || !rule.enabled) return false;

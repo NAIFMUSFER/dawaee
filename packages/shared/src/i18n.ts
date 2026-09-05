@@ -2,7 +2,7 @@ import type { Locale } from './enums.js';
 
 /**
  * Single source of truth for user-facing strings. Consumed by the mobile app,
- * the caregiver portal, and by the worker when composing push / WhatsApp bodies,
+ * the caregiver portal, and by the worker when composing push notification bodies,
  * so a caregiver in Riyadh gets Arabic and one abroad gets English from the
  * exact same template set.
  *
@@ -185,9 +185,6 @@ export const MESSAGES = {
     'escalation.afterTwoMissed': 'بعد جرعتين فائتتين',
     'escalation.never': 'لا تنبّه العائلة',
 
-    'whatsapp.title': 'تنبيهات واتساب',
-    'whatsapp.consent': 'أوافق على إرسال تنبيهات الأدوية عبر واتساب إلى المرافقين الذين أحدّدهم.',
-    'whatsapp.consentRequired': 'يلزم الحصول على موافقتك قبل تفعيل تنبيهات واتساب.',
 
     'reports.title': 'التقارير',
     'reports.weeklyFamily': 'التقرير الأسبوعي للعائلة',
@@ -534,9 +531,6 @@ export const MESSAGES = {
     'emergency.qrEnableFailed': 'تعذّر تفعيل الرمز.',
 
     'privacy.consents': 'الموافقات',
-    'privacy.whatsappHint': 'منح هذه الموافقة يعني إرسال نص التذكير إلى رقم واتساب المرافق الذي تحدده.',
-    'privacy.sms': 'تنبيهات الرسائل النصية',
-    'privacy.smsHint': 'تُرسل التذكيرات كرسالة نصية عبر مزوّد اتصالات، وقد تُطبَّق رسوم المشغّل.',
     'privacy.ocr': 'قراءة صور الأدوية',
     'privacy.ocrHint': 'تُرفع صور العلب أو الوصفات إلى خدمة قراءة نصوص لاستخراج الاسم والجرعة، وتبقى النتيجة اقتراحاً حتى تؤكده.',
     'privacy.caregiverSharing': 'مشاركة البيانات مع المرافقين',
@@ -836,7 +830,6 @@ export const MESSAGES = {
     'invite.send': 'إرسال الدعوة',
     'invite.created': 'تم إنشاء الدعوة',
     'invite.createdBody': 'يستطيع {name} الانضمام عبر هذا الرابط، وتنتهي صلاحيته خلال {hours} ساعة.',
-    'invite.deliveryFailed': 'تعذّر إرسال الرسالة. يمكنك مشاركة الرابط بنفسك.',
     'invite.copyLink': 'نسخ الرابط',
     'invite.linkCopied': 'تم نسخ الرابط',
     'invite.nameRequired': 'أدخل اسم المرافق.',
@@ -853,8 +846,6 @@ export const MESSAGES = {
     'preset.emergency_only': 'الطوارئ فقط',
     'preset.emergency_onlyHint': 'يرى بطاقة الطوارئ فقط.',
     'preset.custom': 'مخصص',
-    'channel.sms': 'رسالة نصية',
-    'channel.whatsapp': 'واتساب',
     'channel.link': 'رابط أنسخه بنفسي',
     'channel.qr': 'رمز QR',
     'channel.push': 'إشعار على الجوال',
@@ -868,8 +859,6 @@ export const MESSAGES = {
     'relationship.caregiver': 'مقدّم رعاية',
     'relationship.doctor': 'طبيب',
     'relationship.other': 'صلة أخرى',
-    'whatsapp.consentTitle': 'إذن تنبيهات واتساب',
-    'whatsapp.agree': 'أوافق وأكمل',
     'notify.title': 'طريقة التنبيه',
     'notify.mode': 'ماذا نرسل له',
     'notify.every_dose': 'كل جرعة',
@@ -1123,9 +1112,6 @@ export const MESSAGES = {
     'escalation.afterTwoMissed': 'After two missed reminders',
     'escalation.never': 'Never',
 
-    'whatsapp.title': 'WhatsApp alerts',
-    'whatsapp.consent': 'I agree to send medication alerts over WhatsApp to the caregivers I choose.',
-    'whatsapp.consentRequired': 'Your explicit consent is required before WhatsApp alerts can be enabled.',
 
     'reports.title': 'Reports',
     'reports.weeklyFamily': 'Weekly family report',
@@ -1472,9 +1458,6 @@ export const MESSAGES = {
     'emergency.qrEnableFailed': 'The code could not be enabled.',
 
     'privacy.consents': 'Consents',
-    'privacy.whatsappHint': 'Granting this means we send the reminder text to the WhatsApp number of the caregiver you choose.',
-    'privacy.sms': 'SMS alerts',
-    'privacy.smsHint': 'Reminders are sent as text messages through a telecom provider. Carrier charges may apply.',
     'privacy.ocr': 'Reading medication images',
     'privacy.ocrHint': 'Photos of packs or prescriptions are uploaded to a text-recognition service to read the name and dose, and the result stays a suggestion until you confirm it.',
     'privacy.caregiverSharing': 'Sharing data with caregivers',
@@ -1774,7 +1757,6 @@ export const MESSAGES = {
     'invite.send': 'Send invitation',
     'invite.created': 'Invitation created',
     'invite.createdBody': '{name} can join with this link. It expires in {hours} hours.',
-    'invite.deliveryFailed': 'We could not send the message. You can share the link yourself.',
     'invite.copyLink': 'Copy link',
     'invite.linkCopied': 'Link copied',
     'invite.nameRequired': 'Enter the caregiver’s name.',
@@ -1791,8 +1773,6 @@ export const MESSAGES = {
     'preset.emergency_only': 'Emergency only',
     'preset.emergency_onlyHint': 'Sees the emergency card only.',
     'preset.custom': 'Custom',
-    'channel.sms': 'SMS',
-    'channel.whatsapp': 'WhatsApp',
     'channel.link': 'A link I copy myself',
     'channel.qr': 'QR code',
     'channel.push': 'Phone notification',
@@ -1806,8 +1786,6 @@ export const MESSAGES = {
     'relationship.caregiver': 'Caregiver',
     'relationship.doctor': 'Doctor',
     'relationship.other': 'Other',
-    'whatsapp.consentTitle': 'WhatsApp alerts permission',
-    'whatsapp.agree': 'I agree, continue',
     'notify.title': 'How they are notified',
     'notify.mode': 'What we send them',
     'notify.every_dose': 'Every dose',

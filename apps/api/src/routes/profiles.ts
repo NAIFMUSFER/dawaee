@@ -118,7 +118,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Consent. WhatsApp alerts and OCR image processing are both gated on an
+   * Consent. OCR image processing is gated on an
    * explicit grant recorded here, and withdrawal takes effect immediately
    * because the escalation engine reads this on every send.
    */

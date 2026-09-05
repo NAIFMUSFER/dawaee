@@ -141,7 +141,18 @@ export const CAREGIVER_ROLE_PRESETS: Record<string, readonly CaregiverPermission
   emergency_only: ['view_emergency_card'],
 };
 
-export const NOTIFICATION_CHANNELS = ['push', 'local', 'whatsapp', 'sms', 'email', 'in_app'] as const;
+/**
+ * Channels a notification can actually go out on.
+ *
+ * WhatsApp and SMS are absent on purpose. Reaching a Saudi phone by SMS needs
+ * an alphanumeric Sender ID registered against a commercial registration, and
+ * by WhatsApp needs a Meta-verified business with an approved template —
+ * neither can be enabled by configuration, so neither is offered as a choice a
+ * patient or caregiver can make and then wait on forever. The database enum
+ * still carries both values so historical rows stay readable, and adding the
+ * channel back is a matter of a provider plus one entry here.
+ */
+export const NOTIFICATION_CHANNELS = ['push', 'local', 'in_app'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 
 export const DELIVERY_STATUSES = ['queued', 'sending', 'sent', 'delivered', 'read', 'failed', 'skipped', 'expired'] as const;

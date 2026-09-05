@@ -186,7 +186,6 @@ function seed(): DemoState {
         escalationPriority: 1, invitationExpiresAt: null, acceptedAt: new Date(now.getTime() - 6 * 86_400_000).toISOString(),
         isYou: false,
         notificationRules: [
-          { channel: 'whatsapp', mode: 'missed_only', consecutiveMissedThreshold: 2, summaryTime: null, quietHoursStart: null, quietHoursEnd: null, enabled: true },
           { channel: 'push', mode: 'missed_only', consecutiveMissedThreshold: 2, summaryTime: null, quietHoursStart: null, quietHoursEnd: null, enabled: true },
         ],
       },

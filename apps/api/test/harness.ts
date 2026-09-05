@@ -5,7 +5,7 @@ import { buildServer } from '../src/server.js';
 import { closePool } from '../src/lib/db.js';
 import { buildProviders } from '../src/providers/index.js';
 import { loadConfig } from '../src/config.js';
-import type { MockSmsProvider, MockWhatsAppProvider, MockPushProvider } from '../src/providers/index.js';
+import type { MockPushProvider } from '../src/providers/index.js';
 import { createWorkerContext, type WorkerContext } from '../../worker/src/context.js';
 import { runTick } from '../../worker/src/index.js';
 import { resetClockSource, setClockSource } from '../src/lib/clock.js';
@@ -14,8 +14,6 @@ const ROOT = resolve(import.meta.dirname, '../../..');
 
 export interface Harness {
   app: FastifyInstance;
-  sms: MockSmsProvider;
-  whatsapp: MockWhatsAppProvider;
   push: MockPushProvider;
   worker: WorkerContext;
   /** Lets a test drive the clock the worker sees. */
@@ -61,8 +59,6 @@ export async function startHarness(): Promise<Harness> {
 
   harness = {
     app,
-    sms: providers.sms as MockSmsProvider,
-    whatsapp: providers.whatsapp as MockWhatsAppProvider,
     push: providers.push as MockPushProvider,
     worker,
     setWorkerNow: (d) => {
@@ -97,34 +93,53 @@ export interface TestUser {
 
 let ipCounter = 0;
 /**
- * Distinct source address per test user. The OTP endpoints are rate limited
- * per IP — correctly — so a suite that signs several users in from one address
- * would otherwise trip its own defences.
+ * Distinct source address per test user. Registration and sign-in are rate
+ * limited per caller — correctly — so a suite that signed several users in
+ * from one address would otherwise trip its own defences and fail in a way
+ * that looks like a bug in whatever it was actually testing.
  */
 function nextRemoteAddress(): string {
   ipCounter += 1;
   return `10.${Math.floor(ipCounter / 254) % 254}.${ipCounter % 254}.2`;
 }
 
-/** Registers (or signs in) a user and returns everything a test needs. */
+/**
+ * The password every test account is created with.
+ *
+ * Long enough to pass the strength check, and deliberately not a phrase the
+ * common-password list would reject.
+ */
+export const TEST_PASSWORD = 'correct horse battery staple';
+
+/**
+ * Registers (or signs in) a user and returns everything a test needs.
+ *
+ * Password, not OTP. The one-time-code path has no delivery channel left —
+ * both SMS and WhatsApp need a Saudi commercial registration — so the request
+ * endpoint refuses, and a suite that signed in through it would be testing a
+ * route no real user can take. This is the way in that actually exists.
+ */
 export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`): Promise<TestUser> {
   const remoteAddress = nextRemoteAddress();
-  const request = await h.app.inject({
-    method: 'POST', url: '/v1/auth/otp/request', payload: { phone }, remoteAddress,
-  });
-  const parsed = request.json<{ debugCode?: string; error?: { code: string } }>();
-  if (!parsed.debugCode) {
-    throw new Error(`OTP request failed for ${phone}: ${JSON.stringify(parsed)}`);
-  }
-  const code = parsed.debugCode;
 
-  const verify = await h.app.inject({
-    method: 'POST', url: '/v1/auth/otp/verify', payload: { phone, code, deviceId }, remoteAddress,
+  const registered = await h.app.inject({
+    method: 'POST', url: '/v1/auth/register', remoteAddress,
+    payload: { phone, displayName: phone, password: TEST_PASSWORD, deviceId },
   });
-  if (verify.statusCode !== 200) {
-    throw new Error(`OTP verify failed for ${phone}: ${verify.body}`);
-  }
-  const auth = verify.json<{ accessToken: string; refreshToken: string }>();
+
+  // A suite may sign the same number in twice; the second time it is a login.
+  const auth = registered.statusCode === 200
+    ? registered.json<{ accessToken: string; refreshToken: string }>()
+    : await (async () => {
+        const login = await h.app.inject({
+          method: 'POST', url: '/v1/auth/login', remoteAddress,
+          payload: { identifier: phone, password: TEST_PASSWORD, deviceId },
+        });
+        if (login.statusCode !== 200) {
+          throw new Error(`sign-in failed for ${phone}: ${registered.body} / ${login.body}`);
+        }
+        return login.json<{ accessToken: string; refreshToken: string }>();
+      })();
 
   const profiles = await h.app.inject({
     method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${auth.accessToken}` },

@@ -58,21 +58,13 @@ const schema = z.object({
   /** Development convenience: echo the OTP in the response. Refused in production. */
   OTP_DEBUG_ECHO: envBoolean(false),
   /**
-   * Where the login code is delivered.
-   *
-   * WhatsApp is the practical default for Saudi Arabia: A2P SMS there requires
-   * an alphanumeric Sender ID registered against a commercial registration, and
-   * long and short codes are not available at all — so SMS cannot be turned on
-   * by configuration alone the way WhatsApp can.
-   */
-  OTP_CHANNEL: z.enum(['sms', 'whatsapp']).default('sms'),
-  /**
    * Password sign-in.
    *
-   * On by default because it is the only route that does not depend on someone
-   * else's approval: SMS needs a Sender ID registered against a commercial
-   * registration, and WhatsApp authentication templates need Meta business
-   * verification. Turn it off once a verified second factor is available.
+   * On by default because it is the only route into the application. The two
+   * code-delivery channels both require a Saudi commercial registration — an
+   * SMS Sender ID, or a Meta-verified business for a WhatsApp authentication
+   * template — so neither exists here. Turn this off only once a verified
+   * second factor is actually available.
    */
   PASSWORD_LOGIN_ENABLED: envBoolean(true),
 
@@ -82,20 +74,6 @@ const schema = z.object({
   IP_HASH_SALT: z.string().min(8).default('dawaee-dev-salt'),
 
   // --- providers (all optional; each falls back to a logging mock) ---
-  SMS_PROVIDER: z.enum(['mock', 'twilio', 'unifonic']).default('mock'),
-  TWILIO_ACCOUNT_SID: z.string().optional(),
-  TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_FROM: z.string().optional(),
-  UNIFONIC_APP_SID: z.string().optional(),
-  UNIFONIC_SENDER_ID: z.string().optional(),
-
-  WHATSAPP_PROVIDER: z.enum(['mock', 'meta_cloud']).default('mock'),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
-  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
-  WHATSAPP_API_VERSION: z.string().default('v21.0'),
-  WHATSAPP_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
-  WHATSAPP_APP_SECRET: z.string().optional(),
-
   PUSH_PROVIDER: z.enum(['mock', 'expo']).default('mock'),
   EXPO_ACCESS_TOKEN: z.string().optional(),
 
@@ -139,12 +117,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.OTP_DEBUG_ECHO) throw new Error('OTP_DEBUG_ECHO must be false in production');
     if (cfg.IP_HASH_SALT === 'dawaee-dev-salt') throw new Error('IP_HASH_SALT must be set in production');
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
-    if (cfg.WHATSAPP_PROVIDER === 'meta_cloud' && !cfg.WHATSAPP_ACCESS_TOKEN) {
-      throw new Error('WHATSAPP_ACCESS_TOKEN is required when WHATSAPP_PROVIDER=meta_cloud');
-    }
-    if (cfg.OTP_CHANNEL === 'whatsapp' && cfg.WHATSAPP_PROVIDER !== 'meta_cloud') {
-      throw new Error('OTP_CHANNEL=whatsapp requires WHATSAPP_PROVIDER=meta_cloud');
-    }
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
     }

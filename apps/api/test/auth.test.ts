@@ -1,5 +1,19 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { clearOtpCooldown, resetDatabase, signIn, startHarness, type Harness } from './harness.js';
+import { withTransaction } from '../src/lib/db.js';
+import { issueOtp } from '../src/auth/otp-service.js';
+
+/**
+ * Issues a challenge through the service rather than the HTTP route.
+ *
+ * `/v1/auth/otp/request` refuses now: there is no channel left to deliver a
+ * code over, and both would need a Saudi commercial registration to exist. The
+ * verification machinery below it is intact and still guards real properties —
+ * a wrong code is rejected, a used code cannot be replayed, guessing is locked
+ * out — so those stay under test at the layer that still runs. Delivering the
+ * code is what disappeared; checking it is not.
+ */
+const issue = (phone: string) => withTransaction((tx) => issueOtp(tx, phone, null));
 
 let h: Harness;
 
@@ -35,10 +49,7 @@ describe('phone OTP sign-in', () => {
   });
 
   it('rejects an incorrect code', async () => {
-    const req = await h.app.inject({
-      method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '0500000003' }, remoteAddress: '10.9.9.1',
-    });
-    expect(req.statusCode).toBe(200);
+    await issue('+966500000003');
     const bad = await h.app.inject({
       method: 'POST', url: '/v1/auth/otp/verify',
       payload: { phone: '0500000003', code: '000000', deviceId: 'device-bad' }, remoteAddress: '10.9.9.1',
@@ -48,10 +59,7 @@ describe('phone OTP sign-in', () => {
   });
 
   it('consumes a code so it cannot be replayed', async () => {
-    const req = await h.app.inject({
-      method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '0500000004' }, remoteAddress: '10.9.9.2',
-    });
-    const code = req.json().debugCode;
+    const { code } = await issue('+966500000004');
     const first = await h.app.inject({
       method: 'POST', url: '/v1/auth/otp/verify',
       payload: { phone: '0500000004', code, deviceId: 'device-replay' }, remoteAddress: '10.9.9.2',
@@ -66,10 +74,7 @@ describe('phone OTP sign-in', () => {
   });
 
   it('locks out after too many wrong guesses', async () => {
-    const issued = await h.app.inject({
-      method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '0500000005' }, remoteAddress: '10.9.9.3',
-    });
-    expect(issued.statusCode, issued.body).toBe(200);
+    await issue('+966500000005');
     let last = 0;
     const seen: number[] = [];
     for (let i = 0; i < 6; i++) {
@@ -87,14 +92,22 @@ describe('phone OTP sign-in', () => {
   });
 
   it('enforces a resend cooldown', async () => {
-    await h.app.inject({
-      method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '0500000006' }, remoteAddress: '10.9.9.4',
+    await issue('+966500000006');
+    await expect(issue('+966500000006')).rejects.toThrow();
+  });
+
+  /**
+   * The route itself is gone, and must say so rather than appearing to work.
+   * A 200 with no message arriving is the failure that makes someone think
+   * their phone is broken.
+   */
+  it('refuses to issue a code, because none can be delivered', async () => {
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/auth/otp/request',
+      payload: { phone: '0500000007' }, remoteAddress: '10.9.9.5',
     });
-    const second = await h.app.inject({
-      method: 'POST', url: '/v1/auth/otp/request', payload: { phone: '0500000006' }, remoteAddress: '10.9.9.4',
-    });
-    expect(second.statusCode).toBe(429);
-    expect(second.json().error.code).toBe('rate_limited');
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('provider_unavailable');
   });
 });
 

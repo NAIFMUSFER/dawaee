@@ -1,12 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import {
   AppError, ERROR_CODES, passwordLoginSchema, registerPushTokenSchema, registerSchema,
-  requestOtpSchema, refreshSchema, setPasswordSchema, verifyOtpSchema, t,
+  refreshSchema, setPasswordSchema, verifyOtpSchema, t,
 } from '@dawaee/shared';
-import { loadConfig } from '../config.js';
 import { withTransaction, withUser } from '../lib/db.js';
 import { maskPhone, normalizePhone } from '../lib/crypto.js';
-import { assertOtpVerified, checkOtp, issueOtp, OTP_RESEND_COOLDOWN_SECONDS } from '../auth/otp-service.js';
+import { assertOtpVerified, checkOtp } from '../auth/otp-service.js';
 import { assertRotated, createSession, revokeSession, rotateSessionAttempt } from '../auth/session-service.js';
 import {
   assertLogin, attemptPasswordLogin, hashNewPassword, passwordLoginEnabled,
@@ -15,64 +14,32 @@ import { verifyPassword } from '../lib/password.js';
 import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
-import type { Providers } from '../providers/index.js';
-import { WHATSAPP_TEMPLATES } from '../providers/index.js';
 
-export function registerAuthRoutes(app: FastifyInstance, providers: Providers): void {
-  const cfg = loadConfig();
-
+export function registerAuthRoutes(app: FastifyInstance): void {
   /**
    * Request an OTP.
    *
-   * Always answers 200 with the same shape whether or not the number is known.
-   * Revealing "no account for this number" would turn the endpoint into a way
-   * to test whether a person uses the app — which, for a medication app, is
-   * itself a health-adjacent disclosure.
+   * Refused, and deliberately not deleted.
+   *
+   * There is no channel left to deliver a code over: reaching a Saudi phone by
+   * SMS needs an alphanumeric Sender ID registered against a commercial
+   * registration, and by WhatsApp needs a Meta-verified business with an
+   * approved AUTHENTICATION template. Both were removed rather than left as
+   * configuration nobody can switch on.
+   *
+   * It refuses instead of issuing a code because issuing one is worse than
+   * saying no: the caller would get a 200, wait for a message that can never
+   * arrive, and conclude their phone or the app is broken. The verify route
+   * below still works, so an existing challenge is not stranded, and the whole
+   * path comes back by adding a provider once a registration exists.
    */
   app.post('/v1/auth/otp/request', {
     config: { rateLimit: { max: 8, timeWindow: '10 minutes' } },
-  }, async (req) => {
-    const body = requestOtpSchema.parse(req.body);
-    const phone = normalizePhone(body.phone);
-    if (!phone) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
-
-    const issued = await withTransaction(async (tx) => issueOtp(tx, phone, req.ipHash));
-
-    const message = t(body.locale, 'auth.otpSent', { phone: maskPhone(phone) });
-    const smsBody =
-      body.locale === 'ar'
-        ? `رمز التحقق لتطبيق دوائي: ${issued.code}\nصالح لمدة ${cfg.OTP_TTL_MINUTES} دقائق.`
-        : `Your Dawaee verification code is ${issued.code}. Valid for ${cfg.OTP_TTL_MINUTES} minutes.`;
-
-    // The code never travels with anything else. A login message carries no
-    // medication name, no patient name, nothing about health — on WhatsApp it
-    // would otherwise sit in a chat list preview on a shared or lost phone.
-    const result =
-      cfg.OTP_CHANNEL === 'whatsapp'
-        ? await providers.whatsapp.sendTemplate({
-            to: phone,
-            templateName: WHATSAPP_TEMPLATES.loginCode,
-            languageCode: body.locale === 'ar' ? 'ar' : 'en',
-            parameters: [issued.code],
-            authenticationCode: issued.code,
-          })
-        : await providers.sms.send(phone, smsBody);
-
-    if (!result.ok) {
-      req.log.error(
-        { errorCode: result.errorCode, channel: cfg.OTP_CHANNEL },
-        'OTP delivery failed',
-      );
-    }
-
-    return {
-      sent: true,
-      message,
-      expiresAt: issued.expiresAt.toISOString(),
-      resendAfterSeconds: OTP_RESEND_COOLDOWN_SECONDS,
-      // Development only; config refuses this flag in production.
-      ...(cfg.OTP_DEBUG_ECHO ? { debugCode: issued.code } : {}),
-    };
+  }, async () => {
+    throw new AppError(
+      ERROR_CODES.PROVIDER_UNAVAILABLE, 503,
+      'Sign-in codes are unavailable. Use your password to sign in.',
+    );
   });
 
   /** Verify an OTP; creates the account on first successful verification. */

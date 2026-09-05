@@ -1,16 +1,25 @@
 import type { Config } from '../config.js';
-import { MockSmsProvider, TwilioSmsProvider, UnifonicSmsProvider } from './sms.js';
-import { MetaCloudWhatsAppProvider, MockWhatsAppProvider } from './whatsapp.js';
 import { ExpoPushProvider, MockPushProvider } from './push.js';
 import {
   AzureDocumentIntelligenceOcrProvider, GoogleVisionOcrProvider, MockOcrProvider,
 } from './ocr.js';
 import { LocalStorageProvider, S3StorageProvider, UnconfiguredStorageProvider } from './storage.js';
-import type { OcrProvider, PushProvider, SmsProvider, StorageProvider, WhatsAppProvider } from './types.js';
+import type { OcrProvider, PushProvider, StorageProvider } from './types.js';
 
+/**
+ * Outbound integrations.
+ *
+ * There is exactly one messaging channel — push — and that is a deliberate,
+ * externally forced choice rather than an unfinished one. Reaching a Saudi
+ * phone by SMS requires an alphanumeric Sender ID registered against a
+ * commercial registration, and no long or short codes are available; reaching
+ * one by WhatsApp requires a Meta-verified business and an approved
+ * AUTHENTICATION template. Neither can be turned on by configuration, so
+ * neither is offered as configuration. When a commercial registration exists,
+ * the channel goes back in as a new provider against the same interfaces —
+ * the notification pipeline is already channel-shaped.
+ */
 export interface Providers {
-  sms: SmsProvider;
-  whatsapp: WhatsAppProvider;
   push: PushProvider;
   ocr: OcrProvider;
   storage: StorageProvider;
@@ -23,14 +32,6 @@ export interface Providers {
  * is actually able to reach anyone.
  */
 export function buildProviders(cfg: Config): Providers {
-  const sms: SmsProvider =
-    cfg.SMS_PROVIDER === 'twilio' ? new TwilioSmsProvider(cfg)
-      : cfg.SMS_PROVIDER === 'unifonic' ? new UnifonicSmsProvider(cfg)
-        : new MockSmsProvider();
-
-  const whatsapp: WhatsAppProvider =
-    cfg.WHATSAPP_PROVIDER === 'meta_cloud' ? new MetaCloudWhatsAppProvider(cfg) : new MockWhatsAppProvider();
-
   const push: PushProvider = cfg.PUSH_PROVIDER === 'expo' ? new ExpoPushProvider(cfg) : new MockPushProvider();
 
   const ocr: OcrProvider =
@@ -48,12 +49,10 @@ export function buildProviders(cfg: Config): Providers {
         ? new S3StorageProvider(cfg)
         : new UnconfiguredStorageProvider();
 
-  return { sms, whatsapp, push, ocr, storage };
+  return { push, ocr, storage };
 }
 
 export * from './types.js';
-export { MockSmsProvider } from './sms.js';
-export { MockWhatsAppProvider, WHATSAPP_TEMPLATES } from './whatsapp.js';
 export { MockPushProvider } from './push.js';
 export { MockOcrProvider, parseMedicationText, parsePrescriptionText, detectLanguage } from './ocr.js';
 export { LocalStorageProvider, UnconfiguredStorageProvider, ALLOWED_IMAGE_TYPES, sniffImageType, buildObjectKey } from './storage.js';

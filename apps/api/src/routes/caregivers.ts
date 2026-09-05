@@ -11,7 +11,6 @@ import { maskPhone, normalizePhone, randomToken, sha256 } from '../lib/crypto.js
 import { authenticate, currentUser } from '../middleware/context.js';
 import { loadProfileAccess, requireProfileAccess, requireProfileOwner } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
-import { WHATSAPP_TEMPLATES, type Providers } from '../providers/index.js';
 
 /**
  * Family Care Circle.
@@ -21,7 +20,7 @@ import { WHATSAPP_TEMPLATES, type Providers } from '../providers/index.js';
  *  2. The patient can revoke that authorization at any moment, and revocation
  *     takes effect on the very next request — there is no cached grant.
  */
-export function registerCaregiverRoutes(app: FastifyInstance, providers: Providers): void {
+export function registerCaregiverRoutes(app: FastifyInstance): void {
   const cfg = loadConfig();
 
   app.addHook('preHandler', async (req) => {
@@ -136,26 +135,18 @@ export function registerCaregiverRoutes(app: FastifyInstance, providers: Provide
       patient: result.patientName, hours: body.expiresInHours, link,
     });
 
-    let delivery: { channel: string; ok: boolean; error?: string } = { channel: body.channel, ok: true };
-    if (body.channel === 'sms') {
-      const sent = await providers.sms.send(phone, message);
-      delivery = { channel: 'sms', ok: sent.ok, error: sent.errorCode };
-    } else if (body.channel === 'whatsapp') {
-      const sent = await providers.whatsapp.sendTemplate({
-        to: phone,
-        templateName: WHATSAPP_TEMPLATES.caregiverInvite,
-        languageCode: 'ar',
-        parameters: [result.patientName, link],
-      });
-      delivery = { channel: 'whatsapp', ok: sent.ok, error: sent.errorCode };
-    }
-
+    // The invitation is handed to the patient to pass on themselves — by
+    // whichever messenger they already use. The app does not send it: the two
+    // channels it could have sent on both need a commercial registration, and
+    // an invitation the patient forwards is a channel that always works.
     return {
       relationshipId: result.relationshipId,
       expiresAt: result.expiresAt,
-      // Returned so the patient can share it themselves if delivery failed.
+      // The patient shares these themselves; there is no delivery to report.
       invitationLink: link,
-      delivery,
+      // The ready-written message, so the app can offer a share sheet rather
+      // than making the patient compose an explanation of what the link is.
+      invitationMessage: message,
     };
   });
 
@@ -240,24 +231,6 @@ export function registerCaregiverRoutes(app: FastifyInstance, providers: Provide
       );
       if (!relRows[0]) throw AppError.notFound('Caregiver relationship not found');
       await requireProfileOwner(tx, userId, relRows[0].patient_profile_id);
-
-      // WhatsApp cannot be switched on without a recorded consent from the
-      // patient, checked again at send time by the escalation engine.
-      if (body.channel === 'whatsapp' && body.enabled && body.mode !== 'never') {
-        const { rows: consent } = await tx.query<{ granted: boolean }>(
-          `SELECT granted FROM consents
-            WHERE user_id = $1 AND type = 'whatsapp_notifications'
-              AND (patient_profile_id = $2 OR patient_profile_id IS NULL)
-            ORDER BY patient_profile_id NULLS LAST LIMIT 1`,
-          [userId, relRows[0].patient_profile_id],
-        );
-        if (!consent[0]?.granted) {
-          throw new AppError(
-            ERROR_CODES.CONSENT_REQUIRED, 428,
-            'WhatsApp notifications require explicit consent before they can be enabled',
-          );
-        }
-      }
 
       const { rows } = await tx.query(
         `INSERT INTO caregiver_notification_rules

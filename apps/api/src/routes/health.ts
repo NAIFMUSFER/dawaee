@@ -27,8 +27,6 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
     }
 
     const integrations = {
-      sms: providers.sms.name,
-      whatsapp: providers.whatsapp.name,
       push: providers.push.name,
       ocr: providers.ocr.name,
       storage: providers.storage.name,
