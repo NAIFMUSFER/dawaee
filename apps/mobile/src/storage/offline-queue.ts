@@ -1,6 +1,7 @@
 import { api, NetworkError } from '../api/client.js';
 import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js';
 import type { CacheSlot } from './secure-cache.js';
+import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
 
 /**
  * The offline queue.
@@ -24,7 +25,7 @@ import type { CacheSlot } from './secure-cache.js';
  */
 const QUEUE_SLOT: CacheSlot = { plaintextKey: 'dawaee.offlineQueue' };
 const CACHE_SLOT: CacheSlot = { plaintextKey: 'dawaee.todayCache' };
-export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT];
+export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT, LOW_STOCK_SLOT];
 
 /**
  * Who the stored data belongs to.
@@ -215,6 +216,10 @@ export async function purgeLocalCaches(userId: string | null): Promise<void> {
     await clearSlot(CACHE_SLOT, userId);
   }
   await purgeAllSlots(ALL_SLOTS);
+  // The low-stock snooze lives in the same encrypted store but keeps its own
+  // module, because it also has to sweep the pre-encryption per-medication keys
+  // that were never account-scoped at all.
+  await purgeSnoozes(userId);
 }
 
 /** Applies a queued action to the cached view so the UI updates instantly offline. */

@@ -87,6 +87,7 @@ const crypto_ = await import('../src/storage/crypto.js');
 const keys = await import('../src/storage/cache-key.js');
 const cache = await import('../src/storage/secure-cache.js');
 const queue = await import('../src/storage/offline-queue.js');
+const snooze = await import('../src/storage/low-stock-snooze.js');
 
 const ALICE = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const BOB = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
@@ -696,5 +697,172 @@ describe('nothing writes medication data in the clear any more', () => {
   it('binds the cache to the account before anything can read it', () => {
     const src = readFileSync(join(ROOT, 'apps/mobile/src/state/app-store.tsx'), 'utf8');
     expect(src.indexOf('setCacheOwner(me.user.id)')).toBeLessThan(src.indexOf('const { restartRequired }'));
+  });
+});
+
+// ────────────────────────────────────────────────── low-stock snooze (PHI key)
+
+/**
+ * `dawaee.lowStockSnoozedUntil.<medicationId>` — one AsyncStorage entry per
+ * medication. The stored VALUE was only a date, which is why it survived the
+ * first pass, but the KEY was the leak: a directory listing of the storage file
+ * told anyone reading it how many medications the person takes and which ones
+ * are running out, and the stable id let the same medication be correlated
+ * across backups months apart. Encrypting values does not protect key names.
+ */
+describe('the low-stock snooze no longer names medications in the clear', () => {
+  const LEGACY = 'dawaee.lowStockSnoozedUntil.';
+  const TODAY = '2026-09-05';
+  const MED_A = 'med-11111111-2222-3333-4444-555555555555';
+  const MED_B = 'med-99999999-8888-7777-6666-555555555555';
+
+  const keyNames = () => [...async_.keys()].join('|');
+
+  it('stores a snooze with no medication id in any key name', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    expect(keyNames()).not.toContain(MED_A);
+    expect(keyNames()).not.toContain('lowStockSnoozedUntil');
+    expect(allValues(), 'and not in the values either').not.toContain(MED_A);
+  });
+
+  it('still snoozes the right medication and only that one', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBe('2026-09-06');
+    expect(await snooze.readSnooze(ALICE, MED_B, TODAY)).toBeNull();
+  });
+
+  it('holds several medications at once', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    await snooze.setSnooze(ALICE, MED_B, '2026-09-08', TODAY);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({
+      [MED_A]: '2026-09-06', [MED_B]: '2026-09-08',
+    });
+  });
+
+  it('expires a snooze once its date has passed', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    expect(await snooze.readSnooze(ALICE, MED_A, '2026-09-06')).toBeNull();
+    expect(await snooze.readSnooze(ALICE, MED_A, '2026-09-20')).toBeNull();
+  });
+
+  it('drops a snooze when the medication is refilled', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    await snooze.clearSnooze(ALICE, MED_A, TODAY);
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBeNull();
+  });
+
+  it('migrates a legacy per-medication key and deletes it', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBe('2026-09-06');
+    expect(async_.has(`${LEGACY}${MED_A}`)).toBe(false);
+    expect(keyNames()).not.toContain(MED_A);
+  });
+
+  it('migrates several legacy keys in one pass', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    async_.set(`${LEGACY}${MED_B}`, '2026-09-08');
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({
+      [MED_A]: '2026-09-06', [MED_B]: '2026-09-08',
+    });
+    expect(keyNames()).not.toContain('lowStockSnoozedUntil');
+  });
+
+  it('is idempotent', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    await snooze.readSnoozes(ALICE, TODAY);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({ [MED_A]: '2026-09-06' });
+  });
+
+  it('enumerates only the Dawaee prefix, leaving other keys alone', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    async_.set('some.other.library.key', 'not ours');
+    async_.set('dawaee.deviceId', 'dev-abc');
+    await snooze.readSnoozes(ALICE, TODAY);
+    expect(async_.get('some.other.library.key')).toBe('not ours');
+    expect(async_.get('dawaee.deviceId')).toBe('dev-abc');
+  });
+
+  /**
+   * A refill cancels a snooze. If the stale legacy key could overwrite the
+   * encrypted state, that cancelled snooze would come back and suppress a
+   * warning about a medication that had genuinely run out.
+   */
+  it('never lets a stale legacy key override newer encrypted state', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-30', TODAY);
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBe('2026-09-30');
+    expect(async_.has(`${LEGACY}${MED_A}`)).toBe(false);
+  });
+
+  it('keeps the legacy key when the encrypted write fails', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    await keys.getOrCreateCacheKey(ALICE);
+    asyncWriteFails = true;
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBe('2026-09-06');
+    expect(async_.get(`${LEGACY}${MED_A}`), 'the only copy survives').toBe('2026-09-06');
+  });
+
+  it('stays correct when legacy cleanup keeps failing', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-30', TODAY);
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    asyncDeleteFails = true;
+    for (let i = 0; i < 5; i++) {
+      expect(await snooze.readSnooze(ALICE, MED_A, TODAY), `launch ${i}`).toBe('2026-09-30');
+    }
+    expect(async_.has(`${LEGACY}${MED_A}`), 'still there, still ignored').toBe(true);
+  });
+
+  it('keeps two accounts apart', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    await snooze.setSnooze(BOB, MED_B, '2026-09-08', TODAY);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({ [MED_A]: '2026-09-06' });
+    expect(await snooze.readSnoozes(BOB, TODAY)).toEqual({ [MED_B]: '2026-09-08' });
+  });
+
+  it('User A logout → User B login → no trace of A’s medications', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-30', TODAY);
+    async_.set(`${LEGACY}${MED_B}`, '2026-09-09'); // a legacy key from an older build
+
+    await snooze.purgeSnoozes(ALICE);
+
+    expect(await snooze.readSnoozes(BOB, TODAY)).toEqual({});
+    expect(keyNames()).not.toContain(MED_A);
+    expect(keyNames()).not.toContain(MED_B);
+    expect(allValues()).not.toContain(MED_A);
+  });
+
+  it('is swept by the sign-out purge along with the other caches', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-30', TODAY);
+    async_.set(`${LEGACY}${MED_B}`, '2026-09-09');
+    await queue.purgeLocalCaches(ALICE);
+    expect([...async_.keys()]).toEqual([]);
+  });
+
+  it('does nothing at all when nobody is signed in', async () => {
+    await snooze.setSnooze(null, MED_A, '2026-09-06', TODAY);
+    expect(await snooze.readSnoozes(null, TODAY)).toEqual({});
+    expect([...async_.keys()]).toEqual([]);
+  });
+
+  it('ignores a malformed stored date rather than trusting it', async () => {
+    async_.set(`${LEGACY}${MED_A}`, 'not-a-date');
+    expect(await snooze.readSnooze(ALICE, MED_A, TODAY)).toBeNull();
+  });
+
+  it('leaves no medication id in any AsyncStorage key name, ever', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    await snooze.setSnooze(ALICE, MED_B, '2026-09-08', TODAY);
+    await snooze.readSnoozes(ALICE, TODAY);
+    for (const key of async_.keys()) {
+      expect(key, `key ${key}`).not.toMatch(/med-/);
+      expect(key).not.toContain('lowStockSnoozedUntil');
+    }
+  });
+
+  it('has no medication-id key left in the stock screen', () => {
+    const src = readFileSync(join(ROOT, 'apps/mobile/app/medication/stock.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '');
+    expect(src).not.toContain('AsyncStorage');
+    expect(src).not.toContain('lowStockSnoozedUntil');
   });
 });
