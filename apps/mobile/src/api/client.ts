@@ -77,7 +77,7 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
-let refreshInFlight: Promise<boolean> | null = null;
+let refreshInFlight: Promise<RefreshResult> | null = null;
 let onUnauthenticated: (() => void) | null = null;
 
 export async function loadStoredSession(): Promise<boolean> {
@@ -130,9 +130,41 @@ export async function getDeviceId(): Promise<string> {
   return id;
 }
 
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshToken) return false;
-  // Concurrent 401s must trigger exactly one refresh.
+/**
+ * Refresh, single-flight.
+ *
+ * Every concurrent caller shares one in-flight promise, so twenty requests that
+ * all discover an expired access token at the same moment produce exactly ONE
+ * refresh over the network. That is not only a bandwidth nicety: two
+ * client-originated refreshes carrying the same token race on the server, and
+ * until recently the loser was treated as a stolen-token replay and revoked the
+ * whole device. The server no longer does that within its grace window, but the
+ * client's job is to not create the race in the first place.
+ *
+ * The promise is cleared in `finally`, so a failed refresh does not wedge every
+ * later caller onto a dead result.
+ */
+/**
+ * Why an enum and not a boolean.
+ *
+ * `request()` used to read "refresh returned false" as "this session is dead"
+ * and clear storage. Two of the three ways a refresh fails are not that:
+ *
+ *   `offline`    — the network never reached the server, so the tokens are
+ *                  fine. Clearing here signed a user out because their train
+ *                  went into a tunnel while a token happened to be expiring,
+ *                  which is the exact opposite of what the offline design is
+ *                  for; the comment in the catch below already claimed this
+ *                  did not happen.
+ *   `superseded` — this client's own parallel request already rotated. The
+ *                  newer tokens are on disk; erasing them turns a harmless race
+ *                  into a sign-out and undoes the server-side fix for it.
+ *   `rejected`   — the server refused the token. This one really is dead.
+ */
+type RefreshResult = 'ok' | 'rejected' | 'offline' | 'superseded';
+
+async function refreshAccessToken(): Promise<RefreshResult> {
+  if (!refreshToken) return 'rejected';
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
@@ -143,9 +175,22 @@ async function refreshAccessToken(): Promise<boolean> {
         body: JSON.stringify({ refreshToken }),
       });
       if (!res.ok) {
+        /**
+         * 409 REFRESH_SUPERSEDED: two of THIS client's own requests raced and
+         * this one lost. The other already stored a valid session.
+         *
+         * Clearing here would be the worst possible reaction — it would erase
+         * the newer tokens the winning request just wrote, turning a harmless
+         * race into a sign-out. Single-flight below means this should be
+         * unreachable in normal operation; it is handled anyway because "should
+         * be unreachable" is not a security property, and because a process
+         * restart mid-refresh can produce exactly this shape.
+         */
+        if (res.status === 409) return 'superseded';
+
         await clearSession();
         onUnauthenticated?.();
-        return false;
+        return 'rejected';
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
       try {
@@ -160,10 +205,10 @@ async function refreshAccessToken(): Promise<boolean> {
         // pair, which storeSession set before it threw.
         await clearStoredSession().catch(() => undefined);
       }
-      return true;
+      return 'ok';
     } catch {
       // Offline: keep the tokens, the user is not signed out.
-      return false;
+      return 'offline';
     } finally {
       refreshInFlight = null;
     }
@@ -235,12 +280,23 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     const parsed = await res.clone().json().catch(() => null) as { error?: { code?: string } } | null;
     // Only an expired token is worth a silent refresh; a revoked session must
     // sign the user out rather than loop.
-    if (parsed?.error?.code === 'token_expired' && (await refreshAccessToken())) {
-      try {
-        res = await send();
-      } catch (err) {
-        throw new NetworkError(err instanceof Error ? err.message : undefined);
+    if (parsed?.error?.code === 'token_expired') {
+      const outcome = await refreshAccessToken();
+      if (outcome === 'ok') {
+        try {
+          res = await send();
+        } catch (err) {
+          throw new NetworkError(err instanceof Error ? err.message : undefined);
+        }
+      } else if (outcome === 'offline') {
+        // The refresh never reached the server. Surface it as what it is so the
+        // UI falls back to cached data, and leave the session alone.
+        throw new NetworkError('refresh unreachable');
       }
+      // 'superseded': this client's own parallel request already rotated, and
+      // `refreshAccessToken` has cleared nothing. Fall through to the error
+      // below; the caller retries against the session the winner stored.
+      // 'rejected': the session is genuinely dead and has already been cleared.
     } else {
       await clearSession();
       onUnauthenticated?.();

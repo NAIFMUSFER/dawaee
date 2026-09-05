@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { clearOtpCooldown, resetDatabase, signIn, startHarness, type Harness } from './harness.js';
 import { withTransaction } from '../src/lib/db.js';
@@ -121,15 +122,43 @@ describe('sessions', () => {
     const rotated = first.json();
     expect(rotated.refreshToken).not.toBe(user.refreshToken);
 
-    // Re-presenting the consumed token is treated as theft.
+    // Re-presenting the consumed token IMMEDIATELY is a race, not theft: a
+    // client can legitimately have two requests in flight carrying the same
+    // token. Within the 30-second window the server says "superseded", mints
+    // nothing, and revokes nothing (P9-1).
+    const raced = await h.app.inject({
+      method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: user.refreshToken },
+    });
+    expect(raced.statusCode).toBe(409);
+    expect(raced.json().error.code).toBe('refresh_superseded');
+
+    // The replacement is untouched by that.
+    const stillGood = await h.app.inject({
+      method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: rotated.refreshToken },
+    });
+    expect(stillGood.statusCode).toBe(200);
+    const rotatedTwice = stillGood.json();
+
+    // Age the lineage past the race window: the same replay is now theft, and
+    // it revokes the device including the live tip.
+    // The owner connection: the worker role deliberately has no access to
+    // auth_sessions at all since the P8-1 least-privilege work.
+    const ownerPool = new pg.Pool({
+      connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test', max: 1,
+    });
+    await ownerPool.query(
+      `UPDATE auth_sessions SET revoked_at = now() - interval '31 seconds'
+        WHERE user_id = $1 AND replaced_by IS NOT NULL`,
+      [user.userId],
+    );
+    await ownerPool.end();
     const reuse = await h.app.inject({
       method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: user.refreshToken },
     });
     expect(reuse.statusCode).toBe(401);
 
-    // …and that revokes the replacement too, so the attacker gains nothing.
     const afterTheft = await h.app.inject({
-      method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: rotated.refreshToken },
+      method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: rotatedTwice.refreshToken },
     });
     expect(afterTheft.statusCode).toBe(401);
   });

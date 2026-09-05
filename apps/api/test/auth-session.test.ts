@@ -57,6 +57,22 @@ const refresh = (token: string) => h.app.inject({
   payload: { refreshToken: token },
 });
 
+/**
+ * Push every already-rotated session past the P9-1 grace window.
+ *
+ * The blocks below test MALICIOUS replay, which by definition arrives later
+ * than the 30-second race window — a thief is not competing with the victim's
+ * own in-flight request. Without this they would land in the grace path and
+ * assert the wrong thing. The window itself is covered separately.
+ */
+async function ageBeyondGrace(userId: string) {
+  await owner.query(
+    `UPDATE auth_sessions SET revoked_at = now() - interval '31 seconds'
+      WHERE user_id = $1 AND replaced_by IS NOT NULL AND revoked_at IS NOT NULL`,
+    [userId],
+  );
+}
+
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
@@ -261,14 +277,14 @@ describe('C — the losing request in a legitimate race', () => {
       await c2.query('COMMIT');
     } finally { c1.release(); c2.release(); }
 
-    // The loser is told it detected theft.
-    expect(loserOutcome, 'the loser took a different branch than expected').toBe('reuse_detected');
+    // P9-1 FIXED: the loser is told it was superseded, not that it is a thief.
+    expect(loserOutcome, 'the loser was treated as theft again').toBe('superseded');
 
-    // And the consequence: the winner's fresh session is revoked too.
+    // And the winner's fresh session is untouched.
     const live = (await sessions(bob.userId)).filter(
       (s) => s.device_id === 'device-loser-0001' && s.revoked_at === null,
     );
-    expect(live.length, 'documented behaviour: the device is fully revoked').toBe(0);
+    expect(live.length, "the loser revoked the winner's session").toBe(1);
   });
 
   /**
@@ -305,6 +321,7 @@ describe('D — replay after a completed rotation', () => {
     // R2 is alive before the replay.
     expect((await refresh(r2)).statusCode).toBe(200);
 
+    await ageBeyondGrace(dan.userId);
     const replay = await refresh(r1);
     expect(replay.statusCode, 'a replayed R1 was accepted').not.toBe(200);
 
@@ -320,7 +337,8 @@ describe('D — replay after a completed rotation', () => {
     const { refreshToken: r1 } = await login(eve.phone, 'device-desc-0001');
     const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
 
-    await refresh(r1); // replay
+    await ageBeyondGrace(eve.userId);
+    await refresh(r1); // replay, now outside the grace window
     expect((await refresh(r2)).statusCode, 'R2 still worked after reuse detection').not.toBe(200);
   });
 });
@@ -332,6 +350,7 @@ describe('E — chain replay', () => {
     const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
     const r3 = (await refresh(r2)).json<{ refreshToken: string }>().refreshToken;
 
+    await ageBeyondGrace(frank.userId);
     expect((await refresh(r1)).statusCode).not.toBe(200);
     expect((await refresh(r3)).statusCode, 'the live tip survived a replay of R1').not.toBe(200);
   });
@@ -342,6 +361,7 @@ describe('E — chain replay', () => {
     const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
     const r3 = (await refresh(r2)).json<{ refreshToken: string }>().refreshToken;
 
+    await ageBeyondGrace(grace.userId);
     expect((await refresh(r2)).statusCode).not.toBe(200);
     expect((await refresh(r3)).statusCode).not.toBe(200);
   });
@@ -354,6 +374,7 @@ describe('F — revocation scope is the device, not the account', () => {
     const { refreshToken: rB, accessToken: aB } = await login(heidi.phone, 'device-B-scope-0001');
 
     const rA2 = (await refresh(rA)).json<{ refreshToken: string }>().refreshToken;
+    await ageBeyondGrace(heidi.userId);
     expect((await refresh(rA)).statusCode).not.toBe(200); // replay, revokes device A
     expect((await refresh(rA2)).statusCode, 'device A should be dead').not.toBe(200);
 
@@ -664,15 +685,21 @@ describe('the JWT surface refuses everything it should', () => {
 // ══════════════════════════════════════════ password
 
 describe('password handling', () => {
-  it('uses scrypt with the cost stored in the hash', async () => {
+  /**
+   * Against a named source: the OWASP Password Storage Cheat Sheet (retrieved
+   * 2026-09-05) lists N=2^15, r=8, p=3 as one of five equivalent-work scrypt
+   * configurations. The code previously used p=1 at that N, which is below
+   * every listed option rather than "at the floor".
+   */
+  it('uses scrypt at the OWASP-listed work factor for N=2^15', async () => {
     const { rows } = await owner.query<{ password_hash: string }>(
       'SELECT password_hash FROM user_credentials WHERE user_id = $1', [alice.userId],
     );
     const parts = rows[0]!.password_hash.split('$');
     expect(parts[0]).toBe('scrypt');
-    expect(Number(parts[1]), 'N below the OWASP floor of 2^15').toBeGreaterThanOrEqual(32768);
+    expect(Number(parts[1]), 'N below 2^15').toBeGreaterThanOrEqual(32768);
     expect(Number(parts[2])).toBe(8);
-    expect(Number(parts[3])).toBe(1);
+    expect(Number(parts[3]), 'p below the OWASP pairing for this N').toBeGreaterThanOrEqual(3);
     // 16-byte salt, 64-byte key, both base64.
     expect(Buffer.from(parts[4]!, 'base64')).toHaveLength(16);
     expect(Buffer.from(parts[5]!, 'base64')).toHaveLength(64);
@@ -1032,5 +1059,294 @@ describe('identity-surface observations for P5', () => {
     const unknown = await refresh('completely-made-up-token-value-1234567890');
     expect(revoked.statusCode).toBe(unknown.statusCode);
     expect(revoked.json().error.code).toBe(unknown.json().error.code);
+  });
+});
+
+// ══════════════════════════════════════════ P9-4: disabled accounts
+
+/**
+ * `users.disabled_at` blocks both login paths — the OTP function raises
+ * "account is disabled" and the password path refuses — so it means account
+ * disablement, not "no new logins". Nothing consulted it after authentication,
+ * so every session open at the moment of disabling kept working until its
+ * refresh token expired. That inverts the control exactly when it matters:
+ * disabling is the response to a compromised, abusive or unsafe account, and in
+ * all three the already-open sessions ARE the problem.
+ *
+ * It is written out of band — no route sets it — which is why the check belongs
+ * at the liveness boundary rather than in a handler that revokes sessions.
+ */
+describe('P9-4 — disabling an account stops it at once', () => {
+  const disable = (userId: string) =>
+    owner.query('UPDATE users SET disabled_at = now() WHERE id = $1', [userId]);
+  const enable = (userId: string) =>
+    owner.query('UPDATE users SET disabled_at = NULL WHERE id = $1', [userId]);
+
+  it('an access token stops working the moment the account is disabled', async () => {
+    const user = await signIn(h, '+966500003001');
+    const s = await login(user.phone, 'device-dis-a-0001');
+    const headers = { authorization: `Bearer ${s.accessToken}` };
+
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode,
+      'the positive control failed').toBe(200);
+
+    await disable(user.userId);
+
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode,
+      'a disabled account still served a request').toBe(401);
+    await enable(user.userId);
+  });
+
+  it('the refresh token is refused too', async () => {
+    const user = await signIn(h, '+966500003002');
+    const s = await login(user.phone, 'device-dis-b-0001');
+    await disable(user.userId);
+    expect((await refresh(s.refreshToken)).statusCode,
+      'a disabled account could still refresh').not.toBe(200);
+    await enable(user.userId);
+  });
+
+  it('refusing a disabled refresh is indistinguishable from an unknown token', async () => {
+    const user = await signIn(h, '+966500003003');
+    const s = await login(user.phone, 'device-dis-c-0001');
+    await disable(user.userId);
+
+    const disabledRes = await refresh(s.refreshToken);
+    const unknownRes = await refresh('a-token-that-was-never-issued-0123456789');
+    expect(disabledRes.statusCode).toBe(unknownRes.statusCode);
+    expect(disabledRes.json().error.code, 'disablement is observable from outside')
+      .toBe(unknownRes.json().error.code);
+    await enable(user.userId);
+  });
+
+  it('a new login is refused', async () => {
+    const user = await signIn(h, '+966500003004');
+    await disable(user.userId);
+    const res = await h.app.inject({
+      method: 'POST', url: '/v1/auth/login', remoteAddress: '10.20.1.1',
+      payload: { identifier: user.phone, password: TEST_PASSWORD, deviceId: 'device-dis-d-0001' },
+    });
+    expect(res.statusCode).toBe(401);
+    await enable(user.userId);
+  });
+
+  it('every device is stopped, not just one', async () => {
+    const user = await signIn(h, '+966500003005');
+    const one = await login(user.phone, 'device-dis-e-0001');
+    const two = await login(user.phone, 'device-dis-e-0002');
+    await disable(user.userId);
+
+    for (const s of [one, two]) {
+      expect((await h.app.inject({
+        method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${s.accessToken}` },
+      })).statusCode, 'a device survived account disablement').toBe(401);
+      expect((await refresh(s.refreshToken)).statusCode).not.toBe(200);
+    }
+    await enable(user.userId);
+  });
+
+  /**
+   * Checking at read time rather than revoking rows makes the state reversible:
+   * an account disabled by mistake is restored without forcing everyone to sign
+   * in again, and with no cleanup to get wrong.
+   */
+  it('re-enabling restores sessions that are still live', async () => {
+    const user = await signIn(h, '+966500003006');
+    const s = await login(user.phone, 'device-dis-f-0001');
+    const headers = { authorization: `Bearer ${s.accessToken}` };
+
+    await disable(user.userId);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(401);
+
+    await enable(user.userId);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode,
+      're-enabling did not restore a live session').toBe(200);
+    expect((await refresh(s.refreshToken)).statusCode).toBe(200);
+  });
+});
+
+// ══════════════════════════════════════════ P9-1: superseded
+
+describe('P9-1 — a superseded refresh is not theft', () => {
+  it('the loser gets 409 and the winner survives', async () => {
+    const user = await signIn(h, '+966500003100');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-a-0001');
+
+    const [a, b] = await Promise.all([refresh(r1), refresh(r1)]);
+    const winner = [a, b].find((r) => r.statusCode === 200);
+    const loser = [a, b].find((r) => r.statusCode !== 200);
+
+    expect(winner, 'neither request won').toBeDefined();
+    expect(loser!.statusCode, 'the loser was not told it was superseded').toBe(409);
+    expect(loser!.json().error.code).toBe('refresh_superseded');
+
+    const r2 = winner!.json<{ refreshToken: string }>().refreshToken;
+    expect((await refresh(r2)).statusCode, 'the loser revoked the winner').toBe(200);
+  });
+
+  /**
+   * The security property: the grace path mints NOTHING. An attacker replaying
+   * a stolen token inside the window avoids tripping the immediate revocation
+   * and receives zero usable material for it.
+   */
+  it('the superseded response carries no token material at all', async () => {
+    const user = await signIn(h, '+966500003101');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-b-0001');
+    const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
+
+    const superseded = await refresh(r1);
+    expect(superseded.statusCode).toBe(409);
+    const body = superseded.body;
+    expect(body).not.toContain(r1);
+    expect(body).not.toContain(r2);
+    expect(body).not.toMatch(/accessToken|refreshToken|sessionId/);
+    expect(body).not.toMatch(/[A-Za-z0-9_-]{40,}/);
+  });
+
+  it('creates no second descendant session', async () => {
+    const user = await signIn(h, '+966500003102');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-c-0001');
+    const before = (await sessions(user.userId)).length;
+
+    await refresh(r1);
+    await refresh(r1);
+    await refresh(r1);
+
+    expect((await sessions(user.userId)).length - before,
+      'a superseded refresh created a session').toBe(1);
+  });
+
+  it('stores no raw descendant token server-side', async () => {
+    const user = await signIn(h, '+966500003103');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-d-0001');
+    const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
+
+    const { rows } = await owner.query<{ refresh_token_hash: string }>(
+      'SELECT refresh_token_hash FROM auth_sessions WHERE user_id=$1', [user.userId],
+    );
+    for (const row of rows) {
+      expect(row.refresh_token_hash, 'a raw token was stored').not.toBe(r2);
+      expect(row.refresh_token_hash).not.toBe(r1);
+      expect(row.refresh_token_hash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  /**
+   * After the window the same replay is theft again. Driven at the database
+   * level because the grace is 30 seconds and a test must not sleep for it.
+   */
+  it('after the grace window, the same replay revokes the device', async () => {
+    const user = await signIn(h, '+966500003104');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-e-0001');
+    const r2 = (await refresh(r1)).json<{ refreshToken: string }>().refreshToken;
+
+    await owner.query(
+      `UPDATE auth_sessions SET revoked_at = now() - interval '31 seconds'
+        WHERE user_id = $1 AND replaced_by IS NOT NULL`,
+      [user.userId],
+    );
+
+    const replay = await refresh(r1);
+    expect(replay.statusCode, 'an aged replay was still treated as a race').toBe(401);
+    expect((await refresh(r2)).statusCode, 'the device was not revoked').not.toBe(200);
+  });
+
+  /**
+   * A token revoked by LOGOUT has no `replaced_by`, so it can never take the
+   * grace path however recent it is — logout is not a rotation.
+   */
+  it('a token revoked by logout is never treated as superseded', async () => {
+    const user = await signIn(h, '+966500003105');
+    const s = await login(user.phone, 'device-sup-f-0001');
+    await h.app.inject({
+      method: 'POST', url: '/v1/auth/logout',
+      headers: { authorization: `Bearer ${s.accessToken}` },
+    });
+    const res = await refresh(s.refreshToken);
+    expect(res.statusCode, 'a logged-out token got the grace path').not.toBe(409);
+  });
+
+  it('the grace window is a named constant, not a literal in a branch', async () => {
+    const { rows } = await owner.query<{ src: string }>(
+      "SELECT prosrc AS src FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+      + "WHERE n.nspname='app' AND p.proname='rotate_session'",
+    );
+    expect(rows[0]!.src).toMatch(/grace\s+constant\s+interval/i);
+    expect(rows[0]!.src).toMatch(/revoked_at\s*>\s*now\(\)\s*-\s*grace/i);
+  });
+
+  it('still allows exactly one winner among many simultaneous callers', async () => {
+    const user = await signIn(h, '+966500003106');
+    const { refreshToken: r1 } = await login(user.phone, 'device-sup-g-0001');
+    const before = (await sessions(user.userId)).length;
+
+    const results = await Promise.all(Array.from({ length: 8 }, () => refresh(r1)));
+    const winners = results.filter((r) => r.statusCode === 200);
+    expect(winners.length, 'more than one winner among 8 racers').toBe(1);
+    for (const loser of results.filter((r) => r.statusCode !== 200)) {
+      expect(loser.statusCode, 'a loser was treated as theft').toBe(409);
+    }
+    expect((await sessions(user.userId)).length - before).toBe(1);
+  });
+});
+
+const { needsRehash, hashPassword, verifyPassword } = await import('../src/lib/password.js');
+
+describe('password cost parameters and normalization are deliberate', () => {
+
+  /**
+   * Raising `p` alone must actually upgrade people. `needsRehash` compared only
+   * N and r, so every existing hash would have kept its weaker cost forever
+   * while the constants claimed otherwise.
+   */
+  it('marks a hash written at a lower p for rehash', () => {
+    const weak = 'scrypt$32768$8$1$c2FsdA==$aGFzaA==';
+    expect(needsRehash(weak), 'a p=1 hash was not flagged for upgrade').toBe(true);
+  });
+
+  it('does not flag a hash already at the current cost', async () => {
+    expect(needsRehash(await hashPassword('a-strong-enough-password'))).toBe(false);
+  });
+
+  it('still verifies an old hash written at the weaker cost', async () => {
+    // Written the old way, verified now: parameters travel inside the hash, so
+    // nobody is locked out by the change.
+    const { scrypt } = await import('node:crypto');
+    const { promisify } = await import('node:util');
+    const s = promisify(scrypt) as (pw: string, salt: Buffer, len: number, o: object) => Promise<Buffer>;
+    const salt = Buffer.alloc(16, 7);
+    const derived = await s('legacy-password-value', salt, 64, { N: 32768, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
+    const legacy = ['scrypt', 32768, 8, 1, salt.toString('base64'), derived.toString('base64')].join('$');
+
+    expect(await verifyPassword('legacy-password-value', legacy), 'an old hash stopped verifying').toBe(true);
+    expect(await verifyPassword('wrong', legacy)).toBe(false);
+    expect(needsRehash(legacy), 'the old hash is not queued for upgrade').toBe(true);
+  });
+
+  /**
+   * NFKC is compatibility normalization, so some visually distinct inputs
+   * collapse. Measured rather than assumed, and pinned so a later change to the
+   * normalization form — which would invalidate every stored hash — is a
+   * deliberate act.
+   */
+  it('collapses compatibility forms, by design', async () => {
+    const h = await hashPassword('ﬁre-truck-2026');
+    expect(await verifyPassword('fire-truck-2026', h),
+      'the ligature did not fold — normalization changed').toBe(true);
+  });
+
+  it('keeps Arabic-Indic digits distinct from ASCII digits', async () => {
+    const h = await hashPassword('كلمة٢٠٢٦سر');
+    expect(await verifyPassword('كلمة2026سر', h),
+      'Arabic numerals folded into ASCII — that would shrink the space badly').toBe(false);
+  });
+
+  it('normalizes identically on both sides', async () => {
+    // The property that actually matters: any form is safe if hashing and
+    // verification agree.
+    const composed = 'passwörd-with-umlaut';
+    const decomposed = 'passwörd-with-umlaut';
+    const h = await hashPassword(composed);
+    expect(await verifyPassword(decomposed, h)).toBe(true);
   });
 });

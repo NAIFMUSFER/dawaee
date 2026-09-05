@@ -3,6 +3,13 @@ export const ERROR_CODES = {
   VALIDATION_FAILED: 'validation_failed',
   UNAUTHENTICATED: 'unauthenticated',
   TOKEN_EXPIRED: 'token_expired',
+  /**
+   * The presented refresh token was superseded moments ago by a rotation this
+   * client itself performed — two of its own requests raced. Carries no
+   * credentials: the caller must use the result of its winning refresh, and
+   * must NOT treat this as theft or clear its stored session.
+   */
+  REFRESH_SUPERSEDED: 'refresh_superseded',
   FORBIDDEN: 'forbidden',
   NOT_FOUND: 'not_found',
   CONFLICT: 'conflict',
