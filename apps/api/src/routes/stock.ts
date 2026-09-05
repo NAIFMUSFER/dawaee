@@ -17,7 +17,15 @@ import { now as serverNow } from '../lib/clock.js';
  */
 export function registerStockRoutes(app: FastifyInstance): void {
   app.addHook('preHandler', async (req) => {
-    if (req.url.includes('/stock') || req.url.includes('/refill')) await authenticate(req, null as never);
+    // `startsWith`, not `includes`. `req.url` carries the query string, so a
+    // substring match let ANY request whose URL merely contained "/stock"
+    // demand authentication — including the deliberately public emergency
+    // scan, which a crafted link could turn into a 401 for a paramedic.
+    const path = req.url.split('?')[0] ?? '';
+    if (path.startsWith('/v1/stock') || path.startsWith('/v1/refill')
+        || path.startsWith('/v1/medications')) {
+      await authenticate(req, null as never);
+    }
   });
 
   async function consumptionSources(tx: Parameters<typeof requireProfileAccess>[0], medicationId: string) {

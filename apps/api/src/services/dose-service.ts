@@ -48,14 +48,24 @@ export async function loadDoseForUpdate(tx: PoolClient, doseId: string): Promise
  * Idempotency for the offline queue.
  *
  * A phone that confirmed a dose while offline retries on reconnect, possibly
- * several times, possibly after the app was reinstalled. The client event id is
- * unique in the database, so the second attempt returns the first result
+ * several times, possibly after the app was reinstalled. The client event id
+ * identifies that one intent, so the second attempt returns the first result
  * instead of double-decrementing the medication box.
+ *
+ * Scoped to the dose being acted on, not searched globally. It used to match
+ * on `client_event_id` alone across every patient in the database — so an id
+ * that collided with a DIFFERENT dose returned that dose's status, reported
+ * `idempotentReplay: true`, and left the dose actually named in the request
+ * unconfirmed. The API answered 200 and the adherence record was quietly
+ * wrong, which for a medication app is the worst shape a bug can take. The
+ * unique index is scoped per patient in migration 0019 for the same reason.
  */
-async function findByClientEvent(tx: PoolClient, clientEventId: string): Promise<{ id: string; status: DoseStatus } | null> {
+async function findByClientEvent(
+  tx: PoolClient, doseId: string, clientEventId: string,
+): Promise<{ id: string; status: DoseStatus } | null> {
   const { rows } = await tx.query<{ id: string; status: DoseStatus }>(
-    'SELECT id, status FROM dose_occurrences WHERE client_event_id = $1',
-    [clientEventId],
+    'SELECT id, status FROM dose_occurrences WHERE id = $1 AND client_event_id = $2',
+    [doseId, clientEventId],
   );
   return rows[0] ?? null;
 }
@@ -85,7 +95,7 @@ export interface ConfirmDoseResult {
 }
 
 export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Promise<ConfirmDoseResult> {
-  const replay = await findByClientEvent(tx, input.clientEventId);
+  const replay = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (replay) {
     const { rows } = await tx.query<{ status: DoseStatus; confirmed_at: Date | null; scheduled_at: Date }>(
       'SELECT status, confirmed_at, scheduled_at FROM dose_occurrences WHERE id = $1',
@@ -218,7 +228,7 @@ export async function snoozeDose(
   tx: PoolClient,
   input: { doseId: string; userId: string; minutes: number; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
-  const existing = await findByClientEvent(tx, input.clientEventId);
+  const existing = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (existing) {
     const { rows } = await tx.query<{ snoozed_until: Date | null; snooze_count: number }>(
       'SELECT snoozed_until, snooze_count FROM dose_occurrences WHERE id = $1', [existing.id],
@@ -274,7 +284,7 @@ export async function skipDoseAction(
   tx: PoolClient,
   input: { doseId: string; userId: string; reason?: string | null; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
-  const existing = await findByClientEvent(tx, input.clientEventId);
+  const existing = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (existing) return { doseId: existing.id, status: existing.status, idempotentReplay: true };
 
   const dose = await loadDoseForUpdate(tx, input.doseId);

@@ -36,7 +36,7 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       const access = await requireProfileAccess(tx, userId, profileId, 'view_emergency_card');
       const { rows } = await tx.query(
         `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
-                include_medications, include_allergies, include_contacts,
+                include_medications, include_allergies, include_contacts, include_conditions,
                 qr_enabled, qr_rotated_at, qr_view_count, qr_last_viewed_at, updated_at
            FROM emergency_cards WHERE patient_profile_id = $1`,
         [profileId],
@@ -49,7 +49,8 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
               bloodType: card.blood_type, allergies: card.allergies,
               conditionsNote: card.conditions_note, emergencyContacts: card.emergency_contacts,
               includeMedications: card.include_medications, includeAllergies: card.include_allergies,
-              includeContacts: card.include_contacts, qrEnabled: card.qr_enabled,
+              includeContacts: card.include_contacts,
+              includeConditions: card.include_conditions, qrEnabled: card.qr_enabled,
               qrRotatedAt: card.qr_rotated_at, qrViewCount: card.qr_view_count,
               qrLastViewedAt: card.qr_last_viewed_at, updatedAt: card.updated_at,
             }
@@ -70,20 +71,21 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       const { rows } = await tx.query(
         `INSERT INTO emergency_cards
            (patient_profile_id, blood_type, allergies, conditions_note, emergency_contacts,
-            include_medications, include_allergies, include_contacts)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            include_medications, include_allergies, include_contacts, include_conditions)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          ON CONFLICT (patient_profile_id) DO UPDATE
            SET blood_type = EXCLUDED.blood_type, allergies = EXCLUDED.allergies,
                conditions_note = EXCLUDED.conditions_note,
                emergency_contacts = EXCLUDED.emergency_contacts,
                include_medications = EXCLUDED.include_medications,
                include_allergies = EXCLUDED.include_allergies,
-               include_contacts = EXCLUDED.include_contacts
+               include_contacts = EXCLUDED.include_contacts,
+               include_conditions = EXCLUDED.include_conditions
          RETURNING id, qr_enabled`,
         [
           profileId, body.bloodType ?? null, body.allergies, body.conditionsNote ?? null,
           JSON.stringify(body.emergencyContacts), body.includeMedications,
-          body.includeAllergies, body.includeContacts,
+          body.includeAllergies, body.includeContacts, body.includeConditions,
         ],
       );
       await recordAudit(tx, {

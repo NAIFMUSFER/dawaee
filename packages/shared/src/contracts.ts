@@ -70,6 +70,15 @@ export const passwordLoginSchema = z.object({
   deviceName: z.string().max(120).optional(),
 });
 
+function isKnownTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
@@ -93,6 +102,21 @@ export const registerSchema = z
  * a valid one.
  */
 export const requestDeletionSchema = z.object({ confirm: z.literal(true) });
+
+/**
+ * The signed-in user's own record.
+ *
+ * `timezone` is validated against the runtime's own zone list rather than a
+ * regex: every dose in the account is materialized against this value, so a
+ * string that merely LOOKS like a zone would produce a schedule that is wrong
+ * rather than one that fails.
+ */
+export const updateMeSchema = z.object({
+  displayName: safeText(120).optional(),
+  locale: z.enum(LOCALES).optional(),
+  timezone: z.string().max(64).refine(isKnownTimeZone, 'unknown time zone').optional(),
+  email: z.string().email().max(320).nullish(),
+});
 
 export const setPasswordSchema = z.object({
   currentPassword: z.string().max(200).optional(),
@@ -394,9 +418,22 @@ export const updateEmergencyCardSchema = z.object({
     .array(z.object({ name: safeText(80), phoneE164, relation: z.string().trim().max(40).nullish() }))
     .max(5)
     .default([]),
-  includeMedications: z.boolean().default(true),
-  includeAllergies: z.boolean().default(true),
-  includeContacts: z.boolean().default(true),
+  /**
+   * What a scan may reveal. All default to FALSE.
+   *
+   * They defaulted to true, and enabling the QR inserted a card row without
+   * naming them — so one tap published every medication, allergy and contact
+   * the patient had. A disclosure decision must be made, not inherited.
+   */
+  includeMedications: z.boolean().default(false),
+  includeAllergies: z.boolean().default(false),
+  includeContacts: z.boolean().default(false),
+  /**
+   * The free-text "what is wrong with me" field had no flag at all and was
+   * returned unconditionally — the most sensitive thing on the card was the
+   * one thing the patient could not withhold.
+   */
+  includeConditions: z.boolean().default(false),
 });
 
 // ---------------------------------------------------------------- consent

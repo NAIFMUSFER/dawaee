@@ -57,6 +57,7 @@ interface EmergencyCardView {
   includeMedications: boolean;
   includeAllergies: boolean;
   includeContacts: boolean;
+  includeConditions: boolean;
 }
 
 const EMPTY_CARD: EmergencyCardView = {
@@ -64,9 +65,13 @@ const EMPTY_CARD: EmergencyCardView = {
   allergies: [],
   conditionsNote: null,
   emergencyContacts: [],
-  includeMedications: true,
-  includeAllergies: true,
-  includeContacts: true,
+  // Off, matching the server. A disclosure decision is made, not inherited:
+  // these defaulted to true, so enabling the QR without ever opening this
+  // screen published every medication, allergy and contact at once.
+  includeMedications: false,
+  includeAllergies: false,
+  includeContacts: false,
+  includeConditions: false,
 };
 
 export default function EmergencyCardScreen() {
@@ -145,6 +150,7 @@ export default function EmergencyCardScreen() {
         includeMedications: card.includeMedications,
         includeAllergies: card.includeAllergies,
         includeContacts: card.includeContacts,
+        includeConditions: card.includeConditions,
       }, { profileId: activeProfile.id });
       setSaved(true);
       setOffline(false);
@@ -356,6 +362,7 @@ export default function EmergencyCardScreen() {
             ) : null}
 
             <SectionTitle>{t('emergency.whatToShow')}</SectionTitle>
+            <Txt variant="caption" color={theme.colors.ink500}>{t('emergency.disclosureHint')}</Txt>
             <Card>
               <Txt variant="bodySmall" color={theme.colors.ink500}>{t('emergency.includeHint')}</Txt>
               <IncludeSwitch
@@ -372,6 +379,11 @@ export default function EmergencyCardScreen() {
                 label={t('emergency.includeContacts')}
                 value={card.includeContacts}
                 onChange={(v) => patch({ includeContacts: v })}
+              />
+              <IncludeSwitch
+                label={t('emergency.includeConditions')}
+                value={card.includeConditions}
+                onChange={(v: boolean) => patch({ includeConditions: v })}
               />
             </Card>
 

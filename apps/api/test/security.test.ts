@@ -394,3 +394,225 @@ describe('admin surface', () => {
     }
   });
 });
+
+/**
+ * Findings from an authorization audit, each pinned by the test that would
+ * have caught it. Every one of these passed a code review and failed against
+ * a real database.
+ */
+describe('cross-patient writes through an id in the request body', () => {
+  /**
+   * The id arrived in the BODY of a route named `/v1/me/...`, and nothing
+   * checked it. RLS does not catch this: the consents policy constrains
+   * `user_id` only, and a foreign key check does not apply the referenced
+   * table's policies — so one patient could write a consent row, and an entry
+   * in the append-only audit trail, scoped to another patient's profile.
+   */
+  it('refuses a consent written against a profile the caller does not own', async () => {
+    const res = await h.app.inject({
+      method: 'PUT', url: '/v1/me/consents', headers: authHeaders(alice),
+      payload: { patientProfileId: bob.profileId, type: 'analytics', granted: true, version: '1.0' },
+    });
+    expect([403, 404]).toContain(res.statusCode);
+  });
+
+  it('still allows a consent on the caller\'s own profile', async () => {
+    const res = await h.app.inject({
+      method: 'PUT', url: '/v1/me/consents', headers: authHeaders(alice),
+      payload: { patientProfileId: alice.profileId, type: 'analytics', granted: true, version: '1.0' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('still allows an account-wide consent with no profile at all', async () => {
+    const res = await h.app.inject({
+      method: 'PUT', url: '/v1/me/consents', headers: authHeaders(alice),
+      payload: { type: 'ocr_image_processing', granted: true, version: '1.0' },
+    });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('PATCH /v1/me validates what it writes', () => {
+  /**
+   * `timezone` is what every dose in the account is materialized against, so
+   * an unvalidated string is a broken schedule rather than a cosmetic defect.
+   */
+  it('refuses a time zone that is not a time zone', async () => {
+    for (const timezone of ['Mars/Olympus', 'Asia/Riyadh; DROP', '../../etc', 'x'.repeat(80)]) {
+      const res = await h.app.inject({
+        method: 'PATCH', url: '/v1/me', headers: authHeaders(alice), payload: { timezone },
+      });
+      expect(res.statusCode, timezone).toBe(400);
+    }
+  });
+
+  it('accepts a real one', async () => {
+    const res = await h.app.inject({
+      method: 'PATCH', url: '/v1/me', headers: authHeaders(alice), payload: { timezone: 'Asia/Riyadh' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.timezone).toBe('Asia/Riyadh');
+  });
+
+  it('refuses a locale the app cannot render', async () => {
+    const res = await h.app.inject({
+      method: 'PATCH', url: '/v1/me', headers: authHeaders(alice), payload: { locale: 'fr' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('refuses a malformed email rather than storing it', async () => {
+    const res = await h.app.inject({
+      method: 'PATCH', url: '/v1/me', headers: authHeaders(alice), payload: { email: 'not-an-email' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('the emergency card publishes only what the patient chose', () => {
+  /**
+   * The three include flags defaulted to TRUE and the enable route inserts a
+   * row naming only the QR columns — so a patient who tapped "enable" without
+   * ever opening the card editor published every active medication, their
+   * allergies and their contacts in one action. `conditions_note`, the
+   * free-text "what is wrong with me" field, had no flag at all and could not
+   * be withheld even deliberately.
+   */
+  it('reveals nothing but a name when the QR is enabled and nothing was chosen', async () => {
+    const enable = await h.app.inject({
+      method: 'POST', url: `/v1/emergency/qr/enable?profileId=${bob.profileId}`,
+      headers: authHeaders(bob), payload: {},
+    });
+    expect(enable.statusCode).toBe(200);
+    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+
+    const scan = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` });
+    expect(scan.statusCode).toBe(200);
+    const card = scan.json();
+    expect(card.medications).toEqual([]);
+    expect(card.allergies).toEqual([]);
+    expect(card.emergencyContacts).toEqual([]);
+    expect(card.bloodType).toBeNull();
+    expect(card.conditionsNote).toBeNull();
+  });
+
+  it('reveals each field only once the patient turns that field on', async () => {
+    await h.app.inject({
+      method: 'PUT', url: `/v1/emergency/card?profileId=${bob.profileId}`,
+      headers: authHeaders(bob),
+      payload: {
+        patientProfileId: bob.profileId,
+        bloodType: 'O-', allergies: ['penicillin'],
+        conditionsNote: 'a private note',
+        emergencyContacts: [{ name: 'Sara', phoneE164: '+966501234567' }],
+        includeAllergies: true, includeContacts: false,
+        includeMedications: false, includeConditions: false,
+      },
+    });
+    const enable = await h.app.inject({
+      method: 'POST', url: `/v1/emergency/qr/enable?profileId=${bob.profileId}`,
+      headers: authHeaders(bob), payload: {},
+    });
+    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    const card = (await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` })).json();
+
+    expect(card.allergies).toEqual(['penicillin']);
+    expect(card.bloodType).toBe('O-');
+    // The three the patient left off, including the one that had no flag.
+    expect(card.conditionsNote).toBeNull();
+    expect(card.emergencyContacts).toEqual([]);
+    expect(card.medications).toEqual([]);
+  });
+});
+
+/** Today and tomorrow in the profile's zone; the suite's doses are materialized forward from today. */
+const riyadhDay = (offsetDays: number) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date(Date.now() + offsetDays * 86_400_000));
+
+describe('a client event id belongs to one dose, not to the whole database', () => {
+  /**
+   * The idempotency lookup matched on `client_event_id` alone across every
+   * patient, and the unique index was global too. Two failures, one loud and
+   * one silent — the silent one is why this is here.
+   *
+   * A collision with a different dose the caller could read returned THAT
+   * dose's status, reported an idempotent replay, and left the dose named in
+   * the request unconfirmed. The API answered 200 and the adherence record was
+   * wrong, with nothing anywhere reporting a fault.
+   */
+  it('does not report a different dose as an already-recorded replay', async () => {
+    const doses = await h.app.inject({
+      method: 'GET', url: `/v1/doses?profileId=${alice.profileId}&from=${riyadhDay(1)}&to=${riyadhDay(6)}`,
+      headers: authHeaders(alice),
+    });
+    const list = (doses.json().doses as Array<{ id: string; status: string }>)
+      .filter((d) => ['upcoming', 'due', 'pending_confirmation'].includes(d.status));
+    expect(list.length, 'the suite needs two unresolved doses to collide').toBeGreaterThan(1);
+    const [first, second] = list as [{ id: string }, { id: string }];
+
+    const shared = 'evt-collision-probe-1';
+    const a = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${first.id}/taken`, headers: authHeaders(alice),
+      payload: { clientEventId: shared, method: 'app' },
+    });
+    expect(a.statusCode).toBe(200);
+    expect(a.json().doseId).toBe(first.id);
+
+    // Same id, different dose. It must NOT quietly answer with the first one.
+    const b = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${second.id}/taken`, headers: authHeaders(alice),
+      payload: { clientEventId: shared, method: 'app' },
+    });
+    expect(b.json().doseId ?? second.id).not.toBe(first.id);
+  });
+
+  /**
+   * The same id used by two different patients is two different intents, and
+   * neither should be able to make the other's confirmation fail.
+   */
+  it('lets two patients use the same id without colliding', async () => {
+    const shared = 'evt-shared-across-patients';
+    const doseOf = async (u: TestUser) => {
+      const res = await h.app.inject({
+        method: 'GET', url: `/v1/doses?profileId=${u.profileId}&from=${riyadhDay(7)}&to=${riyadhDay(7)}`,
+        headers: authHeaders(u),
+      });
+      return (res.json().doses as Array<{ id: string }>)[0]!.id;
+    };
+    const aliceDose = await doseOf(alice);
+    const bobDose = await doseOf(bob);
+
+    const one = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${aliceDose}/taken`, headers: authHeaders(alice),
+      payload: { clientEventId: shared, method: 'app' },
+    });
+    const two = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${bobDose}/taken`, headers: authHeaders(bob),
+      payload: { clientEventId: shared, method: 'app' },
+    });
+    expect(one.statusCode).toBe(200);
+    expect(two.statusCode, two.body).toBe(200);
+  });
+});
+
+describe('the public emergency scan cannot be forced to demand a login', () => {
+  /**
+   * The stock module gated authentication with `req.url.includes('/stock')`,
+   * and `req.url` carries the query string — so appending `?x=/stock` to the
+   * deliberately unauthenticated scan turned it into a 401. A paramedic
+   * following a crafted link would have been asked to sign in.
+   */
+  it('ignores a query string crafted to trip another route\'s auth hook', async () => {
+    const enable = await h.app.inject({
+      method: 'POST', url: `/v1/emergency/qr/enable?profileId=${alice.profileId}`,
+      headers: authHeaders(alice), payload: {},
+    });
+    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    for (const suffix of ['', '?x=/stock', '?y=/refill', '?z=/medications']) {
+      const res = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}${suffix}` });
+      expect(res.statusCode, suffix).toBe(200);
+    }
+  });
+});

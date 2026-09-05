@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import {
   AppError, ERROR_CODES, applyTravelDecisionSchema, createProfileSchema,
-  requestDeletionSchema, setConsentSchema,
+  requestDeletionSchema, setConsentSchema, updateMeSchema,
   updatePreferencesSchema, updateProfileSchema,
 } from '@dawaee/shared';
 import { detectTimezoneChange } from '@dawaee/core';
@@ -74,9 +74,22 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     });
   });
 
+  /**
+   * Update the signed-in user's own record.
+   *
+   * The body used to be a bare cast with no schema: `locale`, `timezone` and
+   * `email` were written exactly as sent. Two consequences, one of them worse
+   * than it looks. An arbitrary `timezone` string is what every dose in the
+   * account is materialized against, so a malformed value is a broken
+   * schedule, not a cosmetic defect. And because `users.email` is uniquely
+   * indexed, an unvalidated write turned this into a cheap authenticated
+   * oracle for whether any given email address has an account — at 300
+   * requests a minute against a medication app, where merely having an
+   * account is health-adjacent.
+   */
   app.patch('/v1/me', async (req) => {
     const { userId } = currentUser(req);
-    const body = (req.body ?? {}) as { displayName?: string; locale?: string; timezone?: string; email?: string | null };
+    const body = updateMeSchema.parse(req.body);
     return withUser(userId, async (tx) => {
       const { rows } = await tx.query(
         `UPDATE users SET
@@ -86,7 +99,8 @@ export function registerProfileRoutes(app: FastifyInstance): void {
            email = COALESCE($5, email)
          WHERE id = $1
          RETURNING id, display_name, locale, timezone, email`,
-        [userId, body.displayName ?? null, body.locale ?? null, body.timezone ?? null, body.email ?? null],
+        [userId, body.displayName ?? null, body.locale ?? null, body.timezone ?? null,
+         body.email ? body.email.trim().toLowerCase() : null],
       );
       return { user: rows[0] };
     });
@@ -137,6 +151,19 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const body = setConsentSchema.parse(req.body);
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
+      // The profile id arrives in the BODY, and nothing checked it. Row level
+      // security does not catch this: the consents policy constrains user_id
+      // only, and a foreign key check does not apply the referenced table's
+      // policies — so one patient could write a consent row, and an entry in
+      // the append-only audit trail, scoped to another patient's profile.
+      // Confirmed against a live database before this line existed.
+      //
+      // A consent is a statement the profile's OWNER makes. A caregiver, even
+      // one with wide permissions, does not consent on someone else's behalf.
+      if (body.patientProfileId) {
+        await requireProfileOwner(tx, userId, body.patientProfileId);
+      }
+
       const { rows } = await tx.query(
         `INSERT INTO consents (user_id, patient_profile_id, type, granted, version, granted_at, withdrawn_at, ip_hash)
          VALUES ($1,$2,$3,$4,$5, CASE WHEN $4 THEN now() END, CASE WHEN NOT $4 THEN now() END, $6)
