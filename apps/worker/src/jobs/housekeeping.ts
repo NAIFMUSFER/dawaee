@@ -24,10 +24,24 @@ export async function housekeepingJob(ctx: WorkerContext, client: PoolClient): P
   );
   removed += expired ?? 0;
 
-  const { rowCount: sessions } = await client.query(
-    `DELETE FROM auth_sessions WHERE expires_at < now() - interval '30 days'`,
+  /**
+   * Sessions are purged through a function, not by touching the table.
+   *
+   * The worker has no privilege on `auth_sessions` at all: it holds refresh
+   * token hashes, device names and IP hashes for every user, and DELETE would
+   * have carried effective visibility of all of it. `app.cleanup_expired_sessions`
+   * performs the one DELETE and returns a count.
+   *
+   * This statement is also why housekeeping had never completed. The worker was
+   * granted no DELETE on anything, so the old `DELETE FROM auth_sessions` threw
+   * "permission denied" on every run and aborted the job before any of the
+   * retention below executed — which is why notification_deliveries still held
+   * rows well past its 90-day limit.
+   */
+  const { rows: sessions } = await client.query<{ cleanup_expired_sessions: string }>(
+    'SELECT app.cleanup_expired_sessions(30)',
   );
-  removed += sessions ?? 0;
+  removed += Number(sessions[0]?.cleanup_expired_sessions ?? 0);
 
   const { rowCount: deliveries } = await client.query(
     `DELETE FROM notification_deliveries

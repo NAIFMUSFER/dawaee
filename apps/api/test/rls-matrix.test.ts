@@ -238,7 +238,7 @@ afterAll(async () => {
   const findings = matrix.filter((m) => m.status === 'FINDING').length;
   console.log(
     `\n=== P8 RLS ADVERSARIAL MATRIX ===\n`
-    + `${matrix.length} attempts · ${failures} unexplained FAIL · ${findings} known FINDING (P8-1, worker over-privilege)\n\n`
+    + `${matrix.length} attempts · ${failures} unexplained FAIL · ${findings} open FINDING\n\n`
     + rows.join('\n') + '\n',
   );
   await appPool.end();
@@ -789,27 +789,17 @@ describe('the worker role is scoped to what a worker needs', () => {
   });
 
   /**
-   * FINDING P8-1 — the worker role is over-privileged.
+   * FINDING P8-1, now CLOSED — the worker role was over-privileged.
    *
-   * It holds SELECT on 27 tables and its policies are `USING (true)`, so it
-   * reads every row of every patient. Static analysis of apps/worker/src shows
-   * it actually touches 14, and several of the others are the most sensitive
-   * data in the system: emergency_cards, symptom_notes, health_measurements,
-   * prescriptions, consents, patient_profiles.
-   *
-   * This is not a patient-to-patient boundary break — the worker is a trusted
-   * service role — but it is the process with the widest exposure to
-   * third-party providers (push, WhatsApp, OCR), so a compromise there
-   * currently yields the entire PHI corpus rather than the reminder subset.
-   *
-   * This test PINS the finding rather than asserting a fix: the narrowing is a
-   * REVOKE migration, and revoking a grant the worker turns out to need at
-   * runtime breaks medication reminders — the most safety-critical function in
-   * the product. It is proposed, with the exact list, and not applied here.
-   * When the narrowing ships, this test's expectation flips and the finding
-   * closes.
+   * It held SELECT on 27 tables with `USING (true)` policies, so it read every
+   * row of every patient, while touching 17. Among the ones it never queried
+   * were emergency_cards, symptom_notes, health_measurements, prescriptions and
+   * consents. Migration 0021 revoked everything and re-granted an explicit
+   * manifest; these assertions are the ones that used to pin the hole open, now
+   * inverted to hold it shut. The full allowlist lives in
+   * privilege-boundary.test.ts.
    */
-  it('FINDING: reads sensitive tables it never queries (pinned, not fixed)', async () => {
+  it('cannot read the PHI tables it never queries (P8-1 closed)', async () => {
     const p = workerPool();
     const NEVER_QUERIED = [
       'emergency_cards', 'symptom_notes', 'health_measurements',
@@ -821,43 +811,26 @@ describe('the worker role is scoped to what a worker needs', () => {
         const res = await p.query(`SELECT count(*)::int AS n FROM ${table}`)
           .catch(() => ({ rows: [{ n: -1 }] }));
         const n = Number((res.rows[0] as { n: number }).n);
-        record(table, 'worker role', 'SELECT', 'DENY', n >= 0 ? Math.max(n, 1) : 0, null, true);
+        record(table, 'worker role', 'SELECT', 'DENY', n >= 0 ? Math.max(n, 1) : 0, null);
         if (n >= 0) readable.push(table);
       }
-      // Documented current state. Change this to `toEqual([])` when the
-      // narrowing migration ships.
-      expect(readable, 'worker read surface changed — re-audit the finding')
-        .toEqual(NEVER_QUERIED);
+      expect(readable, 'worker regained PHI read access').toEqual([]);
     } finally { await p.end(); }
   });
 
   /**
-   * The worker legitimately deletes expired rows from auth_sessions
-   * (housekeeping.ts:28), so a blanket denial is wrong — but `USING (true)`
-   * means it can also read every live session's refresh_token_hash, device
-   * name and ip_hash for every user. Pinned as part of the same finding.
+   * auth_sessions holds refresh token hashes, device names and IP hashes for
+   * every user. The worker's only session work — deleting long-expired rows —
+   * now goes through `app.cleanup_expired_sessions`, which returns a count and
+   * nothing else, so the table itself is unreachable.
    */
-  it('FINDING: reads every session row, not only expired ones (pinned)', async () => {
+  it('cannot read session rows at all (P8-1 closed)', async () => {
     const p = workerPool();
     try {
-      const res = await p.query<{ n: number }>(
-        'SELECT count(*)::int AS n FROM auth_sessions WHERE expires_at > now()',
-      );
-      const live = Number(res.rows[0]!.n);
-      record('auth_sessions (live)', 'worker role', 'SELECT', 'DENY', live, null, true);
-      expect(live, 'worker session visibility changed — re-audit').toBeGreaterThan(0);
-    } finally { await p.end(); }
-  });
-
-  it('cannot delete patient data', async () => {
-    const p = workerPool();
-    try {
-      const res = await p.query('DELETE FROM dose_occurrences').catch((e: Error) => ({ rowCount: -1, err: e.message }));
-      const n = (res as { rowCount: number }).rowCount;
-      record('dose_occurrences', 'worker role', 'DELETE', 'DENY', n > 0 ? n : 0, null);
-      expect(n, 'worker deleted dose rows').toBeLessThanOrEqual(0);
-      const left = await truth<{ n: number }>('SELECT count(*)::int AS n FROM dose_occurrences');
-      expect(Number(left[0]!.n)).toBeGreaterThan(0);
+      const err = await p.query('SELECT count(*) FROM auth_sessions')
+        .then(() => null).catch((e: Error) => e.message);
+      record('auth_sessions', 'worker role', 'SELECT', 'DENY', 0, err);
+      expect(err, 'worker can still read sessions').toMatch(/permission denied/i);
     } finally { await p.end(); }
   });
 });
