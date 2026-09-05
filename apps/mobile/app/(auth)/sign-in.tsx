@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
+import { landingAfterAuth } from '@/storage/pending-invite';
 
 interface AuthTokens {
   accessToken: string;
@@ -41,7 +42,11 @@ export default function SignInScreen() {
         deviceId: await getDeviceId(),
       });
       await signInWithTokens(tokens);
-      router.replace('/(tabs)/today');
+      // Someone who arrived through a caregiver invitation came here to finish
+      // it. The token was already being stashed before this detour and nothing
+      // ever read it back, so they landed on Today and the invitation sat in
+      // storage forever — the care circle could not be formed at all.
+      router.replace(await landingAfterAuth());
     } catch (err) {
       if (err instanceof NetworkError) setError(t('notifications.offlineBanner'));
       else if (err instanceof ApiError) setError(err.message);

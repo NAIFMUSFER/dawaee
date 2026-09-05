@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { claimInviteAttempt, clearPendingInvite, peekPendingInvite, stashPendingInvite } from '@/storage/pending-invite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, EmptyState, Loading, Screen, Txt } from '@/components/ui';
@@ -23,7 +23,6 @@ import type { CaregiverPermission } from '@dawaee/shared';
  * person holding them.
  */
 
-const PENDING_TOKEN_KEY = 'dawaee.pendingInvitationToken';
 
 const CHANGE_PERMISSIONS: readonly CaregiverPermission[] = [
   'edit_schedule', 'add_medication', 'edit_medication', 'update_stock', 'confirm_dose', 'manage_caregivers',
@@ -61,11 +60,11 @@ export default function AcceptInvitationScreen() {
     let cancelled = false;
     void (async () => {
       if (params.token) {
-        await AsyncStorage.setItem(PENDING_TOKEN_KEY, params.token).catch(() => undefined);
+        await stashPendingInvite(params.token);
         if (!cancelled) { setToken(params.token); setTokenResolved(true); }
         return;
       }
-      const stored = await AsyncStorage.getItem(PENDING_TOKEN_KEY).catch(() => null);
+      const stored = await peekPendingInvite();
       if (!cancelled) { setToken(stored); setTokenResolved(true); }
     })();
     return () => { cancelled = true; };
@@ -75,7 +74,7 @@ export default function AcceptInvitationScreen() {
     setOutcome({ kind: 'working' });
     try {
       const res = await api.post<AcceptResponse>('/v1/caregivers/accept', { token: value });
-      await AsyncStorage.removeItem(PENDING_TOKEN_KEY).catch(() => undefined);
+      await clearPendingInvite();
       await refreshProfiles().catch(() => undefined);
       setOffline(false);
       setOutcome({
@@ -90,8 +89,18 @@ export default function AcceptInvitationScreen() {
         return;
       }
       if (err instanceof ApiError) {
-        if (err.status === 410 || err.code === 'invitation_expired') { setOutcome({ kind: 'expired' }); return; }
-        if (err.status === 409 || err.code === 'invitation_already_used') { setOutcome({ kind: 'used' }); return; }
+        // Expired or already used: the token is spent. Forget it, or it
+        // follows this person back to the same dead end after every sign-in.
+        if (err.status === 410 || err.code === 'invitation_expired') {
+          await clearPendingInvite();
+          setOutcome({ kind: 'expired' });
+          return;
+        }
+        if (err.status === 409 || err.code === 'invitation_already_used') {
+          await clearPendingInvite();
+          setOutcome({ kind: 'used' });
+          return;
+        }
         const key = `error.${err.code}` as 'error.internal_error';
         const text = t(key);
         setOutcome({ kind: 'invalid', message: text === key ? err.message : text });
@@ -101,13 +110,29 @@ export default function AcceptInvitationScreen() {
     }
   }, [refreshProfiles, setOffline, t]);
 
-  // Runs on arrival and again the moment a sign-in completes while this screen
-  // is still open, which is what brings the user "back here afterwards".
+  /**
+   * Accept at most once per token, ever.
+   *
+   * `outcome.kind !== 'idle'` is not enough of a guard. Two effect runs in the
+   * same commit both read `idle` before either `setOutcome` lands, so the
+   * invitation was accepted TWICE — and an invitation is single-use: the first
+   * call succeeded and burned the token, the second got "invitation not found",
+   * and the screen showed the caregiver "this invitation link is not valid"
+   * for an invitation they had just successfully accepted. They would have
+   * asked the patient to send another one, which would have done the same
+   * thing again.
+   *
+   * The claim lives outside this component because the guard has to outlive
+   * it: this screen is mounted TWICE during the flow — once before the
+   * sign-in detour and once after the return — and both instances become
+   * eligible the moment `signedIn` flips. A ref would give each its own guard,
+   * and both would fire.
+   */
   useEffect(() => {
     if (!tokenResolved || !signedIn || !token) return;
-    if (outcome.kind !== 'idle') return;
+    if (!claimInviteAttempt(token)) return;
     void accept(token);
-  }, [accept, outcome.kind, signedIn, token, tokenResolved]);
+  }, [accept, signedIn, token, tokenResolved]);
 
   const acceptedProfile = useMemo(
     () => (outcome.kind === 'accepted' && outcome.profileId
@@ -140,7 +165,7 @@ export default function AcceptInvitationScreen() {
         <Screen>
           <Txt variant="h1" weight="bold" accessibilityRole="header">{t('accept.signInTitle')}</Txt>
           <Txt variant="body" color={theme.colors.ink700}>{t('accept.signInBody')}</Txt>
-          <Button label={t('accept.signIn')} size="large" onPress={() => router.push('/(auth)/phone')} />
+          <Button label={t('accept.signIn')} size="large" onPress={() => router.push('/(auth)/sign-in')} />
         </Screen>
       </SafeAreaView>
     );
