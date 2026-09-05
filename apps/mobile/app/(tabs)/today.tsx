@@ -158,6 +158,33 @@ export default function TodayScreen() {
     })();
   }, [t]);
 
+  /**
+   * Reverse a confirmation the patient did not mean.
+   *
+   * The server has accepted this within a ten-minute window from the start,
+   * and nothing ever called it. Deliberately NOT queued when offline: undo is
+   * time-bounded, so a request replayed twenty minutes later would be refused
+   * anyway, and silently queueing it would tell the patient their correction
+   * was accepted when it was not. It says plainly that the window passed.
+   */
+  const undo = useCallback(async (dose: DoseView) => {
+    setBusyDoseId(dose.id);
+    try {
+      await api.post(`/v1/doses/${dose.id}/undo`, {});
+      setLocalOverrides((o) => {
+        const next = { ...o };
+        delete next[dose.id];
+        return next;
+      });
+      await load();
+    } catch (err) {
+      if (err instanceof NetworkError) setOffline(true);
+      else setNotificationWarning(t('today.undoFailed'));
+    } finally {
+      setBusyDoseId(null);
+    }
+  }, [load, setOffline, t]);
+
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
       setBusyDoseId(dose.id);
@@ -226,7 +253,25 @@ export default function TodayScreen() {
   if (loading && !data) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
 
   const todayList = (data?.today ?? []).map(withOverride);
-  const next = data?.next ? withOverride(data.next) : null;
+  const nextAnyDay = data?.next ? withOverride(data.next) : null;
+
+  /**
+   * The hero card, but only for a dose that belongs to today.
+   *
+   * The server's `next` is the next unresolved dose on any day. So the moment
+   * a patient confirmed their last dose of the day, the hero swapped to
+   * TOMORROW's — same medication, same time, indistinguishable at a glance —
+   * still carrying a "Taken" button. One tap, at the exact moment of most
+   * confusion, recorded a dose roughly twenty-four hours early. For an elderly
+   * patient that is not a cosmetic problem.
+   *
+   * A dose on a later date is not hidden, it is simply not offered as
+   * something to act on now: "you are done for today" is the honest thing to
+   * show, and the timeline below still lists everything.
+   */
+  const next = nextAnyDay && data && nextAnyDay.scheduledLocalDate === data.localDate
+    ? nextAnyDay
+    : null;
   const allDone = todayList.length > 0 && todayList.every((d) => !['upcoming', 'due', 'pending_confirmation', 'snoozed'].includes(d.status));
 
   return (
@@ -274,11 +319,12 @@ export default function TodayScreen() {
               prominent
               busy={busyDoseId === next.id}
               onTaken={() => void act(next, 'taken')}
+              onUndo={() => void undo(next)}
               onSnooze={() => setSnoozeFor(next)}
               onSkip={() => void act(next, 'skip')}
             />
           </>
-        ) : allDone ? (
+        ) : allDone || nextAnyDay ? (
           <Card><Txt variant="h3" weight="bold" align="center">{t('today.allDone')}</Txt></Card>
         ) : null}
 
@@ -291,7 +337,13 @@ export default function TodayScreen() {
         ) : (
           <View style={{ gap: theme.spacing.sm }}>
             {todayList.map((dose) => (
-              <DoseCard key={dose.id} dose={dose} onPress={() => router.push(`/medication/${dose.medicationId}`)} />
+              <DoseCard
+                key={dose.id}
+                dose={dose}
+                busy={busyDoseId === dose.id}
+                onUndo={() => void undo(dose)}
+                onPress={() => router.push(`/medication/${dose.medicationId}`)}
+              />
             ))}
           </View>
         )}

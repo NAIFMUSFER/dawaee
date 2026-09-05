@@ -60,6 +60,10 @@ export const MESSAGES = {
     'dose.status.missed': 'فائت',
     'dose.status.pending_confirmation': 'بانتظار التأكيد',
     'dose.status.cancelled': 'ملغى',
+    'today.undo': 'تراجع',
+    'today.undone': 'أُلغي التسجيل. الجرعة عادت كما كانت.',
+    'today.undoWindow': 'يمكنك التراجع خلال {minutes} دقائق.',
+    'today.undoFailed': 'انتهت مهلة التراجع. سجّل الجرعة من شاشة الدواء إن احتجت.',
     'dose.takenAt': 'تم الأخذ {time}',
     'dose.lateBy': 'متأخر {minutes} دقيقة',
 
@@ -987,6 +991,10 @@ export const MESSAGES = {
     'dose.status.missed': 'Missed',
     'dose.status.pending_confirmation': 'Pending confirmation',
     'dose.status.cancelled': 'Cancelled',
+    'today.undo': 'Undo',
+    'today.undone': 'Undone. The dose is back as it was.',
+    'today.undoWindow': 'You can undo this for {minutes} minutes.',
+    'today.undoFailed': 'The undo window has passed. Correct it from the medication screen if you need to.',
     'dose.takenAt': 'Taken {time}',
     'dose.lateBy': '{minutes} minutes late',
 
