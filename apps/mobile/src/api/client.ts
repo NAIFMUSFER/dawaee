@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import type { ErrorCode } from '@dawaee/shared';
+import { clearStoredSession, readSession, writeSession } from './token-store.js';
 
 /**
  * API client.
@@ -39,8 +40,17 @@ const BASE_URL: string =
  */
 export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
 
-const ACCESS_KEY = 'dawaee.accessToken';
-const REFRESH_KEY = 'dawaee.refreshToken';
+/**
+ * The device id is NOT a credential and stays in AsyncStorage deliberately.
+ * It is a random per-install string used to name this phone for push
+ * registration and offline replay; it authorises nothing on its own, and
+ * putting it in the keychain would mean it becomes unreadable before first
+ * unlock — exactly when a boot-time notification needs it.
+ *
+ * The access and refresh tokens used to live beside it. They now live in
+ * `./token-store`, which is the keychain; see that file for why, and for what
+ * happens to the plaintext copies left on devices that upgrade.
+ */
 const DEVICE_KEY = 'dawaee.deviceId';
 
 export class ApiError extends Error {
@@ -76,22 +86,30 @@ export async function loadStoredSession(): Promise<boolean> {
     refreshToken = 'demo';
     return true;
   }
-  const [a, r] = await Promise.all([AsyncStorage.getItem(ACCESS_KEY), AsyncStorage.getItem(REFRESH_KEY)]);
-  accessToken = a;
-  refreshToken = r;
-  return Boolean(a && r);
+  const stored = await readSession();
+  accessToken = stored?.accessToken ?? null;
+  refreshToken = stored?.refreshToken ?? null;
+  return stored !== null;
 }
 
+/**
+ * Hold a session in memory and persist it securely.
+ *
+ * The in-memory assignment happens first and unconditionally: if the keychain
+ * write fails, the person who just typed their password is still signed in for
+ * this run rather than being bounced back to the form with no explanation. The
+ * throw still propagates, so a caller that wants to report it can.
+ */
 export async function storeSession(tokens: { accessToken: string; refreshToken: string }): Promise<void> {
   accessToken = tokens.accessToken;
   refreshToken = tokens.refreshToken;
-  await AsyncStorage.multiSet([[ACCESS_KEY, tokens.accessToken], [REFRESH_KEY, tokens.refreshToken]]);
+  await writeSession(tokens);
 }
 
 export async function clearSession(): Promise<void> {
   accessToken = null;
   refreshToken = null;
-  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY]);
+  await clearStoredSession();
 }
 
 export function setUnauthenticatedHandler(fn: () => void): void {
@@ -130,7 +148,18 @@ async function refreshAccessToken(): Promise<boolean> {
         return false;
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
-      await storeSession(body);
+      try {
+        await storeSession(body);
+      } catch {
+        // The rotation succeeded on the server, so the OLD refresh token is
+        // now dead — but persisting the new pair failed, which means whatever
+        // is on disk still names the dead one. Leaving it there would produce
+        // a launch that presents an invalidated token, gets a 401, and signs
+        // the user out with no explanation days later. Clearing makes the next
+        // launch a clean sign-in instead. This run continues on the in-memory
+        // pair, which storeSession set before it threw.
+        await clearStoredSession().catch(() => undefined);
+      }
       return true;
     } catch {
       // Offline: keep the tokens, the user is not signed out.
