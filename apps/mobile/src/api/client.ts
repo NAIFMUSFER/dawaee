@@ -242,6 +242,12 @@ export const api = {
   delete: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { method: 'DELETE', query }),
   anonymous: {
     post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body, anonymous: true }),
+    // The emergency scan is read by a paramedic who has no account, on a phone
+    // that is not theirs. Sending a stored token with it would be wrong twice:
+    // it would attach the wrong identity, and a 401 would trigger the refresh
+    // and sign-out path on the phone's actual owner.
+    get: <T>(path: string, query?: RequestOptions['query']) =>
+      request<T>(path, { method: 'GET', query, anonymous: true }),
   },
   baseUrl: BASE_URL,
 };

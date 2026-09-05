@@ -5,7 +5,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: ['packages/**/*.test.ts', 'apps/api/**/*.test.ts', 'apps/worker/**/*.test.ts'],
+    // apps/mobile was absent from this list, so the app had no tests at all —
+    // which is how a notification handler that nothing called, and a push
+    // token that was never registered, both survived to production.
+    include: [
+      'packages/**/*.test.ts', 'apps/api/**/*.test.ts',
+      'apps/worker/**/*.test.ts', 'apps/mobile/test/**/*.test.ts',
+    ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     setupFiles: ['./vitest.setup.ts'],
     // Integration suites share one Postgres database, so they run serially.

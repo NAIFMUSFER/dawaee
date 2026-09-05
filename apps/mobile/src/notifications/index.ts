@@ -4,6 +4,7 @@ import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { t } from '@dawaee/shared';
+import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
  * Local notifications.
@@ -55,18 +56,33 @@ export interface NotificationCapability {
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
 }
 
+/**
+ * What the last real scheduling attempt observed about exact alarms.
+ *
+ * Android does not let Expo ask whether SCHEDULE_EXACT_ALARM is still held;
+ * only trying to schedule reveals it. `rescheduleLocalNotifications` learned
+ * that and returned it — and both screens that report on reminders threw the
+ * answer away and derived `canScheduleExact` from notification permission
+ * instead, which is a different thing entirely. So a phone whose exact-alarm
+ * permission had been revoked was told its reminders were fine, while they
+ * quietly drifted or failed to schedule at all.
+ *
+ * Remembered here because this module makes the call that observes it.
+ */
+let exactAlarmsObservedUnavailable = false;
+
 export async function inspectCapability(): Promise<NotificationCapability> {
   const N = await load();
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
   const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
+  const canScheduleExact =
+    Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
   return {
     supported: true,
     permissionGranted: granted,
-    // Android exact-alarm capability is not directly queryable from Expo; the
-    // scheduling call is what reveals it, and a failure is surfaced there.
-    canScheduleExact: Platform.OS !== 'android' || granted,
+    canScheduleExact,
     ...(granted ? {} : { warningKey: 'notifications.disabledTitle' as const }),
   };
 }
@@ -101,10 +117,61 @@ export async function configureCategories(locale: Locale): Promise<void> {
   // Lock-screen actions: the patient can confirm without opening the app,
   // which is the difference between a tap and a forgotten dose.
   await N.setNotificationCategoryAsync(MEDICATION_CATEGORY_ID, [
-    { identifier: 'TAKEN', buttonTitle: t(locale, 'today.taken'), options: { opensAppToForeground: false } },
-    { identifier: 'SNOOZE', buttonTitle: t(locale, 'today.remindLater'), options: { opensAppToForeground: false } },
-    { identifier: 'SKIP', buttonTitle: t(locale, 'today.skip'), options: { opensAppToForeground: true } },
+    { identifier: ACTION_TAKEN, buttonTitle: t(locale, 'today.taken'), options: { opensAppToForeground: false } },
+    { identifier: ACTION_SNOOZE, buttonTitle: t(locale, 'today.remindLater'), options: { opensAppToForeground: false } },
+    { identifier: ACTION_SKIP, buttonTitle: t(locale, 'today.skip'), options: { opensAppToForeground: true } },
   ]);
+}
+
+/**
+ * Starts listening for taps on those buttons.
+ *
+ * Without this the buttons are decoration: registering a category tells the OS
+ * to DRAW them, and nothing more. Returns a function that stops listening.
+ *
+ * `getLastNotificationResponseAsync` covers the case the listener cannot: the
+ * app was not running when the patient tapped, and is launched by the tap. A
+ * confirmation must not depend on the app having been alive.
+ */
+export async function startNotificationActionListener(
+  onHandled?: (outcome: ActionOutcome) => void,
+): Promise<() => void> {
+  const N = await load();
+  if (!N) return () => undefined;
+
+  const handle = async (response: {
+    actionIdentifier: string;
+    notification: { request: { content: { data: Record<string, unknown> } } };
+  }): Promise<void> => {
+    const outcome = await applyNotificationAction(
+      response.actionIdentifier,
+      response.notification.request.content.data ?? {},
+    );
+    if (outcome) onHandled?.(outcome);
+  };
+
+  // A tap that launched the app cold, which the subscription below misses.
+  const last = await N.getLastNotificationResponseAsync();
+  if (last) await handle(last as Parameters<typeof handle>[0]);
+
+  const sub = N.addNotificationResponseReceivedListener((response) => {
+    void handle(response as Parameters<typeof handle>[0]);
+  });
+  return () => sub.remove();
+}
+
+/**
+ * Silences this device.
+ *
+ * Signing out has to clear the LOCAL schedule too, not only the server-side
+ * registration: those notifications were already handed to the OS, name the
+ * patient's medications, and would keep firing on a phone nobody is signed in
+ * to for as long as the prefetch window lasts.
+ */
+export async function cancelAllLocalNotifications(): Promise<void> {
+  const N = await load();
+  if (!N) return;
+  await N.cancelAllScheduledNotificationsAsync();
 }
 
 export interface ScheduleResult {
@@ -173,6 +240,12 @@ export async function rescheduleLocalNotifications(
       if (String(err).includes('exact')) exactAlarmsUnavailable = true;
     }
   }
+
+  // Remembered so `inspectCapability` can report it. Only ever set to true by
+  // an actual rejection, and cleared by a run that scheduled something without
+  // one, so a permission the patient restores is picked up on the next load.
+  if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
+  else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
 
   return { scheduled, failed, exactAlarmsUnavailable };
 }

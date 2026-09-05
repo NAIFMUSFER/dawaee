@@ -7,7 +7,7 @@ import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels, syncPushRegistration } from '@/notifications';
+import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 
 /**
@@ -18,7 +18,7 @@ import { DEMO_MODE } from '@/api/client';
  * right language and direction — no flash of English in an Arabic app.
  */
 function Shell() {
-  const { ready, preferences, signedIn, deviceId } = useApp();
+  const { ready, preferences, signedIn, deviceId, syncNow: refreshAfterAction } = useApp();
 
   useEffect(() => {
     void configureChannels();
@@ -43,6 +43,29 @@ function Shell() {
     if (!signedIn || !deviceId) return;
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
+
+  /**
+   * Act on the reminder's own buttons.
+   *
+   * Registering the category only tells the OS to draw "Taken / Remind me
+   * later / Skip"; something has to listen for the tap. Nothing did, so a
+   * patient confirming from the lock screen recorded nothing, the dose was
+   * marked missed, and their family was alerted — the gesture meant to prevent
+   * a false alarm was producing one.
+   *
+   * Mounted once for the whole app rather than on the Today screen, because
+   * two of the three buttons deliberately do not open the app: the handler has
+   * to exist even when no screen is showing.
+   */
+  useEffect(() => {
+    if (!signedIn) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void startNotificationActionListener(() => { void refreshAfterAction(); })
+      .then((s) => { if (cancelled) s(); else stop = s; })
+      .catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [signedIn, refreshAfterAction]);
 
   // The provider wraps the loading state too. Components as basic as the
   // spinner reach for the theme, and the theme is direction-aware — rendering

@@ -5,6 +5,7 @@ import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkE
 import type { ProfileSummary } from '../api/types.js';
 import { flushQueue, queueSize } from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
+import { cancelAllLocalNotifications } from '../notifications/index.js';
 
 /**
  * Application state: who is signed in, which patient profile is selected, and
@@ -163,6 +164,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, ready: true }));
     },
     signOut: async () => {
+      // Deactivate this device FIRST, while the token still authorises it.
+      // Signing out used to leave the push registration live, so medication
+      // reminders naming the patient's drugs kept arriving on a phone they had
+      // signed out of — including one they had sold or lost. Best effort: a
+      // failure here must not trap someone in a session they are trying to
+      // leave, and cancelling the local schedule below still silences this
+      // device either way.
+      const deviceId = await getDeviceId();
+      await api.delete(`/v1/devices/push-token/${encodeURIComponent(deviceId)}`).catch(() => undefined);
+      await cancelAllLocalNotifications().catch(() => undefined);
       await api.post('/v1/auth/logout').catch(() => undefined);
       await clearSession();
       setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));

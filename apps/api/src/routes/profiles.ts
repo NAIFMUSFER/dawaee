@@ -1,10 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, applyTravelDecisionSchema, createProfileSchema, setConsentSchema,
+  AppError, ERROR_CODES, applyTravelDecisionSchema, createProfileSchema,
+  requestDeletionSchema, setConsentSchema,
   updatePreferencesSchema, updateProfileSchema,
 } from '@dawaee/shared';
 import { detectTimezoneChange } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
+
+/**
+ * How long an account is kept after erasure is requested.
+ *
+ * Not zero: a request made from a stolen or briefly-borrowed phone must be
+ * recoverable by the real owner, and an irreversible action with no window is
+ * its own hazard. Not long either — this is an erasure right, not a
+ * retention policy.
+ */
+const DELETION_GRACE_DAYS = 14;
 import { authenticate, currentUser } from '../middleware/context.js';
 import { listAccessibleProfiles, loadProfileAccess, requireProfileOwner } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
@@ -145,6 +156,67 @@ export function registerProfileRoutes(app: FastifyInstance): void {
         newValue: { type: body.type, granted: body.granted, version: body.version },
       });
       return { consent: rows[0] };
+    });
+  });
+
+  /**
+   * Ask for the account to be erased.
+   *
+   * The privacy screen has always offered this, behind a two-step
+   * confirmation, and always called an endpoint that did not exist — the
+   * request failed every time against a real server, and only looked like it
+   * worked in the preview build, whose stub answered success. A screen that
+   * promises an erasure right and silently cannot exercise it is worse than
+   * one that never offered it.
+   *
+   * It marks rather than deletes, deliberately. Erasure has to cascade across
+   * every profile, dose, note and caregiver link, and it has to survive a
+   * crash halfway through; doing that inside one request, while the person
+   * waits, is how half-deleted accounts happen. The mark is the durable,
+   * auditable record that they asked, and the deadline is what the request is
+   * measured against.
+   *
+   * Requesting twice is not an error — someone unsure whether the first one
+   * registered must not be told "no" — so the original timestamp is kept.
+   */
+  app.post('/v1/me/deletion-request', {
+    config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
+  }, async (req) => {
+    const body = requestDeletionSchema.parse(req.body);
+    if (!body.confirm) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Deletion must be explicitly confirmed');
+    }
+    const { userId } = currentUser(req);
+
+    return withUser(userId, async (tx) => {
+      const { rows } = await tx.query<{ deletion_requested_at: string }>(
+        `UPDATE users
+            SET deletion_requested_at = COALESCE(deletion_requested_at, now())
+          WHERE id = $1
+        RETURNING deletion_requested_at`,
+        [userId],
+      );
+      const requestedAt = rows[0]?.deletion_requested_at;
+      if (!requestedAt) throw AppError.notFound('Account not found');
+
+      // Every device is silenced at once. Continuing to send medication
+      // reminders to someone who has asked to be erased is the most visible
+      // way to ignore the request.
+      await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1', [userId]);
+
+      await recordAudit(tx, {
+        actorUserId: userId,
+        patientProfileId: null,
+        action: 'account.deletion_requested',
+        entityType: 'user', entityId: userId,
+        requestId: req.id, ipHash: req.ipHash,
+        newValue: { requestedAt },
+      });
+
+      const scheduledFor = new Date(
+        new Date(requestedAt).getTime() + DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      return { requested: true, requestedAt, scheduledFor };
     });
   });
 

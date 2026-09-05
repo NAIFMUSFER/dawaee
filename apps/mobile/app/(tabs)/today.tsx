@@ -81,6 +81,7 @@ export default function TodayScreen() {
   const [busyDoseId, setBusyDoseId] = useState<string | null>(null);
   const [snoozeFor, setSnoozeFor] = useState<DoseView | null>(null);
   const [notificationWarning, setNotificationWarning] = useState<string | null>(null);
+  const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
 
   const load = useCallback(async () => {
@@ -104,9 +105,16 @@ export default function TodayScreen() {
 
       // Rebuilt from the freshly cached window so a phone that loses signal
       // right after this still reminds on time.
-      await rescheduleLocalNotifications([...res.today, ...res.prefetch], preferences.locale, {
-        voiceEnabled: preferences.voiceRemindersEnabled,
-      });
+      const schedule = await rescheduleLocalNotifications(
+        [...res.today, ...res.prefetch], preferences.locale,
+        { voiceEnabled: preferences.voiceRemindersEnabled },
+      );
+
+      // The scheduling attempt is the only thing that can discover Android has
+      // taken exact alarms away. This used to be computed and discarded, so a
+      // patient whose reminders had started arriving late was shown a screen
+      // saying everything was fine.
+      setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
     } catch (err) {
       if (err instanceof NetworkError) {
         setOffline(true);
@@ -248,6 +256,14 @@ export default function TodayScreen() {
 
         {notificationWarning ? (
           <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} />
+        ) : null}
+
+        {exactAlarmsUnavailable ? (
+          <Banner
+            tone="warning"
+            title={t('notifications.exactAlarmsOff')}
+            body={t('notifications.exactAlarmsOffBody')}
+          />
         ) : null}
 
         {next ? (

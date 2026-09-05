@@ -85,6 +85,15 @@ export const registerSchema = z
     path: ['phone'],
   });
 
+/**
+ * Account deletion.
+ *
+ * `confirm` is required and must be true. A destructive, irreversible request
+ * should not be expressible by an empty body — an accidental POST must not be
+ * a valid one.
+ */
+export const requestDeletionSchema = z.object({ confirm: z.literal(true) });
+
 export const setPasswordSchema = z.object({
   currentPassword: z.string().max(200).optional(),
   newPassword: z.string().min(10).max(200),
