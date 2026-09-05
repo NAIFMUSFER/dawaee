@@ -101,10 +101,18 @@ async function main(): Promise<void> {
   };
 
   await loop();
-  const timer = setInterval(() => void loop(), tickSeconds * 1000);
-  timer.unref?.();
-  // Keep the process alive between ticks.
-  await new Promise(() => undefined);
+
+  // The interval is deliberately NOT unref'd: it is the handle that keeps this
+  // process alive. It used to be unref'd, with a never-settling promise standing
+  // in as the keep-alive — but an unsettled promise is not a handle, so the only
+  // thing holding the event loop open was whatever sockets the database pool
+  // happened to be keeping. That works right up until the moment it matters:
+  // when the database is unreachable the pool holds nothing, Node finds an empty
+  // event loop, and the worker exits ZERO — no error, no stack, indistinguishable
+  // from a clean shutdown. In production it looked like an instance restarting
+  // for no reason, with backoff, while reminders silently stopped going out.
+  // A medication reminder that fails must fail loudly and keep retrying.
+  setInterval(() => void loop(), tickSeconds * 1000);
 }
 
 if (process.env.WORKER_ENABLED !== 'false' && import.meta.url === `file://${process.argv[1]}`) {
