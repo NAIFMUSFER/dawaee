@@ -238,14 +238,35 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     const locale = req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar';
 
+    /**
+     * The existing hash, looked up BY USER ID.
+     *
+     * This used to call `app.find_user_for_password_login(userId)`, and that
+     * function matches on `phone_e164` or `lower(email)` — never on an id. A
+     * UUID matches neither, so it returned no row, `existing` was always null,
+     * and the current-password check below was skipped for every account that
+     * has ever used this endpoint. Anyone holding a valid access token could
+     * set a new password without knowing the old one; combined with the fact
+     * that a password change does not end other sessions, a single stolen
+     * access token was a permanent account takeover — the attacker sets a
+     * password and the owner's own stops working.
+     *
+     * It goes through a function rather than a plain SELECT because
+     * `user_credentials` is deliberately unreachable from the API role — RLS
+     * with zero policies and no grant — so hashes are reachable only through
+     * the SECURITY DEFINER auth plane. `app.password_hash_for_user` returns the
+     * hash and nothing else.
+     */
     const existing = await withTransaction(async (tx) => {
       const { rows } = await tx.query<{ password_hash: string | null }>(
-        'SELECT password_hash FROM app.find_user_for_password_login($1)',
+        'SELECT app.password_hash_for_user($1) AS password_hash',
         [userId],
       );
       return rows[0]?.password_hash ?? null;
     });
 
+    // An account with no password yet (OTP-only) is setting one for the first
+    // time and has nothing to prove. An account that HAS one must present it.
     if (existing) {
       const ok = body.currentPassword ? await verifyPassword(body.currentPassword, existing) : false;
       if (!ok) {
@@ -254,8 +275,30 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     }
 
     const hash = await hashNewPassword(body.newPassword, locale);
-    await withTransaction(async (tx) => {
+    const { sessionId } = currentUser(req);
+    // `withUser`, not `withTransaction`: the session revocation below is a
+    // plain UPDATE on auth_sessions, and that table's policy scopes rows to
+    // `app.current_user_id()`. Without the identity set, RLS silently matches
+    // nothing and the revocation is a no-op that reports success — which is
+    // exactly the failure mode this whole finding is about.
+    await withUser(userId, async (tx) => {
       await tx.query('SELECT app.set_password($1,$2)', [userId, hash]);
+
+      /**
+       * Every OTHER session ends here.
+       *
+       * Changing a password is what someone does when they believe another
+       * person has their account. Leaving the other sessions alive means the
+       * action they took to eject an intruder does not eject them — the
+       * intruder's refresh token keeps working and the owner gets no signal.
+       * The session making the change is deliberately kept, so the person is
+       * not signed out of the device they are holding.
+       */
+      await tx.query(
+        `UPDATE auth_sessions SET revoked_at = now()
+          WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`,
+        [userId, sessionId],
+      );
       await recordAudit(tx, {
         actorUserId: userId,
         patientProfileId: null,
