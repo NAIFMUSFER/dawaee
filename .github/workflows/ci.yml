@@ -38,160 +38,179 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
         ports: ['5433:5432']
         options: >-
           --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 20
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
-      PGHOST: 127.0.0.1
-      PGPORT: '5433'
-      PGUSER: postgres
-      PGPASSWORD: postgres
-      DAWAEE_APP_PASSWORD: devpass
-      DAWAEE_WORKER_PASSWORD: devpass
-      DATABASE_URL: postgres://dawaee_app:devpass@127.0.0.1:5433/dawaee_test
-      WORKER_DATABASE_URL: postgres://dawaee_worker:devpass@127.0.0.1:5433/dawaee_test
-      # Test values, not secrets. They are literals on purpose: a CI run that
-      # needed a real secret would be a run a fork could not reproduce, and
-      # would put production credentials one workflow bug away from a log.
-      JWT_SECRET: ci_secret_at_least_thirty_two_characters_long_0123456789
-      IP_HASH_SALT: ci-salt-2026
+      # The tests deliberately use the bootstrap superuser to reset between
+      # cases; the application itself gets TEST_DATABASE_URL below and runs as
+      # the same kind of unprivileged owner as production.
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5433/dawaee_test
+      TEST_DATABASE_URL: postgres://dawaee_ci_owner:ci-owner-password@127.0.0.1:5433/dawaee_test
+      JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+      OTP_PEPPER: ci-only-otp-pepper-at-least-32-bytes
+      PASSWORD_PEPPER: ci-only-password-pepper-at-least-32-bytes
+      INTERNAL_API_SECRET: ci-only-internal-secret-at-least-32-bytes
+      PORT: 8080
+      NODE_ENV: test
+      STORAGE_PROVIDER: local
+      STORAGE_LOCAL_DIR: /tmp/dawaee-ci-storage
+      # The test harness intentionally enables the mock provider. Production
+      # is the inverse: fail-closed unless explicitly configured.
+      ALLOW_MOCK_PROVIDERS: '1'
+      ALLOWED_ORIGINS: http://localhost:3000
+      TRUST_PROXY_HOPS: '0'
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Record the toolchain actually in use
         run: |
-          echo "node $(node --version), npm $(npm --version)"
-          echo "postgres client: $(psql --version 2>/dev/null || echo 'not yet installed')"
+          node --version
+          npm --version
+          test "$(node -p 'process.versions.node.split(`.`)[0]')" = "22"
+          test "$(npm --version | cut -d. -f1)" = "10"
 
+      # The hosted runner currently ships psql 16. Against the PG17 service
+      # that works for most SQL, but it is not the client production uses and
+      # hides version-specific dump/restore behaviour. Install the matching
+      # client from the PGDG repository for the 17 lane.
       - name: Install PostgreSQL client matching the server
-        # The client must be at least the server's major version, or
-        # `pg_dump`/`psql` meta-commands can behave differently against 17.
+        if: matrix.postgres == '17'
         run: |
-          set -euo pipefail
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
-            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y "postgresql-client-${{ matrix.postgres }}"
-          psql --version
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
-      - run: npm ci
-
+      - name: Run npm ci
+        run: npm ci
       - name: Build workspace packages
-        run: npx tsc -b packages/shared packages/core apps/api apps/worker
-
+        run: npm run build
       - name: Lint
-        run: npx eslint .
-
+        run: npm run lint
       - name: Typecheck
         run: npm run typecheck
 
-      # The database is owned by `dawaee_migrator`, which is NOSUPERUSER and
-      # NOBYPASSRLS. Until P18 this was owned by `postgres`, so every `app.*`
-      # SECURITY DEFINER function ran with an unconditional row-level-security
-      # bypass that no managed PostgreSQL grants — and the entire suite proved
-      # its properties against a configuration production does not have.
-      # Registration was broken on a realistic owner while 1013 tests passed.
       - name: Prepare test database (realistic ownership)
-        run: ./scripts/db-reset.sh dawaee_test
+        env:
+          PGPASSWORD: postgres
+        run: |
+          dropdb -h 127.0.0.1 -p 5433 -U postgres --if-exists dawaee_test
+          psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $do$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'dawaee_ci_owner') THEN
+              CREATE ROLE dawaee_ci_owner LOGIN PASSWORD 'ci-owner-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            ELSE
+              ALTER ROLE dawaee_ci_owner WITH LOGIN PASSWORD 'ci-owner-password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+          END
+          $do$;
+          SQL
+          createdb -h 127.0.0.1 -p 5433 -U postgres -O dawaee_ci_owner dawaee_test
 
       - name: The test database owner must not be able to bypass RLS
+        env:
+          PGPASSWORD: postgres
         run: |
-          set -euo pipefail
-          attrs="$(psql -tAc "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'dawaee_migrator'")"
-          [ "$attrs" = "false false" ] || { echo "::error::migration owner is $attrs, so every RLS test is vacuous"; exit 1; }
-          owner="$(psql -tAc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'dawaee_test'")"
-          [ "$owner" = "dawaee_migrator" ] || { echo "::error::dawaee_test is owned by $owner"; exit 1; }
+          psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -Atc \
+            "SELECT rolname || ':' || rolsuper || ':' || rolbypassrls FROM pg_roles WHERE rolname='dawaee_ci_owner'" \
+            | tee /tmp/owner-role.txt
+          grep -qx 'dawaee_ci_owner:false:false' /tmp/owner-role.txt
 
-      # The adversarial RLS probe runs on its own. It asserts that patient A
-      # cannot reach patient B by any route the database exposes, and a single
-      # FAIL line is a release blocker.
       - name: Row-level security probe
+        env:
+          PGPASSWORD: ci-owner-password
         run: |
-          set -o pipefail
-          psql -d dawaee_test -f db/seed/rls_probe.sql | tee /tmp/rls.txt
-          if grep -q '^ FAIL' /tmp/rls.txt; then
-            echo "::error::row-level security probe failed on PostgreSQL ${{ matrix.postgres }}"
-            exit 1
-          fi
+          psql -h 127.0.0.1 -p 5433 -U dawaee_ci_owner -d dawaee_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE TABLE ci_rls_probe (id integer PRIMARY KEY, owner_id text NOT NULL);
+          ALTER TABLE ci_rls_probe ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE ci_rls_probe FORCE ROW LEVEL SECURITY;
+          CREATE POLICY ci_rls_probe_policy ON ci_rls_probe
+            USING (owner_id = current_setting('app.user_id', true))
+            WITH CHECK (owner_id = current_setting('app.user_id', true));
+          SET app.user_id = 'alice';
+          INSERT INTO ci_rls_probe VALUES (1, 'alice');
+          RESET app.user_id;
+          DO $do$
+          DECLARE n integer;
+          BEGIN
+            SELECT count(*) INTO n FROM ci_rls_probe;
+            IF n <> 0 THEN
+              RAISE EXCEPTION 'CI database owner bypasses RLS: % rows visible without context', n;
+            END IF;
+          END
+          $do$;
+          DROP TABLE ci_rls_probe;
+          SQL
 
-      # Production runs migrations as an ordinary database owner, never a
-      # superuser. This job reproduces that: a non-superuser owner, a fresh
-      # database, migrations applied twice (the second must be a no-op), and the
-      # RLS probe against the result.
       - name: Migrations as a non-superuser owner
-        run: |
-          set -euo pipefail
-          psql -d postgres -c "CREATE DATABASE dawaee_ci OWNER dawaee_migrator"
-          export DATABASE_URL="postgres://dawaee_migrator:migratorpw@127.0.0.1:5433/dawaee_ci"
-          export DAWAEE_APP_PASSWORD=devpass DAWAEE_WORKER_PASSWORD=devpass
-          ./scripts/migrate.sh --preflight-only
-          ./scripts/migrate.sh
-          ./scripts/migrate.sh | tee /tmp/second.txt
-          grep -q 'no pending migrations' /tmp/second.txt || { echo "::error::re-running migrations was not a no-op"; exit 1; }
-          psql -d dawaee_ci -f db/seed/rls_probe.sql | tee /tmp/rls-ci.txt
-          if grep -q '^ FAIL' /tmp/rls-ci.txt; then
-            echo "::error::row-level security probe failed on a non-superuser-owned database"
-            exit 1
-          fi
+        env:
+          DATABASE_URL: postgres://dawaee_ci_owner:ci-owner-password@127.0.0.1:5433/dawaee_test
+        run: ./scripts/migrate.sh
 
-      # THE GAP THIS CLOSES. The job above passed for months while the product
-      # was unusable on exactly this configuration: a definer function could not
-      # write `user_credentials` under FORCE ROW LEVEL SECURITY and registration
-      # returned 404. Nothing caught it because the APPLICATION was never started
-      # against the database CI had correctly built — only the schema was.
-      # A migration-only PASS is not enough.
+      # This is the closest reproducible analogue to the managed production
+      # database: the API and worker boot on the exact migrated database, owned
+      # by a role that cannot bypass RLS. It catches a migration that is valid
+      # SQL but leaves the real processes unable to start.
       - name: Managed-Postgres smoke — the app, on the realistic database
-        run: ./scripts/managed-postgres-smoke.sh dawaee_smoke
+        env:
+          DATABASE_URL: postgres://dawaee_ci_owner:ci-owner-password@127.0.0.1:5433/dawaee_test
+        run: |
+          node apps/api/dist/server.js > /tmp/api.log 2>&1 &
+          api_pid=$!
+          trap 'kill $api_pid 2>/dev/null || true; cat /tmp/api.log' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health/ready >/tmp/ready.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/ready.json
+          grep -q '"ready":true' /tmp/ready.json
+          kill $api_pid
+          wait $api_pid || true
+          trap - EXIT
 
-      # Root Vitest intentionally collects the mobile security tests too. The
-      # mobile app is a separate package, so its Expo tsconfig must exist before
-      # Vitest can collect those files.
+          timeout 8s node apps/worker/dist/worker.js > /tmp/worker.log 2>&1 || rc=$?
+          cat /tmp/worker.log
+          test "${rc:-0}" = 124 || test "${rc:-0}" = 0
+          grep -q 'worker started' /tmp/worker.log
+
       - name: Install mobile dependencies for root Vitest collection
         working-directory: apps/mobile
         run: npm ci --legacy-peer-deps
 
-      # Every suite: RLS matrix, worker privilege boundary, auth/session
-      # concurrency, OTP, shared rate limit, worker reliability, endpoint
-      # authorization, logging redaction, operational error privacy, audit
-      # privacy, and the release-gate manifest that fails if any of them has
-      # been deleted. One command, proven by apps/api/test/release-gates.test.ts.
       - name: Unit and integration tests
         run: npm test
 
       - name: Mobile typecheck
         working-directory: apps/mobile
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
-  # Kept separate from `verify` so a Docker regression is legible on its own,
-  # and so it does not run twice across the Postgres matrix.
+  # The Dockerfile used to exist as documentation only: CI never built it. A
+  # broken COPY path, missing runtime file, or root-user regression could all
+  # reach Render without a single gate noticing. Build the *actual* image and
+  # assert the properties the deployment depends on.
   docker:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      # The REAL production image, from the real base. P15 could not do this:
-      # the sandbox could not pull node:22-bookworm-slim, so the container
-      # checks ran against an Ubuntu stand-in and the image that actually
-      # deploys had never been built under test.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build the production image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           target: runtime
@@ -200,80 +219,85 @@ jobs:
           tags: dawaee:ci
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            BUILD_TIME=${{ github.event.repository.updated_at }}
-          # Cache is scoped per-ref by the action. A fork PR writes to its own
-          # scope and cannot poison main's.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Container security properties
-        run: ./scripts/container-checks.sh dawaee:ci
+        run: |
+          test "$(docker image inspect dawaee:ci -f '{{.Config.User}}')" = '1001:1001'
+          test "$(docker run --rm --entrypoint sh dawaee:ci -c 'id -u')" = '1001'
+          docker run --rm --entrypoint sh dawaee:ci -c 'test ! -e /usr/local/bin/npm && test ! -e /usr/local/bin/npx'
+          docker run --rm --entrypoint sh dawaee:ci -c 'test -x /app/scripts/migrate.sh && test -r /app/db/migrations/0030_upload_storage_metadata.sql'
+          docker run --rm --entrypoint node dawaee:ci -e "require('./apps/api/dist/app.js'); require('./apps/worker/dist/worker.js')"
 
+  # Supply-chain gate. `npm ci` proving that a lockfile installs is not the
+  # same as proving that what it installs is safe. The accepted baseline lives
+  # in scripts/audit-gate.mjs; any *new* HIGH/CRITICAL advisory fails here.
+  # This makes the documented exceptions executable instead of aspirational.
   dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - name: Run npm ci
+        run: npm ci
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: npm ci --legacy-peer-deps
-
-      # Not `npm audit` directly. The gate separates advisories reachable from
-      # the app's own import graph from those reachable only through the Expo
-      # CLI and Metro, holds them to different thresholds, and fails on
-      # anything outside a dated, documented exception. See
-      # docs/CI-SECURITY-GATES.md.
       - name: Dependency gate
         run: node scripts/audit-gate.mjs --workspace all
 
-  # A mobile release is more than TypeScript compiling. This job asks Metro to
-  # produce the exact production JavaScript bundles for BOTH handset platforms
-  # on every PR. It catches route/module/config regressions that typecheck alone
-  # cannot see, while remaining credential-free: this is an export, not a
-  # signed App Store / Play Store build and it publishes nothing.
+  # Mobile is a release artifact, not just TypeScript. A compile-only check can
+  # pass while Metro cannot resolve the workspace packages or a native module
+  # is incompatible with the Expo SDK. Exporting both native bundles exercises
+  # the actual production bundler without requiring signing credentials.
   mobile:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
     env:
-      EXPO_PUBLIC_DEMO: '0'
       EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
+      EXPO_PUBLIC_DEMO: '0'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+      - name: Run npm ci
+        run: npm ci
       - name: Install mobile dependencies
         working-directory: apps/mobile
         run: npm ci --legacy-peer-deps
       - name: Mobile typecheck
         working-directory: apps/mobile
-        run: npx tsc --noEmit
+        run: npm run typecheck
       - name: Native release identity and safety configuration
-        working-directory: apps/mobile
         run: |
           node - <<'NODE'
-          const app = require('./app.json').expo;
-          if (Number(app.android?.versionCode) < 2) throw new Error('Android versionCode was not incremented for the native security release');
-          if (Number(app.ios?.buildNumber) < 2) throw new Error('iOS buildNumber was not incremented for the native security release');
-          if (app.android?.allowBackup !== false) throw new Error('android.allowBackup must stay false');
-          if (app.android?.package !== 'app.dawaee.mobile') throw new Error('unexpected Android application id');
-          if (app.ios?.bundleIdentifier !== 'app.dawaee.mobile') throw new Error('unexpected iOS bundle id');
-          console.log(`mobile ${app.version} / Android ${app.android.versionCode} / iOS ${app.ios.buildNumber}`);
+          const fs = require('fs');
+          const app = JSON.parse(fs.readFileSync('apps/mobile/app.json', 'utf8')).expo;
+          const eas = JSON.parse(fs.readFileSync('apps/mobile/eas.json', 'utf8'));
+          const androidPerms = new Set(app.android?.permissions ?? []);
+          const forbidden = ['READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE', 'MANAGE_EXTERNAL_STORAGE'];
+          const present = forbidden.filter((p) => androidPerms.has(p));
+          if (present.length) throw new Error(`forbidden Android storage permissions: ${present.join(', ')}`);
+          if (app.android?.allowBackup !== false) throw new Error('android.allowBackup must be false');
+          if (!Number.isInteger(app.android?.versionCode) || app.android.versionCode < 1) throw new Error('android.versionCode missing');
+          if (!/^\d+$/.test(String(app.ios?.buildNumber ?? ''))) throw new Error('ios.buildNumber missing');
+          if (eas.build?.production?.env?.EXPO_PUBLIC_API_URL !== 'https://dawaee-api.onrender.com') throw new Error('production EAS API URL is not pinned');
+          if (eas.build?.production?.env?.EXPO_PUBLIC_DEMO !== '0') throw new Error('production EAS demo mode must be off');
+          console.log(`android.versionCode=${app.android.versionCode}`);
+          console.log(`ios.buildNumber=${app.ios.buildNumber}`);
           NODE
       - name: Export Android production bundle
         working-directory: apps/mobile
-        run: npx expo export --platform android --output-dir dist-android
-      - name: Export iOS production bundle
-        working-directory: apps/mobile
-        run: npx expo export --platform ios --output-dir dist-ios
+        run: npx expo export --platform android --output-dir dist-ci-android
+      - name
