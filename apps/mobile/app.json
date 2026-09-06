@@ -76,7 +76,8 @@
           "photosPermission": "لاختيار صورة الدواء من مكتبة الصور.",
           "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "extra": {
       "apiBaseUrl": "https://dawaee-api.onrender.com",
