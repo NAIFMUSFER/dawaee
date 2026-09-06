@@ -1194,7 +1194,11 @@ describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
       payload: {
         patientProfileId: patient.profileId, invitedName: 'Neighbour',
         invitedPhone: helper.phone, role: 'caregiver',
-        permissions: ['view_schedule'], escalationPriority: 1,
+        // The narrowest grant that actually functions: "see when the pills are
+        // due", nothing else. `view_medications` travels with `view_schedule`
+        // because a dose row cannot be read without its medication — see
+        // P12-14, which is the finding that established this pairing.
+        permissions: ['view_schedule', 'view_medications'], escalationPriority: 1,
       },
     });
     expect(invite.statusCode, invite.body).toBe(200);
@@ -1233,9 +1237,9 @@ describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
    * relationship" rather than "was this granted".
    */
   const BEYOND_GRANT: Array<[string, 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', () => string, unknown?]> = [
-    ['view_medications: list', 'GET', () => `/v1/medications?profileId=${ids.profileId}`],
-    ['view_medications: read one', 'GET', () => `/v1/medications/${ids.medicationId}`],
-    ['view_medications: stock', 'GET', () => `/v1/medications/${ids.medicationId}/stock`],
+    // `view_medications` reads are NOT here: they travel with the grant, per
+    // P12-14. What is here is everything the patient did not agree to.
+    ['view_history: doses', 'GET', () => `/v1/doses?profileId=${ids.profileId}&from=2026-09-01&to=2026-09-30`],
     ['view_history: notes', 'GET', () => `/v1/notes?profileId=${ids.profileId}`],
     ['view_history: measurements', 'GET', () => `/v1/measurements?profileId=${ids.profileId}`],
     ['view_reports: weekly', 'GET', () => `/v1/reports/weekly?profileId=${ids.profileId}`],
@@ -1294,7 +1298,7 @@ describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
       `SELECT permissions::text FROM caregiver_relationships WHERE id = '${ids.relationshipId}'`], {
       env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
     }).toString().trim();
-    expect(perms, 'the caregiver widened its own grant').toBe('{view_schedule}');
+    expect(perms, 'the caregiver widened its own grant').toBe('{view_schedule,view_medications}');
   });
 
   it('loses everything the moment the patient revokes the relationship', async () => {
@@ -1644,4 +1648,158 @@ describe('P12-13 a dose id in the body must belong to the same patient', () => {
     expect(res.statusCode).toBeLessThan(500);
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
   });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P12-14 — a permission check that names less than its query reads.
+ *
+ * Measured at the baseline commit, a caregiver granted every permission
+ * EXCEPT `view_medications` — `view_schedule`, `view_history`,
+ * `view_adherence`, `view_reports`, `confirm_dose`, `update_stock` — got:
+ *
+ *   GET /v1/today            200, empty
+ *   GET /v1/doses            200, zero doses
+ *   GET /v1/doses/:id        404
+ *   GET /v1/reports/weekly   200, zero medications
+ *   GET /v1/reports/clinician 200, zero doses
+ *   POST /v1/doses/:id/taken 400 "The request violates a data rule"
+ *
+ * Not one permission error anywhere. The patient had granted a caregiver the
+ * ability to watch their schedule and confirm their doses, and the caregiver
+ * saw an empty app with nothing to explain it.
+ *
+ * The cause is that a dose is not readable alone: `DOSE_LIST_SELECT` and the
+ * report query inner join `medications`, whose RLS policy requires
+ * `view_medications`. The application layer asked for one permission while
+ * the query read two, and RLS answered the truth by returning no rows —
+ * which a `SELECT` cannot distinguish from "there is nothing here".
+ *
+ * Resolved in favour of the database, per the product decision that seeing
+ * the schedule entails seeing which medication it is for. `/v1/stock/low`
+ * already worked this way and was the model: it asked for what it read and
+ * returned a clean 403.
+ *
+ * `/v1/adherence` is deliberately not in the list below. It LEFT joins, so it
+ * degrades to counts without medication names instead of returning nothing,
+ * and it still answers 200 with real numbers on the narrow grant. That is the
+ * behaviour the other routes would have if those joins were ever relaxed.
+ */
+describe('P12-14 a caregiver missing view_medications is told so', () => {
+  let patient: TestUser;
+  let narrow: TestUser;
+  const ids = { doseId: '' };
+  const RANGE = 'from=2026-09-01&to=2026-09-30';
+
+  beforeAll(async () => {
+    patient = await signIn(h, '+966500090040');
+    narrow = await signIn(h, '+966500090041');
+
+    await createMedication(patient);
+    const doses = await send({
+      method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&${RANGE}`,
+      headers: authHeaders(patient),
+    });
+    ids.doseId = doses.json<{ doses: Array<{ id: string }> }>().doses[0]!.id;
+
+    const invite = await send({
+      method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(patient),
+      payload: {
+        patientProfileId: patient.profileId, invitedName: 'Narrow', invitedPhone: narrow.phone,
+        role: 'caregiver',
+        // Everything except view_medications.
+        permissions: [
+          'view_schedule', 'view_history', 'view_adherence', 'view_reports',
+          'confirm_dose', 'update_stock', 'receive_notifications',
+        ],
+        escalationPriority: 1,
+      },
+    });
+    expect(invite.statusCode, invite.body).toBe(200);
+    const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
+    expect((await send({
+      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    })).statusCode).toBe(200);
+  }, 120_000);
+
+  const NEEDS_MEDICATIONS: Array<[string, 'GET' | 'POST', () => string, unknown?]> = [
+    ['GET /v1/today', 'GET', () => `/v1/today?profileId=${patient.profileId}`],
+    ['GET /v1/doses', 'GET', () => `/v1/doses?profileId=${patient.profileId}&${RANGE}`],
+    ['GET /v1/doses/:id', 'GET', () => `/v1/doses/${ids.doseId}`],
+    ['GET /v1/reports/weekly', 'GET', () => `/v1/reports/weekly?profileId=${patient.profileId}`],
+    ['GET /v1/reports/adherence', 'GET', () => `/v1/reports/adherence?profileId=${patient.profileId}&${RANGE}`],
+    ['GET /v1/reports/clinician', 'GET', () => `/v1/reports/clinician?profileId=${patient.profileId}&${RANGE}`],
+    ['GET /v1/stock/low', 'GET', () => `/v1/stock/low?profileId=${patient.profileId}`],
+    ['POST taken', 'POST', () => `/v1/doses/${ids.doseId}/taken`, { clientEventId: 'narrow-probe-0001' }],
+    ['POST snooze', 'POST', () => `/v1/doses/${ids.doseId}/snooze`, { minutes: 10, clientEventId: 'narrow-probe-0002' }],
+    ['POST skip', 'POST', () => `/v1/doses/${ids.doseId}/skip`, { clientEventId: 'narrow-probe-0003' }],
+  ];
+
+  it('answers 403 naming the missing permission, never an empty success', async () => {
+    const wrong: string[] = [];
+    for (const [label, method, url, payload] of NEEDS_MEDICATIONS) {
+      const res = await send({ method, url: url(), headers: authHeaders(narrow), payload: payload ?? undefined });
+      if (res.statusCode !== 403) { wrong.push(`${label} -> ${res.statusCode} ${res.body.slice(0, 110)}`); continue; }
+      const msg = res.json<{ error: { message: string } }>().error.message;
+      if (!msg.includes('view_medications')) wrong.push(`${label} -> 403 but said "${msg}"`);
+    }
+    expect(wrong, 'these did not say what was missing').toEqual([]);
+  }, 120_000);
+
+  it('and none of them returned a medication name anyway', async () => {
+    for (const [label, method, url, payload] of NEEDS_MEDICATIONS) {
+      const res = await send({ method, url: url(), headers: authHeaders(narrow), payload: payload ?? undefined });
+      expect(res.body, `${label} disclosed the medication`).not.toContain(PANADOL.name);
+    }
+  }, 120_000);
+
+  it('/v1/adherence still works on the narrow grant, because it LEFT joins', async () => {
+    const res = await send({
+      method: 'GET', url: `/v1/adherence?profileId=${patient.profileId}&${RANGE}`,
+      headers: authHeaders(narrow),
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json<{ summary: { scheduled: number } }>().summary.scheduled).toBeGreaterThan(0);
+    expect(res.body, 'and it does so without naming the medication').not.toContain(PANADOL.name);
+  });
+
+  /**
+   * The control that matters most. Without it, the block above would pass just
+   * as well if every one of these routes were broken for everybody.
+   */
+  it('positive control: adding view_medications makes every one of them work', async () => {
+    const rel = execFileSync('psql', ['-d', 'dawaee_test', '-tAc',
+      `SELECT id FROM caregiver_relationships
+        WHERE caregiver_user_id = '${narrow.userId}' AND patient_profile_id = '${patient.profileId}'`], {
+      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
+    }).toString().trim();
+
+    const widened = await send({
+      method: 'PATCH', url: `/v1/caregivers/${rel}/permissions`, headers: authHeaders(patient),
+      payload: {
+        permissions: [
+          'view_schedule', 'view_history', 'view_adherence', 'view_reports',
+          'confirm_dose', 'update_stock', 'receive_notifications', 'view_medications',
+        ],
+      },
+    });
+    expect(widened.statusCode, widened.body).toBe(200);
+
+    const broken: string[] = [];
+    for (const [label, method, url, payload] of NEEDS_MEDICATIONS) {
+      if (method !== 'GET') continue;
+      const res = await send({ method, url: url(), headers: authHeaders(narrow) });
+      if (res.statusCode !== 200) broken.push(`${label} -> ${res.statusCode} ${res.body.slice(0, 110)}`);
+      void payload;
+    }
+    expect(broken, 'the routes are broken regardless, so the 403s above prove nothing').toEqual([]);
+
+    // And the data really is there now, not merely a 200.
+    const list = await send({
+      method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&${RANGE}`, headers: authHeaders(narrow),
+    });
+    expect(list.json<{ doses: unknown[] }>().doses.length).toBeGreaterThan(0);
+    expect(list.body).toContain(PANADOL.name);
+  }, 120_000);
 });

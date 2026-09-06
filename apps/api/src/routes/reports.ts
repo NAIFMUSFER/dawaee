@@ -4,7 +4,7 @@ import { addDays, dailyBreakdown, forecastStock, localDateInZone, summarizeAdher
 import { requireDate, requireDateRange, requireUuid } from '../lib/params.js';
 import { withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
-import { requireProfileAccess } from '../services/access-service.js';
+import { REPORT_READ, requireProfileAccess } from '../services/access-service.js';
 import { now as serverNow } from '../lib/clock.js';
 
 /**
@@ -28,7 +28,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     audience: 'family' | 'clinician',
   ) {
     return withUserReadOnly(userId, async (tx) => {
-      const access = await requireProfileAccess(tx, userId, profileId, 'view_reports');
+      const access = await requireProfileAccess(tx, userId, profileId, REPORT_READ);
       const now = serverNow();
 
       const { rows } = await tx.query(

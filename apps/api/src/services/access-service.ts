@@ -72,16 +72,58 @@ export async function loadProfileAccess(
   };
 }
 
+/**
+ * Requires every permission a route's query actually needs.
+ *
+ * Accepts a list because a permission check that names one thing while the
+ * query reads two is not a check, it is a silence. Measured at the baseline
+ * commit: a caregiver granted `view_schedule` and `view_history` — the narrow
+ * "see when the pills are due" grant a patient would choose for a neighbour —
+ * got 200 with an empty array from `/v1/today` and `/v1/doses`, and 404 from
+ * `/v1/doses/:id`. Not a permission error anywhere; just nothing, with no
+ * indication why.
+ *
+ * The cause is that a dose is not readable on its own. Every dose query inner
+ * joins `medications` to render the row, and that table's RLS policy requires
+ * `view_medications`. So the application layer said `view_schedule` was
+ * enough while the database required two permissions, and the disagreement
+ * surfaced as an empty screen rather than as a refusal.
+ *
+ * Resolved in favour of the database's answer, per the product decision that
+ * seeing the schedule entails seeing which medication it is for: the routes
+ * now ask for what they read. A caregiver missing `view_medications` gets
+ * `Missing permission: view_medications`, which is the true reason and is
+ * actionable — the patient can grant it.
+ *
+ * The permissions are checked in the order given, so the message names the
+ * route's primary permission first when both are absent.
+ */
 export async function requireProfileAccess(
   tx: PoolClient,
   userId: string,
   profileId: string,
-  permission: CaregiverPermission,
+  permission: CaregiverPermission | readonly CaregiverPermission[],
 ): Promise<ProfileAccess> {
   const access = await loadProfileAccess(tx, userId, profileId);
-  assertCan(access, permission);
+  for (const p of Array.isArray(permission) ? permission : [permission as CaregiverPermission]) {
+    assertCan(access, p);
+  }
   return access;
 }
+
+/**
+ * The permission set required to read a dose row.
+ *
+ * `view_medications` is in every one of these because `DOSE_LIST_SELECT` and
+ * the report query inner join `medications`. If those joins ever become LEFT
+ * joins — showing a caregiver "a dose at 08:00" without saying which medicine,
+ * which is the other coherent product answer — this constant is the one place
+ * that has to change.
+ */
+export const DOSE_READ = ['view_schedule', 'view_medications'] as const;
+export const DOSE_HISTORY_READ = ['view_history', 'view_medications'] as const;
+export const DOSE_CONFIRM = ['confirm_dose', 'view_medications'] as const;
+export const REPORT_READ = ['view_reports', 'view_medications'] as const;
 
 export async function requireProfileOwner(
   tx: PoolClient,
