@@ -57,7 +57,7 @@ jobs:
       # needed a real secret would be a run a fork could not reproduce, and
       # would put production credentials one workflow bug away from a log.
       JWT_SECRET: ci_secret_at_least_thirty_two_characters_long_0123456789
-      IP_HASH_SALT: ci-salt
+      IP_HASH_SALT: ci-salt-2026
 
     steps:
       - uses: actions/checkout@v4
@@ -156,6 +156,13 @@ jobs:
       - name: Managed-Postgres smoke — the app, on the realistic database
         run: ./scripts/managed-postgres-smoke.sh dawaee_smoke
 
+      # Root Vitest intentionally collects the mobile security tests too. The
+      # mobile app is a separate package, so its Expo tsconfig must exist before
+      # Vitest can collect those files.
+      - name: Install mobile dependencies for root Vitest collection
+        working-directory: apps/mobile
+        run: npm ci --legacy-peer-deps
+
       # Every suite: RLS matrix, worker privilege boundary, auth/session
       # concurrency, OTP, shared rate limit, worker reliability, endpoint
       # authorization, logging redaction, operational error privacy, audit
@@ -166,9 +173,7 @@ jobs:
 
       - name: Mobile typecheck
         working-directory: apps/mobile
-        run: |
-          npm ci --legacy-peer-deps
-          npx tsc --noEmit
+        run: npx tsc --noEmit
 
   # Kept separate from `verify` so a Docker regression is legible on its own,
   # and so it does not run twice across the Postgres matrix.
