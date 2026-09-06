@@ -34,10 +34,7 @@ jobs:
             apps/mobile/package-lock.json
 
       # Mobile tests/typechecking intentionally reach packages/shared and use
-      # Vitest from the repository root. The first rehearsal installed only the
-      # mobile tree, so SDK 53 itself upgraded correctly but TypeScript could not
-      # resolve the repo-level test/runtime dependencies. Reproduce the real CI
-      # topology instead of weakening tsconfig or skipping tests.
+      # Vitest from the repository root. Reproduce the real CI topology.
       - name: Install repository test dependencies
         run: npm ci
 
@@ -46,6 +43,9 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
+      # Expo SDK 53+ requires export output to remain under the project root.
+      # Keep rehearsal bundles local to apps/mobile and remove them before the
+      # dependency/config commit so no generated bundle is ever pushed.
       - name: Upgrade and verify SDK 53
         working-directory: apps/mobile
         run: |
@@ -55,9 +55,10 @@ jobs:
           npx expo install --fix --npm
           npx expo install --check --npm
           npx tsc --noEmit
-          rm -rf /tmp/dawaee-sdk53-android /tmp/dawaee-sdk53-ios
-          npx expo export --platform android --output-dir /tmp/dawaee-sdk53-android
-          npx expo export --platform ios --output-dir /tmp/dawaee-sdk53-ios
+          rm -rf .upgrade-artifacts
+          npx expo export --platform android --output-dir .upgrade-artifacts/sdk53-android
+          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk53-ios
+          rm -rf .upgrade-artifacts
           git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 52 to 53'
@@ -71,9 +72,10 @@ jobs:
           npx expo install --fix --npm
           npx expo install --check --npm
           npx tsc --noEmit
-          rm -rf /tmp/dawaee-sdk54-android /tmp/dawaee-sdk54-ios
-          npx expo export --platform android --output-dir /tmp/dawaee-sdk54-android
-          npx expo export --platform ios --output-dir /tmp/dawaee-sdk54-ios
+          rm -rf .upgrade-artifacts
+          npx expo export --platform android --output-dir .upgrade-artifacts/sdk54-android
+          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk54-ios
+          rm -rf .upgrade-artifacts
           git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 53 to 54'
@@ -87,9 +89,10 @@ jobs:
           npx expo install --fix --npm
           npx expo install --check --npm
           npx tsc --noEmit
-          rm -rf /tmp/dawaee-sdk55-android /tmp/dawaee-sdk55-ios
-          npx expo export --platform android --output-dir /tmp/dawaee-sdk55-android
-          npx expo export --platform ios --output-dir /tmp/dawaee-sdk55-ios
+          rm -rf .upgrade-artifacts
+          npx expo export --platform android --output-dir .upgrade-artifacts/sdk55-android
+          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk55-ios
+          rm -rf .upgrade-artifacts
           git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 54 to 55'
