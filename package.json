@@ -26,6 +26,8 @@
     "dev:api": "npm run dev -w @dawaee/api",
     "dev:worker": "npm run dev -w @dawaee/worker",
     "audit:gate": "node scripts/audit-gate.mjs --workspace all",
+    "audit:root": "node scripts/audit-gate.mjs --workspace root",
+    "audit:mobile": "node scripts/audit-gate.mjs --workspace mobile",
     "ci:container": "./scripts/container-checks.sh"
   },
   "devDependencies": {
