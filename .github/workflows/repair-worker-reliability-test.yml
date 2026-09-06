@@ -1,0 +1,57 @@
+name: Repair worker reliability test isolation
+
+on:
+  push:
+    branches: [release/dawaee-rc-2026-09-06]
+    paths:
+      - '.github/workflows/repair-worker-reliability-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/dawaee-rc-2026-09-06
+          fetch-depth: 0
+
+      - name: Make crash-window fixtures deterministic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          test = Path('apps/api/test/worker-reliability.test.ts')
+          src = test.read_text()
+          old = "VALUES ($1,$2,'dose_reminder','push','en','t','b','{}'::jsonb,$3, now(), now(), 'queued')\n       RETURNING id`"
+          new = "VALUES ($1,$2,'dose_reminder','push','en','t','b','{}'::jsonb,$3, now(), TIMESTAMPTZ '2000-01-01 00:00:00+00', 'queued')\n       RETURNING id`"
+          if src.count(old) != 1:
+              raise SystemExit(f'expected exactly one crash-window enqueue fixture, found {src.count(old)}')
+          test.write_text(src.replace(old, new, 1))
+
+          package = Path('package.json')
+          pkg = package.read_text()
+          old_script = '"test": "vitest run --no-file-parallelism"'
+          new_script = '"test": "vitest run"'
+          if pkg.count(old_script) != 1:
+              raise SystemExit(f'expected serialized test script once, found {pkg.count(old_script)}')
+          package.write_text(pkg.replace(old_script, new_script, 1))
+
+          # This workflow is intentionally one-shot. Remove it in the same
+          # repair commit so it cannot become permanent release machinery.
+          Path('.github/workflows/repair-worker-reliability-test.yml').unlink()
+          PY
+
+      - name: Commit repair
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/test/worker-reliability.test.ts package.json .github/workflows/repair-worker-reliability-test.yml
+          git diff --cached --check
+          git diff --cached --exit-code && { echo 'no repair produced'; exit 1; } || true
+          git commit -m 'test: isolate dispatcher crash-window fixtures'
+          git push origin HEAD:release/dawaee-rc-2026-09-06
