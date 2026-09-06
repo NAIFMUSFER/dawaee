@@ -67,6 +67,30 @@ export function registerErrorHandler(app: FastifyInstance): void {
         error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the supplied values is malformed', requestId },
       } satisfies ApiErrorBody);
     }
+    /**
+     * A foreign key violation is almost always a caller referring to something
+     * that is not there — a stale offline queue replaying a note for a dose
+     * since deleted — and it was reaching the 500 branch, so an ordinary
+     * client mistake was reported as a server fault and logged as an unhandled
+     * error.
+     *
+     * Unlike the malformed-input codes above, this one is genuinely ambiguous:
+     * it can also mean a real bug, a race or a missing cascade. So it is
+     * mapped to a 400 for the caller *and* logged with its constraint, which
+     * is the field that says which of the two it was. The constraint name is
+     * safe to log; `detail`, which quotes the offending value, is dropped by
+     * the error serializer.
+     */
+    if (isPgError(err, PG_ERRORS.FOREIGN_KEY_VIOLATION)) {
+      req.log.warn(
+        { requestId, constraint: (err as { constraint?: string }).constraint },
+        'request referenced a row that does not exist',
+      );
+      return reply.status(400).send({
+        error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the referenced records does not exist', requestId },
+      } satisfies ApiErrorBody);
+    }
+
     if (isPgError(err, PG_ERRORS.CHECK_VIOLATION) || isPgError(err, PG_ERRORS.RAISE_EXCEPTION)) {
       return reply.status(400).send({
         error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'The request violates a data rule', requestId },

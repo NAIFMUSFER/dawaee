@@ -5,3 +5,4 @@ export * from './errors.js';
 export * from './i18n.js';
 export * from './design.js';
 export * from './reminder-text.js';
+export * from './logging.js';

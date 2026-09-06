@@ -1472,3 +1472,176 @@ describe('P12-12 signature comparison and the measurement date filter', () => {
     expect(await read('&from=2026-03-01&to=2026-03-01')).toEqual([71]);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P12-13 — a foreign key in the request body is not an ownership check.
+ *
+ * `symptom_notes.dose_occurrence_id` and `health_measurements.dose_occurrence_id`
+ * are client-supplied. Postgres enforced that the referenced dose EXISTS;
+ * nothing enforced whose it was.
+ *
+ * Nothing leaked — the list query joins `dose_occurrences` under the caller's
+ * own RLS context, so a cross-linked row came back with `medicationName: null`.
+ * The reachable problem was the pair of responses: another patient's dose id
+ * was accepted with a 200, and an id belonging to nobody raised a foreign-key
+ * violation that reached the 500 branch. That difference is an existence
+ * oracle for other patients' dose ids — the class P12 closed on path
+ * parameters, arriving through a body field instead.
+ */
+describe('P12-13 a dose id in the body must belong to the same patient', () => {
+  let aliceDoseId = '';
+
+  beforeAll(async () => {
+    // Patient A owns nothing schedulable in the earlier blocks — every
+    // medication in this file belongs to B on purpose. The positive control
+    // needs A to have a dose of her own, so she gets one here.
+    await createMedication(alice);
+    const own = await send({
+      method: 'GET', url: `/v1/doses?profileId=${alice.profileId}&from=2026-09-01&to=2026-09-30`,
+      headers: authHeaders(alice),
+    });
+    aliceDoseId = own.json<{ doses: Array<{ id: string }> }>().doses[0]!.id;
+  }, 60_000);
+
+  it('refuses a note linked to another patient’s dose', async () => {
+    const res = await send({
+      method: 'POST', url: `/v1/notes?profileId=${alice.profileId}`, headers: authHeaders(alice),
+      payload: { profileId: alice.profileId, doseOccurrenceId: bobIds.doseId, tags: ['nausea'], text: 'cross-link probe' },
+    });
+    expect(res.statusCode, res.body).toBe(404);
+
+    const planted = execFileSync('psql', ['-d', 'dawaee_test', '-tAc',
+      `SELECT count(*) FROM symptom_notes WHERE dose_occurrence_id = '${bobIds.doseId}'`], {
+      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
+    }).toString().trim();
+    expect(planted, 'a row was attached to another patient’s dose').toBe('0');
+  });
+
+  it('refuses a measurement linked to another patient’s dose', async () => {
+    const res = await send({
+      method: 'POST', url: `/v1/measurements?profileId=${alice.profileId}`, headers: authHeaders(alice),
+      payload: {
+        profileId: alice.profileId, doseOccurrenceId: bobIds.doseId,
+        type: 'weight', valuePrimary: 70, unit: 'kg', measuredAt: '2026-09-01T08:00:00.000Z',
+      },
+    });
+    expect(res.statusCode, res.body).toBe(404);
+  });
+
+  /**
+   * The oracle itself. Before the fix these were 200 and 500; if they ever
+   * differ again, an id in hand can be classified as "belongs to somebody" or
+   * "belongs to nobody".
+   */
+  it('answers identically for another patient’s dose and for no dose at all', async () => {
+    const ask = (doseOccurrenceId: string) => send({
+      method: 'POST', url: `/v1/notes?profileId=${alice.profileId}`, headers: authHeaders(alice),
+      payload: { profileId: alice.profileId, doseOccurrenceId, tags: ['nausea'], text: 'oracle probe' },
+    });
+    const [somebodys, nobodys] = [await ask(bobIds.doseId), await ask(BOGUS_UUID)];
+    expect(somebodys.statusCode).toBe(nobodys.statusCode);
+    expect(somebodys.json<{ error: { message: string } }>().error.message)
+      .toBe(nobodys.json<{ error: { message: string } }>().error.message);
+  });
+
+  it('positive control: the patient’s own dose is still accepted and linked', async () => {
+    const doseId = aliceDoseId;
+    expect(doseId, 'setup: Patient A has no doses to link to').toBeTruthy();
+
+    const res = await send({
+      method: 'POST', url: `/v1/notes?profileId=${alice.profileId}`, headers: authHeaders(alice),
+      payload: { profileId: alice.profileId, doseOccurrenceId: doseId, tags: ['nausea'], text: 'own-dose probe' },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+
+    const list = await send({
+      method: 'GET', url: `/v1/notes?profileId=${alice.profileId}`, headers: authHeaders(alice),
+    });
+    const note = list.json<{ notes: Array<{ text: string; doseOccurrenceId: string | null; medicationName: string | null }> }>()
+      .notes.find((n) => n.text === 'own-dose probe');
+    expect(note?.doseOccurrenceId).toBe(doseId);
+    expect(note?.medicationName, 'the join resolves for the patient’s own dose').toBeTruthy();
+  });
+
+  /**
+   * The case where the profile comparison is the control, not RLS.
+   *
+   * For an unrelated patient the lookup inside `requireOwnDose` returns
+   * nothing at all — it runs in the caller's own RLS context, so the row is
+   * simply invisible, and removing the `patient_profile_id` comparison does
+   * not change the outcome. A caregiver is different: they can legitimately
+   * read the patient's doses, so the row IS visible to the lookup, and only
+   * the comparison stops them attaching one of those doses to a note on their
+   * own personal profile. Two layers, and this is the one that exercises the
+   * second.
+   */
+  it('a caregiver cannot attach the patient’s dose to a note on their own profile', async () => {
+    const carer = await signIn(h, '+966500090030');
+    const invite = await send({
+      method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(bob),
+      payload: {
+        patientProfileId: bob.profileId, invitedName: 'Carer', invitedPhone: carer.phone,
+        // `view_medications` is in this grant deliberately. Without it the
+        // caregiver cannot see the dose at all — every dose query inner-joins
+        // `medications`, whose RLS needs that permission — so the setup check
+        // below would fail and this test would prove nothing. That gap is a
+        // finding in its own right, recorded separately; here the grant is
+        // made wide enough for the thing under test to be reachable.
+        role: 'caregiver',
+        permissions: ['view_schedule', 'view_history', 'view_medications', 'confirm_dose'],
+        escalationPriority: 1,
+      },
+    });
+    expect(invite.statusCode, invite.body).toBe(200);
+    const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
+    expect((await send({
+      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
+    })).statusCode).toBe(200);
+
+    // Setup check: the caregiver really can see the dose, so the lookup will
+    // find it and the comparison is what has to refuse.
+    const visible = await send({
+      method: 'GET', url: `/v1/doses/${bobIds.doseId}`, headers: authHeaders(carer),
+    });
+    expect(visible.statusCode, 'setup: the caregiver cannot see the dose, so this proves nothing').toBe(200);
+
+    const res = await send({
+      method: 'POST', url: `/v1/notes?profileId=${carer.profileId}`, headers: authHeaders(carer),
+      payload: {
+        profileId: carer.profileId, doseOccurrenceId: bobIds.doseId,
+        tags: ['nausea'], text: 'caregiver cross-link probe',
+      },
+    });
+    expect(res.statusCode, `a caregiver attached the patient's dose to their own record: ${res.body}`).toBe(404);
+
+    const planted = execFileSync('psql', ['-d', 'dawaee_test', '-tAc',
+      `SELECT count(*) FROM symptom_notes WHERE text = 'caregiver cross-link probe'`], {
+      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
+    }).toString().trim();
+    expect(planted).toBe('0');
+
+    // Positive control: the same caregiver CAN write that note on the
+    // patient's own profile, where the dose belongs.
+    const allowed = await send({
+      method: 'POST', url: `/v1/notes?profileId=${bob.profileId}`, headers: authHeaders(carer),
+      payload: {
+        profileId: bob.profileId, doseOccurrenceId: bobIds.doseId,
+        tags: ['nausea'], text: 'caregiver legitimate note',
+      },
+    });
+    expect(allowed.statusCode, allowed.body).toBe(200);
+  }, 60_000);
+
+  it('a stale reference is a 400, not a 500', async () => {
+    // An offline queue replaying a note for a dose since deleted is an
+    // ordinary client condition, and it was being reported as a server fault.
+    const res = await send({
+      method: 'POST', url: `/v1/notes?profileId=${alice.profileId}`, headers: authHeaders(alice),
+      payload: { profileId: alice.profileId, doseOccurrenceId: BOGUS_UUID, tags: ['nausea'], text: 'stale probe' },
+    });
+    expect(res.statusCode).toBeLessThan(500);
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+  });
+});

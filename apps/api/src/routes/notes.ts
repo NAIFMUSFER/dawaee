@@ -1,5 +1,6 @@
+import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
-import { MEASUREMENT_TYPES, createMeasurementSchema, createSymptomNoteSchema } from '@dawaee/shared';
+import { AppError, MEASUREMENT_TYPES, createMeasurementSchema, createSymptomNoteSchema } from '@dawaee/shared';
 import { optionalDate, requireEnum, requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
@@ -50,15 +51,54 @@ export function registerNoteRoutes(app: FastifyInstance): void {
     });
   });
 
+/**
+ * Confirms the dose a note or measurement is being attached to belongs to the
+ * same patient.
+ *
+ * The column is a foreign key, so Postgres checked that the dose *exists* —
+ * and nothing checked whose it was. Two things followed from that, both
+ * measured against a running server.
+ *
+ * A row could be written into one patient's record carrying another patient's
+ * dose id. Nothing leaked: the list query joins `dose_occurrences` under the
+ * caller's own RLS context, so the join found nothing and `medicationName`
+ * came back null. Confidentiality held; referential honesty did not.
+ *
+ * The reachable problem is the pair of responses. An id belonging to another
+ * patient was accepted with a 200, and an id belonging to nobody raised a
+ * foreign-key violation — SQLSTATE 23503, which the error handler does not
+ * map — and came back as a 500. That difference is an existence oracle for
+ * other patients' dose ids, the same class P12 closed on path parameters,
+ * arriving here through a body field instead. It also made an ordinary stale
+ * client — a phone replaying a queued note for a dose since deleted — look
+ * like a server fault.
+ *
+ * Resolving ownership makes both cases identical and honest: not found.
+ */
+async function requireOwnDose(
+  tx: PoolClient,
+  profileId: string,
+  doseOccurrenceId: string | null | undefined,
+): Promise<string | null> {
+  if (!doseOccurrenceId) return null;
+  const { rows } = await tx.query<{ patient_profile_id: string }>(
+    'SELECT patient_profile_id FROM dose_occurrences WHERE id = $1',
+    [doseOccurrenceId],
+  );
+  if (rows[0]?.patient_profile_id !== profileId) throw AppError.notFound('Dose not found');
+  return doseOccurrenceId;
+}
+
   app.post('/v1/notes', async (req) => {
     const body = createSymptomNoteSchema.parse(req.body);
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       await requireProfileAccess(tx, userId, body.profileId, 'confirm_dose');
+      const doseId = await requireOwnDose(tx, body.profileId, body.doseOccurrenceId);
       const { rows } = await tx.query(
         `INSERT INTO symptom_notes (patient_profile_id, dose_occurrence_id, tags, text, created_by)
          VALUES ($1,$2,$3,$4,$5) RETURNING id, recorded_at`,
-        [body.profileId, body.doseOccurrenceId ?? null, body.tags, body.text ?? null, userId],
+        [body.profileId, doseId, body.tags, body.text ?? null, userId],
       );
       return { note: { id: rows[0]!.id, recordedAt: rows[0]!.recorded_at } };
     });
@@ -107,6 +147,7 @@ export function registerNoteRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       await requireProfileOwner(tx, userId, profileId);
+      const doseId = await requireOwnDose(tx, profileId, body.doseOccurrenceId);
       const { rows } = await tx.query(
         `INSERT INTO health_measurements
            (patient_profile_id, type, value_primary, value_secondary, unit, measured_at, dose_occurrence_id, note, created_by)
@@ -114,7 +155,7 @@ export function registerNoteRoutes(app: FastifyInstance): void {
          RETURNING id, measured_at`,
         [
           profileId, body.type, body.valuePrimary, body.valueSecondary ?? null, body.unit,
-          body.measuredAt ?? serverNow(), body.doseOccurrenceId ?? null, body.note ?? null, userId,
+          body.measuredAt ?? serverNow(), doseId, body.note ?? null, userId,
         ],
       );
       return { measurement: { id: rows[0]!.id, measuredAt: rows[0]!.measured_at } };

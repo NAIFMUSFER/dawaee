@@ -1,5 +1,6 @@
 import pg from 'pg';
 import pino from 'pino';
+import { LOG_REDACTION, serializeLoggedError } from '@dawaee/shared';
 import { loadConfig, type Config } from '@dawaee/api/config';
 import { withRole } from '@dawaee/api/lib/db';
 import { databaseTlsOptions } from '@dawaee/api/lib/db-tls';
@@ -21,20 +22,36 @@ export interface WorkerContext {
   now: () => Date;
 }
 
+/**
+ * The worker's logger, as a function so a test can build the real one.
+ *
+ * Extracted from `createWorkerContext` for exactly that reason. The context
+ * accepts a `log` override, so a test that passes its own instance proves
+ * nothing about the one the worker actually runs with — which is how the
+ * redaction drift below survived: it was never constructed under test.
+ *
+ * `destination` is only for that. In the worker it is undefined and pino
+ * writes to file descriptor 1 as usual.
+ */
+export function createWorkerLogger(config: Config, destination?: pino.DestinationStream): pino.Logger {
+  return pino({
+    level: config.LOG_LEVEL,
+    base: { service: 'dawaee-worker', env: config.NODE_ENV },
+    timestamp: pino.stdTimeFunctions.isoTime,
+    // The same redaction policy object the API uses, from the same package.
+    // This used to be a second list with a comment claiming it matched the
+    // API's. It did not: the API's had grown to twenty-one paths while this
+    // one still had seven, missing allergies, invitedPhone and every
+    // free-text note field — and nothing would have failed if it drifted
+    // further, because the claim lived in a comment rather than in code.
+    redact: LOG_REDACTION,
+    serializers: { err: serializeLoggedError },
+  }, destination as pino.DestinationStream);
+}
+
 export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerContext {
   const config = overrides?.config ?? loadConfig();
-  const log =
-    overrides?.log ??
-    pino({
-      level: config.LOG_LEVEL,
-      base: { service: 'dawaee-worker', env: config.NODE_ENV },
-      // Same redaction posture as the API: job logs must not carry medication
-      // names or phone numbers into an aggregator.
-      redact: {
-        paths: ['medication', 'medicationName', 'phone', 'phoneE164', 'to', '*.medicationName', '*.phoneE164'],
-        censor: '[redacted]',
-      },
-    });
+  const log = overrides?.log ?? createWorkerLogger(config);
 
   const pool =
     overrides?.pool ??

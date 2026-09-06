@@ -1,5 +1,6 @@
 import pino from 'pino';
 import type { FastifyBaseLogger } from 'fastify';
+import { LOG_REDACTION, serializeLoggedError } from '@dawaee/shared';
 import { loadConfig } from '../config.js';
 
 /**
@@ -9,31 +10,12 @@ import { loadConfig } from '../config.js';
  * names or health data. Redaction is enforced here rather than left to each call
  * site, because one careless `log.info({ medication })` would otherwise leak
  * medical information into an aggregator forever.
+ *
+ * The policy itself — which paths are redacted, and what survives from a
+ * thrown error — lives in `@dawaee/shared`, because the worker writes logs
+ * too and the two lists had already drifted apart while each claimed to match
+ * the other.
  */
-const REDACTED_PATHS = [
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'req.body.code',
-  'req.body.token',
-  'req.body.refreshToken',
-  'req.body.phone',
-  'req.body.name',
-  'req.body.brandName',
-  'req.body.genericName',
-  'req.body.instructions',
-  'req.body.doctorInstructions',
-  'req.body.notes',
-  'req.body.allergies',
-  'req.body.conditionsNote',
-  'medication',
-  'medicationName',
-  'allergies',
-  'phone',
-  'phoneE164',
-  'invitedPhone',
-  '*.medicationName',
-  '*.phoneE164',
-];
 
 /**
  * Capabilities carried in a URL PATH, which the request log records in full.
@@ -78,10 +60,13 @@ export function createLogger(): FastifyBaseLogger {
   const cfg = loadConfig();
   return pino({
     level: cfg.LOG_LEVEL,
-    redact: { paths: REDACTED_PATHS, censor: '[redacted]' },
+    redact: LOG_REDACTION,
     base: { service: 'dawaee-api', env: cfg.NODE_ENV },
     timestamp: pino.stdTimeFunctions.isoTime,
     serializers: {
+      // Replaces pino's default, which copies every property of the thrown
+      // object — including the ones a DatabaseError uses to quote row values.
+      err: serializeLoggedError,
       // Replaces Fastify's default request serializer. Same fields, minus the
       // secret. Anything added here must keep `url` going through redactUrl.
       req(req: { method?: string; url?: string; headers?: Record<string, unknown>; ip?: string }) {
