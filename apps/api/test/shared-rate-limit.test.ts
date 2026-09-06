@@ -85,20 +85,16 @@ describe('two API instances share one authentication budget', () => {
   });
 
   it('one instance sees the attempts the other already counted', async () => {
-    const phone = newPhone();
-    await login(alpha, phone, '198.51.100.200');
-    await login(alpha, phone, '198.51.100.201');
-    const { rows } = await owner.query<{ count: number }>(
-      "SELECT count FROM auth_rate_buckets WHERE scope = 'login:identifier' ORDER BY window_start DESC LIMIT 1",
-    );
-    expect(rows[0]!.count).toBeGreaterThanOrEqual(2);
-    // Beta has never seen this identifier in its own memory.
-    const third = await login(beta, phone, '198.51.100.202');
-    expect(third.statusCode).not.toBe(429);
-    const { rows: after } = await owner.query<{ count: number }>(
-      "SELECT count FROM auth_rate_buckets WHERE scope = 'login:identifier' AND count >= 3 ORDER BY window_start DESC LIMIT 1",
-    );
-    expect(after[0]?.count, 'the second instance started its own count').toBeGreaterThanOrEqual(3);
+    const identifier = `+9665${String(7900000 + n++).padStart(8, '0')}`;
+    const max = BUDGETS['login:identifier'].max;
+
+    // Spend the whole budget on alpha only.
+    for (let i = 0; i < max; i++) await login(alpha, identifier, `198.51.100.${100 + i}`);
+
+    // Beta has never seen this identifier in its own memory. If the counters
+    // were per-process it would happily start again from zero.
+    const onBeta = await login(beta, identifier, '198.51.100.199');
+    expect(onBeta.statusCode, 'the second instance did not see the first instance\'s attempts').toBe(429);
   });
 });
 
@@ -128,13 +124,15 @@ describe('a restart does not hand back a fresh budget', () => {
 describe('the counter is atomic', () => {
   it('twenty simultaneous attempts are counted twenty times', async () => {
     const key = `concurrent-${Date.now()}`;
-    await Promise.all(Array.from({ length: 20 }, () => consumeBudget('login:identifier', key)));
-    const { rows } = await owner.query<{ count: number }>(
-      "SELECT count FROM auth_rate_buckets WHERE scope='login:identifier' ORDER BY window_start DESC, count DESC LIMIT 1",
-    );
+    const results = await Promise.all(Array.from({ length: 20 }, () => consumeBudget('login:identifier', key)));
+    // Asserted on what the function RETURNED for this key, rather than by
+    // re-reading the table: another test's bucket can be the newest row, and a
+    // limiter test that can pick up someone else's count is not a test.
+    //
     // A read-then-write limiter loses increments here, which is exactly the
     // window an attacker parallelises into.
-    expect(rows[0]!.count, 'increments were lost to a race').toBe(20);
+    const hits = results.map((r) => r.hits).sort((a, b) => a - b);
+    expect(hits, `counts seen: ${hits.join(',')}`).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
   });
 
   it('a spent budget reports when to come back, and the window does expire', async () => {
