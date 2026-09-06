@@ -33,8 +33,6 @@ jobs:
             package-lock.json
             apps/mobile/package-lock.json
 
-      # Mobile tests/typechecking intentionally reach packages/shared and use
-      # Vitest from the repository root. Reproduce the real CI topology.
       - name: Install repository test dependencies
         run: npm ci
 
@@ -43,26 +41,20 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      # Expo SDK 53+ requires export output to remain under the project root.
-      # Keep rehearsal bundles local to apps/mobile and remove them before the
-      # dependency/config commit so no generated bundle is ever pushed.
-      - name: Upgrade and verify SDK 53
+      # SDK 53 is already committed on this rehearsal branch. Re-verify that
+      # exact checkpoint before moving forward so a later fix cannot hide a
+      # regression in the first supported intermediate state.
+      - name: Verify committed SDK 53 checkpoint
         working-directory: apps/mobile
         run: |
           set -euo pipefail
           npm ci --legacy-peer-deps
-          npm install expo@~53.0.0 --legacy-peer-deps
-          npx expo install --fix --npm
           npx expo install --check --npm
           npx tsc --noEmit
           rm -rf .upgrade-artifacts
           npx expo export --platform android --output-dir .upgrade-artifacts/sdk53-android
           npx expo export --platform ios --output-dir .upgrade-artifacts/sdk53-ios
           rm -rf .upgrade-artifacts
-          git add package.json package-lock.json app.json
-          git diff --cached --check
-          git commit -m 'mobile: upgrade Expo SDK 52 to 53'
-          git push origin HEAD:mobile/expo55-store-readiness
 
       - name: Upgrade and verify SDK 54
         working-directory: apps/mobile
@@ -70,6 +62,13 @@ jobs:
           set -euo pipefail
           npm install expo@~54.0.0 --legacy-peer-deps
           npx expo install --fix --npm
+          # Reinstall from the generated lockfile before bundling. The previous
+          # incremental install left simple-swizzle present without its declared
+          # is-arrayish dependency; a clean npm ci is the release-reproducible
+          # topology and must resolve the full graph.
+          rm -rf node_modules
+          npm ci --legacy-peer-deps
+          npm ls simple-swizzle is-arrayish
           npx expo install --check --npm
           npx tsc --noEmit
           rm -rf .upgrade-artifacts
@@ -87,6 +86,9 @@ jobs:
           set -euo pipefail
           npm install expo@~55.0.0 --legacy-peer-deps
           npx expo install --fix --npm
+          rm -rf node_modules
+          npm ci --legacy-peer-deps
+          npm ls simple-swizzle is-arrayish
           npx expo install --check --npm
           npx tsc --noEmit
           rm -rf .upgrade-artifacts
