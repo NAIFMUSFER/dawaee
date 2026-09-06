@@ -53,14 +53,9 @@ jobs:
           # the pack, still clonable, and still has to be rotated.
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Findings fail the job. The report names the file, the line and the
-          # rule; it does not print the value, and neither should any triage
-          # comment written afterwards.
-          args: --redact --verbose
 
   # The base OS, not the npm tree. `npm audit` being green says nothing about
   # the Debian packages underneath: P15 could not scan them at all because the
@@ -97,7 +92,7 @@ jobs:
           docker run --rm --entrypoint node dawaee:scan --version
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd2b74cdd8a832d53cea2e3e3b1605e9019 # v0.36.0
         with:
           image-ref: dawaee:scan
           format: sarif
@@ -122,7 +117,7 @@ jobs:
       # A CRITICAL with no fix published is triage, not a wall — there is
       # nothing to upgrade to.
       - name: Fail on fixable CRITICAL findings
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd2b74cdd8a832d53cea2e3e3b1605e9019 # v0.36.0
         with:
           image-ref: dawaee:scan
           format: table
