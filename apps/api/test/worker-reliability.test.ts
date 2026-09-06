@@ -420,7 +420,7 @@ describe('delivery claiming is atomic across replicas', () => {
       `INSERT INTO notification_deliveries
          (patient_profile_id, recipient_user_id, kind, channel, locale, title, body, payload,
           dedupe_key, scheduled_for, next_attempt_at, status)
-       VALUES ($1,$2,'dose_reminder','push','en','t','b','{}'::jsonb,$3, now(), now(), 'queued')
+       VALUES ($1,$2,'dose_reminder','push','en','t','b','{}'::jsonb,$3, now(), TIMESTAMPTZ '2000-01-01 00:00:00+00', 'queued')
        RETURNING id`,
       [user.profileId, user.userId, key],
     );
