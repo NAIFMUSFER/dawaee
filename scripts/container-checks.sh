@@ -86,6 +86,14 @@ check "no build toolchain in the runtime image" bash -c '
   done
 '
 
+check "npm and npx are absent from the runtime image" bash -c '
+  # npm is a build-time tool only. Keeping this assertion prevents the exact
+  # attack surface removed for CVE-2026-59873 from silently returning later.
+  docker run --rm --entrypoint sh '"$IMAGE"' -c \
+    "test ! -e /usr/local/bin/npm && test ! -e /usr/local/bin/npx && test ! -d /usr/local/lib/node_modules/npm" \
+    || { echo "npm/npx is present in the runtime image"; exit 1; }
+'
+
 check "no source directories, only compiled output" bash -c '
   found=$(docker run --rm --entrypoint sh '"$IMAGE"' -c "ls -d /app/packages/*/src /app/apps/*/src 2>/dev/null || true")
   [ -z "$found" ] || { echo "found: $found"; exit 1; }
