@@ -24,7 +24,10 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-config.resolver.disableHierarchicalLookup = true;
+// Do not disable hierarchical lookup. SDK 54+ dependency graphs may keep a
+// package's declared dependency nested below that package (for example
+// simple-swizzle -> is-arrayish). Blocking hierarchical resolution made Metro
+// reject a dependency that npm had correctly installed and `npm ls` could see.
 config.resolver.extraNodeModules = {
   '@dawaee/shared': path.resolve(sharedSrc, 'shared/src'),
   '@dawaee/core': path.resolve(sharedSrc, 'core/src'),
