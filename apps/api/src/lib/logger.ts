@@ -45,6 +45,17 @@ const PATH_SECRETS: Array<{ pattern: RegExp; replace: string }> = [
   // The local development storage sink signs the object key into the query
   // string; the signature is a capability for that object.
   { pattern: /^(\/v1\/uploads\/local\/[^?]*)\?.*$/, replace: '$1?[redacted]' },
+  /**
+   * `?objectKey=` on the signed-read endpoint.
+   *
+   * The key alone is not a capability — RLS on `stored_objects` decides whether
+   * the caller may have a signed URL for it — but it is an unguessable
+   * identifier for one patient's prescription or medication photograph, it is
+   * the sole input to the endpoint that mints that capability, and it has no
+   * diagnostic value in a request log. The path and the outcome are the useful
+   * parts and they survive.
+   */
+  { pattern: /^(\/v1\/uploads\/url)\?.*$/, replace: '$1?[redacted]' },
 ];
 
 export function redactUrl(url: string): string {

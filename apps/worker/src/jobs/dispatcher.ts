@@ -1,3 +1,4 @@
+import { sanitizeOperationalError } from '@dawaee/shared';
 import type { PoolClient } from 'pg';
 import type { PushMessage } from '@dawaee/api/providers';
 import type { WorkerContext } from '../context.js';
@@ -207,14 +208,14 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
             SET status = 'queued', next_attempt_at = now() + make_interval(secs => $3),
                 error_code = $4, error_detail = $5, provider = $6, lease_until = NULL
           WHERE id = $1 AND lease_token = $2`,
-        [delaySeconds, result.errorCode ?? null, result.errorDetail ?? null, result.provider]);
+        [delaySeconds, result.errorCode ?? null, result.errorDetail ? sanitizeOperationalError(result.errorDetail) : null, result.provider]);
     } else {
       await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'failed', error_code = $3, error_detail = $4, provider = $5,
                 lease_until = NULL
           WHERE id = $1 AND lease_token = $2`,
-        [result.errorCode ?? null, result.errorDetail ?? null, result.provider]);
+        [result.errorCode ?? null, result.errorDetail ? sanitizeOperationalError(result.errorDetail) : null, result.provider]);
       ctx.log.warn(
         { deliveryId: row.id, channel: row.channel, errorCode: result.errorCode },
         'notification delivery failed permanently',

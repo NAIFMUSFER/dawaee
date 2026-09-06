@@ -1,3 +1,4 @@
+import { sanitizeOperationalError } from '@dawaee/shared';
 import type { PoolClient } from 'pg';
 import type { WorkerContext } from '../context.js';
 
@@ -45,7 +46,10 @@ export async function runStep(
     await client.query(`RELEASE SAVEPOINT ${step}`);
   } catch (err) {
     await client.query(`ROLLBACK TO SAVEPOINT ${step}`).catch(() => undefined);
-    const message = (err as Error).message;
+    // Sanitized here as well as at the persistence boundary: this string is
+    // logged immediately, and a step that fails on a row is exactly where a
+    // row value enters an error.
+    const message = sanitizeOperationalError(err);
     outcome.failures.push({ step, error: message });
     // Named, so an operator reading logs knows WHICH retention class stopped
     // rather than that "housekeeping failed".

@@ -1,6 +1,8 @@
 import pg from 'pg';
 import pino from 'pino';
-import { LOG_REDACTION, serializeLoggedError } from '@dawaee/shared';
+import {
+  LOG_REDACTION, OPERATIONAL_ERROR_MAX, sanitizeOperationalError, serializeLoggedError,
+} from '@dawaee/shared';
 import { loadConfig, type Config } from '@dawaee/api/config';
 import { withRole } from '@dawaee/api/lib/db';
 import { databaseTlsOptions } from '@dawaee/api/lib/db-tls';
@@ -130,10 +132,22 @@ export async function runJob<T>(
       [
         jobName, startedAt, failures.length === 0, outcome.itemsProcessed,
         failures.length === 0 ? null
-          : `${failures.length} step(s) failed: ${failures.map((f) => f.step).join(', ')}`.slice(0, 500),
-        // Step names and error text only. No row contents, so an operator can
-        // see WHICH retention class is broken without the log carrying PHI.
-        JSON.stringify(failures.length ? { failedSteps: failures } : {}),
+          : `${failures.length} step(s) failed: ${failures.map((f) => f.step).join(', ')}`.slice(0, OPERATIONAL_ERROR_MAX),
+        // Step names, and each step's error reduced to something safe to keep.
+        //
+        // The previous comment here said "Step names and error text only. No
+        // row contents". The step names were true; "error text" was doing more
+        // work than it looked. Measured through this exact path: a unique
+        // violation stored the patient's phone number, and this schema's own
+        // `medication % not found` trigger stored a medication id — into a
+        // table in the same database as the medical records, which nothing
+        // purges. `job_runs.error_message` was at least capped at 500; this
+        // copy had no limit at all.
+        JSON.stringify(
+          failures.length
+            ? { failedSteps: failures.map((f) => ({ step: f.step, error: sanitizeOperationalError(f.error) })) }
+            : {},
+        ),
       ],
     );
     await client.query('COMMIT');
@@ -148,13 +162,14 @@ export async function runJob<T>(
     return { ran: true, ...outcome };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
-    ctx.log.error({ job: jobName, err: (err as Error).message }, 'job failed');
+    const safe = sanitizeOperationalError(err);
+    ctx.log.error({ job: jobName, err: safe }, 'job failed');
     // Recorded on its own connection so the failure survives the rollback.
     await ctx.pool
       .query(
         `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message)
          VALUES ($1,$2,now(),false,$3)`,
-        [jobName, startedAt, (err as Error).message.slice(0, 500)],
+        [jobName, startedAt, safe],
       )
       .catch(() => undefined);
     return { ran: true, itemsProcessed: 0 };
