@@ -60,8 +60,11 @@ interface MeResponse {
 }
 
 interface FileSystemModule {
-  documentDirectory: string | null;
-  writeAsStringAsync: (fileUri: string, contents: string) => Promise<void>;
+  Paths: { document: unknown };
+  File: new (base: unknown, name: string) => {
+    uri: string;
+    write: (contents: string) => void;
+  };
 }
 
 interface SharingModule {
@@ -154,10 +157,12 @@ export default function PrivacyScreen() {
       const fileSystem = optionalModule<FileSystemModule>(() => require('expo-file-system'));
       const sharing = optionalModule<SharingModule>(() => require('expo-sharing'));
 
-      if (fileSystem?.documentDirectory && sharing && (await sharing.isAvailableAsync())) {
-        const uri = `${fileSystem.documentDirectory}${fileName}`;
-        await fileSystem.writeAsStringAsync(uri, json);
-        await sharing.shareAsync(uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
+      if (fileSystem?.Paths?.document && fileSystem?.File && sharing && (await sharing.isAvailableAsync())) {
+        // SDK 55's File/Paths API replaces documentDirectory + writeAsStringAsync.
+        // Using the current API avoids a runtime throw from the legacy surface.
+        const file = new fileSystem.File(fileSystem.Paths.document, fileName);
+        file.write(json);
+        await sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
         setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
         return;
       }
