@@ -182,7 +182,6 @@ describe('the definer exemption covers every forced table', () => {
         WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity ORDER BY 1`,
     );
     expect(bare.map((r) => r.relname)).toEqual([
-      'auth_otp_challenges',      // reached only through app.issue_otp / app.verify_otp
       'job_runs',                 // worker bookkeeping, no patient data
       'provider_webhook_events',  // delivery receipts, no patient data
       'schema_migrations',        // the ledger
