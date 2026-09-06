@@ -3,6 +3,11 @@ dist/
 .env
 .env.*
 !.env.example
+# A local .npmrc is where an npm auth token ends up. The repository does not
+# ship one and does not need one — every dependency in both lockfiles resolves
+# from registry.npmjs.org — so any .npmrc appearing here is a developer's own
+# credential file and must not be committed.
+.npmrc
 *.log
 coverage/
 .expo/
