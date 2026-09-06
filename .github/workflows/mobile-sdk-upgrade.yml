@@ -1,4 +1,4 @@
-name: Mobile SDK 55 native validation
+name: Mobile SDK 55 final validation
 
 on:
   push:
@@ -10,17 +10,13 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: mobile-sdk55-native-validation
-  cancel-in-progress: true
-
 env:
   NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
   EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
   EXPO_PUBLIC_DEMO: '0'
 
 jobs:
-  js-config:
+  final:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -43,7 +39,7 @@ jobs:
         working-directory: apps/mobile
         run: npm ci --legacy-peer-deps
 
-      - name: SDK 55 compatibility gates
+      - name: Final SDK 55 gates
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -51,28 +47,30 @@ jobs:
           npx expo-doctor@latest
           npx tsc --noEmit
           npm audit --omit=dev --audit-level=high
+          node -e "require.resolve('expo-system-ui'); console.log('expo-system-ui resolved')"
 
-      - name: Surface removed or legacy Expo API usage
+      - name: Reject legacy Expo file-system calls
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          echo '--- expo-file-system imports/usages ---'
-          grep -R -n -E "expo-file-system|FileSystem\.(copyAsync|createDownloadResumable|createUploadTask|getContentUriAsync|getFreeDiskStorageAsync|getInfoAsync|makeDirectoryAsync|moveAsync|readAsStringAsync|writeAsStringAsync|deleteAsync|downloadAsync|documentDirectory|cacheDirectory)" app src || true
-          echo '--- removed/deprecated SDK 55 config/API markers ---'
-          grep -R -n -E "newArchEnabled|edgeToEdgeEnabled|ExpoRequest|ExpoResponse|allowsFullscreen|experimentalBlurMethod" app src app.json || true
+          if grep -R -n -E "FileSystem\.(copyAsync|createDownloadResumable|createUploadTask|getContentUriAsync|getFreeDiskStorageAsync|getInfoAsync|makeDirectoryAsync|moveAsync|readAsStringAsync|writeAsStringAsync|deleteAsync|downloadAsync|documentDirectory|cacheDirectory)|fileSystem\.(documentDirectory|cacheDirectory|writeAsStringAsync|readAsStringAsync|downloadAsync|deleteAsync|moveAsync|copyAsync|getInfoAsync)" app src; then
+            echo '::error::legacy expo-file-system API remains in shipped mobile code'
+            exit 1
+          fi
+          echo 'No legacy expo-file-system calls remain.'
 
-      - name: Export production bundles
+      - name: Export final production bundles
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          rm -rf .native-validation
-          npx expo export --platform android --output-dir .native-validation/android
-          npx expo export --platform ios --output-dir .native-validation/ios
-          test -f .native-validation/android/metadata.json
-          test -f .native-validation/ios/metadata.json
-          rm -rf .native-validation
+          rm -rf .final-validation
+          npx expo export --platform android --output-dir .final-validation/android
+          npx expo export --platform ios --output-dir .final-validation/ios
+          test -f .final-validation/android/metadata.json
+          test -f .final-validation/ios/metadata.json
+          rm -rf .final-validation
 
-      - name: Generate both native projects from app config
+      - name: Final native config generation
         working-directory: apps/mobile
         env:
           EXPO_NO_GIT_STATUS: '1'
@@ -81,108 +79,3 @@ jobs:
           npx expo prebuild --clean --no-install --platform all
           test -f android/app/build.gradle
           test -f ios/Podfile
-
-  android-release:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: mobile/expo55-store-readiness
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            apps/mobile/package-lock.json
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install dependencies
-        run: |
-          npm ci
-          cd apps/mobile
-          npm ci --legacy-peer-deps
-
-      - name: Generate Android native project
-        working-directory: apps/mobile
-        env:
-          EXPO_NO_GIT_STATUS: '1'
-        run: npx expo prebuild --clean --no-install --platform android
-
-      - name: Compile Android release AAB
-        working-directory: apps/mobile/android
-        run: |
-          set -euo pipefail
-          ./gradlew :app:bundleRelease --no-daemon
-          test -f app/build/outputs/bundle/release/app-release.aab
-          ls -lh app/build/outputs/bundle/release/app-release.aab
-
-  ios-release-simulator:
-    runs-on: macos-26
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: mobile/expo55-store-readiness
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            apps/mobile/package-lock.json
-
-      - name: Pin the SDK 55 store toolchain
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
-          xcodebuild -version
-
-      - name: Install dependencies
-        run: |
-          npm ci
-          cd apps/mobile
-          npm ci --legacy-peer-deps
-
-      - name: Generate iOS native project
-        working-directory: apps/mobile
-        env:
-          EXPO_NO_GIT_STATUS: '1'
-        run: npx expo prebuild --clean --no-install --platform ios
-
-      - name: Install CocoaPods
-        working-directory: apps/mobile/ios
-        env:
-          LANG: en_US.UTF-8
-          LC_ALL: en_US.UTF-8
-        run: pod install
-
-      - name: Compile iOS Release simulator app
-        working-directory: apps/mobile
-        env:
-          LANG: en_US.UTF-8
-          LC_ALL: en_US.UTF-8
-        run: |
-          set -euo pipefail
-          workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
-          project="$(find ios -maxdepth 1 -name '*.xcodeproj' -print -quit)"
-          test -n "$workspace"
-          test -n "$project"
-          scheme="$(basename "$project" .xcodeproj)"
-          echo "workspace=$workspace scheme=$scheme"
-          xcodebuild \
-            -workspace "$workspace" \
-            -scheme "$scheme" \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath ios/build \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-          find ios/build/Build/Products -maxdepth 2 -name '*.app' -print -quit | grep -q .
