@@ -5,11 +5,11 @@
 # escalation rules the worker enforces must be the exact ones the API tested.
 # `APP` selects which process the container runs.
 
-# Pinned to the exact multi-platform manifest resolved by the release security
-# scan on 2026-09-06. The readable tag records the intended Node/Debian line;
-# the digest is the actual supply-chain identity used by every reproducible
-# release build. Refresh both deliberately after a reviewed base-image update.
-FROM node:22.22.0-bookworm-slim@sha256:0d8be5ba60d5c85d2f3b967fdfb66779590a1e8d483075d3591bc3ea0154346a AS base
+# Pinned to the exact linux/amd64 manifest resolved from node:22-bookworm-slim
+# by the successful release CI build on 2026-09-06. The readable tag records
+# the intended Node/Debian line; the digest is the supply-chain identity.
+# Refresh the digest deliberately after a reviewed base-image update.
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS base
 ENV NODE_ENV=production
 WORKDIR /app
 # `postgresql-client` is here for scripts/migrate.sh, which the deploy runs
