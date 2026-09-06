@@ -232,3 +232,48 @@ jobs:
       # docs/CI-SECURITY-GATES.md.
       - name: Dependency gate
         run: node scripts/audit-gate.mjs --workspace all
+
+  # A mobile release is more than TypeScript compiling. This job asks Metro to
+  # produce the exact production JavaScript bundles for BOTH handset platforms
+  # on every PR. It catches route/module/config regressions that typecheck alone
+  # cannot see, while remaining credential-free: this is an export, not a
+  # signed App Store / Play Store build and it publishes nothing.
+  mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      EXPO_PUBLIC_DEMO: '0'
+      EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci --legacy-peer-deps
+      - name: Mobile typecheck
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+      - name: Native release identity and safety configuration
+        working-directory: apps/mobile
+        run: |
+          node - <<'NODE'
+          const app = require('./app.json').expo;
+          if (Number(app.android?.versionCode) < 2) throw new Error('Android versionCode was not incremented for the native security release');
+          if (Number(app.ios?.buildNumber) < 2) throw new Error('iOS buildNumber was not incremented for the native security release');
+          if (app.android?.allowBackup !== false) throw new Error('android.allowBackup must stay false');
+          if (app.android?.package !== 'app.dawaee.mobile') throw new Error('unexpected Android application id');
+          if (app.ios?.bundleIdentifier !== 'app.dawaee.mobile') throw new Error('unexpected iOS bundle id');
+          console.log(`mobile ${app.version} / Android ${app.android.versionCode} / iOS ${app.ios.buildNumber}`);
+          NODE
+      - name: Export Android production bundle
+        working-directory: apps/mobile
+        run: npx expo export --platform android --output-dir dist-android
+      - name: Export iOS production bundle
+        working-directory: apps/mobile
+        run: npx expo export --platform ios --output-dir dist-ios
