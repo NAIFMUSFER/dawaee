@@ -12,11 +12,11 @@ variable and where to read it, never the value.
 
 | | |
 |---|---|
-| Repository `main` | `1cafd5a708d38cc2ff56050e1439ca6ed1d055c1` |
+| Repository `main` | see `git rev-parse HEAD` — P18-R added `0030` and a startup gate |
 | `dawaee-api` live commit | `db7061f1ae8fc52a02d68aea76da8a46ff382b04` |
 | `dawaee-worker` live commit | `db7061f1ae8fc52a02d68aea76da8a46ff382b04` |
 | Delta | 113 files changed, 20 152 insertions, 380 deletions |
-| Pending migrations | **10** — `0020` … `0029` (production ledger stops at `0019`) |
+| Pending migrations | **11** — `0020` … `0030` (production ledger stops at `0019`) |
 
 Production is running the **audit baseline**. Every fix from P5 through P16 is
 unshipped. This is therefore not a routine deploy: it is a ten-migration,
@@ -36,13 +36,19 @@ theoretical concern:
 
 | New API code path | Requires | From migration |
 |---|---|---|
+| Startup itself | the whole ledger through `0030` | **the API now refuses to boot below it** |
 | Shared auth rate limiting | `app.consume_rate_budget` | `0029` |
 | Password change | `app.password_hash_for_user` | `0022` |
 | OTP challenge issue | one-live-challenge unique index | `0028` |
 | Worker's session reads | `auth_sessions` grant to `dawaee_worker` | `0021` |
 
-An API that boots before `0029` lands will fail every authentication request
-with an undefined-function error, not a clean 503.
+An API that boots before `0029` lands used to fail every authentication request
+with an undefined-function error while `/health` and `/health/ready` both
+answered 200 — measured, twelve logins out of twelve. **It no longer boots at
+all**: `assertSchemaContract` compares the shipped `db/migrations` against the
+ledger and exits 1 before binding a port, naming the migrations that are
+missing. The ordering below is still the right ordering; it is now enforced by
+the artefact rather than by the runbook.
 
 **The runbook below therefore does not rely on auto-deploy.** Auto-deploy is
 suspended for the release, migrations are driven deliberately, and the API is
@@ -151,12 +157,55 @@ confirmed by reading `DATABASE_URL`. Confirm which host `DATABASE_URL` names
 
 ---
 
-## Step 3 — Rehearse the migrations against a copy
+## Step 2b — Preflight, which now refuses before it can half-apply
 
 **PRECONDITION:** Step 2 complete.
 
-**ACTION:** Restore the backup into a scratch database (a Supabase branch or a
-local PostgreSQL 17 instance) and run:
+**ACTION:**
+
+```bash
+DATABASE_URL='…' DAWAEE_APP_PASSWORD='…' DAWAEE_WORKER_PASSWORD='…' \
+  ./scripts/migrate.sh --preflight-only
+```
+
+**EXPECTED RESULT:** five lines, exit 0, and **nothing applied**:
+
+```
+preflight: connection
+preflight: migrating as '<role>'
+preflight: role administration OK
+preflight: definer policies
+preflight complete — no migration was applied
+```
+
+**ROLLBACK CONDITION:** any non-zero exit → stop and fix what it names. Nothing
+has been applied, which is the entire point: P18 measured both of the failures
+this replaces, and both of them committed migrations first.
+
+**WHAT IT CATCHES.** See `docs/RUNBOOK-migrate-preflight.md`. In short: migrating
+as a runtime role; a migration role that cannot set the runtime roles' passwords
+(PostgreSQL 16+ needs ADMIN on a role to do that, and the old script discovered
+this *after* committing ten migrations); and a missing definer privilege path,
+without which `0025`'s dedup `DELETE` matches zero rows in silence and the index
+build that follows aborts the deploy at `0025` with `0020`–`0024` already
+committed.
+
+**A SIDE EFFECT WORTH KNOWING.** The preflight installs the definer policies on
+whatever schema it finds — including a database still at `0019`. Measured: the
+currently deployed build (`db7061f`) returns **404** to `POST /v1/auth/register`
+on a database whose owner cannot bypass row-level security, and **200** on the
+same database seconds after the preflight runs. If production is in that state,
+the preflight alone repairs registration before a single migration is applied.
+
+---
+
+## Step 3 — Rehearse the migrations against a copy
+
+**PRECONDITION:** Step 2b clean.
+
+**ACTION:** Restore the backup into a scratch database **owned by a role with
+`rolsuper = false` and `rolbypassrls = false`** — this is not optional, and is
+the single thing P18's rehearsal got wrong — then:
 
 ```bash
 DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh
@@ -166,25 +215,18 @@ psql "postgres://…/scratch" -f db/seed/rls_probe.sql
 
 **EXPECTED RESULT:**
 
-- First run prints `applying 0020_…` through `applying 0029_…`, then
-  `applied 10 migration(s)`.
+- First run prints `applying 0020_…` through `applying 0030_…`, then
+  `applied 11 migration(s)`.
 - Second run prints exactly `no pending migrations`.
 - The RLS probe prints no line beginning `FAIL`.
-- Record the wall-clock duration of the first run. This is the outage budget for
-  Step 4.
+- Record the wall-clock duration. Measured on a seeded database: **0.9 s**.
 
-**ROLLBACK CONDITION:** Any migration fails, the second run is not a no-op, or
-the probe reports FAIL → **stop.** Nothing has touched production. Fix, re-run
-CI, restart at Step 1.
+**ROLLBACK CONDITION:** any migration fails, the second run is not a no-op, or
+the probe reports FAIL → **stop.** Nothing has touched production.
 
-**WHY THIS STEP IS NOT OPTIONAL:** the migration ledger stores an md5 per file
-and refuses a file whose contents changed after shipping. If production's ledger
-disagrees with the repository for any of `0001`–`0019`, `migrate.sh` exits 1 —
-and it exits *inside the worker's pre-deploy*, which is a much worse place to
-discover it. Comparing `pre-release-ledger.txt` against the repository is the
-cheap version of this check; the rehearsal is the real one.
-
----
+**IF THE SCRATCH DATABASE IS OWNED BY A SUPERUSER**, this step proves nothing.
+That is precisely how P18's first rehearsal passed while the upgrade would have
+aborted at `0025` in production.
 
 ## Step 4 — Apply migrations, deliberately, before any new code runs
 
@@ -272,11 +314,11 @@ a reminder.** See Known state.
 `db7061f1` (Step R2). A config error here means a variable the new code requires
 was never set; the old image does not require it.
 
-**NOTE ON BUILD IDENTITY:** the Render Docker build does not pass `GIT_COMMIT`
-as a build argument, so `/version` will report `commit: "unknown"` rather than a
-wrong value — by design (`Dockerfile`, ARG defaults). Traceability at Render
-therefore comes from the deploy record, not the endpoint. Treat `unknown` as
-expected here, and a *specific but wrong* SHA as a serious finding.
+**NOTE ON BUILD IDENTITY:** `/version` reads `RENDER_GIT_COMMIT` — which Render
+sets itself, from the commit it built — before falling back to the `GIT_COMMIT`
+build argument. So a Render deploy now reports its real SHA with no build
+argument at all. `unknown` here means the platform variable was absent and
+should be investigated; a *specific but wrong* SHA remains a serious finding.
 
 ---
 
@@ -305,7 +347,10 @@ curl -fsS https://<api-host>/version
   on a stub. On current production it will contain `push`. This endpoint is the
   authoritative answer to "are reminders actually being sent" — do not infer it
   from anywhere else.
-- `/version` → exactly `{service, commit, version, builtAt}` and nothing else.
+- `/version` → exactly `{service, commit, version, builtAt, schema}` and nothing
+  else. `commit` now comes from Render's own `RENDER_GIT_COMMIT` first, so it
+  reports the real SHA without anyone maintaining a build argument; `schema` is
+  the migration this build requires.
 
 **ROLLBACK CONDITION:** `/health/ready` fails while `/health` succeeds → the
 process is up but cannot reach the database as `dawaee_app`. Roll back the API

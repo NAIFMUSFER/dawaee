@@ -89,6 +89,9 @@ const REQUIRED_SUITES: Array<[phase: string, file: string]> = [
   ['P13 log redaction', 'apps/api/test/log-redaction.test.ts'],
   ['P13 operational error privacy', 'apps/api/test/operational-error-privacy.test.ts'],
   ['P13 audit privacy', 'apps/api/test/audit-privacy.test.ts'],
+  ['P18-R definer privilege model', 'apps/api/test/definer-privilege-model.test.ts'],
+  ['P18-R schema startup contract', 'apps/api/test/schema-contract.test.ts'],
+  ['P4 database TLS', 'apps/api/test/db-tls.test.ts'],
   ['P1-P3 mobile token store', 'apps/mobile/test/token-store.test.ts'],
   ['P1-P3 mobile secure cache', 'apps/mobile/test/secure-cache.test.ts'],
   ['P1-P3 mobile app lock', 'apps/mobile/test/app-lock.test.ts'],
@@ -302,8 +305,25 @@ describe('P16-5 a running service can say which commit it is', () => {
     const { buildIdentity } = await import('../src/routes/health.js');
     const saved = { ...process.env };
     try {
-      delete process.env.GIT_COMMIT; delete process.env.APP_VERSION; delete process.env.BUILD_TIME;
-      expect(buildIdentity()).toEqual({ commit: 'unknown', version: 'unknown', builtAt: 'unknown' });
+      delete process.env.GIT_COMMIT; delete process.env.RENDER_GIT_COMMIT;
+      delete process.env.APP_VERSION; delete process.env.BUILD_TIME;
+      expect(buildIdentity()).toMatchObject({ commit: 'unknown', version: 'unknown', builtAt: 'unknown' });
+      // The schema revision comes from the shipped migrations, not the
+      // environment, so it is known even when nothing was passed to the build.
+      expect(buildIdentity().schema).toMatch(/^\d{4}_[a-z0-9_]+\.sql$/);
+
+      // Render sets RENDER_GIT_COMMIT itself, from the commit it built. P18
+      // found /version would say `unknown` in production because render.yaml
+      // passes no build arguments; the platform's own value takes precedence
+      // precisely so nobody has to maintain one by hand.
+      process.env.RENDER_GIT_COMMIT = 'fedcba9876543210fedcba9876543210fedcba98';
+      process.env.GIT_COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+      expect(buildIdentity().commit).toBe('fedcba9876543210fedcba9876543210fedcba98');
+
+      // A malformed platform value must not shadow a good build argument.
+      process.env.RENDER_GIT_COMMIT = 'not-a-sha';
+      expect(buildIdentity().commit).toBe('a1b2c3d4e5f60718293a4b5c6d7e8f9012345678');
+      delete process.env.RENDER_GIT_COMMIT;
 
       process.env.GIT_COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
       process.env.APP_VERSION = '0.1.0';
@@ -335,6 +355,18 @@ describe('P16-5 a running service can say which commit it is', () => {
     } finally {
       process.env = saved;
     }
+  });
+
+  /**
+   * The schema startup contract reads `db/migrations` out of the image to know
+   * which migrations this build requires. If the Dockerfile ever stops shipping
+   * that directory, the API refuses to start — with an error about a missing
+   * directory rather than a missing migration, which is a much worse deploy to
+   * debug at 3am. Cheap to assert, expensive to discover.
+   */
+  it('the image still ships db/migrations, which the startup gate reads', () => {
+    const dockerfile = read('Dockerfile');
+    expect(dockerfile, 'the runtime stage no longer copies db/').toMatch(/^COPY db \.\/db$/m);
   });
 
   it('the Dockerfile freezes the identity into the image rather than reading it at runtime', () => {

@@ -80,6 +80,17 @@ services:
         sync: false
       - key: IP_HASH_SALT
         sync: false
+      # Declared, not defaulted. This decides which address the rate limiter and
+      # the IP hash treat as the client: too low and Render's own proxy is what
+      # every per-IP control sees, too high and a caller can forge the value in
+      # X-Forwarded-For and defeat them. It was not in this file at all, so a
+      # security-sensitive topology assumption lived only as a default in
+      # config.ts. `1` is the assumption for a Render web service behind Render's
+      # single proxy hop; it is NOT a measurement, and P17 could not take one
+      # because production has no external traffic to observe. Verify against a
+      # real request before the service takes real traffic.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: PUBLIC_APP_URL
         sync: false
       - key: CORS_ORIGINS

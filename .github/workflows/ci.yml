@@ -98,10 +98,22 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Prepare test database
+      # The database is owned by `dawaee_migrator`, which is NOSUPERUSER and
+      # NOBYPASSRLS. Until P18 this was owned by `postgres`, so every `app.*`
+      # SECURITY DEFINER function ran with an unconditional row-level-security
+      # bypass that no managed PostgreSQL grants — and the entire suite proved
+      # its properties against a configuration production does not have.
+      # Registration was broken on a realistic owner while 1013 tests passed.
+      - name: Prepare test database (realistic ownership)
+        run: ./scripts/db-reset.sh dawaee_test
+
+      - name: The test database owner must not be able to bypass RLS
         run: |
-          ./scripts/db-reset.sh dawaee_test
-          ./scripts/db-bootstrap-roles.sh dawaee_test
+          set -euo pipefail
+          attrs="$(psql -tAc "SELECT rolsuper::text || ' ' || rolbypassrls::text FROM pg_roles WHERE rolname = 'dawaee_migrator'")"
+          [ "$attrs" = "false false" ] || { echo "::error::migration owner is $attrs, so every RLS test is vacuous"; exit 1; }
+          owner="$(psql -tAc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'dawaee_test'")"
+          [ "$owner" = "dawaee_migrator" ] || { echo "::error::dawaee_test is owned by $owner"; exit 1; }
 
       # The adversarial RLS probe runs on its own. It asserts that patient A
       # cannot reach patient B by any route the database exposes, and a single
@@ -116,17 +128,16 @@ jobs:
           fi
 
       # Production runs migrations as an ordinary database owner, never a
-      # superuser. That difference has already hidden two failures that only
-      # appear on deploy, so CI reproduces it: a non-superuser owner, a fresh
-      # database, migrations applied twice (the second run must be a no-op),
-      # and the RLS probe against the result.
+      # superuser. This job reproduces that: a non-superuser owner, a fresh
+      # database, migrations applied twice (the second must be a no-op), and the
+      # RLS probe against the result.
       - name: Migrations as a non-superuser owner
         run: |
           set -euo pipefail
-          psql -d postgres -c "CREATE ROLE ci_owner LOGIN CREATEDB CREATEROLE PASSWORD 'ciownerpw'"
-          psql -d postgres -c "CREATE DATABASE dawaee_ci OWNER ci_owner"
-          export DATABASE_URL="postgres://ci_owner:ciownerpw@127.0.0.1:5433/dawaee_ci"
-          export DAWAEE_APP_PASSWORD=cipass DAWAEE_WORKER_PASSWORD=cipass
+          psql -d postgres -c "CREATE DATABASE dawaee_ci OWNER dawaee_migrator"
+          export DATABASE_URL="postgres://dawaee_migrator:migratorpw@127.0.0.1:5433/dawaee_ci"
+          export DAWAEE_APP_PASSWORD=devpass DAWAEE_WORKER_PASSWORD=devpass
+          ./scripts/migrate.sh --preflight-only
           ./scripts/migrate.sh
           ./scripts/migrate.sh | tee /tmp/second.txt
           grep -q 'no pending migrations' /tmp/second.txt || { echo "::error::re-running migrations was not a no-op"; exit 1; }
@@ -135,6 +146,15 @@ jobs:
             echo "::error::row-level security probe failed on a non-superuser-owned database"
             exit 1
           fi
+
+      # THE GAP THIS CLOSES. The job above passed for months while the product
+      # was unusable on exactly this configuration: a definer function could not
+      # write `user_credentials` under FORCE ROW LEVEL SECURITY and registration
+      # returned 404. Nothing caught it because the APPLICATION was never started
+      # against the database CI had correctly built — only the schema was.
+      # A migration-only PASS is not enough.
+      - name: Managed-Postgres smoke — the app, on the realistic database
+        run: ./scripts/managed-postgres-smoke.sh dawaee_smoke
 
       # Every suite: RLS matrix, worker privilege boundary, auth/session
       # concurrency, OTP, shared rate limit, worker reliability, endpoint

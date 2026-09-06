@@ -140,8 +140,16 @@ GRANT  EXECUTE ON FUNCTION app.purge_expired_otp(int) TO dawaee_worker;
 
 DROP POLICY IF EXISTS caregiver_rel_update ON caregiver_relationships;
 
+-- `TO dawaee_app`, restored. 0008 scoped this policy to the application role;
+-- the rewrite above dropped the clause, which in PostgreSQL means TO PUBLIC —
+-- a permissive policy that unions with every other role's own policies,
+-- including the worker's. The predicate happens to evaluate false for the
+-- worker (it has no `app.user_id`, so `app.current_user_id()` is NULL), so
+-- nothing was actually widened; but "happens to be false" is not a control, and
+-- an accidental PUBLIC policy is exactly what 0030 refuses to let the schema
+-- carry. Caught by that assertion, not by review.
 CREATE POLICY caregiver_rel_update ON caregiver_relationships
-  FOR UPDATE
+  FOR UPDATE TO dawaee_app
   USING (
     app.owns_profile(patient_profile_id)
     OR caregiver_user_id = app.current_user_id()

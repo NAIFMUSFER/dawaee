@@ -274,12 +274,20 @@ describe('one logical dose produces one occurrence', () => {
         [user.profileId, medicationId, scheduleId, when, DATE],
       ).then(() => 'ok').catch((e: Error) => e.message);
 
-      const pa = insert(a);
-      const pb = insert(b);
-      results.push(await pa);
-      await a.query('COMMIT');
-      results.push(await pb);
-      await b.query('COMMIT').catch(() => undefined);
+      // Each writer commits as soon as ITS OWN insert returns, rather than the
+      // test deciding who goes first.
+      //
+      // The previous shape awaited `pa` and only then committed A. Which writer
+      // reaches the unique index first is not ordered, so whenever B won the
+      // race the test deadlocked itself: A blocked on B's uncommitted tuple, and
+      // B's COMMIT was queued behind an `await` that could never return. Not a
+      // product deadlock — PostgreSQL cannot see a cycle that runs through the
+      // client — so it simply hung until the 30s test timeout. Observed once in
+      // four full-suite runs, on a loaded machine; a race that only usually
+      // resolves is a flake waiting for CI.
+      const settle = (c: pg.PoolClient, p: Promise<string>) =>
+        p.then(async (r) => { await c.query('COMMIT').catch(() => undefined); return r; });
+      results.push(...await Promise.all([settle(a, insert(a)), settle(b, insert(b))]));
     } finally { a.release(); b.release(); }
 
     expect(results.filter((r) => r === 'ok').length,

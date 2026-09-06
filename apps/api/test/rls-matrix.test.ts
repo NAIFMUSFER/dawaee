@@ -300,15 +300,30 @@ describe('the runtime roles cannot escape row level security', () => {
   });
 
   /**
-   * Credentials are reachable only through SECURITY DEFINER functions. RLS is
-   * enabled with zero policies, which is deny-all — the strongest possible
-   * statement, and worth pinning so a later "convenience" policy is a failure.
+   * Credentials are reachable only through SECURITY DEFINER functions.
+   *
+   * This used to assert zero policies — deny-all, the strongest possible
+   * statement. That was only ever true because the test database was owned by a
+   * superuser, which is exempt from FORCE ROW LEVEL SECURITY for free. On a
+   * managed PostgreSQL the owner is not exempt, so with zero policies
+   * `app.register_with_password` could not write a password hash and
+   * registration returned 404 for every user. (P18.)
+   *
+   * The invariant that actually matters is narrower and is what is pinned now:
+   * exactly one policy, naming the schema owner and nobody else. A later
+   * "convenience" policy for a runtime role is still a failure.
    */
   it('user_credentials is unreachable from the runtime role entirely', async () => {
-    const policies = await truth<{ n: number }>(
-      "SELECT count(*)::int AS n FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid WHERE c.relname='user_credentials'",
+    const policies = await truth<{ policyname: string; roles: string }>(
+      `SELECT policyname, roles::text AS roles FROM pg_policies
+        WHERE schemaname='public' AND tablename='user_credentials'`,
     );
-    expect(Number(policies[0]!.n), 'user_credentials has policies').toBe(0);
+    expect(policies.map((p) => p.policyname), 'policies on user_credentials')
+      .toEqual(['user_credentials_definer']);
+    for (const p of policies) {
+      expect(p.roles, `${p.policyname} names a runtime role or PUBLIC`)
+        .not.toMatch(/dawaee_app|dawaee_worker|public/);
+    }
 
     const res = await asUser(alice.userId, 'SELECT count(*)::int AS n FROM user_credentials');
     record('user_credentials', 'Patient A', 'SELECT', 'DENY', Number(res.rows[0]?.n ?? 0), res.error);

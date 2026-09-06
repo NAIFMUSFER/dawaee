@@ -1816,7 +1816,11 @@ describe('P16 /version says which commit is serving, and nothing else', () => {
     expect(res.statusCode, res.body).toBe(200);
     const body = res.json<Record<string, string>>();
     expect(body.service).toBe('dawaee-api');
-    expect(Object.keys(body).sort()).toEqual(['builtAt', 'commit', 'service', 'version']);
+    expect(Object.keys(body).sort()).toEqual(['builtAt', 'commit', 'schema', 'service', 'version']);
+    // `schema` is the migration this BUILD requires — a property of the
+    // artefact, not of whatever database it is pointed at, so it belongs here
+    // and cannot be used to probe the deployment.
+    expect(body.schema).toMatch(/^\d{4}_[a-z0-9_]+\.sql$/);
   });
 
   it('discloses nothing that varies with configuration', async () => {

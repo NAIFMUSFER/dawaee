@@ -32,13 +32,19 @@ export interface Harness {
 
 let harness: Harness | null = null;
 
-/** Rebuilds the test database from scratch. Called once per suite file. */
+/**
+ * Rebuilds the test database from scratch. Called once per suite file.
+ *
+ * The database it produces is owned by `dawaee_migrator`, which is deliberately
+ * NOSUPERUSER and NOBYPASSRLS. That is not incidental: when this database was
+ * owned by `postgres`, every `app.*` SECURITY DEFINER function ran with an
+ * unconditional row-level-security bypass that no managed PostgreSQL grants,
+ * and the whole suite proved its properties against a configuration production
+ * does not have. Registration was broken on a realistic owner while 1013 tests
+ * passed. See db/maintenance/definer_policies.sql.
+ */
 export function resetDatabase(): void {
   execFileSync(resolve(ROOT, 'scripts/db-reset.sh'), ['dawaee_test'], {
-    env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
-    stdio: 'pipe',
-  });
-  execFileSync(resolve(ROOT, 'scripts/db-bootstrap-roles.sh'), ['dawaee_test'], {
     env: {
       ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres',
       DAWAEE_APP_PASSWORD: 'devpass', DAWAEE_WORKER_PASSWORD: 'devpass',
