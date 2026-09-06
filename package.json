@@ -16,9 +16,9 @@
   "scripts": {
     "build": "npm run build -w @dawaee/shared && npm run build -w @dawaee/core && npm run build -w @dawaee/api && npm run build -w @dawaee/worker",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:unit": "vitest run packages",
-    "test:int": "vitest run apps/api",
+    "test:int": "vitest run apps/api --no-file-parallelism",
     "test:watch": "vitest",
     "lint": "eslint .",
     "db:migrate": "./scripts/migrate.sh",
