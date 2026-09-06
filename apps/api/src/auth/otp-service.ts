@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 import { loadConfig } from '../config.js';
-import { generateOtp, sha256 } from '../lib/crypto.js';
+import { generateOtp, otpVerifier } from '../lib/crypto.js';
 
 /**
  * Phone OTP.
@@ -33,7 +33,7 @@ export async function issueOtp(tx: PoolClient, phone: string, ipHash: string | n
   }>(
     'SELECT * FROM app.issue_otp($1,$2,$3,$4,$5,$6,$7,$8)',
     [
-      phone, sha256(code), cfg.OTP_TTL_MINUTES, cfg.OTP_MAX_ATTEMPTS, ipHash,
+      phone, otpVerifier(phone, code), cfg.OTP_TTL_MINUTES, cfg.OTP_MAX_ATTEMPTS, ipHash,
       OTP_REQUEST_WINDOW_MINUTES, OTP_MAX_REQUESTS_PER_WINDOW, OTP_RESEND_COOLDOWN_SECONDS,
     ],
   );
@@ -73,7 +73,7 @@ export interface OtpCheckResult {
 export async function checkOtp(tx: PoolClient, phone: string, code: string): Promise<OtpCheckResult> {
   const { rows } = await tx.query<{ outcome: string; attempts_remaining: number }>(
     'SELECT * FROM app.verify_otp($1,$2)',
-    [phone, sha256(code)],
+    [phone, otpVerifier(phone, code)],
   );
   return {
     outcome: (rows[0]?.outcome ?? 'no_challenge') as OtpOutcome,

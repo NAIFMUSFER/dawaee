@@ -59,11 +59,50 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const result = await withTransaction(async (tx) => {
       // Account resolution runs before an identity exists, so it goes through
       // the auth-plane function rather than raw INSERTs that RLS would refuse.
-      const { rows: account } = await tx.query<{
-        user_id: string; is_admin: boolean; is_new_user: boolean; self_profile_id: string | null;
-      }>('SELECT * FROM app.find_or_create_user_by_phone($1, $2, $3)', [phone, maskPhone(phone), 'ar']);
+      let account;
+      try {
+        ({ rows: account } = await tx.query<{
+          user_id: string; is_admin: boolean; is_new_user: boolean; self_profile_id: string | null;
+        }>('SELECT * FROM app.find_or_create_user_by_phone($1, $2, $3)', [phone, maskPhone(phone), 'ar']));
+      } catch (err) {
+        /**
+         * A disabled account looks exactly like a wrong code.
+         *
+         * `find_or_create_user_by_phone` raises `insufficient_privilege` for a
+         * disabled account, which the error handler was rendering as 404
+         * "Resource not found" — a different answer from the 200 an unknown
+         * number gets, and therefore a working "this number is registered, and
+         * it has been suspended" oracle for anyone holding a valid code. It was
+         * also simply the wrong status for an authentication refusal.
+         *
+         * Disablement is a compromise or abuse response. Confirming it tells an
+         * attacker their target has been flagged, which is precisely the moment
+         * they should learn nothing. The code has already been consumed by the
+         * committed transaction above, so this costs the attacker their guess.
+         */
+        if ((err as { code?: string }).code === '42501') {
+          throw new AppError(ERROR_CODES.OTP_INVALID, 401, 'Incorrect verification code');
+        }
+        throw err;
+      }
 
       const { user_id: userId, is_admin: isAdmin, is_new_user: isNewUser } = account[0]!;
+
+      /**
+       * Signing in by code clears a password lockout. This is a policy choice,
+       * stated rather than inherited.
+       *
+       * A one-time code proves possession of the phone the account is
+       * registered to, which is a stronger claim than knowing its password —
+       * so it is not a bypass of the lockout, it outranks it. Leaving the lock
+       * in place would also leave a patient who just proved who they are unable
+       * to use their own password for another fifteen minutes, with nothing on
+       * screen explaining why.
+       *
+       * Disablement is NOT cleared here, and must not be: that is an operator
+       * decision, and the refusal above happens before this line is reached.
+       */
+      await tx.query('SELECT app.clear_login_failures($1)', [userId]);
 
       const session = await createSession(tx, userId, {
         deviceId: body.deviceId,
