@@ -73,68 +73,11 @@ const WORKSPACES = {
  * the gate: the exception is not silently revoked — that would break a build
  * for a reason unrelated to security — it is escalated to a person.
  *
- * Every entry here is build-toolchain, and every one is fixed only by a MAJOR
- * Expo or React Native upgrade. That upgrade is a product decision with its own
- * testing, not something a security gate should force on a Tuesday.
+ * Each entry is classified against the current dependency graph. Build-only and
+ * runtime-reachable exceptions are held to separate thresholds and must state why
+ * the current upstream-compatible version is being retained.
  */
 const BASELINE = [
-  {
-    workspace: 'mobile',
-    module: 'tar',
-    severity: 'critical',
-    advisories: [
-      'GHSA-34x7-hfp2-rc4v', 'GHSA-8qq5-rm4j-mr97', 'GHSA-83g3-92jg-28cx', 'GHSA-qffp-2rhf-9h96',
-      'GHSA-9ppj-qmqm-q256', 'GHSA-r6q2-hw4h-h46w', 'GHSA-vmf3-w455-68vh', 'GHSA-w8wr-v893-vjvp',
-      'GHSA-23hp-3jrh-7fpw', 'GHSA-8x88-c5mf-7j5w', 'GHSA-gvwx-54wh-qm9j', 'GHSA-r292-9mhp-454m',
-    ],
-    accepted: '2026-09-06',
-    reviewBy: '2026-12-06',
-    reason:
-      'Reached only as expo -> @expo/cli -> cacache -> tar. It extracts archives on the machine '
-      + 'that BUILDS the app; it is not bundled into the binary a patient installs, so the '
-      + 'arbitrary-file-write is a build-server risk, not a patient risk. Fixed only by expo@57, '
-      + 'a major upgrade across the whole SDK.',
-    endsWhen: 'The Expo SDK is upgraded to a version whose tree resolves a patched tar, or the app stops depending on @expo/cli.',
-  },
-  {
-    workspace: 'mobile',
-    module: 'postcss',
-    severity: 'high',
-    advisories: ['GHSA-qx2v-qp2m-jg93', 'GHSA-6g55-p6wh-862q', 'GHSA-fxqj-rqcc-2cmp', 'GHSA-r28c-9q8g-f849'],
-    accepted: '2026-09-06',
-    reviewBy: '2026-12-06',
-    reason:
-      'Reached only through @expo/metro-config. It processes CSS during bundling; this app ships '
-      + 'no CSS and postcss does not run on a device. Fixed only by a major React Native upgrade.',
-    endsWhen: 'React Native / Expo upgrade, or Metro drops the postcss dependency.',
-  },
-  {
-    workspace: 'mobile',
-    module: 'image-size',
-    severity: 'high',
-    advisories: ['GHSA-w3rx-r6r6-pgpr', 'GHSA-5p2g-fcmc-qvqq'],
-    accepted: '2026-09-06',
-    reviewBy: '2026-12-06',
-    reason:
-      'Reached only through metro. It reads image dimensions at bundle time from assets committed '
-      + 'to this repository, never from user input at runtime. Fixed only by react-native@0.86, a major upgrade.',
-    endsWhen: 'React Native upgrade.',
-  },
-  {
-    workspace: 'mobile',
-    module: '@xmldom/xmldom',
-    severity: 'high',
-    advisories: [
-      'GHSA-wh4c-j3r5-mjhp', 'GHSA-2v35-w6hq-6mfw', 'GHSA-f6ww-3ggp-fr8h',
-      'GHSA-x6wf-f3px-wcqx', 'GHSA-j759-j44w-7fr8', 'GHSA-6gmq-8vp8-gcm6',
-    ],
-    accepted: '2026-09-06',
-    reviewBy: '2026-12-06',
-    reason:
-      'Reached only through @expo/plist -> @expo/config-plugins. It parses Info.plist and '
-      + 'AndroidManifest during prebuild, from files in this repository. Fixed only by expo@57.',
-    endsWhen: 'Expo SDK upgrade.',
-  },
   {
     workspace: 'mobile',
     module: 'uuid',
@@ -143,8 +86,8 @@ const BASELINE = [
     accepted: '2026-09-06',
     reviewBy: '2026-12-06',
     reason:
-      'Reached only through @expo/rudder-sdk-node and xcode — Expo CLI telemetry and the iOS '
-      + 'project generator. Below the build-toolchain threshold; listed so the review is deliberate.',
+      'Reached through xcode -> uuid in the Expo iOS project-generation toolchain. It is not '
+      + 'bundled into the patient runtime; below the build threshold and retained only as a reviewed exception.',
     endsWhen: 'Expo SDK upgrade.',
   },
   {
