@@ -79,7 +79,30 @@ const schema = z.object({
   PASSWORD_LOGIN_ENABLED: envBoolean(true),
 
   CORS_ORIGINS: z.string().default(''),
-  TRUST_PROXY: envBoolean(true),
+  /**
+   * How many proxies sit in front of this app — NOT a boolean.
+   *
+   * It used to be `envBoolean(true)`, and Fastify's `trustProxy: true` means
+   * "trust the entire X-Forwarded-For chain and take the LEFTMOST entry as the
+   * client". The leftmost entry is whatever the client typed. Measured against
+   * the running server: 6 registrations from one address were rate-limited as
+   * intended, and 14 from the same address with a different `X-Forwarded-For`
+   * on each were all allowed — `blocked=0`. Every IP-keyed limit in the app was
+   * a single header away from being nothing, which is also what made
+   * registration enumeration unbounded rather than 6-per-10-minutes.
+   *
+   * A hop count fixes it. `trustProxy: 1` tells Fastify to skip one entry from
+   * the RIGHT — the address the immediate upstream proxy appended itself — so
+   * the value comes from infrastructure rather than from the request body's
+   * author. Render terminates TLS at exactly one proxy, hence the default of 1.
+   *
+   * Set it to the real number of trusted hops for the deployment. `0` disables
+   * `X-Forwarded-For` entirely and uses the socket address, which is correct
+   * when nothing is in front of the app; a larger number is correct behind a
+   * CDN plus a load balancer. Never make it large "to be safe" — each extra hop
+   * is one more attacker-controlled entry treated as trusted.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   /** Salt for hashing IPs in the audit log — we never store a raw address. */
   IP_HASH_SALT: z.string().min(8).default('dawaee-dev-salt'),
 

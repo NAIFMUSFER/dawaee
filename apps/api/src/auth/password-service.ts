@@ -52,8 +52,38 @@ export async function attemptPasswordLogin(
     return { outcome: 'invalid' };
   }
 
+  /**
+   * A locked account is disclosed only to someone who already knows the
+   * password.
+   *
+   * The lock used to be announced to whoever asked: eight wrong guesses turned
+   * the ninth response from 401 `invalid_credentials` into 429
+   * `account_locked`. Only a real account can be locked, so that was a
+   * definitive account-existence oracle costing nine unauthenticated requests —
+   * and it charged the victim for the lookup, since the same nine requests lock
+   * them out for fifteen minutes. For a medication app, "this number has an
+   * account here" is itself a disclosure about someone's health.
+   *
+   * Verifying the password first splits the two audiences. Someone who cannot
+   * supply it gets the same 401 as for a phone number that was never
+   * registered, so nothing distinguishes a locked account from a non-existent
+   * one. Someone who CAN supply it is the account holder in every practical
+   * sense, and telling them "locked for N minutes" is the difference between a
+   * clear message and a password that mysteriously stops working.
+   *
+   * The failure is still recorded while locked. Skipping it would hand an
+   * attacker a free guessing window: no counter moves during the lock, so they
+   * could spend fifteen minutes guessing and watch for the response to change.
+   * Recording pushes `locked_until` further out on every wrong guess instead.
+   */
   if (row.locked_until && row.locked_until.getTime() > Date.now()) {
-    await burnVerificationTime();
+    const correct = await verifyPassword(password, row.password_hash);
+    if (!correct) {
+      await tx.query('SELECT app.record_login_failure($1,$2,$3)', [row.user_id, MAX_LOGIN_ATTEMPTS, LOCK_MINUTES]);
+      return { outcome: 'invalid' };
+    }
+    // Disabled outranks locked, and is never disclosed either way.
+    if (row.disabled) return { outcome: 'invalid' };
     return { outcome: 'locked', until: row.locked_until };
   }
 

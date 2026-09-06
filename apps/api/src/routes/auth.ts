@@ -117,7 +117,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (body.phone && !phone) {
       throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
     }
-    const email = body.email ? body.email.trim().toLowerCase() : null;
+    // Already trimmed and lower-cased by `emailInput`; one spelling, decided once.
+    const email = body.email ?? null;
 
     const passwordHash = await hashNewPassword(body.password, body.locale, phone ?? email ?? undefined);
 

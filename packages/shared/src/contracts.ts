@@ -26,6 +26,32 @@ export const phoneInput = z
   .min(7)
   .max(24)
   .regex(/^[+0-9()\-.\s]+$/, 'phone number contains unexpected characters');
+
+/**
+ * One spelling of an email address, decided in one place.
+ *
+ * Every control that depends on "this identifier is that person" — the
+ * uniqueness constraint, the rate-limit bucket, the sign-in lookup — is only as
+ * good as the agreement between routes about what the identifier IS. That
+ * agreement was partial: sign-in trimmed and lower-cased what it was given,
+ * while registration validated first and normalised afterwards, so a pasted
+ * address with a trailing space could sign in but could not register. The
+ * trim in the handler never ran, because `z.string().email()` had already
+ * rejected the value.
+ *
+ * Trimming and lower-casing BEFORE validation makes the normalised form the
+ * only form any route ever sees.
+ *
+ * Deliberately not touched: the local part beyond case, and `+tag` suffixes in
+ * particular. Collapsing `user+x@` onto `user@` is a common "normalisation"
+ * that lets one person claim an address belonging to someone else, and RFC 5321
+ * leaves local-part semantics to the receiving server — so the mailbox owner,
+ * not this app, decides whether two local parts are the same person.
+ */
+export const emailInput = z
+  .string()
+  .transform((v) => v.trim().toLowerCase())
+  .pipe(z.string().email().max(320));
 export const timezone = z
   .string()
   .min(3)
@@ -82,7 +108,7 @@ function isKnownTimeZone(value: string): boolean {
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
-    email: z.string().email().max(320).optional(),
+    email: emailInput.optional(),
     displayName: z.string().min(1).max(120),
     password: z.string().min(10).max(200),
     locale: z.enum(LOCALES).default('ar'),
@@ -115,7 +141,7 @@ export const updateMeSchema = z.object({
   displayName: safeText(120).optional(),
   locale: z.enum(LOCALES).optional(),
   timezone: z.string().max(64).refine(isKnownTimeZone, 'unknown time zone').optional(),
-  email: z.string().email().max(320).nullish(),
+  email: emailInput.nullish(),
 });
 
 export const setPasswordSchema = z.object({

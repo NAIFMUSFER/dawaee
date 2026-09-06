@@ -91,7 +91,27 @@ export function registerProfileRoutes(app: FastifyInstance): void {
    * requests a minute against a medication app, where merely having an
    * account is health-adjacent.
    */
-  app.patch('/v1/me', async (req) => {
+  /**
+   * Changing your own record — throttled because it answers a question about
+   * OTHER people's records.
+   *
+   * Setting `email` to an address another account already uses returns 409
+   * `conflict`, and a free address returns 200. That difference is a working
+   * "does this person have an account here" oracle, and on the global limit it
+   * ran at 300 answers a minute — over four hundred thousand a day from one
+   * signed-in account. Authentication raises the cost of asking; it does not
+   * make the answer less disclosing, and for a medication app the answer is a
+   * statement about someone's health.
+   *
+   * The conflict itself stays. Silently keeping the old address, or accepting a
+   * duplicate, would be worse than saying the change did not happen. What
+   * changes is the rate: a person edits their own name, locale, timezone or
+   * email a handful of times in the life of an account, so ten an hour is
+   * beyond generous for the legitimate case and useless for enumeration.
+   */
+  app.patch('/v1/me', {
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (req) => {
     const { userId } = currentUser(req);
     const body = updateMeSchema.parse(req.body);
     return withUser(userId, async (tx) => {
@@ -104,7 +124,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
          WHERE id = $1
          RETURNING id, display_name, locale, timezone, email`,
         [userId, body.displayName ?? null, body.locale ?? null, body.timezone ?? null,
-         body.email ? body.email.trim().toLowerCase() : null],
+         body.email ?? null],
       );
       return { user: rows[0] };
     });
