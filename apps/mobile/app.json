@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "scheme": "dawaee",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -77,7 +76,8 @@
           "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sharing"
     ],
     "extra": {
       "apiBaseUrl": "https://dawaee-api.onrender.com",
