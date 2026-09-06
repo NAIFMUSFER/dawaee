@@ -1,4 +1,4 @@
-name: Mobile SDK 55 upgrade rehearsal
+name: Mobile SDK 55 native validation
 
 on:
   push:
@@ -8,22 +8,25 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: mobile-sdk55-native-validation
+  cancel-in-progress: true
+
+env:
+  NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
+  EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
+  EXPO_PUBLIC_DEMO: '0'
 
 jobs:
-  upgrade:
-    if: github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 55
-    env:
-      NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
-      EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
-      EXPO_PUBLIC_DEMO: '0'
+  js-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: mobile/expo55-store-readiness
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -33,79 +36,153 @@ jobs:
             package-lock.json
             apps/mobile/package-lock.json
 
-      - name: Install repository test dependencies
+      - name: Install repository dependencies
         run: npm ci
 
-      - name: Configure upgrade commits
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-      - name: Verify committed SDK 53 checkpoint
+      - name: Install mobile dependencies
         working-directory: apps/mobile
-        run: |
-          set -euo pipefail
-          npm ci --legacy-peer-deps
-          npx expo install --check --npm
-          npx tsc --noEmit
-          rm -rf .upgrade-artifacts
-          npx expo export --platform android --output-dir .upgrade-artifacts/sdk53-android
-          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk53-ios
-          rm -rf .upgrade-artifacts
+        run: npm ci --legacy-peer-deps
 
-      - name: Upgrade and verify SDK 54
-        working-directory: apps/mobile
-        run: |
-          set -euo pipefail
-          npm install expo@~54.0.0 --legacy-peer-deps
-          npx expo install --fix --npm
-          rm -rf node_modules
-          npm ci --legacy-peer-deps
-          # Prove the dependency that exposed the old Metro configuration is
-          # actually installed, then prove Metro can resolve it in both bundles.
-          npm ls simple-swizzle is-arrayish
-          npx expo install --check --npm
-          npx tsc --noEmit
-          rm -rf .upgrade-artifacts
-          npx expo export --platform android --output-dir .upgrade-artifacts/sdk54-android
-          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk54-ios
-          rm -rf .upgrade-artifacts
-          git add package.json package-lock.json app.json
-          git diff --cached --check
-          git commit -m 'mobile: upgrade Expo SDK 53 to 54'
-          git push origin HEAD:mobile/expo55-store-readiness
-
-      - name: Upgrade and verify SDK 55
-        working-directory: apps/mobile
-        run: |
-          set -euo pipefail
-          # React Native 0.83 / Expo 55 always uses the New Architecture. The
-          # legacy switch is no longer a meaningful app-config option.
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
-          delete app.expo.newArchEnabled;
-          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
-          NODE
-          npm install expo@~55.0.0 --legacy-peer-deps
-          npx expo install --fix --npm
-          rm -rf node_modules
-          npm ci --legacy-peer-deps
-          npm ls simple-swizzle is-arrayish
-          npx expo install --check --npm
-          npx tsc --noEmit
-          rm -rf .upgrade-artifacts
-          npx expo export --platform android --output-dir .upgrade-artifacts/sdk55-android
-          npx expo export --platform ios --output-dir .upgrade-artifacts/sdk55-ios
-          rm -rf .upgrade-artifacts
-          git add package.json package-lock.json app.json
-          git diff --cached --check
-          git commit -m 'mobile: upgrade Expo SDK 54 to 55'
-          git push origin HEAD:mobile/expo55-store-readiness
-
-      - name: Final Expo health check
+      - name: SDK 55 compatibility gates
         working-directory: apps/mobile
         run: |
           set -euo pipefail
           npx expo install --check --npm
           npx expo-doctor@latest
+          npx tsc --noEmit
+          npm audit --omit=dev --audit-level=high
+
+      - name: Surface removed or legacy Expo API usage
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          echo '--- expo-file-system imports/usages ---'
+          grep -R -n -E "expo-file-system|FileSystem\.(copyAsync|createDownloadResumable|createUploadTask|getContentUriAsync|getFreeDiskStorageAsync|getInfoAsync|makeDirectoryAsync|moveAsync|readAsStringAsync|writeAsStringAsync|deleteAsync|downloadAsync|documentDirectory|cacheDirectory)" app src || true
+          echo '--- removed/deprecated SDK 55 config/API markers ---'
+          grep -R -n -E "newArchEnabled|edgeToEdgeEnabled|ExpoRequest|ExpoResponse|allowsFullscreen|experimentalBlurMethod" app src app.json || true
+
+      - name: Export production bundles
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          rm -rf .native-validation
+          npx expo export --platform android --output-dir .native-validation/android
+          npx expo export --platform ios --output-dir .native-validation/ios
+          test -f .native-validation/android/metadata.json
+          test -f .native-validation/ios/metadata.json
+          rm -rf .native-validation
+
+      - name: Generate both native projects from app config
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: '1'
+        run: |
+          set -euo pipefail
+          npx expo prebuild --clean --no-install --platform all
+          test -f android/app/build.gradle
+          test -f ios/Podfile
+
+  android-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mobile/expo55-store-readiness
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd apps/mobile
+          npm ci --legacy-peer-deps
+
+      - name: Generate Android native project
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: '1'
+        run: npx expo prebuild --clean --no-install --platform android
+
+      - name: Compile Android release AAB
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          ./gradlew :app:bundleRelease --no-daemon
+          test -f app/build/outputs/bundle/release/app-release.aab
+          ls -lh app/build/outputs/bundle/release/app-release.aab
+
+  ios-release-simulator:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mobile/expo55-store-readiness
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+
+      - name: Pin the SDK 55 store toolchain
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd apps/mobile
+          npm ci --legacy-peer-deps
+
+      - name: Generate iOS native project
+        working-directory: apps/mobile
+        env:
+          EXPO_NO_GIT_STATUS: '1'
+        run: npx expo prebuild --clean --no-install --platform ios
+
+      - name: Install CocoaPods
+        working-directory: apps/mobile/ios
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: pod install
+
+      - name: Compile iOS Release simulator app
+        working-directory: apps/mobile
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: |
+          set -euo pipefail
+          workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          project="$(find ios -maxdepth 1 -name '*.xcodeproj' -print -quit)"
+          test -n "$workspace"
+          test -n "$project"
+          scheme="$(basename "$project" .xcodeproj)"
+          echo "workspace=$workspace scheme=$scheme"
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          find ios/build/Build/Products -maxdepth 2 -name '*.app' -print -quit | grep -q .
