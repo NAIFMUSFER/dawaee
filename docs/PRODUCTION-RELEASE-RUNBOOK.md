@@ -19,7 +19,7 @@ variable and where to read it, never the value.
 | Pending migrations | **11** — `0020` … `0030` (production ledger stops at `0019`) |
 
 Production is running the **audit baseline**. Every fix from P5 through P16 is
-unshipped. This is therefore not a routine deploy: it is a ten-migration,
+unshipped. This is therefore not a routine deploy: it is an eleven-migration,
 twenty-thousand-line jump, and it should be treated as the highest-risk release
 the project has had.
 
@@ -60,9 +60,9 @@ started last. Step 0 is what makes the rest of it true.
 
 Do not begin until every line is true.
 
-- [ ] CI is green on `1cafd5a` for **both** PostgreSQL 16 and 17 (P16 classified
-      actual GitHub Actions execution as NOT RUN — this must become an observed
-      green run, not an assumption).
+- [x] CI is green on the current release branch head for **both** PostgreSQL 16 and 17,
+      including the realistic migration-owner/RLS smoke, Docker, dependency, mobile,
+      CodeQL, Gitleaks and Trivy gates.
 - [ ] A named operator is at a machine with the Render dashboard, the Supabase
       dashboard, and `psql`.
 - [ ] A second person is available to authorize a rollback.
@@ -146,7 +146,7 @@ psql "$DATABASE_URL" -tAc \
 A backup identifier is written down.
 
 **ROLLBACK CONDITION:** Backup cannot be taken or verified → **stop the
-release.** Ten migrations including a `DELETE` (`0025`) and an `UPDATE` (`0028`)
+release.** Eleven migrations including a `DELETE` (`0025`) and an `UPDATE` (`0028`)
 must not be applied without a restore point.
 
 **NOTE:** `dawaee-db` (`dpg-dacego15efls73e58ukg-a`) is a *separate*, free-plan
@@ -242,7 +242,7 @@ git checkout <release commit>
 ./scripts/migrate.sh 2>&1 | tee migrate-$(date +%s).log
 ```
 
-Migrations `0020`–`0029` are additive: no `DROP TABLE`, no `DROP COLUMN`, no
+Migrations `0020`–`0030` are additive: no `DROP TABLE`, no `DROP COLUMN`, no
 `TRUNCATE`. Two carry data statements and must be read before running:
 
 | Migration | Data statement | Effect |
@@ -253,7 +253,7 @@ Migrations `0020`–`0029` are additive: no `DROP TABLE`, no `DROP COLUMN`, no
 Neither destroys medication, dose or profile data. Both are irreversible without
 the Step 2 backup.
 
-**EXPECTED RESULT:** `applied 10 migration(s)`, then `applying role grants…`,
+**EXPECTED RESULT:** `applied 11 migration(s)`, then `applying role grants…`,
 then `migrations complete`. The old code (`db7061f1`) is still serving and is
 unaffected: every migration is additive, so the running API keeps working.
 
@@ -271,7 +271,7 @@ not a deploy problem.
 
 ## Step 5 — Deploy the worker
 
-**PRECONDITION:** Step 4 succeeded. Migrations at `0029`.
+**PRECONDITION:** Step 4 succeeded. Migrations at `0030`.
 
 **ACTION:** In Render, deploy `dawaee-worker` at the release commit
 (Manual Deploy → the recorded commit).
