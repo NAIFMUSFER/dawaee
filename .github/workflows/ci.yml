@@ -300,4 +300,6 @@ jobs:
       - name: Export Android production bundle
         working-directory: apps/mobile
         run: npx expo export --platform android --output-dir dist-ci-android
-      - name
+      - name: Export iOS production bundle
+        working-directory: apps/mobile
+        run: npx expo export --platform ios --output-dir dist-ci-ios
