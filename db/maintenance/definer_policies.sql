@@ -82,6 +82,31 @@ BEGIN
   END LOOP;
 END $$;
 
+-- FORCE ROW LEVEL SECURITY does not enable RLS by itself. A table can therefore
+-- look hardened (`relforcerowsecurity = true`) while every policy is actually
+-- inert (`relrowsecurity = false`). Supabase's production advisor found exactly
+-- that state on auth_otp_challenges after the 0030 rollout. Refuse it here,
+-- before the sweep can make the state look even more convincing by adding an
+-- owner policy to a table on which RLS is disabled.
+DO $$
+DECLARE
+  bad text;
+BEGIN
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname)
+    INTO bad
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND c.relkind = 'r'
+     AND c.relforcerowsecurity
+     AND NOT c.relrowsecurity;
+
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'FORCE RLS is set while RLS is disabled on: %', bad
+      USING HINT = 'ENABLE ROW LEVEL SECURITY on the named table(s) before creating definer policies.';
+  END IF;
+END $$;
+
 -- ------------------------------------------------------------- the sweep
 --
 -- Derived from `pg_class` rather than a list, because a list is what went
