@@ -1,0 +1,5 @@
+# Exact historical false-positive fingerprints only. These are synthetic test
+# fixtures retained in the audited PR history; do not broaden this allowlist.
+3fbbc7820acef740a06f17327b141d26ad2fa987:apps/api/test/upload-emergency-security.test.ts:generic-api-key:345
+5774f46894a076d7b599a5d51c79a00bffbf01a4:apps/api/test/otp-security.test.ts:generic-api-key:395
+2c9747497a258dceeecb4fd8647bcdeae2baafd7:apps/api/test/endpoint-authorization.test.ts:jwt:350
