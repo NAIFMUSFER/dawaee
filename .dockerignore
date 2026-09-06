@@ -1,0 +1,61 @@
+# How much of the working tree the builder is allowed to see.
+#
+# Measured, with the classic builder: 492.2 MB of context without this file,
+# 4.9 MB with it. The bulk is apps/mobile's node_modules, but the part that
+# matters is that .env — a real local secrets file — and the full .git history
+# were both inside it.
+#
+# Whether that context actually leaves the machine depends on the builder.
+# BuildKit transfers lazily, only files a COPY pattern matches, so it never
+# shipped .env; the classic builder sends the entire context up front, secrets
+# included. The Dockerfile requests BuildKit via its syntax directive, but that
+# is a preference, not a guarantee — DOCKER_BUILDKIT=0 and older or third-party
+# build systems fall back. This file removes the dependency on which builder
+# happens to run.
+#
+# Nothing here is referenced by any COPY in the Dockerfile; the build was
+# verified end to end after each exclusion was added.
+
+# Secrets. First, because this is the one that matters.
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.p12
+
+# History and CI metadata: nothing at runtime reads them.
+.git
+.gitignore
+.github
+
+# Installed dependencies. The image runs `npm ci` from the lockfile; shipping a
+# host node_modules would also ship whatever architecture it was built for.
+node_modules
+**/node_modules
+
+# The mobile app is not part of the backend image — it is not a workspace member
+# and nothing in the Dockerfile copies it. On its own this is 420 MB.
+apps/mobile
+
+# Build and test output.
+dist
+coverage
+*.tsbuildinfo
+playwright-report
+test-results
+
+# Local tooling and editor state.
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+tmp
+*.log
+
+# Docs are not read at runtime.
+docs
+*.md
+!README.md
