@@ -1,0 +1,73 @@
+name: Repair production release runbook
+
+on:
+  push:
+    branches: [release/dawaee-rc-2026-09-06]
+    paths: [.github/workflows/repair-release-runbook.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: release/dawaee-rc-2026-09-06
+      - name: Correct current release facts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('docs/PRODUCTION-RELEASE-RUNBOOK.md')
+          s = p.read_text()
+          replacements = [
+              (
+                  'This is therefore not a routine deploy: it is a ten-migration,\n',
+                  'This is therefore not a routine deploy: it is an eleven-migration,\n',
+              ),
+              (
+                  '- [ ] CI is green on `1cafd5a` for **both** PostgreSQL 16 and 17 (P16 classified\n'
+                  '      actual GitHub Actions execution as NOT RUN — this must become an observed\n'
+                  '      green run, not an assumption).',
+                  '- [x] CI is green on the current release branch head for **both** PostgreSQL 16 and 17,\n'
+                  '      including the realistic migration-owner/RLS smoke, Docker, dependency, mobile,\n'
+                  '      CodeQL, Gitleaks and Trivy gates.',
+              ),
+              (
+                  'release.** Ten migrations including a `DELETE` (`0025`) and an `UPDATE` (`0028`)\n',
+                  'release.** Eleven migrations including a `DELETE` (`0025`) and an `UPDATE` (`0028`)\n',
+              ),
+              (
+                  'Migrations `0020`–`0029` are additive: no `DROP TABLE`, no `DROP COLUMN`, no\n',
+                  'Migrations `0020`–`0030` are additive: no `DROP TABLE`, no `DROP COLUMN`, no\n',
+              ),
+              (
+                  '**EXPECTED RESULT:** `applied 10 migration(s)`, then `applying role grants…`,\n',
+                  '**EXPECTED RESULT:** `applied 11 migration(s)`, then `applying role grants…`,\n',
+              ),
+              (
+                  '**PRECONDITION:** Step 4 succeeded. Migrations at `0029`.\n',
+                  '**PRECONDITION:** Step 4 succeeded. Migrations at `0030`.\n',
+              ),
+          ]
+          for old, new in replacements:
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'expected exactly one match, got {n}: {old!r}')
+              s = s.replace(old, new)
+          p.write_text(s)
+          PY
+          git diff --check
+          grep -F 'applied 11 migration(s)' docs/PRODUCTION-RELEASE-RUNBOOK.md
+          grep -F 'Migrations at `0030`' docs/PRODUCTION-RELEASE-RUNBOOK.md
+      - name: Commit repair and remove one-shot workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/repair-release-runbook.yml
+          git add docs/PRODUCTION-RELEASE-RUNBOOK.md
+          git diff --cached --check
+          git commit -m 'docs: correct production release migration count'
+          git push origin HEAD:release/dawaee-rc-2026-09-06
