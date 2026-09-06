@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import {
   AppError, ERROR_CODES, applyTravelDecisionSchema, createProfileSchema,
@@ -34,6 +35,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
         `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at,
                 p.locale AS pref_locale, p.numeral_system, p.calendar_system, p.elderly_mode,
                 p.text_scale, p.high_contrast, p.voice_reminders_enabled, p.voice_confirmation_enabled,
+                p.show_medication_in_notifications,
                 p.app_lock_enabled, p.app_lock_areas, p.quiet_hours_start, p.quiet_hours_end,
                 p.default_snooze_minutes, p.low_stock_threshold_days, p.expiry_warning_days
            FROM users u LEFT JOIN user_preferences p ON p.user_id = u.id
@@ -62,6 +64,9 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           highContrast: u.high_contrast ?? false,
           voiceRemindersEnabled: u.voice_reminders_enabled ?? false,
           voiceConfirmationEnabled: u.voice_confirmation_enabled ?? false,
+          // Default false on a row that predates the column, so a missing value
+          // is the private setting rather than the disclosing one.
+          showMedicationInNotifications: u.show_medication_in_notifications ?? false,
           appLockEnabled: u.app_lock_enabled ?? false,
           appLockAreas: u.app_lock_areas ?? [],
           quietHoursStart: u.quiet_hours_start, quietHoursEnd: u.quiet_hours_end,
@@ -87,7 +92,27 @@ export function registerProfileRoutes(app: FastifyInstance): void {
    * requests a minute against a medication app, where merely having an
    * account is health-adjacent.
    */
-  app.patch('/v1/me', async (req) => {
+  /**
+   * Changing your own record — throttled because it answers a question about
+   * OTHER people's records.
+   *
+   * Setting `email` to an address another account already uses returns 409
+   * `conflict`, and a free address returns 200. That difference is a working
+   * "does this person have an account here" oracle, and on the global limit it
+   * ran at 300 answers a minute — over four hundred thousand a day from one
+   * signed-in account. Authentication raises the cost of asking; it does not
+   * make the answer less disclosing, and for a medication app the answer is a
+   * statement about someone's health.
+   *
+   * The conflict itself stays. Silently keeping the old address, or accepting a
+   * duplicate, would be worse than saying the change did not happen. What
+   * changes is the rate: a person edits their own name, locale, timezone or
+   * email a handful of times in the life of an account, so ten an hour is
+   * beyond generous for the legitimate case and useless for enumeration.
+   */
+  app.patch('/v1/me', {
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (req) => {
     const { userId } = currentUser(req);
     const body = updateMeSchema.parse(req.body);
     return withUser(userId, async (tx) => {
@@ -100,7 +125,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
          WHERE id = $1
          RETURNING id, display_name, locale, timezone, email`,
         [userId, body.displayName ?? null, body.locale ?? null, body.timezone ?? null,
-         body.email ? body.email.trim().toLowerCase() : null],
+         body.email ?? null],
       );
       return { user: rows[0] };
     });
@@ -127,7 +152,8 @@ export function registerProfileRoutes(app: FastifyInstance): void {
            quiet_hours_end = COALESCE($13, user_preferences.quiet_hours_end),
            default_snooze_minutes = COALESCE($14, user_preferences.default_snooze_minutes),
            low_stock_threshold_days = COALESCE($15, user_preferences.low_stock_threshold_days),
-           expiry_warning_days = COALESCE($16, user_preferences.expiry_warning_days)
+           expiry_warning_days = COALESCE($16, user_preferences.expiry_warning_days),
+           show_medication_in_notifications = COALESCE($17, user_preferences.show_medication_in_notifications)
          RETURNING *`,
         [
           userId, body.locale ?? null, body.numeralSystem ?? null, body.calendarSystem ?? null,
@@ -136,6 +162,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           body.appLockEnabled ?? null, body.appLockAreas ?? null,
           body.quietHoursStart ?? null, body.quietHoursEnd ?? null,
           body.defaultSnoozeMinutes ?? null, body.lowStockThresholdDays ?? null, body.expiryWarningDays ?? null,
+          body.showMedicationInNotifications ?? null,
         ],
       );
       return { preferences: rows[0] };
@@ -258,12 +285,42 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const body = createProfileSchema.parse(req.body);
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
-      const { rows } = await tx.query(
+      /**
+       * Two statements, on purpose. This route was returning 404 for every
+       * caller — nobody could add a second patient profile at all, which is
+       * the entire family-care feature.
+       *
+       * The cause is an interaction between `INSERT … RETURNING` and this
+       * table's SELECT policy, and it is specific to `patient_profiles`:
+       * `profiles_read` is the only policy in the schema whose predicate reads
+       * the very table it protects (`app.can_read_profile(id)` →
+       * `app.owns_profile(id)` → `SELECT … FROM patient_profiles`). That
+       * function is STABLE, so it evaluates against the snapshot taken at the
+       * start of the statement, and under FORCE ROW LEVEL SECURITY the
+       * RETURNING clause must satisfy the SELECT policy. The row being
+       * inserted is invisible to a snapshot older than itself, so the check
+       * fails and Postgres raises 42501 — reported to the client as 404.
+       * Measured: the same INSERT without RETURNING succeeds, and a separate
+       * SELECT in the same transaction then sees the row.
+       *
+       * Fixed here rather than in the policy. The access itself was never
+       * denied — only that one syntax was — so widening the most
+       * security-critical table's policies to accommodate a query shape would
+       * be the wrong trade. The id is generated here so the follow-up read is
+       * exact rather than a guess at "the most recent row".
+       */
+      const profileId = randomUUID();
+      await tx.query(
         `INSERT INTO patient_profiles
-           (owner_user_id, display_name, birth_year, timezone, home_timezone, travel_policy, is_self)
-         VALUES ($1,$2,$3,$4,$4,$5,$6)
-         RETURNING id, display_name, birth_year, timezone, home_timezone, travel_policy::text AS travel_policy, is_self`,
-        [userId, body.displayName, body.birthYear ?? null, body.timezone, body.travelPolicy, body.isSelf],
+           (id, owner_user_id, display_name, birth_year, timezone, home_timezone, travel_policy, is_self)
+         VALUES ($1,$2,$3,$4,$5,$5,$6,$7)`,
+        [profileId, userId, body.displayName, body.birthYear ?? null, body.timezone, body.travelPolicy, body.isSelf],
+      );
+      const { rows } = await tx.query(
+        `SELECT id, display_name, birth_year, timezone, home_timezone,
+                travel_policy::text AS travel_policy, is_self
+           FROM patient_profiles WHERE id = $1`,
+        [profileId],
       );
       const profile = rows[0]!;
       await recordAudit(tx, {

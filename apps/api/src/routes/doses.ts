@@ -3,10 +3,12 @@ import {
   AppError, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, syncDoseActionsSchema,
 } from '@dawaee/shared';
 import { can, consecutiveMissed, dailyBreakdown, localDateInZone, summarizeAdherence, viewOf } from '@dawaee/core';
-import { requireDateRange, requireUuid, optionalUuid } from '../lib/params.js';
+import { requireDateRange, requireUuid, optionalUuid, requireLimit } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
-import { profileIdForDose, requireProfileAccess } from '../services/access-service.js';
+import {
+  DOSE_CONFIRM, DOSE_HISTORY_READ, DOSE_READ, profileIdForDose, requireProfileAccess,
+} from '../services/access-service.js';
 import { confirmDose, skipDoseAction, snoozeDose, undoDose } from '../services/dose-service.js';
 import { CLIENT_PREFETCH_DAYS } from '../services/materializer.js';
 import { now as serverNow } from '../lib/clock.js';
@@ -89,7 +91,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const now = serverNow();
 
     return withUserReadOnly(userId, async (tx) => {
-      const access = await requireProfileAccess(tx, userId, profileId, 'view_schedule');
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_READ);
       const today = localDateInZone(now, access.profileTimezone);
 
       const { rows } = await tx.query(
@@ -145,7 +147,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const now = serverNow();
 
     return withUserReadOnly(userId, async (tx) => {
-      await requireProfileAccess(tx, userId, profileId, 'view_history');
+      await requireProfileAccess(tx, userId, profileId, DOSE_HISTORY_READ);
       const { rows } = await tx.query(
         `${DOSE_LIST_SELECT}
           WHERE d.patient_profile_id = $1
@@ -154,7 +156,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
             AND d.status <> 'cancelled'
           ORDER BY d.scheduled_at DESC
           LIMIT $5`,
-        [profileId, range.from, range.to, medicationId, Math.min(Number(q.limit ?? 500), 2000)],
+        [profileId, range.from, range.to, medicationId, requireLimit(q.limit, 500, 2000)],
       );
       let doses = rows.map((r) => mapDose(r, now));
       if (q.status) doses = doses.filter((d) => d.status === q.status);
@@ -168,7 +170,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const now = serverNow();
     return withUserReadOnly(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, 'view_schedule');
+      await requireProfileAccess(tx, userId, profileId, DOSE_READ);
       const { rows } = await tx.query(`${DOSE_LIST_SELECT} WHERE d.id = $1`, [doseId]);
       if (!rows[0]) throw AppError.notFound('Dose not found');
       const { rows: events } = await tx.query(
@@ -188,7 +190,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      const access = await requireProfileAccess(tx, userId, profileId, 'confirm_dose');
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return confirmDose(tx, {
         doseId, userId,
         actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
@@ -211,7 +213,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, 'confirm_dose');
+      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return snoozeDose(tx, {
         doseId, userId, minutes: body.minutes, clientEventId: body.clientEventId,
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
@@ -225,7 +227,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, 'confirm_dose');
+      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return skipDoseAction(tx, {
         doseId, userId, reason: body.reason, clientEventId: body.clientEventId,
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
@@ -238,7 +240,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, 'confirm_dose');
+      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return undoDose(tx, { doseId, userId, now: serverNow(), requestId: req.id, ipHash: req.ipHash });
     });
   });
@@ -260,7 +262,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
       try {
         const outcome = await withUser(userId, async (tx) => {
           const profileId = await profileIdForDose(tx, action.doseOccurrenceId);
-          const access = await requireProfileAccess(tx, userId, profileId, 'confirm_dose');
+          const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
           if (action.type === 'taken') {
             return confirmDose(tx, {
               doseId: action.doseOccurrenceId, userId,

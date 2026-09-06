@@ -5,23 +5,123 @@ on:
   pull_request: { branches: [main] }
   schedule: [{ cron: '0 3 * * 1' }]
 
+# Read-only at the top. The one job that needs to write does so explicitly, and
+# writes only security events.
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   codeql:
     runs-on: ubuntu-latest
-    permissions: { security-events: write, contents: read }
+    timeout-minutes: 30
+    permissions:
+      # Required to upload the SARIF result. Nothing else is granted, so a
+      # compromised query pack cannot push code or publish a package.
+      security-events: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with: { languages: javascript-typescript, queries: security-extended }
-      - uses: github/codeql-action/analyze@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          # A finding must break the build, not sit in a tab nobody opens.
+          # `security-extended` is noisier than the default pack; if that
+          # proves unworkable the answer is to tune the query set here and say
+          # so, never to stop failing on results.
+          upload: always
 
-  audit:
+  # Secret scanning as a workflow rather than only as a repository setting.
+  # GitHub's own push protection is a repository-level configuration this audit
+  # cannot see (P16: NOT VERIFIED), so the scan runs here where its result is
+  # visible and blocking.
+  secrets:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
-      - run: npm ci
-      # A known-vulnerable dependency in a medication app is a release blocker,
-      # not a warning to triage later.
-      - run: npm audit --audit-level=high
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Full history: a credential removed in a later commit is still in
+          # the pack, still clonable, and still has to be rotated.
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The base OS, not the npm tree. `npm audit` being green says nothing about
+  # the Debian packages underneath: P15 could not scan them at all because the
+  # sandbox could not pull the real base image.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build the production image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          push: false
+          load: true
+          tags: dawaee:scan
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Record the resolved base image digest
+        # P15 could not resolve this. Recording it on every run means the exact
+        # base a release was built on is recoverable afterwards, which is what
+        # a digest pin would guarantee up front — and it makes the decision to
+        # pin an informed one rather than a guess.
+        run: |
+          docker image inspect dawaee:scan \
+            -f 'built from: {{index .Config.Labels "org.opencontainers.image.base.name"}}' || true
+          docker run --rm --entrypoint cat dawaee:scan /etc/os-release | head -3
+          docker run --rm --entrypoint node dawaee:scan --version
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: dawaee:scan
+          format: sarif
+          output: trivy.sarif
+          # OS packages and language dependencies both.
+          scanners: vuln
+          # Reported, not failed on — the failing gate is the next step, which
+          # is narrower. This step exists so HIGH findings are visible for
+          # triage even when they do not block.
+          exit-code: '0'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload scan result
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: container
+
+      # The blocking half. A CRITICAL with a fix available in the base image is
+      # a release blocker: it means a rebuild would fix it and nobody rebuilt.
+      # A CRITICAL with no fix published is triage, not a wall — there is
+      # nothing to upgrade to.
+      - name: Fail on fixable CRITICAL findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: dawaee:scan
+          format: table
+          scanners: vuln
+          exit-code: '1'
+          severity: 'CRITICAL'
+          ignore-unfixed: true

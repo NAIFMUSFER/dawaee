@@ -1,8 +1,8 @@
 import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, ERROR_CODES, checkDuplicateSchema, createMedicationSchema, createScheduleSchema,
-  updateMedicationSchema, updateScheduleSchema,
+  AppError, ERROR_CODES, MEDICATION_STATUSES, checkDuplicateSchema, createMedicationSchema,
+  createScheduleSchema, updateMedicationSchema, updateScheduleSchema,
 } from '@dawaee/shared';
 import { detectHighRiskChanges, findDuplicates, forecastStock } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
@@ -10,6 +10,7 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import {
   profileIdForMedication, profileIdForSchedule, requireProfileAccess, requireProfileOwner,
 } from '../services/access-service.js';
+import { requireEnum, requireUuid } from '../lib/params.js';
 import { diffFields, recordAudit } from '../services/audit-service.js';
 import { cancelFutureDoses, materializeSchedule, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
 import { now as serverNow } from '../lib/clock.js';
@@ -84,11 +85,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
 
   app.get('/v1/medications', async (req) => {
     const query = req.query as { profileId?: string; status?: string; includeStock?: string };
-    if (!query.profileId) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'profileId is required');
+    const profileId = requireUuid(query.profileId, 'profileId');
+    const status = requireEnum(query.status, MEDICATION_STATUSES, 'status');
     const { userId } = currentUser(req);
 
     return withUserReadOnly(userId, async (tx) => {
-      const access = await requireProfileAccess(tx, userId, query.profileId!, 'view_medications');
+      const access = await requireProfileAccess(tx, userId, profileId, 'view_medications');
       const { rows } = await tx.query(
         `SELECT ${MEDICATION_COLUMNS},
                 st.unit::text AS stock_unit, st.remaining_quantity, st.initial_quantity,
@@ -98,7 +100,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           WHERE m.patient_profile_id = $1
             AND ($2::text IS NULL OR m.status = $2::medication_status)
           ORDER BY (m.status = 'active') DESC, m.name`,
-        [query.profileId, query.status ?? null],
+        [profileId, status],
       );
 
       const { rows: prefs } = await tx.query<{ low_stock_threshold_days: number }>(

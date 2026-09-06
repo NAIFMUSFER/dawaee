@@ -107,7 +107,10 @@ export default function TodayScreen() {
       // right after this still reminds on time.
       const schedule = await rescheduleLocalNotifications(
         [...res.today, ...res.prefetch], preferences.locale,
-        { voiceEnabled: preferences.voiceRemindersEnabled },
+        {
+          voiceEnabled: preferences.voiceRemindersEnabled,
+          showMedication: preferences.showMedicationInNotifications,
+        },
       );
 
       // The scheduling attempt is the only thing that can discover Android has

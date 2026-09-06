@@ -10,19 +10,25 @@
     "apps/worker"
   ],
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22.11 <23",
+    "npm": ">=10.9"
   },
   "scripts": {
     "build": "npm run build -w @dawaee/shared && npm run build -w @dawaee/core && npm run build -w @dawaee/api && npm run build -w @dawaee/worker",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:unit": "vitest run packages",
-    "test:int": "vitest run apps/api",
+    "test:int": "vitest run apps/api --no-file-parallelism",
+    "test:worker-reliability": "vitest run apps/api/test/worker-reliability.test.ts",
     "test:watch": "vitest",
     "lint": "eslint .",
     "db:migrate": "./scripts/migrate.sh",
     "dev:api": "npm run dev -w @dawaee/api",
-    "dev:worker": "npm run dev -w @dawaee/worker"
+    "dev:worker": "npm run dev -w @dawaee/worker",
+    "audit:gate": "node scripts/audit-gate.mjs --workspace all",
+    "audit:root": "node scripts/audit-gate.mjs --workspace root",
+    "audit:mobile": "node scripts/audit-gate.mjs --workspace mobile",
+    "ci:container": "./scripts/container-checks.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -34,5 +40,6 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.69.0",
     "vitest": "^2.1.8"
-  }
+  },
+  "packageManager": "npm@10.9.7"
 }

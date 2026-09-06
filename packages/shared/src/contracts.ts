@@ -26,6 +26,32 @@ export const phoneInput = z
   .min(7)
   .max(24)
   .regex(/^[+0-9()\-.\s]+$/, 'phone number contains unexpected characters');
+
+/**
+ * One spelling of an email address, decided in one place.
+ *
+ * Every control that depends on "this identifier is that person" — the
+ * uniqueness constraint, the rate-limit bucket, the sign-in lookup — is only as
+ * good as the agreement between routes about what the identifier IS. That
+ * agreement was partial: sign-in trimmed and lower-cased what it was given,
+ * while registration validated first and normalised afterwards, so a pasted
+ * address with a trailing space could sign in but could not register. The
+ * trim in the handler never ran, because `z.string().email()` had already
+ * rejected the value.
+ *
+ * Trimming and lower-casing BEFORE validation makes the normalised form the
+ * only form any route ever sees.
+ *
+ * Deliberately not touched: the local part beyond case, and `+tag` suffixes in
+ * particular. Collapsing `user+x@` onto `user@` is a common "normalisation"
+ * that lets one person claim an address belonging to someone else, and RFC 5321
+ * leaves local-part semantics to the receiving server — so the mailbox owner,
+ * not this app, decides whether two local parts are the same person.
+ */
+export const emailInput = z
+  .string()
+  .transform((v) => v.trim().toLowerCase())
+  .pipe(z.string().email().max(320));
 export const timezone = z
   .string()
   .min(3)
@@ -82,7 +108,7 @@ function isKnownTimeZone(value: string): boolean {
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
-    email: z.string().email().max(320).optional(),
+    email: emailInput.optional(),
     displayName: z.string().min(1).max(120),
     password: z.string().min(10).max(200),
     locale: z.enum(LOCALES).default('ar'),
@@ -115,7 +141,7 @@ export const updateMeSchema = z.object({
   displayName: safeText(120).optional(),
   locale: z.enum(LOCALES).optional(),
   timezone: z.string().max(64).refine(isKnownTimeZone, 'unknown time zone').optional(),
-  email: z.string().email().max(320).nullish(),
+  email: emailInput.nullish(),
 });
 
 export const setPasswordSchema = z.object({
@@ -154,6 +180,14 @@ export const updatePreferencesSchema = z.object({
   textScale: z.number().min(0.85).max(2).optional(),
   highContrast: z.boolean().optional(),
   voiceRemindersEnabled: z.boolean().optional(),
+  /**
+   * Name the medication and dose in notification text.
+   *
+   * Default false everywhere. Governs the local notification, the worker's push
+   * body, and what is written into notification_queue — one flag, so a patient
+   * who turns it off cannot still be named by the server.
+   */
+  showMedicationInNotifications: z.boolean().optional(),
   voiceConfirmationEnabled: z.boolean().optional(),
   appLockEnabled: z.boolean().optional(),
   appLockAreas: z.array(z.enum(['history', 'caregivers', 'personal', 'reports', 'emergency'])).optional(),
@@ -446,6 +480,29 @@ export const setConsentSchema = z.object({
 });
 
 // ----------------------------------------------------------- measurements
+
+/**
+ * A symptom note — the one place a patient types free text about how they feel.
+ *
+ * It had no schema at all. The route cast `req.body` to a shape and trusted it,
+ * which made this the only write of patient health content in the API with no
+ * bound on what arrives: `text` was unlimited to the 2 MiB body cap, and `tags`
+ * went into a `text[]` column as whatever the caller sent — any string, any
+ * count, or a shape that is not an array at all, which reaches PostgreSQL and
+ * comes back as a 500 rather than a 400.
+ *
+ * Tags are the closed set the app already offers; the mobile client has only
+ * ever sent values from `SYMPTOM_TAGS`, so constraining them here matches what
+ * is actually used and stops the column becoming free-form.
+ */
+export const createSymptomNoteSchema = z.object({
+  profileId: uuid,
+  doseOccurrenceId: uuid.nullish(),
+  tags: z.array(z.enum(SYMPTOM_TAGS)).max(SYMPTOM_TAGS.length).default([]),
+  // Long enough for a real description of how a dose felt, bounded so a note
+  // cannot be used as storage.
+  text: z.string().trim().max(2000).nullish(),
+});
 
 export const createMeasurementSchema = z.object({
   type: z.enum(MEASUREMENT_TYPES),

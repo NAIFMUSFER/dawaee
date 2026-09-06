@@ -1,0 +1,69 @@
+name: Scheduled security audit
+
+# Point-in-time audits go stale the day after they run. This is the standing
+# one: it surfaces new advisories, checks package signatures, and asks Expo
+# whether the dependency set is still the one it supports.
+#
+# It does NOT upgrade anything. An automated dependency bump in a medication
+# app is a change nobody reviewed reaching patients, and the whole value of a
+# scheduled audit is that a person reads the result.
+on:
+  schedule: [{ cron: '0 4 * * 1' }]   # Mondays, 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci --legacy-peer-deps
+
+      # Blocking: the same gate the PR pipeline runs. A new advisory outside
+      # the documented baseline fails here too, which is what makes the weekly
+      # run a control rather than a newsletter.
+      - name: Dependency gate
+        run: node scripts/audit-gate.mjs --workspace all
+
+      # P14 could not run this: Sigstore was unreachable from the audit
+      # sandbox, and the result was recorded as NOT RUN rather than as a pass.
+      # GitHub-hosted runners can reach it.
+      - name: Package signature verification (root)
+        run: npm audit signatures
+
+      - name: Package signature verification (mobile)
+        working-directory: apps/mobile
+        run: npm audit signatures
+
+      # Informational, and labelled as such. Expo's doctor talks to expo.dev,
+      # so a failure here can mean "your dependencies drifted" or "Expo's
+      # service is down", and those must not be the same signal. The dependency
+      # gate above is the blocking one.
+      - name: Expo compatibility (informational)
+        id: expo
+        continue-on-error: true
+        working-directory: apps/mobile
+        run: |
+          npx expo-doctor
+          npx expo install --check
+
+      - name: Report Expo result
+        if: always()
+        run: |
+          if [ "${{ steps.expo.outcome }}" = "failure" ]; then
+            echo "::warning::expo-doctor reported problems, or expo.dev was unreachable. Read the step log; this does not block."
+          else
+            echo "expo-doctor: clean"
+          fi

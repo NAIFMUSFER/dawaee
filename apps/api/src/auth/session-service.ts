@@ -38,7 +38,7 @@ export async function createSession(
 
 export type RotateOutcome =
   | { outcome: 'rotated'; userId: string; isAdmin: boolean; sessionId: string; refreshToken: string; refreshExpiresAt: Date }
-  | { outcome: 'reuse_detected' | 'expired' | 'invalid' };
+  | { outcome: 'reuse_detected' | 'expired' | 'invalid' | 'superseded' };
 
 /**
  * Performs the rotation and RETURNS the outcome rather than throwing.
@@ -74,7 +74,7 @@ export async function rotateSessionAttempt(
       refreshExpiresAt: new Date(result.expires_at!),
     };
   }
-  return { outcome: (result?.outcome ?? 'invalid') as 'reuse_detected' | 'expired' | 'invalid' };
+  return { outcome: (result?.outcome ?? 'invalid') as 'reuse_detected' | 'expired' | 'invalid' | 'superseded' };
 }
 
 export function assertRotated(
@@ -83,6 +83,18 @@ export function assertRotated(
   switch (result.outcome) {
     case 'rotated':
       return result;
+    case 'superseded':
+      /**
+       * Two of this client's own requests raced and this one lost. Nothing was
+       * revoked and nothing is minted — the caller already has a valid session
+       * from its winning request and must use that. Deliberately a 409 rather
+       * than a 401: a 401 is what tells a client to discard its session, which
+       * is precisely the wrong reaction here.
+       */
+      throw new AppError(
+        ERROR_CODES.REFRESH_SUPERSEDED, 409,
+        'This refresh was superseded by another request from the same client.',
+      );
     case 'reuse_detected':
       // The old token surfaced again after rotation. The device's sessions
       // have already been revoked and committed; the legitimate owner has to

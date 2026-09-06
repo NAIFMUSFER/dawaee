@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import type { ErrorCode } from '@dawaee/shared';
+import { clearStoredSession, readSession, writeSession } from './token-store.js';
 
 /**
  * API client.
@@ -39,8 +40,17 @@ const BASE_URL: string =
  */
 export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
 
-const ACCESS_KEY = 'dawaee.accessToken';
-const REFRESH_KEY = 'dawaee.refreshToken';
+/**
+ * The device id is NOT a credential and stays in AsyncStorage deliberately.
+ * It is a random per-install string used to name this phone for push
+ * registration and offline replay; it authorises nothing on its own, and
+ * putting it in the keychain would mean it becomes unreadable before first
+ * unlock — exactly when a boot-time notification needs it.
+ *
+ * The access and refresh tokens used to live beside it. They now live in
+ * `./token-store`, which is the keychain; see that file for why, and for what
+ * happens to the plaintext copies left on devices that upgrade.
+ */
 const DEVICE_KEY = 'dawaee.deviceId';
 
 export class ApiError extends Error {
@@ -67,7 +77,7 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
-let refreshInFlight: Promise<boolean> | null = null;
+let refreshInFlight: Promise<RefreshResult> | null = null;
 let onUnauthenticated: (() => void) | null = null;
 
 export async function loadStoredSession(): Promise<boolean> {
@@ -76,22 +86,30 @@ export async function loadStoredSession(): Promise<boolean> {
     refreshToken = 'demo';
     return true;
   }
-  const [a, r] = await Promise.all([AsyncStorage.getItem(ACCESS_KEY), AsyncStorage.getItem(REFRESH_KEY)]);
-  accessToken = a;
-  refreshToken = r;
-  return Boolean(a && r);
+  const stored = await readSession();
+  accessToken = stored?.accessToken ?? null;
+  refreshToken = stored?.refreshToken ?? null;
+  return stored !== null;
 }
 
+/**
+ * Hold a session in memory and persist it securely.
+ *
+ * The in-memory assignment happens first and unconditionally: if the keychain
+ * write fails, the person who just typed their password is still signed in for
+ * this run rather than being bounced back to the form with no explanation. The
+ * throw still propagates, so a caller that wants to report it can.
+ */
 export async function storeSession(tokens: { accessToken: string; refreshToken: string }): Promise<void> {
   accessToken = tokens.accessToken;
   refreshToken = tokens.refreshToken;
-  await AsyncStorage.multiSet([[ACCESS_KEY, tokens.accessToken], [REFRESH_KEY, tokens.refreshToken]]);
+  await writeSession(tokens);
 }
 
 export async function clearSession(): Promise<void> {
   accessToken = null;
   refreshToken = null;
-  await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY]);
+  await clearStoredSession();
 }
 
 export function setUnauthenticatedHandler(fn: () => void): void {
@@ -112,29 +130,127 @@ export async function getDeviceId(): Promise<string> {
   return id;
 }
 
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshToken) return false;
-  // Concurrent 401s must trigger exactly one refresh.
+/**
+ * Refresh, single-flight.
+ *
+ * Every concurrent caller shares one in-flight promise, so twenty requests that
+ * all discover an expired access token at the same moment produce exactly ONE
+ * refresh over the network. That is not only a bandwidth nicety: two
+ * client-originated refreshes carrying the same token race on the server, and
+ * until recently the loser was treated as a stolen-token replay and revoked the
+ * whole device. The server no longer does that within its grace window, but the
+ * client's job is to not create the race in the first place.
+ *
+ * The promise is cleared in `finally`, so a failed refresh does not wedge every
+ * later caller onto a dead result.
+ */
+/**
+ * Why an enum and not a boolean.
+ *
+ * `request()` used to read "refresh returned false" as "this session is dead"
+ * and clear storage. Two of the three ways a refresh fails are not that:
+ *
+ *   `offline`    — the network never reached the server, so the tokens are
+ *                  fine. Clearing here signed a user out because their train
+ *                  went into a tunnel while a token happened to be expiring,
+ *                  which is the exact opposite of what the offline design is
+ *                  for; the comment in the catch below already claimed this
+ *                  did not happen.
+ *   `superseded` — this client's own parallel request already rotated. The
+ *                  newer tokens are on disk; erasing them turns a harmless race
+ *                  into a sign-out and undoes the server-side fix for it.
+ *   `rejected`   — the server refused the token. This one really is dead.
+ */
+type RefreshResult = 'ok' | 'rejected' | 'offline' | 'superseded';
+
+async function refreshAccessToken(): Promise<RefreshResult> {
+  if (!refreshToken) return 'rejected';
   if (refreshInFlight) return refreshInFlight;
+
+  // The exact token this attempt presents, captured before the await so the
+  // recovery below can tell "storage still holds what I sent" from "another
+  // context has already moved on".
+  const presented = refreshToken;
 
   refreshInFlight = (async () => {
     try {
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        body: JSON.stringify({ refreshToken: presented }),
       });
       if (!res.ok) {
+        /**
+         * 409 REFRESH_SUPERSEDED: two of THIS client's own requests raced and
+         * this one lost. The other already stored a valid session.
+         *
+         * Clearing here would be the worst possible reaction — it would erase
+         * the newer tokens the winning request just wrote, turning a harmless
+         * race into a sign-out. Single-flight below means this should be
+         * unreachable in normal operation; it is handled anyway because "should
+         * be unreachable" is not a security property, and because a process
+         * restart mid-refresh can produce exactly this shape.
+         */
+        /**
+         * 409 REFRESH_SUPERSEDED — another execution context already rotated
+         * this token.
+         *
+         * The in-memory single-flight above covers concurrent callers inside
+         * ONE runtime, and that is the only concurrency this app actually has:
+         * there is no TaskManager task, no headless handler and no background
+         * fetch, so notification actions run in the app's own runtime. What it
+         * does NOT cover is a SEQUENTIAL restart — Android reclaiming the
+         * process, or a cold launch from a notification action — where a
+         * previous process rotated and this one starts holding the old token.
+         *
+         * Recovery, in order:
+         *   1. never re-present the token that was just refused, and
+         *   2. re-read what is actually persisted now.
+         *
+         * If storage has moved on, another context won and wrote the newer
+         * pair: adopt it and carry on. If storage still holds the token that
+         * was just refused, there is no winner to recover from — the rotation
+         * happened but its result was lost — so end the session cleanly.
+         *
+         * Retrying the refused token is the one thing that must not happen. It
+         * would work for a moment and then, once the server's 30-second race
+         * window closed, be classified as theft and revoke the whole device —
+         * turning a lost write into a forced sign-out with a security event
+         * attached to it.
+         */
+        if (res.status === 409) {
+          const stored = await readSession().catch(() => null);
+          if (stored && stored.refreshToken !== presented) {
+            accessToken = stored.accessToken;
+            refreshToken = stored.refreshToken;
+            return 'ok';
+          }
+          await clearSession();
+          onUnauthenticated?.();
+          return 'rejected';
+        }
+
         await clearSession();
         onUnauthenticated?.();
-        return false;
+        return 'rejected';
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
-      await storeSession(body);
-      return true;
+      try {
+        await storeSession(body);
+      } catch {
+        // The rotation succeeded on the server, so the OLD refresh token is
+        // now dead — but persisting the new pair failed, which means whatever
+        // is on disk still names the dead one. Leaving it there would produce
+        // a launch that presents an invalidated token, gets a 401, and signs
+        // the user out with no explanation days later. Clearing makes the next
+        // launch a clean sign-in instead. This run continues on the in-memory
+        // pair, which storeSession set before it threw.
+        await clearStoredSession().catch(() => undefined);
+      }
+      return 'ok';
     } catch {
       // Offline: keep the tokens, the user is not signed out.
-      return false;
+      return 'offline';
     } finally {
       refreshInFlight = null;
     }
@@ -206,12 +322,23 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     const parsed = await res.clone().json().catch(() => null) as { error?: { code?: string } } | null;
     // Only an expired token is worth a silent refresh; a revoked session must
     // sign the user out rather than loop.
-    if (parsed?.error?.code === 'token_expired' && (await refreshAccessToken())) {
-      try {
-        res = await send();
-      } catch (err) {
-        throw new NetworkError(err instanceof Error ? err.message : undefined);
+    if (parsed?.error?.code === 'token_expired') {
+      const outcome = await refreshAccessToken();
+      if (outcome === 'ok') {
+        try {
+          res = await send();
+        } catch (err) {
+          throw new NetworkError(err instanceof Error ? err.message : undefined);
+        }
+      } else if (outcome === 'offline') {
+        // The refresh never reached the server. Surface it as what it is so the
+        // UI falls back to cached data, and leave the session alone.
+        throw new NetworkError('refresh unreachable');
       }
+      // 'superseded': this client's own parallel request already rotated, and
+      // `refreshAccessToken` has cleared nothing. Fall through to the error
+      // below; the caller retries against the session the winner stored.
+      // 'rejected': the session is genuinely dead and has already been cleared.
     } else {
       await clearSession();
       onUnauthenticated?.();

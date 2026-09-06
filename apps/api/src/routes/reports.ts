@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { AppError, ERROR_CODES } from '@dawaee/shared';
+import { AppError } from '@dawaee/shared';
 import { addDays, dailyBreakdown, forecastStock, localDateInZone, summarizeAdherence } from '@dawaee/core';
-import { requireUuid } from '../lib/params.js';
+import { requireDate, requireDateRange, requireUuid } from '../lib/params.js';
 import { withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
-import { requireProfileAccess } from '../services/access-service.js';
+import { REPORT_READ, requireProfileAccess } from '../services/access-service.js';
 import { now as serverNow } from '../lib/clock.js';
 
 /**
@@ -28,7 +28,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     audience: 'family' | 'clinician',
   ) {
     return withUserReadOnly(userId, async (tx) => {
-      const access = await requireProfileAccess(tx, userId, profileId, 'view_reports');
+      const access = await requireProfileAccess(tx, userId, profileId, REPORT_READ);
       const now = serverNow();
 
       const { rows } = await tx.query(
@@ -159,17 +159,29 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const { endDate } = req.query as { endDate?: string };
     const profileId = requireUuid((req.query as { profileId?: string }).profileId, 'profileId');
     const { userId } = currentUser(req);
-    const to = endDate ?? localDateInZone(serverNow(), 'Asia/Riyadh');
+    // The 7-day window is fixed, so only the anchor needs checking — but it does
+    // need checking: `addDays` on a non-date yields a NaN-shaped string that
+    // Postgres rejects, which surfaced as a 500 instead of a 400.
+    const to = endDate === undefined || endDate === '' ? localDateInZone(serverNow(), 'Asia/Riyadh') : requireDate(endDate, 'endDate');
     return buildReport(userId, profileId, addDays(to, -6), to, 'family');
   });
 
+  /**
+   * `from` and `to` are validated and capped here for the same reason every
+   * other range route does it (see `requireDateRange`). Before this they were
+   * passed to Postgres exactly as received: a malformed date became a 500
+   * rather than a 400, and `from=0001-01-01&to=9999-12-31` was an accepted
+   * request that scanned a profile's entire dose history across a three-table
+   * join. Access control was never the gap — `requireProfileAccess` runs inside
+   * `buildReport` and RLS backs it — but the cost ceiling was missing on
+   * exactly the two report endpoints that take a caller-chosen range.
+   */
   app.get('/v1/reports/adherence', async (req) => {
-    const { profileId, from, to } = req.query as { profileId?: string; from?: string; to?: string };
-    if (!profileId || !from || !to) {
-      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'profileId, from and to are required');
-    }
+    const q = req.query as { profileId?: string; from?: string; to?: string };
+    const profileId = requireUuid(q.profileId, 'profileId');
+    const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, from, to, 'family');
+    return buildReport(userId, profileId, range.from, range.to, 'family');
   });
 
   /**
@@ -177,12 +189,11 @@ export function registerReportRoutes(app: FastifyInstance): void {
    * history, missed doses. No conclusions, no flags, no advice.
    */
   app.get('/v1/reports/clinician', async (req) => {
-    const { profileId, from, to } = req.query as { profileId?: string; from?: string; to?: string };
-    if (!profileId || !from || !to) {
-      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'profileId, from and to are required');
-    }
+    const q = req.query as { profileId?: string; from?: string; to?: string };
+    const profileId = requireUuid(q.profileId, 'profileId');
+    const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, from, to, 'clinician');
+    return buildReport(userId, profileId, range.from, range.to, 'clinician');
   });
 
   /** Full data export for the privacy screen (PDPL data-access right). */

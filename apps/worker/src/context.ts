@@ -1,7 +1,11 @@
 import pg from 'pg';
 import pino from 'pino';
+import {
+  LOG_REDACTION, OPERATIONAL_ERROR_MAX, sanitizeOperationalError, serializeLoggedError,
+} from '@dawaee/shared';
 import { loadConfig, type Config } from '@dawaee/api/config';
 import { withRole } from '@dawaee/api/lib/db';
+import { databaseTlsOptions } from '@dawaee/api/lib/db-tls';
 import { buildProviders, type Providers } from '@dawaee/api/providers';
 
 /**
@@ -20,20 +24,36 @@ export interface WorkerContext {
   now: () => Date;
 }
 
+/**
+ * The worker's logger, as a function so a test can build the real one.
+ *
+ * Extracted from `createWorkerContext` for exactly that reason. The context
+ * accepts a `log` override, so a test that passes its own instance proves
+ * nothing about the one the worker actually runs with — which is how the
+ * redaction drift below survived: it was never constructed under test.
+ *
+ * `destination` is only for that. In the worker it is undefined and pino
+ * writes to file descriptor 1 as usual.
+ */
+export function createWorkerLogger(config: Config, destination?: pino.DestinationStream): pino.Logger {
+  return pino({
+    level: config.LOG_LEVEL,
+    base: { service: 'dawaee-worker', env: config.NODE_ENV },
+    timestamp: pino.stdTimeFunctions.isoTime,
+    // The same redaction policy object the API uses, from the same package.
+    // This used to be a second list with a comment claiming it matched the
+    // API's. It did not: the API's had grown to twenty-one paths while this
+    // one still had seven, missing allergies, invitedPhone and every
+    // free-text note field — and nothing would have failed if it drifted
+    // further, because the claim lived in a comment rather than in code.
+    redact: LOG_REDACTION,
+    serializers: { err: serializeLoggedError },
+  }, destination as pino.DestinationStream);
+}
+
 export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerContext {
   const config = overrides?.config ?? loadConfig();
-  const log =
-    overrides?.log ??
-    pino({
-      level: config.LOG_LEVEL,
-      base: { service: 'dawaee-worker', env: config.NODE_ENV },
-      // Same redaction posture as the API: job logs must not carry medication
-      // names or phone numbers into an aggregator.
-      redact: {
-        paths: ['medication', 'medicationName', 'phone', 'phoneE164', 'to', '*.medicationName', '*.phoneE164'],
-        censor: '[redacted]',
-      },
-    });
+  const log = overrides?.log ?? createWorkerLogger(config);
 
   const pool =
     overrides?.pool ??
@@ -46,15 +66,11 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
       max: 5,
       idleTimeoutMillis: 30_000,
       statement_timeout: 30_000,
-      // Managed Postgres refuses plaintext connections; without this the
-      // worker fails to connect while the API (which already sets it) works,
-      // which is a confusing way to find out.
-      ssl:
-        config.DATABASE_SSL === 'true'
-          ? { rejectUnauthorized: true }
-          : config.DATABASE_SSL === 'no-verify'
-            ? { rejectUnauthorized: false }
-            : undefined,
+      // The SAME policy object the API uses, from the same function. The
+      // worker holds the same credentials and reads the same medication rows,
+      // so a weaker connection here would simply move the vulnerability rather
+      // than remove it — and two copies of the rule is how that happens.
+      ssl: databaseTlsOptions(config),
     });
 
   return {
@@ -71,10 +87,31 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
  * instances never process the same tick and the admin panel can answer "did
  * the reminder job run?" without touching medical rows.
  */
+/**
+ * A job that finished with some of its work failing is NOT a successful run.
+ *
+ * P8-2 was a cleanup that had never once completed and said nothing about it
+ * for the life of the deployment. P10-3 made each housekeeping step fail on its
+ * own so one broken step no longer aborts the rest — but per-step isolation
+ * only removes the collateral damage, it does not make the fault visible. A job
+ * that swallows step failures and then records `succeeded = true` recreates the
+ * exact condition P8-2 was about, one level down: an operator reading `job_runs`
+ * sees clean successes while a retention class silently never runs.
+ *
+ * So a job may report partial failure by returning `failures`, and this records
+ * the run as failed with the failing steps named. The steps that DID succeed
+ * still commit — the isolation is the point — and the next scheduled tick
+ * retries the failed class, because nothing marks a step as done.
+ */
+export interface JobFailure {
+  step: string;
+  error: string;
+}
+
 export async function runJob<T>(
   ctx: WorkerContext,
   jobName: string,
-  fn: (client: pg.PoolClient) => Promise<{ itemsProcessed: number; result?: T }>,
+  fn: (client: pg.PoolClient) => Promise<{ itemsProcessed: number; result?: T; failures?: JobFailure[] }>,
 ): Promise<{ ran: boolean; itemsProcessed: number; result?: T }> {
   const client = await ctx.pool.connect();
   const startedAt = new Date();
@@ -88,25 +125,51 @@ export async function runJob<T>(
     }
 
     const outcome = await fn(client);
+    const failures = outcome.failures ?? [];
     await client.query(
-      `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, items_processed)
-       VALUES ($1,$2,now(),true,$3)`,
-      [jobName, startedAt, outcome.itemsProcessed],
+      `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, items_processed, error_message, metadata)
+       VALUES ($1,$2,now(),$3,$4,$5,$6)`,
+      [
+        jobName, startedAt, failures.length === 0, outcome.itemsProcessed,
+        failures.length === 0 ? null
+          : `${failures.length} step(s) failed: ${failures.map((f) => f.step).join(', ')}`.slice(0, OPERATIONAL_ERROR_MAX),
+        // Step names, and each step's error reduced to something safe to keep.
+        //
+        // The previous comment here said "Step names and error text only. No
+        // row contents". The step names were true; "error text" was doing more
+        // work than it looked. Measured through this exact path: a unique
+        // violation stored the patient's phone number, and this schema's own
+        // `medication % not found` trigger stored a medication id — into a
+        // table in the same database as the medical records, which nothing
+        // purges. `job_runs.error_message` was at least capped at 500; this
+        // copy had no limit at all.
+        JSON.stringify(
+          failures.length
+            ? { failedSteps: failures.map((f) => ({ step: f.step, error: sanitizeOperationalError(f.error) })) }
+            : {},
+        ),
+      ],
     );
     await client.query('COMMIT');
-    if (outcome.itemsProcessed > 0) {
+    if (failures.length > 0) {
+      ctx.log.error(
+        { job: jobName, items: outcome.itemsProcessed, failedSteps: failures.map((f) => f.step) },
+        'job completed with failed steps; they will be retried on the next tick',
+      );
+    } else if (outcome.itemsProcessed > 0) {
       ctx.log.info({ job: jobName, items: outcome.itemsProcessed }, 'job completed');
     }
     return { ran: true, ...outcome };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
-    ctx.log.error({ job: jobName, err: (err as Error).message }, 'job failed');
+    const safe = sanitizeOperationalError(err);
+    ctx.log.error({ job: jobName, err: safe }, 'job failed');
     // Recorded on its own connection so the failure survives the rollback.
     await ctx.pool
       .query(
         `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message)
          VALUES ($1,$2,now(),false,$3)`,
-        [jobName, startedAt, (err as Error).message.slice(0, 500)],
+        [jobName, startedAt, safe],
       )
       .catch(() => undefined);
     return { ran: true, itemsProcessed: 0 };

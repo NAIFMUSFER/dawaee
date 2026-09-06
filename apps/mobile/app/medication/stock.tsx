@@ -2,10 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { todayLocalDate } from '@/components/DateField';
+import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
@@ -58,8 +58,13 @@ interface StockResponse {
 
 const THRESHOLD_CHOICES = ['3', '5', '7', '10', '14', '21', '30'] as const;
 
-const SNOOZE_PREFIX = 'dawaee.lowStockSnoozedUntil.';
-
+/**
+ * The snooze used to be one AsyncStorage entry per medication, named
+ * `dawaee.lowStockSnoozedUntil.<medicationId>`. The value was only a date; the
+ * KEY was the leak — a directory listing told anyone reading the storage file
+ * how many medications the person takes and which ones are running out.
+ * It now lives encrypted, per account, with the ids inside the ciphertext.
+ */
 function nextDay(date: string): string {
   const shifted = new Date(`${date}T12:00:00Z`);
   shifted.setUTCDate(shifted.getUTCDate() + 1);
@@ -72,7 +77,7 @@ export default function StockScreen() {
 
   const { t, formatDate, formatNumber } = useI18n();
   const theme = useTheme();
-  const { activeProfile, preferences, updatePreferences } = useApp();
+  const { activeProfile, preferences, updatePreferences, user } = useApp();
 
   const [data, setData] = useState<StockResponse | null>(null);
   const [medicationName, setMedicationName] = useState('');
@@ -122,10 +127,9 @@ export default function StockScreen() {
   useEffect(() => {
     if (!medicationId) return;
     void (async () => {
-      const stored = await AsyncStorage.getItem(`${SNOOZE_PREFIX}${medicationId}`);
-      setSnoozedUntil(stored);
+      setSnoozedUntil(await readSnooze(user?.id ?? null, medicationId, todayLocalDate(activeProfile?.timezone)));
     })();
-  }, [medicationId]);
+  }, [medicationId, user?.id, activeProfile?.timezone]);
 
   const thresholdOptions = useMemo(
     () => THRESHOLD_CHOICES.map((value) => ({ value, label: formatNumber(Number(value)) })),
@@ -175,7 +179,7 @@ export default function StockScreen() {
       setNote('');
       setRefilling(false);
       // A refill clears the reason the banner was hidden in the first place.
-      await AsyncStorage.removeItem(`${SNOOZE_PREFIX}${medicationId}`);
+      await clearSnooze(user?.id ?? null, medicationId, todayLocalDate(activeProfile?.timezone));
       setSnoozedUntil(null);
       await load();
     } catch (err) {
@@ -187,8 +191,9 @@ export default function StockScreen() {
 
   const remindTomorrow = async () => {
     if (!medicationId) return;
-    const until = nextDay(todayLocalDate(activeProfile?.timezone));
-    await AsyncStorage.setItem(`${SNOOZE_PREFIX}${medicationId}`, until);
+    const today = todayLocalDate(activeProfile?.timezone);
+    const until = nextDay(today);
+    await setSnooze(user?.id ?? null, medicationId, until, today);
     setSnoozedUntil(until);
   };
 

@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { withTransaction } from '../lib/db.js';
 import { authenticate, requireAdmin } from '../middleware/context.js';
+import { requireEnum, requireLimit } from '../lib/params.js';
+
+/** Mirrors `notification_channel` (migration 0001). */
+const NOTIFICATION_CHANNELS = ['push', 'local', 'whatsapp', 'sms', 'email', 'in_app'] as const;
 
 /**
  * Operational admin.
@@ -45,7 +49,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
           WHERE status = 'failed'
             AND ($1::text IS NULL OR channel = $1::notification_channel)
           ORDER BY created_at DESC LIMIT $2`,
-        [channel ?? null, Math.min(Number(limit ?? 100), 500)],
+        // `$1::notification_channel` on an unknown string is an "invalid input
+        // value for enum" error, i.e. a 500 for a typo'd query parameter.
+        [requireEnum(channel, NOTIFICATION_CHANNELS, 'channel'), requireLimit(limit, 100, 500)],
       );
       // No recipient, no patient, no medication — just the failure shape.
       return { failures: rows, count: rows.length };

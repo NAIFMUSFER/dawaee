@@ -58,17 +58,67 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
     });
   });
 
-  /** Short-lived read URL. Images are never served from a public bucket. */
+  /**
+   * Short-lived read URL. Images are never served from a public bucket.
+   *
+   * P19-1. This route used to rely on row-level security alone, and the comment
+   * where the check should have been said so:
+   *
+   *     // RLS on stored_objects means an object belonging to another patient
+   *     // simply is not visible here.
+   *
+   * True, and not the question. The policy on `stored_objects` is
+   *
+   *     owner_user_id = app.current_user_id()
+   *     OR (patient_profile_id IS NOT NULL AND app.can_read_profile(...))
+   *
+   * and `app.can_read_profile` is `owns_profile OR caregives_profile` — ANY
+   * active caregiver, with no reference to the permission set at all. Measured:
+   * a caregiver holding only `view_adherence`, refused 403 on `/v1/medications`
+   * and `/v1/today` in the same session, obtained a working read URL for the
+   * patient's PRESCRIPTION IMAGE. The signed URL then serves the bytes with no
+   * further authorization, so it is a complete disclosure, not a hint.
+   *
+   * This is the P12 class of defect — an app layer asking for fewer permissions
+   * than the data it hands back — on the one route P12 did not cover. A
+   * prescription photograph is medication identity in its most direct form, so
+   * it requires the same permission the medication list does.
+   *
+   * `avatar` is deliberately exempt: a profile picture is not medication data,
+   * and every caregiver is meant to see whose profile they are looking at.
+   *
+   * The uploader keeps access to what they uploaded. A caregiver may hold
+   * `add_medication` without `view_medications`, and taking their own upload
+   * away from them mid-flow would break the screen that just created it.
+   */
   app.get('/v1/uploads/url', async (req) => {
     const { objectKey } = req.query as { objectKey?: string };
     if (!objectKey) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'objectKey is required');
     const { userId } = currentUser(req);
 
     return withUserReadOnly(userId, async (tx) => {
-      // RLS on stored_objects means an object belonging to another patient
-      // simply is not visible here.
-      const { rows } = await tx.query('SELECT object_key FROM stored_objects WHERE object_key = $1', [objectKey]);
-      if (!rows[0]) throw AppError.notFound('Object not found');
+      // RLS still scopes this to objects the caller is related to at all: an
+      // unrelated patient's object is invisible and answers 404, exactly as a
+      // key that does not exist does.
+      const { rows } = await tx.query<{
+        object_key: string; patient_profile_id: string | null; owner_user_id: string; purpose: string;
+      }>(
+        `SELECT object_key, patient_profile_id, owner_user_id, purpose
+           FROM stored_objects WHERE object_key = $1`,
+        [objectKey],
+      );
+      const object = rows[0];
+      if (!object) throw AppError.notFound('Object not found');
+
+      const carriesMedicationIdentity = object.purpose === 'medication_image'
+        || object.purpose === 'prescription_image';
+      if (object.patient_profile_id && object.owner_user_id !== userId && carriesMedicationIdentity) {
+        // 403 rather than 404: the caller is legitimately in this patient's care
+        // circle, and P12 settled that an explicit refusal beats a screen that
+        // silently shows nothing.
+        await requireProfileAccess(tx, userId, object.patient_profile_id, 'view_medications');
+      }
+
       return { url: await providers.storage.createReadUrl(objectKey, 300), expiresInSeconds: 300 };
     });
   });

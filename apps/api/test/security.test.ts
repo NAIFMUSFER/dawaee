@@ -616,3 +616,65 @@ describe('the public emergency scan cannot be forced to demand a login', () => {
     }
   });
 });
+
+/**
+ * Notification disclosure, which used to have no setting at all: the medication
+ * name and dose were interpolated into every reminder body by both the phone
+ * and the worker, and reached the lock screen, Android's notification history,
+ * the OS scheduled-notification store, notification_deliveries and the push
+ * provider. A phone face-up on a desk named its owner's diagnosis to anyone
+ * walking past.
+ */
+describe('medication detail in notifications is off until the patient asks', () => {
+  it('is false for a brand-new account', async () => {
+    const res = await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(alice) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().preferences.showMedicationInNotifications).toBe(false);
+  });
+
+  it('turns on only when explicitly set, and back off again', async () => {
+    const on = await h.app.inject({
+      method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),
+      payload: { showMedicationInNotifications: true },
+    });
+    expect(on.statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(alice) }))
+      .json().preferences.showMedicationInNotifications).toBe(true);
+
+    await h.app.inject({
+      method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),
+      payload: { showMedicationInNotifications: false },
+    });
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(alice) }))
+      .json().preferences.showMedicationInNotifications).toBe(false);
+  });
+
+  /**
+   * Account isolation for the preference itself. One patient opting in must not
+   * change what another patient's notifications say.
+   */
+  it('is one patient’s choice and not another’s', async () => {
+    await h.app.inject({
+      method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),
+      payload: { showMedicationInNotifications: true },
+    });
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(bob) }))
+      .json().preferences.showMedicationInNotifications).toBe(false);
+  });
+
+  it('leaves the other preferences alone when it changes', async () => {
+    await h.app.inject({
+      method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),
+      payload: { elderlyMode: true, defaultSnoozeMinutes: 15 },
+    });
+    await h.app.inject({
+      method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),
+      payload: { showMedicationInNotifications: true },
+    });
+    const prefs = (await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(alice) }))
+      .json().preferences;
+    expect(prefs.elderlyMode).toBe(true);
+    expect(prefs.defaultSnoozeMinutes).toBe(15);
+    expect(prefs.showMedicationInNotifications).toBe(true);
+  });
+});

@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import type { MessageKey } from '@dawaee/shared';
+import { loadLocalAuthentication } from '@/security/local-auth';
 
 /**
  * Biometric app lock.
@@ -37,25 +38,6 @@ const AREA_LABEL_KEYS: Record<LockArea, MessageKey> = {
   reports: 'applock.area.reports',
   emergency: 'applock.area.emergency',
 };
-
-interface LocalAuthModule {
-  hasHardwareAsync: () => Promise<boolean>;
-  isEnrolledAsync: () => Promise<boolean>;
-  authenticateAsync: (options: {
-    promptMessage?: string;
-    cancelLabel?: string;
-    disableDeviceFallback?: boolean;
-  }) => Promise<{ success: boolean }>;
-}
-
-function loadLocalAuthentication(): LocalAuthModule | null {
-  if (Platform.OS === 'web') return null;
-  try {
-    return require('expo-local-authentication') as LocalAuthModule;
-  } catch {
-    return null;
-  }
-}
 
 type Availability =
   | { state: 'checking' }

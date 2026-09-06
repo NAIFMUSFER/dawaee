@@ -155,7 +155,11 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
     await h.tick();
     expect(sentTo(PATIENT_DEVICE)).toHaveLength(1);
     expect(h.push.sent[0]!.priority).toBe('high');
-    expect(h.push.sent[0]!.body).toContain('Panadol');
+    // The medication is NOT named: disclosure is off unless the patient opts
+    // in, and this fixture has not. The body still has to be actionable, so it
+    // carries the time. See the opt-in case below for the other half.
+    expect(h.push.sent[0]!.body).not.toContain('Panadol');
+    expect(h.push.sent[0]!.body).toContain('20:00');
     // The family is not told anything yet. This is the whole point of the
     // ladder: a patient who is simply slow must not summon their children.
     expect(sentTo(SON_DEVICE)).toHaveLength(0);
