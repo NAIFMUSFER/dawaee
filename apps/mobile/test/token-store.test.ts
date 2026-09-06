@@ -526,3 +526,82 @@ describe('the browser is handled on purpose, not by accident', () => {
     expect([...async_.keys()]).toEqual([]);
   });
 });
+
+/**
+ * P19 §9 — the drift guard for local storage.
+ *
+ * P3 moved credentials to the keychain and P3-P4 moved medication data into an
+ * encrypted store. Both are enforced by behaviour tests above. What nothing
+ * enforced was the INVENTORY: a key added by a later feature would simply sit
+ * in AsyncStorage in the clear, and every existing test would still pass.
+ *
+ * So the complete set of plaintext keys is pinned by name. Adding one is a
+ * failing build and a deliberate decision, in either direction.
+ */
+describe('nothing new writes plaintext to AsyncStorage', () => {
+  const ALLOWED: Array<[string, string]> = [
+    // Not a credential and not PHI: a random device identifier, which the API
+    // treats as an opaque label. Asserted separately above.
+    ['dawaee.deviceId', 'apps/mobile/src/api/client.ts'],
+    // Legacy names, only ever READ and then deleted by the migrations.
+    ['dawaee.accessToken', 'apps/mobile/src/api/token-store.ts'],
+    ['dawaee.refreshToken', 'apps/mobile/src/api/token-store.ts'],
+    // CacheSlot plaintext names: the legacy key each encrypted slot migrates
+    // FROM. Nothing writes them any more; secure-cache.test.ts proves the
+    // encrypted slot is what is written and the plaintext copy is destroyed.
+    ['dawaee.lowStockSnooze', 'apps/mobile/src/storage/low-stock-snooze.ts'],
+    // The older shape still: one key PER MEDICATION, named after it. Enumerated
+    // and deleted by migrateLegacy, never written. The medication id in a key
+    // name is the reason that migration exists.
+    ['dawaee.lowStockSnoozedUntil.', 'apps/mobile/src/storage/low-stock-snooze.ts'],
+    ['dawaee.offlineQueue', 'apps/mobile/src/storage/offline-queue.ts'],
+    ['dawaee.todayCache', 'apps/mobile/src/storage/offline-queue.ts'],
+    // P19-2, recorded rather than silently tolerated: a caregiver invitation
+    // token, written in the clear between opening a deep link and completing
+    // sign-in. Not PHI, but it IS a short-lived bearer credential sitting in
+    // the weakest store on the device. Single-use, expires in 72 hours by
+    // default, and redemption still requires an authenticated account — which
+    // is why it is a LOW finding and not a blocker. It belongs in SecureStore.
+    ['dawaee.pendingInvitationToken', 'apps/mobile/src/storage/pending-invite.ts'],
+  ];
+
+  it('the set of plaintext storage keys is exactly what has been reviewed', () => {
+    const roots = ['apps/mobile/src', 'apps/mobile/app'];
+    const found = new Map<string, string>();
+    const walk = (dir: string): void => {
+      let entries: string[];
+      try { entries = readdirSync(join(ROOT, dir)); } catch { return; }
+      for (const entry of entries) {
+        const rel = `${dir}/${entry}`;
+        if (statSync(join(ROOT, rel)).isDirectory()) { walk(rel); continue; }
+        if (!/\.(ts|tsx)$/.test(entry)) continue;
+        const src = readFileSync(join(ROOT, rel), 'utf8');
+        for (const m of src.matchAll(/'(dawaee\.[A-Za-z0-9_.]+)'/g)) {
+          const key = m[1]!;
+          // SecureStore namespaces are not AsyncStorage keys.
+          if (key.startsWith('dawaee.cacheKey.') || key === 'dawaee.session.v1') continue;
+          if (!found.has(key)) found.set(key, rel);
+        }
+      }
+    };
+    roots.forEach(walk);
+
+    const allowed = new Set(ALLOWED.map(([k]) => k));
+    const unexpected = [...found.entries()].filter(([k]) => !allowed.has(k));
+    expect(unexpected.map(([k, where]) => `${k} (${where})`),
+      'a new plaintext storage key appeared — is it PHI or a credential?').toEqual([]);
+
+    // And the reverse: a key that was removed should be removed from the list
+    // too, so this cannot rot into a list of names nobody checks.
+    const missing = ALLOWED.filter(([k]) => !found.has(k)).map(([k]) => k);
+    expect(missing, 'the allow-list names keys that no longer exist').toEqual([]);
+  });
+
+  it('and every encrypted slot still declares a plaintext predecessor, not a live key', () => {
+    const queue = readFileSync(join(ROOT, 'apps/mobile/src/storage/offline-queue.ts'), 'utf8');
+    const snooze = readFileSync(join(ROOT, 'apps/mobile/src/storage/low-stock-snooze.ts'), 'utf8');
+    for (const [label, src] of [['offline-queue', queue], ['low-stock-snooze', snooze]]) {
+      expect(src, `${label} writes AsyncStorage directly`).not.toMatch(/AsyncStorage\.setItem\(\s*(QUEUE_SLOT|CACHE_SLOT|SLOT)\.plaintextKey/);
+    }
+  });
+});

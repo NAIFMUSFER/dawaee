@@ -1847,3 +1847,142 @@ describe('P16 /version says which commit is serving, and nothing else', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P19-1 — the signed read URL was the one route that asked row-level security
+ * to make a permission decision it cannot make.
+ *
+ * `GET /v1/uploads/url` had no app-layer check at all. The policy on
+ * `stored_objects` is `owner OR app.can_read_profile(...)`, and
+ * `app.can_read_profile` is `owns_profile OR caregives_profile` — ANY active
+ * caregiver, with no reference to the permission set.
+ *
+ * Measured before the fix: a caregiver holding only `view_adherence`, refused
+ * 403 on `/v1/medications` and `/v1/today` in the same session, received a
+ * working read URL for the patient's PRESCRIPTION IMAGE. The signed URL then
+ * serves the bytes unauthenticated, so it is a complete disclosure of the most
+ * sensitive object the product stores.
+ *
+ * Same class as P12-14, on the route P12 did not cover.
+ */
+describe('P19-1 an image is medication identity, and needs the same permission', () => {
+  let patient: TestUser;
+  let narrow: TestUser;
+  let relationshipId = '';
+  const keys = { medication: '', prescription: '', avatar: '' };
+
+  async function requestUpload(user: TestUser, purpose: string, profileId?: string): Promise<string> {
+    const res = await send({
+      method: 'POST', url: '/v1/uploads/request', headers: authHeaders(user),
+      payload: { purpose, contentType: 'image/jpeg', byteSize: 4096, ...(profileId ? { patientProfileId: profileId } : {}) },
+    });
+    expect(res.statusCode, `${purpose}: ${res.body}`).toBe(200);
+    return res.json<{ objectKey: string }>().objectKey;
+  }
+
+  const readUrl = (user: TestUser, key: string) => send({
+    method: 'GET', url: `/v1/uploads/url?objectKey=${encodeURIComponent(key)}`, headers: authHeaders(user),
+  });
+
+  beforeAll(async () => {
+    patient = await signIn(h, '+966500090060');
+    narrow = await signIn(h, '+966500090061');
+
+    keys.medication = await requestUpload(patient, 'medication_image', patient.profileId);
+    keys.prescription = await requestUpload(patient, 'prescription_image', patient.profileId);
+    keys.avatar = await requestUpload(patient, 'avatar', patient.profileId);
+
+    const invite = await send({
+      method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(patient),
+      payload: {
+        patientProfileId: patient.profileId, invitedName: 'Narrow', invitedPhone: narrow.phone,
+        role: 'caregiver', permissions: ['view_adherence'], escalationPriority: 4,
+      },
+    });
+    expect(invite.statusCode, invite.body).toBe(200);
+    relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
+    const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
+    expect((await send({
+      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    })).statusCode).toBe(200);
+  }, 120_000);
+
+  it('the caregiver really is narrow, and the objects really exist', async () => {
+    // Without this the whole block could pass because the caregiver was never
+    // onboarded or the uploads never happened.
+    const meds = await send({
+      method: 'GET', url: `/v1/medications?profileId=${patient.profileId}`, headers: authHeaders(narrow),
+    });
+    expect(meds.statusCode, 'the narrow caregiver can already read medications').toBe(403);
+    for (const key of Object.values(keys)) expect(key).toMatch(/^[a-z_]+\/\d{4}-\d{2}-\d{2}\//);
+  });
+
+  it('the patient can read every one of their own objects', async () => {
+    for (const [label, key] of Object.entries(keys)) {
+      const res = await readUrl(patient, key);
+      expect(res.statusCode, `${label}: ${res.body}`).toBe(200);
+    }
+  });
+
+  it('a caregiver without view_medications is refused the medication image', async () => {
+    const res = await readUrl(narrow, keys.medication);
+    expect(res.statusCode, res.body).toBe(403);
+    expect(res.json<{ error: { message: string } }>().error.message).toContain('view_medications');
+  });
+
+  it('and refused the prescription image', async () => {
+    const res = await readUrl(narrow, keys.prescription);
+    expect(res.statusCode, res.body).toBe(403);
+    expect(res.json<{ error: { message: string } }>().error.message).toContain('view_medications');
+  });
+
+  /**
+   * Deliberately still allowed. A profile picture is not medication data, and
+   * every caregiver is meant to see whose profile they are looking at. Pinned
+   * so the exemption is a decision rather than an oversight, in either
+   * direction.
+   */
+  it('but an avatar is not medication identity and stays readable', async () => {
+    const res = await readUrl(narrow, keys.avatar);
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it('an unrelated patient gets 404, indistinguishable from a key that does not exist', async () => {
+    const stranger = await signIn(h, '+966500090062');
+    const foreign = await readUrl(stranger, keys.prescription);
+    const nonexistent = await readUrl(stranger, 'prescription_image/2026-01-01/deadbeef/nope.jpg');
+    expect(foreign.statusCode).toBe(404);
+    expect(nonexistent.statusCode).toBe(404);
+    // Identical once the per-request id is normalised away, so the response
+    // cannot be used to learn whether an object key names a real object.
+    const normalise = (b: string) => b.replace(/"requestId":"[^"]+"/, '"requestId":"-"');
+    expect(normalise(foreign.body)).toBe(normalise(nonexistent.body));
+  }, 60_000);
+
+  /**
+   * The control that matters most: without it, every assertion above would pass
+   * just as well if the route were broken for everyone.
+   */
+  it('positive control: adding view_medications makes both images readable', async () => {
+    const widened = await send({
+      method: 'PATCH', url: `/v1/caregivers/${relationshipId}/permissions`, headers: authHeaders(patient),
+      payload: { permissions: ['view_adherence', 'view_medications'] },
+    });
+    expect(widened.statusCode, widened.body).toBe(200);
+    for (const key of [keys.medication, keys.prescription]) {
+      const res = await readUrl(narrow, key);
+      expect(res.statusCode, res.body).toBe(200);
+    }
+  }, 60_000);
+
+  it('and revoking the caregiver closes it again', async () => {
+    const revoked = await send({
+      method: 'DELETE', url: `/v1/caregivers/${relationshipId}`, headers: authHeaders(patient),
+    });
+    expect([200, 204]).toContain(revoked.statusCode);
+    const res = await readUrl(narrow, keys.prescription);
+    expect(res.statusCode, res.body).toBe(404);
+  }, 60_000);
+});

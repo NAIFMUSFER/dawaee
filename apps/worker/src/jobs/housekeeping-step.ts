@@ -40,6 +40,15 @@ export async function runStep(
   // A savepoint rather than a separate connection: the job already holds one
   // transaction and its advisory lock, and taking a second connection per step
   // would multiply pool usage for work that is not time-critical.
+  //
+  // `step` is interpolated because a savepoint name cannot be a bind parameter.
+  // Every caller passes a string literal, so nothing user-controlled reaches
+  // here today — and this is the only interpolation left anywhere in the
+  // codebase, which is exactly why it gets a guard rather than a comment. A
+  // future caller passing a variable fails loudly instead of writing SQL.
+  if (!/^[a-zA-Z][a-zA-Z0-9_]{0,62}$/.test(step)) {
+    throw new Error(`housekeeping step name is not a safe identifier: ${JSON.stringify(step)}`);
+  }
   await client.query(`SAVEPOINT ${step}`);
   try {
     outcome.removed += await fn();

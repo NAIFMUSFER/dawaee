@@ -579,3 +579,57 @@ describe('negative controls — each protection is load-bearing', () => {
       'the owner bypasses RLS, so NC1 and NC2 above cannot fail and prove nothing').toBe(false);
   });
 });
+
+// ══════════════════════════════════ P19 §6 — the last SQL interpolation
+
+/**
+ * `runStep` builds `SAVEPOINT ${step}` by interpolation, because a savepoint
+ * name cannot be a bind parameter. Every caller passes a literal, so nothing
+ * user-controlled reaches it — but it is the only interpolation left in the
+ * codebase, and "no caller does that today" is a property of today.
+ */
+describe('P19 the one unparameterised identifier is guarded', () => {
+  it('rejects a step name that is not a bare identifier', async () => {
+    const { runStep } = await import('../../worker/src/jobs/housekeeping-step.js');
+    const ctx = { log: { error: () => undefined } } as never;
+    const client = {
+      query: async () => { throw new Error('the guard let a hostile name through to the database'); },
+    } as never;
+    for (const hostile of [
+      'otp; DROP TABLE users; --',
+      'a" ; SELECT 1',
+      "x' OR '1'='1",
+      '1otp',
+      '',
+      'a'.repeat(64),
+    ]) {
+      const outcome = { removed: 0, failures: [] as Array<{ step: string; error: string }> };
+      await expect(runStep(ctx, client, outcome, hostile, async () => 0))
+        .rejects.toThrow(/not a safe identifier/);
+    }
+  });
+
+  it('and still accepts every name the worker actually uses', async () => {
+    const { runStep } = await import('../../worker/src/jobs/housekeeping-step.js');
+    const seen: string[] = [];
+    const ctx = { log: { error: () => undefined } } as never;
+    const client = { query: async (sql: string) => { seen.push(sql); return { rows: [] }; } } as never;
+    for (const good of ['otp', 'expired', 'sessions', 'deliveries', 'rateBuckets', 'webhooks', 'jobs', 'uploads', 'expiredMeds']) {
+      const outcome = { removed: 0, failures: [] as Array<{ step: string; error: string }> };
+      await runStep(ctx, client, outcome, good, async () => 1);
+      expect(outcome.removed, `${good} did not run`).toBe(1);
+    }
+    expect(seen.filter((s) => s.startsWith('SAVEPOINT ')).length).toBe(9);
+  });
+
+  it('the worker passes only literals, so nothing dynamic reaches it', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const src = readFileSync(resolve(import.meta.dirname, '../../worker/src/jobs/housekeeping.ts'), 'utf8');
+    const calls = [...src.matchAll(/runStep\(\s*ctx,\s*client,\s*outcome,\s*([^,]+),/g)].map((m) => m[1]!.trim());
+    expect(calls.length).toBeGreaterThan(5);
+    for (const arg of calls) {
+      expect(arg, `runStep called with a non-literal step name: ${arg}`).toMatch(/^'[a-zA-Z][a-zA-Z0-9_]*'$/);
+    }
+  });
+});
