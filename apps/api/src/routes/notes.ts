@@ -68,6 +68,13 @@ export function registerNoteRoutes(app: FastifyInstance): void {
     const q = req.query as { profileId?: string; type?: string; from?: string; to?: string };
     const profileId = requireUuid(q.profileId, 'profileId');
     const type = requireEnum(q.type, MEASUREMENT_TYPES, 'type');
+    // `from` and `to` were declared here and then never used — the route
+    // accepted them, ignored them, and returned the most recent 500 rows
+    // whatever range the client asked for. A filter that silently does nothing
+    // is worse than one that is absent: the caller believes it applied. Wired
+    // up to match `/v1/notes`, which reads the same kind of history.
+    const from = optionalDate(q.from, 'from');
+    const to = optionalDate(q.to, 'to');
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
       await requireProfileAccess(tx, userId, profileId, 'view_history');
@@ -77,8 +84,10 @@ export function registerNoteRoutes(app: FastifyInstance): void {
            FROM health_measurements
           WHERE patient_profile_id = $1
             AND ($2::text IS NULL OR type = $2::measurement_type)
+            AND ($3::date IS NULL OR measured_at >= $3::date)
+            AND ($4::date IS NULL OR measured_at < ($4::date + 1))
           ORDER BY measured_at DESC LIMIT 500`,
-        [profileId, type],
+        [profileId, type, from, to],
       );
       return {
         measurements: rows.map((r) => ({

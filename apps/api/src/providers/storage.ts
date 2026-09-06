@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
@@ -78,9 +78,30 @@ export class LocalStorageProvider implements StorageProvider {
     };
   }
 
+  /**
+   * Compared in constant time, and the expiry is required to be a real number.
+   *
+   * `===` on a hex digest leaks how many leading characters matched through
+   * timing, which is the shape of attack that recovers a signature byte by
+   * byte. Not reachable in production — `STORAGE_PROVIDER=local` is refused
+   * there (config.ts) — but a signature check that is only safe because of
+   * where it happens to be deployed is one deployment change away from being
+   * the real thing.
+   *
+   * `Number(expires)` at the call site yields NaN for a non-numeric or
+   * repeated query parameter, and `Date.now() > NaN` is false, so a malformed
+   * expiry skipped the freshness check and fell through to the digest
+   * comparison. It could never match — the server signs the numeric value, not
+   * "NaN" — but the guard belongs here rather than resting on that.
+   */
   verifyLocalSignature(objectKey: string, expires: number, sig: string, op: string): boolean {
-    if (Date.now() > expires) return false;
-    return this.sign(objectKey, expires, op) === sig;
+    if (!Number.isFinite(expires) || Date.now() > expires) return false;
+    const expected = Buffer.from(this.sign(objectKey, expires, op), 'utf8');
+    const given = Buffer.from(sig, 'utf8');
+    // timingSafeEqual throws on a length mismatch, which would itself be a
+    // (much coarser) oracle; length is public information about a hex digest.
+    if (expected.length !== given.length) return false;
+    return timingSafeEqual(expected, given);
   }
 
   async createReadUrl(objectKey: string, ttlSeconds: number): Promise<string> {

@@ -1398,3 +1398,77 @@ describe('P12-11 disabling an account closes every route at once', () => {
     expect(fresh.statusCode, fresh.body).toBe(200);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P12-12 — the two smaller items carried out of the sweep.
+ *
+ * Neither was exploitable as found. Both are the kind of thing that is only
+ * safe because of where it currently sits, which is a reason to fix rather
+ * than a reason to leave.
+ */
+describe('P12-12 signature comparison and the measurement date filter', () => {
+  /**
+   * Note on what this can and cannot prove. Swapping `timingSafeEqual` back
+   * for `===` does not fail a single assertion here, and that is the accurate
+   * result rather than a gap to paper over: the two agree on every input, and
+   * the difference is a timing property no functional test observes. What the
+   * test does pin is the behaviour around it — a length mismatch returning
+   * false rather than throwing (removing that guard makes `timingSafeEqual`
+   * raise "Input buffers must have the same byte length", turning a 403 into a
+   * 500), and a malformed expiry being refused rather than skipping the
+   * freshness check.
+   */
+  it('the local storage signature check refuses every malformed input', async () => {
+    const { LocalStorageProvider } = await import('../src/providers/storage.js');
+    const { loadConfig } = await import('../src/config.js');
+    const storage = new LocalStorageProvider(loadConfig());
+
+    const ticket = await storage.createUploadTicket({ objectKey: 'probe/a.png', contentType: 'image/png' });
+    const url = new URL(`http://x${ticket.uploadUrl}`);
+    const expires = Number(url.searchParams.get('expires'));
+    const sig = url.searchParams.get('sig')!;
+
+    expect(storage.verifyLocalSignature('probe/a.png', expires, sig, 'put')).toBe(true);
+    // Wrong op, wrong key, wrong signature, right length.
+    expect(storage.verifyLocalSignature('probe/a.png', expires, sig, 'get')).toBe(false);
+    expect(storage.verifyLocalSignature('probe/b.png', expires, sig, 'put')).toBe(false);
+    expect(storage.verifyLocalSignature('probe/a.png', expires, 'f'.repeat(sig.length), 'put')).toBe(false);
+    // A length mismatch must be a plain false, not the throw timingSafeEqual
+    // raises on unequal buffers.
+    expect(storage.verifyLocalSignature('probe/a.png', expires, 'abc', 'put')).toBe(false);
+    // A malformed expiry used to skip the freshness check entirely, because
+    // `Date.now() > NaN` is false.
+    expect(storage.verifyLocalSignature('probe/a.png', Number('abc'), sig, 'put')).toBe(false);
+    expect(storage.verifyLocalSignature('probe/a.png', Date.now() - 1000, sig, 'put')).toBe(false);
+  });
+
+  it('the measurement list actually applies its date range', async () => {
+    const profileId = alice.profileId;
+    const write = (measuredAt: string, valuePrimary: number) => send({
+      method: 'POST', url: `/v1/measurements?profileId=${profileId}`, headers: authHeaders(alice),
+      payload: { profileId, type: 'weight', valuePrimary, unit: 'kg', measuredAt },
+    });
+    expect((await write('2026-03-01T08:00:00.000Z', 71)).statusCode).toBe(200);
+    expect((await write('2026-07-01T08:00:00.000Z', 72)).statusCode).toBe(200);
+
+    const read = async (qs: string) => {
+      const r = await send({
+        method: 'GET', url: `/v1/measurements?profileId=${profileId}&type=weight${qs}`,
+        headers: authHeaders(alice),
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return r.json<{ measurements: Array<{ valuePrimary: number }> }>().measurements.map((m) => m.valuePrimary);
+    };
+
+    expect(await read('')).toEqual(expect.arrayContaining([71, 72]));
+    // The range was previously accepted and ignored, so both rows came back.
+    expect(await read('&from=2026-06-01')).toContain(72);
+    expect(await read('&from=2026-06-01')).not.toContain(71);
+    expect(await read('&to=2026-04-01')).toContain(71);
+    expect(await read('&to=2026-04-01')).not.toContain(72);
+    // Inclusive on `to`, matching /v1/notes.
+    expect(await read('&from=2026-03-01&to=2026-03-01')).toEqual([71]);
+  }, 60_000);
+});
