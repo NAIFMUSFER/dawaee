@@ -1,0 +1,90 @@
+name: Refresh mobile audit baseline after SDK 55
+
+on:
+  push:
+    branches: [release/dawaee-rc-2026-09-06]
+    paths:
+      - '.github/workflows/refresh-mobile-audit-baseline.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/dawaee-rc-2026-09-06
+          fetch-depth: 0
+
+      - name: Remove exceptions whose advisories disappeared on SDK 55
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('scripts/audit-gate.mjs')
+          src = path.read_text()
+
+          stale = ['tar', 'postcss', 'image-size', '@xmldom/xmldom']
+          for module in stale:
+              pattern = (
+                  r"  \{\n"
+                  r"    workspace: 'mobile',\n"
+                  + r"    module: '" + re.escape(module) + r"',\n"
+                  + r".*?\n  \},\n"
+              )
+              src, count = re.subn(pattern, '', src, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one baseline entry for {module}, found {count}')
+
+          old_comment = (
+              ' * Every entry here is build-toolchain, and every one is fixed only by a MAJOR\n'
+              ' * Expo or React Native upgrade. That upgrade is a product decision with its own\n'
+              ' * testing, not something a security gate should force on a Tuesday.\n'
+          )
+          new_comment = (
+              ' * Each entry is classified against the current dependency graph. Build-only and\n'
+              ' * runtime-reachable exceptions are held to separate thresholds and must state why\n'
+              ' * the current upstream-compatible version is being retained.\n'
+          )
+          if old_comment not in src:
+              raise SystemExit('baseline comment changed unexpectedly')
+          src = src.replace(old_comment, new_comment, 1)
+
+          old_uuid = (
+              "      'Reached only through @expo/rudder-sdk-node and xcode — Expo CLI telemetry and the iOS '\n"
+              "      + 'project generator. Below the build-toolchain threshold; listed so the review is deliberate.',\n"
+          )
+          new_uuid = (
+              "      'Reached through xcode -> uuid in the Expo iOS project-generation toolchain. It is not '\n"
+              "      + 'bundled into the patient runtime; below the build threshold and retained only as a reviewed exception.',\n"
+          )
+          if old_uuid not in src:
+              raise SystemExit('uuid rationale changed unexpectedly')
+          src = src.replace(old_uuid, new_uuid, 1)
+
+          path.write_text(src)
+          Path('.github/workflows/refresh-mobile-audit-baseline.yml').unlink()
+          PY
+
+      - name: Prove the refreshed gate passes before committing
+        run: |
+          set -euo pipefail
+          npm ci
+          cd apps/mobile
+          npm ci --legacy-peer-deps
+          cd ../..
+          node scripts/audit-gate.mjs --workspace all
+
+      - name: Commit refreshed baseline and remove this workflow
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/audit-gate.mjs .github/workflows/refresh-mobile-audit-baseline.yml
+          git diff --cached --check
+          git commit -m 'security: refresh mobile audit baseline for Expo 55'
+          git push origin HEAD:release/dawaee-rc-2026-09-06
