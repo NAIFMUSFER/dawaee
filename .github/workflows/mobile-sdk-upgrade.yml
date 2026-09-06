@@ -41,9 +41,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 
-      # SDK 53 is already committed on this rehearsal branch. Re-verify that
-      # exact checkpoint before moving forward so a later fix cannot hide a
-      # regression in the first supported intermediate state.
       - name: Verify committed SDK 53 checkpoint
         working-directory: apps/mobile
         run: |
@@ -62,12 +59,10 @@ jobs:
           set -euo pipefail
           npm install expo@~54.0.0 --legacy-peer-deps
           npx expo install --fix --npm
-          # Reinstall from the generated lockfile before bundling. The previous
-          # incremental install left simple-swizzle present without its declared
-          # is-arrayish dependency; a clean npm ci is the release-reproducible
-          # topology and must resolve the full graph.
           rm -rf node_modules
           npm ci --legacy-peer-deps
+          # Prove the dependency that exposed the old Metro configuration is
+          # actually installed, then prove Metro can resolve it in both bundles.
           npm ls simple-swizzle is-arrayish
           npx expo install --check --npm
           npx tsc --noEmit
@@ -84,6 +79,14 @@ jobs:
         working-directory: apps/mobile
         run: |
           set -euo pipefail
+          # React Native 0.83 / Expo 55 always uses the New Architecture. The
+          # legacy switch is no longer a meaningful app-config option.
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const app = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          delete app.expo.newArchEnabled;
+          fs.writeFileSync('app.json', `${JSON.stringify(app, null, 2)}\n`);
+          NODE
           npm install expo@~55.0.0 --legacy-peer-deps
           npx expo install --fix --npm
           rm -rf node_modules
