@@ -79,8 +79,16 @@ COPY scripts ./scripts
 # so the request never leaves the page and CORS cannot rescue it.
 COPY apps/api/public ./apps/api/public
 
-# Development dependencies are not shipped.
-RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
+# Development dependencies are not shipped. npm is needed only to perform this
+# prune during image construction; neither runtime entrypoint nor migrate.sh uses
+# npm afterwards (they execute node and psql directly). Remove npm/npx from the
+# final artefact as well: shipping an unused package manager is unnecessary
+# attack surface, and in Node 22.23.2 it carried a fixable CRITICAL tar advisory
+# (CVE-2026-59873) inside npm's own dependency tree.
+RUN npm prune --omit=dev --no-audit --no-fund \
+ && npm cache clean --force \
+ && rm -rf /usr/local/lib/node_modules/npm \
+ && rm -f /usr/local/bin/npm /usr/local/bin/npx
 
 # Build identity, so a running service can say which commit it is.
 #
