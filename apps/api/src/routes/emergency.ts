@@ -166,6 +166,24 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       return result.rows;
     });
 
+    /**
+     * Never stored, anywhere, by anyone.
+     *
+     * This response carries a patient's blood type, allergies, conditions,
+     * medications and their emergency contacts' phone numbers, to an
+     * unauthenticated caller. Without `no-store` a browser writes it to disk, a
+     * shared device keeps it after the paramedic hands the phone back, and any
+     * intermediary is free to hold a copy — for a URL whose only secret is in
+     * the path that was just typed into that browser's history.
+     *
+     * Set on the failure path too. A 404 that is cacheable would let a stale
+     * negative answer outlive a card being re-enabled, and it keeps the two
+     * responses indistinguishable in their headers as well as their bodies.
+     */
+    reply.header('cache-control', 'no-store, no-cache, must-revalidate, private');
+    reply.header('pragma', 'no-cache');
+    reply.header('expires', '0');
+
     if (!rows[0]) {
       return reply.status(404).send({
         error: { code: ERROR_CODES.NOT_FOUND, message: 'This emergency code is not active' },
