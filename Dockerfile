@@ -5,19 +5,11 @@
 # escalation rules the worker enforces must be the exact ones the API tested.
 # `APP` selects which process the container runs.
 
-# NOT PINNED BY DIGEST — a known gap, deliberately left as a tag rather than
-# guessed at. `node:22-bookworm-slim` is mutable: it moves with every Node 22
-# patch and every Debian security rebuild, so two builds of this same commit can
-# sit on different base images. For a reproducible deploy this wants to be
-# `node:22-bookworm-slim@sha256:<digest>`, refreshed deliberately.
-#
-# The digest is not written here because it could not be resolved in the
-# environment this was audited from — every container registry is blocked by
-# egress policy — and inventing one would be worse than leaving the tag. Pin it
-# from a machine that can reach the registry:
-#   docker pull node:22-bookworm-slim
-#   docker inspect --format '{{index .RepoDigests 0}}' node:22-bookworm-slim
-FROM node:22-bookworm-slim AS base
+# Pinned to the exact multi-platform manifest resolved by the release security
+# scan on 2026-09-06. The readable tag records the intended Node/Debian line;
+# the digest is the actual supply-chain identity used by every reproducible
+# release build. Refresh both deliberately after a reviewed base-image update.
+FROM node:22.22.0-bookworm-slim@sha256:0d8be5ba60d5c85d2f3b967fdfb66779590a1e8d483075d3591bc3ea0154346a AS base
 ENV NODE_ENV=production
 WORKDIR /app
 # `postgresql-client` is here for scripts/migrate.sh, which the deploy runs
