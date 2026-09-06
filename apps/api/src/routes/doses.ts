@@ -3,7 +3,7 @@ import {
   AppError, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, syncDoseActionsSchema,
 } from '@dawaee/shared';
 import { can, consecutiveMissed, dailyBreakdown, localDateInZone, summarizeAdherence, viewOf } from '@dawaee/core';
-import { requireDateRange, requireUuid, optionalUuid } from '../lib/params.js';
+import { requireDateRange, requireUuid, optionalUuid, requireLimit } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { profileIdForDose, requireProfileAccess } from '../services/access-service.js';
@@ -154,7 +154,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
             AND d.status <> 'cancelled'
           ORDER BY d.scheduled_at DESC
           LIMIT $5`,
-        [profileId, range.from, range.to, medicationId, Math.min(Number(q.limit ?? 500), 2000)],
+        [profileId, range.from, range.to, medicationId, requireLimit(q.limit, 500, 2000)],
       );
       let doses = rows.map((r) => mapDose(r, now));
       if (q.status) doses = doses.filter((d) => d.status === q.status);

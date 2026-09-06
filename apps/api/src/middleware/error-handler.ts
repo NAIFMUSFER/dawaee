@@ -48,7 +48,21 @@ export function registerErrorHandler(app: FastifyInstance): void {
     }
     // A malformed id (bad UUID, bad enum value) is the caller's mistake, not a
     // server fault. Reported as a 400 with no database detail attached.
-    if (isPgError(err, PG_ERRORS.INVALID_TEXT_REPRESENTATION)) {
+    //
+    // `22007` and `2201W` were added after measuring what the API actually
+    // returned for ordinary bad input. `22P02` was already covered, so a bad
+    // UUID or enum was correctly a 400 — but a malformed date (`?from=abc`,
+    // and `?endDate=abc` via `addDays`, which yields the string
+    // "0NaN-NaN-NaN") raises `22007`, and `?limit=-5` raises `2201W`. Neither
+    // was mapped, so both fell through to the 500 branch: logged as an
+    // unhandled server error and reported to the client as one. Route-level
+    // validation now rejects these earlier; this stays as the backstop, so a
+    // future route that forgets returns a 400 rather than a false 500.
+    if (
+      isPgError(err, PG_ERRORS.INVALID_TEXT_REPRESENTATION) ||
+      isPgError(err, PG_ERRORS.INVALID_DATETIME_FORMAT) ||
+      isPgError(err, PG_ERRORS.INVALID_ROW_COUNT_IN_LIMIT)
+    ) {
       return reply.status(400).send({
         error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the supplied values is malformed', requestId },
       } satisfies ApiErrorBody);

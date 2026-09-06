@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import {
   AppError, ERROR_CODES, applyTravelDecisionSchema, createProfileSchema,
@@ -284,12 +285,42 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const body = createProfileSchema.parse(req.body);
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
-      const { rows } = await tx.query(
+      /**
+       * Two statements, on purpose. This route was returning 404 for every
+       * caller — nobody could add a second patient profile at all, which is
+       * the entire family-care feature.
+       *
+       * The cause is an interaction between `INSERT … RETURNING` and this
+       * table's SELECT policy, and it is specific to `patient_profiles`:
+       * `profiles_read` is the only policy in the schema whose predicate reads
+       * the very table it protects (`app.can_read_profile(id)` →
+       * `app.owns_profile(id)` → `SELECT … FROM patient_profiles`). That
+       * function is STABLE, so it evaluates against the snapshot taken at the
+       * start of the statement, and under FORCE ROW LEVEL SECURITY the
+       * RETURNING clause must satisfy the SELECT policy. The row being
+       * inserted is invisible to a snapshot older than itself, so the check
+       * fails and Postgres raises 42501 — reported to the client as 404.
+       * Measured: the same INSERT without RETURNING succeeds, and a separate
+       * SELECT in the same transaction then sees the row.
+       *
+       * Fixed here rather than in the policy. The access itself was never
+       * denied — only that one syntax was — so widening the most
+       * security-critical table's policies to accommodate a query shape would
+       * be the wrong trade. The id is generated here so the follow-up read is
+       * exact rather than a guess at "the most recent row".
+       */
+      const profileId = randomUUID();
+      await tx.query(
         `INSERT INTO patient_profiles
-           (owner_user_id, display_name, birth_year, timezone, home_timezone, travel_policy, is_self)
-         VALUES ($1,$2,$3,$4,$4,$5,$6)
-         RETURNING id, display_name, birth_year, timezone, home_timezone, travel_policy::text AS travel_policy, is_self`,
-        [userId, body.displayName, body.birthYear ?? null, body.timezone, body.travelPolicy, body.isSelf],
+           (id, owner_user_id, display_name, birth_year, timezone, home_timezone, travel_policy, is_self)
+         VALUES ($1,$2,$3,$4,$5,$5,$6,$7)`,
+        [profileId, userId, body.displayName, body.birthYear ?? null, body.timezone, body.travelPolicy, body.isSelf],
+      );
+      const { rows } = await tx.query(
+        `SELECT id, display_name, birth_year, timezone, home_timezone,
+                travel_policy::text AS travel_policy, is_self
+           FROM patient_profiles WHERE id = $1`,
+        [profileId],
       );
       const profile = rows[0]!;
       await recordAudit(tx, {

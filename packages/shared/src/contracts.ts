@@ -481,6 +481,29 @@ export const setConsentSchema = z.object({
 
 // ----------------------------------------------------------- measurements
 
+/**
+ * A symptom note — the one place a patient types free text about how they feel.
+ *
+ * It had no schema at all. The route cast `req.body` to a shape and trusted it,
+ * which made this the only write of patient health content in the API with no
+ * bound on what arrives: `text` was unlimited to the 2 MiB body cap, and `tags`
+ * went into a `text[]` column as whatever the caller sent — any string, any
+ * count, or a shape that is not an array at all, which reaches PostgreSQL and
+ * comes back as a 500 rather than a 400.
+ *
+ * Tags are the closed set the app already offers; the mobile client has only
+ * ever sent values from `SYMPTOM_TAGS`, so constraining them here matches what
+ * is actually used and stops the column becoming free-form.
+ */
+export const createSymptomNoteSchema = z.object({
+  profileId: uuid,
+  doseOccurrenceId: uuid.nullish(),
+  tags: z.array(z.enum(SYMPTOM_TAGS)).max(SYMPTOM_TAGS.length).default([]),
+  // Long enough for a real description of how a dose felt, bounded so a note
+  // cannot be used as storage.
+  text: z.string().trim().max(2000).nullish(),
+});
+
 export const createMeasurementSchema = z.object({
   type: z.enum(MEASUREMENT_TYPES),
   valuePrimary: z.number(),
