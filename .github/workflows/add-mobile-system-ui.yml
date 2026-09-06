@@ -1,0 +1,45 @@
+name: Add Expo system UI for native theme config
+
+on:
+  push:
+    branches: [mobile/expo55-store-readiness]
+    paths:
+      - '.github/workflows/add-mobile-system-ui.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    env:
+      NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mobile/expo55-store-readiness
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install SDK 55 system UI dependency
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          npm ci --legacy-peer-deps
+          npx expo install expo-system-ui --npm
+          npx expo install --check --npm
+
+      - name: Commit dependency and remove this one-shot workflow
+        run: |
+          set -euo pipefail
+          rm .github/workflows/add-mobile-system-ui.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/mobile/package.json apps/mobile/package-lock.json .github/workflows/add-mobile-system-ui.yml
+          git diff --cached --check
+          git commit -m 'mobile: install Expo system UI for native theme config'
+          git push origin HEAD:mobile/expo55-store-readiness
