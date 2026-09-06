@@ -11,8 +11,40 @@ import type { Providers } from '../providers/index.js';
  * provider implementation is wired for each integration — an operator must be
  * able to see that WhatsApp is running on the mock without reading the config.
  */
+/**
+ * Which commit is actually serving.
+ *
+ * Every phase of this audit has produced a statement of the form "at commit X,
+ * this control holds". None of that is worth anything if there is no way to
+ * ask a running service which commit it is — and until now there was not, so
+ * "the audited code is deployed" was an assumption rather than an observation.
+ *
+ * Deliberately unauthenticated and deliberately thin. It answers exactly three
+ * things and nothing that varies with configuration: no environment name, no
+ * provider wiring, no feature flags, no dependency versions. `/health/ready`
+ * already reports which integrations are mocked and it is the right place for
+ * that; this endpoint exists so an operator, or a later audit, can compare a
+ * deployed revision against a git SHA without a login.
+ *
+ * The values come from build arguments the Dockerfile receives and Render
+ * populates. When they are absent — a local run, a build that did not pass
+ * them — the endpoint says `unknown` rather than inventing something, because
+ * a version endpoint that guesses is worse than one that admits it does not
+ * know.
+ */
+export function buildIdentity(): { commit: string; version: string; builtAt: string } {
+  const commit = process.env.GIT_COMMIT?.trim();
+  return {
+    commit: commit && /^[0-9a-f]{7,40}$/i.test(commit) ? commit : 'unknown',
+    version: process.env.APP_VERSION?.trim() || 'unknown',
+    builtAt: process.env.BUILD_TIME?.trim() || 'unknown',
+  };
+}
+
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
+
+  app.get('/version', async () => ({ service: 'dawaee-api', ...buildIdentity() }));
 
   app.get('/health/ready', async (_req, reply) => {
     const cfg = loadConfig();

@@ -82,6 +82,26 @@ COPY apps/api/public ./apps/api/public
 # Development dependencies are not shipped.
 RUN npm prune --omit=dev --no-audit --no-fund && npm cache clean --force
 
+# Build identity, so a running service can say which commit it is.
+#
+# Passed at build time and frozen into the image; never read from the running
+# environment, which is what makes it describe the ARTEFACT rather than
+# whatever the platform happens to have configured. Placed here, after every
+# COPY and the prune, so changing a commit SHA invalidates nothing above it and
+# the layer cache still works.
+#
+# Defaults are literally `unknown`. A build that forgets to pass them produces
+# an image that says so, rather than one that reports a stale or invented SHA —
+# and the whole point of the endpoint is being able to trust the answer.
+ARG GIT_COMMIT=unknown
+ARG APP_VERSION=unknown
+ARG BUILD_TIME=unknown
+ENV GIT_COMMIT=$GIT_COMMIT APP_VERSION=$APP_VERSION BUILD_TIME=$BUILD_TIME
+LABEL org.opencontainers.image.revision=$GIT_COMMIT \
+      org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.created=$BUILD_TIME \
+      org.opencontainers.image.source="https://github.com/NAIFMUSFER/dawaee"
+
 USER dawaee
 ENV APP=api
 EXPOSE 8080

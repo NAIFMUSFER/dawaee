@@ -4,6 +4,13 @@ on:
   push: { branches: [main] }
   pull_request: { branches: [main] }
 
+# Read-only by default, at the top level, so a job that needs more has to say
+# so. Without this block a workflow inherits whatever the repository default
+# is — which for repositories created before 2023 is read/write on everything,
+# meaning any compromised action in any step could push to main.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -11,11 +18,23 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Production runs PostgreSQL 17 (Supabase). CI ran only 16, so every
+        # security property this suite proves was proven against a version the
+        # patients' data does not live on. 17 is the one that must pass; 16 is
+        # kept because it is what a developer has locally, and a divergence
+        # between them is itself worth seeing.
+        postgres: ['17', '16']
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -34,6 +53,9 @@ jobs:
       DAWAEE_WORKER_PASSWORD: devpass
       DATABASE_URL: postgres://dawaee_app:devpass@127.0.0.1:5433/dawaee_test
       WORKER_DATABASE_URL: postgres://dawaee_worker:devpass@127.0.0.1:5433/dawaee_test
+      # Test values, not secrets. They are literals on purpose: a CI run that
+      # needed a real secret would be a run a fork could not reproduce, and
+      # would put production credentials one workflow bug away from a log.
       JWT_SECRET: ci_secret_at_least_thirty_two_characters_long_0123456789
       IP_HASH_SALT: ci-salt
 
@@ -42,11 +64,28 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: npm
 
-      - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Record the toolchain actually in use
+        run: |
+          echo "node $(node --version), npm $(npm --version)"
+          echo "postgres client: $(psql --version 2>/dev/null || echo 'not yet installed')"
+
+      - name: Install PostgreSQL client matching the server
+        # The client must be at least the server's major version, or
+        # `pg_dump`/`psql` meta-commands can behave differently against 17.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y "postgresql-client-${{ matrix.postgres }}"
+          psql --version
 
       - run: npm ci
 
@@ -57,9 +96,7 @@ jobs:
         run: npx eslint .
 
       - name: Typecheck
-        run: |
-          npx tsc -p apps/api/tsconfig.json --noEmit
-          npx tsc -p apps/worker/tsconfig.json --noEmit
+        run: npm run typecheck
 
       - name: Prepare test database
         run: |
@@ -74,7 +111,7 @@ jobs:
           set -o pipefail
           psql -d dawaee_test -f db/seed/rls_probe.sql | tee /tmp/rls.txt
           if grep -q '^ FAIL' /tmp/rls.txt; then
-            echo "::error::row-level security probe failed"
+            echo "::error::row-level security probe failed on PostgreSQL ${{ matrix.postgres }}"
             exit 1
           fi
 
@@ -99,6 +136,11 @@ jobs:
             exit 1
           fi
 
+      # Every suite: RLS matrix, worker privilege boundary, auth/session
+      # concurrency, OTP, shared rate limit, worker reliability, endpoint
+      # authorization, logging redaction, operational error privacy, audit
+      # privacy, and the release-gate manifest that fails if any of them has
+      # been deleted. One command, proven by apps/api/test/release-gates.test.ts.
       - name: Unit and integration tests
         run: npm test
 
@@ -108,18 +150,60 @@ jobs:
           npm ci --legacy-peer-deps
           npx tsc --noEmit
 
+  # Kept separate from `verify` so a Docker regression is legible on its own,
+  # and so it does not run twice across the Postgres matrix.
   docker:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      # Proves the deploy artifact still builds; the API and worker share it.
-      - name: Build runtime image
+
+      # The REAL production image, from the real base. P15 could not do this:
+      # the sandbox could not pull node:22-bookworm-slim, so the container
+      # checks ran against an Ubuntu stand-in and the image that actually
+      # deploys had never been built under test.
+      - name: Build the production image
         uses: docker/build-push-action@v6
         with:
           context: .
           target: runtime
           push: false
+          load: true
+          tags: dawaee:ci
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ github.event.repository.updated_at }}
+          # Cache is scoped per-ref by the action. A fork PR writes to its own
+          # scope and cannot poison main's.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Container security properties
+        run: ./scripts/container-checks.sh dawaee:ci
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci --legacy-peer-deps
+
+      # Not `npm audit` directly. The gate separates advisories reachable from
+      # the app's own import graph from those reachable only through the Expo
+      # CLI and Metro, holds them to different thresholds, and fails on
+      # anything outside a dated, documented exception. See
+      # docs/CI-SECURITY-GATES.md.
+      - name: Dependency gate
+        run: node scripts/audit-gate.mjs --workspace all

@@ -129,6 +129,10 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /health': 'public',
   'GET /health/ready': 'public',
   'GET /app': 'public',
+  // Build identity. Unauthenticated on purpose: an operator comparing a
+  // deployed revision against a git SHA has no account, and the response
+  // carries nothing that varies with configuration. See P16.
+  'GET /version': 'public',
 
   'POST /v1/auth/otp/request': 'auth-plane',
   'POST /v1/auth/otp/verify': 'auth-plane',
@@ -1802,4 +1806,40 @@ describe('P12-14 a caregiver missing view_medications is told so', () => {
     expect(list.json<{ doses: unknown[] }>().doses.length).toBeGreaterThan(0);
     expect(list.body).toContain(PANADOL.name);
   }, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+
+describe('P16 /version says which commit is serving, and nothing else', () => {
+  it('answers without authentication, because an operator checking a deploy has no account', async () => {
+    const res = await send({ method: 'GET', url: '/version' });
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json<Record<string, string>>();
+    expect(body.service).toBe('dawaee-api');
+    expect(Object.keys(body).sort()).toEqual(['builtAt', 'commit', 'service', 'version']);
+  });
+
+  it('discloses nothing that varies with configuration', async () => {
+    const res = await send({ method: 'GET', url: '/version' });
+    // The endpoint is public. /health/ready is where integration wiring is
+    // reported, behind nothing but still deliberately separate from this.
+    for (const leak of ['DATABASE', 'JWT', 'SECRET', 'postgres://', 'node_modules', '/app/', 'env']) {
+      expect(res.body, `/version disclosed ${leak}`).not.toContain(leak);
+    }
+  });
+
+  it('is not an unauthenticated reflector for whatever the build passed', async () => {
+    const { buildIdentity } = await import('../src/routes/health.js');
+    const saved = process.env.GIT_COMMIT;
+    try {
+      process.env.GIT_COMMIT = '<script>alert(1)</script>';
+      expect(buildIdentity().commit).toBe('unknown');
+      process.env.GIT_COMMIT = 'refs/heads/main';
+      expect(buildIdentity().commit).toBe('unknown');
+      process.env.GIT_COMMIT = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+      expect(buildIdentity().commit).toBe('a1b2c3d4e5f60718293a4b5c6d7e8f9012345678');
+    } finally {
+      if (saved === undefined) delete process.env.GIT_COMMIT; else process.env.GIT_COMMIT = saved;
+    }
+  });
 });
