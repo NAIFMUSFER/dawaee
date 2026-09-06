@@ -78,6 +78,10 @@ const WORKER_MANIFEST: Record<string, string[]> = {
 const WORKER_DEFINER_ALLOWED = [
   'can_read_profile', 'caregives_profile', 'cleanup_expired_sessions',
   'has_permission', 'owns_profile', 'purge_expired_otp',
+  // Retention for the shared auth rate-limit buckets. Deletes by age only; it
+  // cannot read a bucket, and the keys are keyed digests in any case, so this
+  // grant carries no visibility of who tried to sign in or from where.
+  'purge_rate_buckets',
 ];
 
 /**

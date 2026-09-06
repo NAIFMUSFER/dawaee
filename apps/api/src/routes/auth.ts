@@ -14,6 +14,7 @@ import { verifyPassword } from '../lib/password.js';
 import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
+import { clearBudget, enforceAuthBudget } from './../auth/rate-budget.js';
 
 export function registerAuthRoutes(app: FastifyInstance): void {
   /**
@@ -49,6 +50,11 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const body = verifyOtpSchema.parse(req.body);
     const phone = normalizePhone(body.phone);
     if (!phone) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
+
+    await enforceAuthBudget({
+      ip: { scope: 'otp-verify:ip', value: req.ip },
+      identifier: { scope: 'otp-verify:identifier', value: phone },
+    });
 
     // Verification COMMITS on its own before any error is raised: a wrong
     // guess must durably increment the attempt counter, and a code that was
@@ -159,6 +165,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     // Already trimmed and lower-cased by `emailInput`; one spelling, decided once.
     const email = body.email ?? null;
 
+    // Shared with every other replica and surviving a cold start, unlike the
+    // in-process limiter this sits behind. Keyed by identifier as well as by
+    // address so a distributed attempt against one number is still bounded.
+    await enforceAuthBudget({
+      ip: { scope: 'register:ip', value: req.ip },
+      identifier: { scope: 'register:identifier', value: phone ?? email! },
+    });
+
     const passwordHash = await hashNewPassword(body.password, body.locale, phone ?? email ?? undefined);
 
     const result = await withTransaction(async (tx) => {
@@ -227,6 +241,11 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const asPhone = normalizePhone(typed);
     const identifier = asPhone ?? typed.toLowerCase();
 
+    await enforceAuthBudget({
+      ip: { scope: 'login:ip', value: req.ip },
+      identifier: { scope: 'login:identifier', value: identifier },
+    });
+
     // The attempt (and its failure counter) commits before anything is refused.
     const attempt = await withTransaction((tx) => attemptPasswordLogin(tx, identifier, body.password));
     assertLogin(attempt, locale);
@@ -250,6 +269,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       });
       return created;
     });
+
+    // Signed in: a couple of mistyped passwords should not follow the person
+    // around for the rest of the window.
+    await clearBudget('login:identifier', identifier);
 
     const { rows } = await withUser(attempt.userId, (tx) =>
       tx.query<{ is_admin: boolean }>('SELECT is_admin FROM users WHERE id = $1', [attempt.userId]));
@@ -361,6 +384,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const body = refreshSchema.parse(req.body);
     // Committed before the outcome is judged, so a detected token reuse
     // durably revokes the device even though the request ends in a 401.
+    // Address only: a refresh token is a capability, so there is no identifier
+    // to key on that an attacker does not already hold.
+    await enforceAuthBudget({ ip: { scope: 'refresh:ip', value: req.ip } });
+
     const attempt = await withTransaction((tx) => rotateSessionAttempt(tx, body.refreshToken, req.ipHash));
     const rotated = assertRotated(attempt);
     return {

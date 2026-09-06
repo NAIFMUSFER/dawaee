@@ -54,6 +54,12 @@ export async function housekeepingJob(
       WHERE created_at < now() - interval '90 days' AND status IN ('sent','delivered','read','skipped')`,
   )).rowCount ?? 0);
 
+  // Rate-limit windows are minutes long; a day is already generous.
+  await runStep(ctx, client, outcome, 'rateBuckets', async () => {
+    const { rows } = await client.query<{ purge_rate_buckets: number }>('SELECT app.purge_rate_buckets(24)');
+    return rows[0]?.purge_rate_buckets ?? 0;
+  });
+
   await runStep(ctx, client, outcome, 'webhooks', async () => (await client.query(
     `DELETE FROM provider_webhook_events WHERE received_at < now() - interval '30 days' AND processed_at IS NOT NULL`,
   )).rowCount ?? 0);
