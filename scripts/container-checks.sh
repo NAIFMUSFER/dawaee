@@ -109,19 +109,30 @@ check "the build identity is present and is the commit CI built" bash -c '
 '
 
 check "TLS verification cannot be disabled by configuration in production" bash -c '
-  # `DATABASE_SSL=no-verify` accepts any certificate from anyone. The config
-  # must refuse to boot rather than silently accept it.
+  # `DATABASE_SSL=no-verify` accepts any certificate from anyone. Supply a
+  # production-valid storage mode so this assertion reaches the TLS guard
+  # instead of failing earlier on an unrelated production requirement.
   out=$(docker run --rm -e NODE_ENV=production -e DATABASE_SSL=no-verify \
         -e DATABASE_URL=postgres://u:p@example.invalid:5432/d \
+        -e STORAGE_PROVIDER=s3 \
         -e JWT_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
         -e IP_HASH_SALT=ci-salt-2026 '"$IMAGE"' 2>&1 || true)
-  echo "$out" | grep -qi "no-verify\|DATABASE_SSL" || { echo "boot did not reject no-verify: $out"; exit 1; }
+  echo "$out" | grep -qi "DATABASE_SSL.*production\|certificate verification" || { echo "boot did not reject no-verify at the TLS guard: $out"; exit 1; }
 '
 
 check "the image reports its own version over HTTP" bash -c '
-  cid=$(docker run -d -e NODE_ENV=test -e DATABASE_URL=postgres://u:p@127.0.0.1:5432/d \
+  # The normal entrypoint deliberately refuses to bind until the migrated
+  # database satisfies the schema contract. That gate is tested elsewhere.
+  # Here we isolate the /version route from database readiness by starting the
+  # exact compiled Fastify server from the image and then making a real HTTP
+  # request to it.
+  cid=$(docker run -d --entrypoint node \
+        -e NODE_ENV=test \
+        -e DATABASE_URL=postgres://u:p@127.0.0.1:1/d \
         -e JWT_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-        -e IP_HASH_SALT=ci-salt-2026 -p 18080:8080 '"$IMAGE"')
+        -e IP_HASH_SALT=ci-salt-2026 \
+        -p 18080:8080 '"$IMAGE"' --input-type=module -e \
+        "import { buildServer } from \"./apps/api/dist/server.js\"; const { app } = await buildServer(); await app.listen({ host: \"0.0.0.0\", port: 8080 });")
   trap "docker rm -f $cid >/dev/null 2>&1 || true" EXIT
   for i in $(seq 1 30); do
     body=$(curl -fsS http://127.0.0.1:18080/version 2>/dev/null) && break
