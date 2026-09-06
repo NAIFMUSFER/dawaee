@@ -14,7 +14,7 @@ import * as SecureStore from 'expo-secure-store';
  * `LEGACY_KEY` is the plaintext AsyncStorage key used by older builds. It is
  * read only for one-way migration and is never written again.
  */
-const SECURE_KEY = 'dawaee.pendingInvitationToken.v1';
+const SECURE_KEY = 'app.dawaee.mobile.pendingInvitationToken.v1';
 const LEGACY_KEY = 'dawaee.pendingInvitationToken';
 
 let memoryPendingInvite: string | null = null;
