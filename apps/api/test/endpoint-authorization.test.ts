@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  authHeaders, resetDatabase, signIn, startHarness, PANADOL, type Harness, type TestUser,
+  authHeaders, resetDatabase, signIn, startHarness, PANADOL, TEST_PASSWORD,
+  type Harness, type TestUser,
 } from './harness.js';
+import { CAREGIVER_PERMISSIONS } from '@dawaee/shared';
 
 /**
  * P12 — endpoint-wide authorization.
@@ -1149,5 +1151,250 @@ describe('P12-9 unvalidated input reaching Postgres still ends in a 4xx', () => 
       const res = await probe.app.inject({ method: 'GET', url });
       expect(res.statusCode, `${url}: ${res.body}`).toBe(200);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P12-10 — a caregiver holds exactly what the patient granted.
+ *
+ * `rls-matrix.test.ts` proves a caregiver of one patient cannot reach another
+ * patient at all. The remaining question is narrower and only visible over
+ * HTTP: inside the one relationship they legitimately hold, does each route
+ * check the specific permission it needs, or merely that a relationship exists?
+ *
+ * Grant one permission — `view_schedule`, the narrowest useful grant, the
+ * "see when the pills are due, nothing else" case a patient would choose for a
+ * neighbour — and every route that needs a different permission must refuse.
+ */
+describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
+  let patient: TestUser;
+  let helper: TestUser;
+  const ids = { profileId: '', medicationId: '', scheduleId: '', doseId: '', relationshipId: '' };
+
+  beforeAll(async () => {
+    patient = await signIn(h, '+966500090010');
+    helper = await signIn(h, '+966500090011');
+
+    const med = await createMedication(patient);
+    ids.medicationId = med.medication.id;
+    ids.scheduleId = med.scheduleId;
+    ids.profileId = patient.profileId;
+
+    const doses = await send({
+      method: 'GET',
+      url: `/v1/doses?profileId=${patient.profileId}&from=2026-09-01&to=2026-09-30`,
+      headers: authHeaders(patient),
+    });
+    ids.doseId = doses.json<{ doses: Array<{ id: string }> }>().doses[0]!.id;
+
+    const invite = await send({
+      method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(patient),
+      payload: {
+        patientProfileId: patient.profileId, invitedName: 'Neighbour',
+        invitedPhone: helper.phone, role: 'caregiver',
+        permissions: ['view_schedule'], escalationPriority: 1,
+      },
+    });
+    expect(invite.statusCode, invite.body).toBe(200);
+    ids.relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
+    const token = (invite.json<{ invitationLink: string }>().invitationLink).split('/invite/')[1]!;
+
+    const accepted = await send({
+      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(helper), payload: { token },
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+  }, 120_000);
+
+  it('positive control: the granted permission actually works', async () => {
+    // `/v1/today` is the route `view_schedule` is for. The dated list at
+    // `/v1/doses` requires `view_history` — a distinction worth noting, since
+    // it means "see today's doses" and "see the record of past doses" are
+    // separately grantable, which is the right shape for this product.
+    const res = await send({
+      method: 'GET', url: `/v1/today?profileId=${ids.profileId}`, headers: authHeaders(helper),
+    });
+    expect(res.statusCode, `view_schedule was granted but refused: ${res.body}`).toBe(200);
+  });
+
+  it('and the history it was NOT granted is refused', async () => {
+    const res = await send({
+      method: 'GET',
+      url: `/v1/doses?profileId=${ids.profileId}&from=2026-09-01&to=2026-09-30`,
+      headers: authHeaders(helper),
+    });
+    expect(res.statusCode, 'view_history was not granted but the list was served').toBe(403);
+  });
+
+  /**
+   * Each entry names the permission the route requires — none of which is
+   * `view_schedule`. A 200 here means that route checks "is there a
+   * relationship" rather than "was this granted".
+   */
+  const BEYOND_GRANT: Array<[string, 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', () => string, unknown?]> = [
+    ['view_medications: list', 'GET', () => `/v1/medications?profileId=${ids.profileId}`],
+    ['view_medications: read one', 'GET', () => `/v1/medications/${ids.medicationId}`],
+    ['view_medications: stock', 'GET', () => `/v1/medications/${ids.medicationId}/stock`],
+    ['view_history: notes', 'GET', () => `/v1/notes?profileId=${ids.profileId}`],
+    ['view_history: measurements', 'GET', () => `/v1/measurements?profileId=${ids.profileId}`],
+    ['view_reports: weekly', 'GET', () => `/v1/reports/weekly?profileId=${ids.profileId}`],
+    ['view_reports: clinician', 'GET', () => `/v1/reports/clinician?profileId=${ids.profileId}&from=2026-09-01&to=2026-09-30`],
+    ['view_emergency_card', 'GET', () => `/v1/emergency/card?profileId=${ids.profileId}`],
+    ['edit_medication', 'PATCH', () => `/v1/medications/${ids.medicationId}`, { notes: 'changed by neighbour' }],
+    ['add_medication', 'POST', () => '/v1/medications', {
+      patientProfileId: '', ...PANADOL, startDate: '2026-09-01',
+      schedule: { rule: { kind: 'fixed_times', times: ['08:00'] }, doseQuantity: 1, doseUnit: 'tablet', startDate: '2026-09-01' },
+    }],
+    ['edit_schedule', 'PATCH', () => `/v1/schedules/${ids.scheduleId}`, { active: false }],
+    ['update_stock', 'PUT', () => `/v1/medications/${ids.medicationId}/stock`, { trackingEnabled: true, remainingQuantity: 1 }],
+    ['confirm_dose: taken', 'POST', () => `/v1/doses/${ids.doseId}/taken`, { clientEventId: 'neighbour-taken-1' }],
+    ['confirm_dose: skip', 'POST', () => `/v1/doses/${ids.doseId}/skip`, { clientEventId: 'neighbour-skip-1' }],
+    ['manage_caregivers', 'PATCH', () => `/v1/caregivers/${ids.relationshipId}/permissions`, { permissions: ['view_schedule', 'edit_medication'] }],
+    ['owner only: export', 'GET', () => `/v1/reports/export?profileId=${ids.profileId}`],
+    ['owner only: rewrite the card', 'PUT', () => `/v1/emergency/card?profileId=${ids.profileId}`, { bloodType: 'B-', allergies: [] }],
+    ['owner only: mint a QR', 'POST', () => `/v1/emergency/qr/enable?profileId=${ids.profileId}`],
+    ['owner only: rename the profile', 'PATCH', () => `/v1/profiles/${ids.profileId}`, { displayName: 'renamed by neighbour' }],
+  ];
+
+  it('refuses every route whose permission was not granted', async () => {
+    const overreach: string[] = [];
+    for (const [label, method, url, payload] of BEYOND_GRANT) {
+      const body = label.startsWith('add_medication')
+        ? { ...(payload as object), patientProfileId: ids.profileId }
+        : payload;
+      const res = await send({
+        method, url: url(), headers: authHeaders(helper),
+        payload: body ?? (method === 'GET' || method === 'DELETE' ? undefined : {}),
+      });
+      if (res.statusCode < 400) overreach.push(`${label} -> ${res.statusCode} ${res.body.slice(0, 140)}`);
+    }
+    expect(overreach, 'a caregiver did more than the patient granted').toEqual([]);
+  }, 120_000);
+
+  it('and none of those responses carried the medication name', async () => {
+    const leaks: string[] = [];
+    for (const [label, method, url, payload] of BEYOND_GRANT) {
+      const res = await send({
+        method, url: url(), headers: authHeaders(helper),
+        payload: payload ?? (method === 'GET' || method === 'DELETE' ? undefined : {}),
+      });
+      if (res.body.includes(PANADOL.name)) leaks.push(label);
+    }
+    expect(leaks, 'a refused request still disclosed the medication').toEqual([]);
+  }, 120_000);
+
+  it('cannot widen its own grant through the permissions route', async () => {
+    await send({
+      method: 'PATCH', url: `/v1/caregivers/${ids.relationshipId}/permissions`,
+      headers: authHeaders(helper),
+      payload: { permissions: [...CAREGIVER_PERMISSIONS] },
+    });
+    const perms = execFileSync('psql', ['-d', 'dawaee_test', '-tAc',
+      `SELECT permissions::text FROM caregiver_relationships WHERE id = '${ids.relationshipId}'`], {
+      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
+    }).toString().trim();
+    expect(perms, 'the caregiver widened its own grant').toBe('{view_schedule}');
+  });
+
+  it('loses everything the moment the patient revokes the relationship', async () => {
+    const revoke = await send({
+      method: 'DELETE', url: `/v1/caregivers/${ids.relationshipId}`, headers: authHeaders(patient),
+    });
+    expect(revoke.statusCode, revoke.body).toBe(200);
+
+    const after = await send({
+      method: 'GET', url: `/v1/today?profileId=${ids.profileId}`, headers: authHeaders(helper),
+    });
+    expect(after.statusCode, 'a revoked caregiver kept the access').toBeGreaterThanOrEqual(400);
+    expect(after.body).not.toContain(PANADOL.name);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * P12-11 — a disabled account is disabled everywhere.
+ *
+ * `auth-session.test.ts` proves that disabling an account stops a token being
+ * accepted, on one route. That is the right mechanism to test, but "on one
+ * route" is the part worth widening: authentication is a shared preHandler, so
+ * the claim generalises — and a sweep is what turns a claim that ought to
+ * generalise into one that is checked.
+ */
+describe('P12-11 disabling an account closes every route at once', () => {
+  let doomed: TestUser;
+
+  const setDisabled = (on: boolean) => execFileSync('psql', ['-d', 'dawaee_test', '-c',
+    `UPDATE users SET disabled_at = ${on ? 'now()' : 'NULL'} WHERE id = '${doomed.userId}'`], {
+    env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
+  });
+
+  beforeAll(async () => { doomed = await signIn(h, '+966500090020'); }, 60_000);
+  afterAll(() => { if (doomed) setDisabled(false); });
+
+  it('positive control: the account works before it is disabled', async () => {
+    const res = await send({ method: 'GET', url: '/v1/me', headers: authHeaders(doomed) });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it('refuses every authenticated route once disabled', async () => {
+    setDisabled(true);
+    const stillOpen: string[] = [];
+    for (const [key, exposure] of Object.entries(EXPOSURE)) {
+      if (exposure !== 'authenticated' && exposure !== 'admin') continue;
+      const [method, template] = key.split(' ') as [string, string];
+      const res = await send({
+        method: method as 'GET', url: template.replace(/:\w+/g, BOGUS_UUID),
+        headers: authHeaders(doomed),
+        payload: method === 'GET' || method === 'DELETE' ? undefined : {},
+      });
+      if (res.statusCode < 400) stillOpen.push(`${key} -> ${res.statusCode}`);
+    }
+    expect(stillOpen, 'a disabled account was still served').toEqual([]);
+  }, 120_000);
+
+  it('and cannot mint a new token from its refresh token', async () => {
+    const res = await send({
+      method: 'POST', url: '/v1/auth/refresh', payload: { refreshToken: doomed.refreshToken },
+    });
+    expect(res.statusCode, 'a disabled account refreshed its session').not.toBe(200);
+  });
+
+  /**
+   * Re-enabling restores the ability to sign in — not the old tokens.
+   *
+   * Two independent controls fire on disable and it is worth being exact about
+   * which does what, because they behave differently on the way back.
+   * `app.session_is_live` checks `disabled_at` on every request, so the block
+   * is immediate; and the `users_revoke_sessions_on_disable` trigger
+   * (migration 0024) stamps `revoked_at` on every session at the NULL ->
+   * non-NULL edge, which is permanent by design — that migration says so:
+   * "re-enabling can never un-revoke". Measured, not inferred: the session row
+   * still carries its `revoked_at` after the flag is cleared.
+   *
+   * The operational consequence belongs in the runbook rather than in a fix.
+   * An account disabled by mistake does not simply resume; every device it was
+   * signed in on has to authenticate again. For an elderly patient this is the
+   * difference between a reversible operator action and one that leaves them
+   * unable to see their reminders until somebody helps them sign in.
+   */
+  it('positive control: re-enabling restores sign-in, and old sessions stay revoked', async () => {
+    setDisabled(false);
+
+    const oldToken = await send({ method: 'GET', url: '/v1/me', headers: authHeaders(doomed) });
+    expect(oldToken.statusCode, 'a session revoked on disable came back to life').toBe(401);
+
+    const login = await send({
+      method: 'POST', url: '/v1/auth/login',
+      payload: { identifier: doomed.phone, password: TEST_PASSWORD, deviceId: 'reenabled-device' },
+    });
+    expect(login.statusCode, `a re-enabled account could not sign in: ${login.body}`).toBe(200);
+
+    const fresh = await send({
+      method: 'GET', url: '/v1/me',
+      headers: { authorization: `Bearer ${login.json<{ accessToken: string }>().accessToken}` },
+    });
+    expect(fresh.statusCode, fresh.body).toBe(200);
   });
 });
