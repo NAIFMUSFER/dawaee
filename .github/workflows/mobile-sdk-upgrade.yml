@@ -14,7 +14,7 @@ jobs:
   upgrade:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     env:
       NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
       EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
@@ -29,7 +29,17 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: apps/mobile/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+
+      # Mobile tests/typechecking intentionally reach packages/shared and use
+      # Vitest from the repository root. The first rehearsal installed only the
+      # mobile tree, so SDK 53 itself upgraded correctly but TypeScript could not
+      # resolve the repo-level test/runtime dependencies. Reproduce the real CI
+      # topology instead of weakening tsconfig or skipping tests.
+      - name: Install repository test dependencies
+        run: npm ci
 
       - name: Configure upgrade commits
         run: |
@@ -48,7 +58,7 @@ jobs:
           rm -rf /tmp/dawaee-sdk53-android /tmp/dawaee-sdk53-ios
           npx expo export --platform android --output-dir /tmp/dawaee-sdk53-android
           npx expo export --platform ios --output-dir /tmp/dawaee-sdk53-ios
-          git add package.json package-lock.json
+          git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 52 to 53'
           git push origin HEAD:mobile/expo55-store-readiness
@@ -64,7 +74,7 @@ jobs:
           rm -rf /tmp/dawaee-sdk54-android /tmp/dawaee-sdk54-ios
           npx expo export --platform android --output-dir /tmp/dawaee-sdk54-android
           npx expo export --platform ios --output-dir /tmp/dawaee-sdk54-ios
-          git add package.json package-lock.json
+          git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 53 to 54'
           git push origin HEAD:mobile/expo55-store-readiness
@@ -80,7 +90,7 @@ jobs:
           rm -rf /tmp/dawaee-sdk55-android /tmp/dawaee-sdk55-ios
           npx expo export --platform android --output-dir /tmp/dawaee-sdk55-android
           npx expo export --platform ios --output-dir /tmp/dawaee-sdk55-ios
-          git add package.json package-lock.json
+          git add package.json package-lock.json app.json
           git diff --cached --check
           git commit -m 'mobile: upgrade Expo SDK 54 to 55'
           git push origin HEAD:mobile/expo55-store-readiness
@@ -90,7 +100,4 @@ jobs:
         run: |
           set -euo pipefail
           npx expo install --check --npm
-          npx expo-doctor@latest || {
-            echo '::warning::expo-doctor reported findings; inspect them before merging the mobile SDK branch'
-            exit 1
-          }
+          npx expo-doctor@latest
