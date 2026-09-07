@@ -17,10 +17,14 @@ function fakePsql(canSet = true): string {
   writeFileSync(p, `#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+role_set=false
+if [[ -n "${'$'}{PSQLRC:-}" && -f "${'$'}PSQLRC" ]] && grep -q '^SET ROLE dawaee_owner;$' "${'$'}PSQLRC"; then
+  role_set=true
+fi
 if [[ "$args" == *"pg_has_role"* ]]; then
   ${canSet ? "printf 't\\n'" : "printf 'f\\n'"}
 elif [[ "$args" == *"SELECT current_user"* ]]; then
-  if [[ "${'$'}{PGOPTIONS:-}" == *"role=dawaee_owner"* ]]; then printf 'dawaee_owner\\n'; else printf 'postgres\\n'; fi
+  if [[ "$role_set" == true ]]; then printf 'dawaee_owner\\n'; else printf 'postgres\\n'; fi
 elif [[ "$args" == *"SELECT session_user"* ]]; then
   printf 'postgres\\n'
 elif [[ "$args" == *"string_agg"* ]]; then
@@ -62,8 +66,8 @@ describe('migration effective role handoff', () => {
     expect(result.stderr).toContain("cannot SET ROLE 'dawaee_owner'");
   });
 
-  it('rejects a deployment-supplied role value that could become SQL or PGOPTIONS injection', () => {
-    const result = run({ MIGRATION_SET_ROLE: 'dawaee_owner -c session_authorization=postgres' }, fakePsql(true));
+  it('rejects a deployment-supplied role value that could become SQL or startup-file injection', () => {
+    const result = run({ MIGRATION_SET_ROLE: 'dawaee_owner; RESET ROLE' }, fakePsql(true));
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('must be a lowercase unquoted Postgres identifier');
   });
