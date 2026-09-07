@@ -15,7 +15,46 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # hundred of them bury the one message that matters — which migration failed —
 # and have trained more than one reader to scroll past a real error. Warnings
 # and above still print.
-export PGOPTIONS="${PGOPTIONS:--c client_min_messages=warning}"
+BASE_PGOPTIONS="${PGOPTIONS:--c client_min_messages=warning}"
+export PGOPTIONS="$BASE_PGOPTIONS"
+
+# Managed Postgres can require authenticating as a platform/admin role while
+# the application schema is deliberately owned by a separate NOSUPERUSER /
+# NOBYPASSRLS role. In that case the connection identity and migration identity
+# must remain distinct. MIGRATION_SET_ROLE makes that distinction explicit.
+#
+# It is opt-in. With the variable unset this script behaves exactly as before.
+if [ -n "${MIGRATION_SET_ROLE:-}" ]; then
+  if [[ ! "$MIGRATION_SET_ROLE" =~ ^[a-z_][a-z0-9_]*$ ]]; then
+    echo "ERROR: MIGRATION_SET_ROLE must be a lowercase unquoted Postgres identifier." >&2
+    exit 1
+  fi
+
+  # Check the authenticated role's exact SET capability before changing any
+  # session state. This is a read-only capability check and fails closed.
+  CAN_SET_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" psql "$DATABASE_URL" -tAc \
+    "SELECT pg_has_role(current_user, '$MIGRATION_SET_ROLE', 'SET')")"
+  if [ "$CAN_SET_ROLE" != "t" ]; then
+    CONNECTION_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" psql "$DATABASE_URL" -tAc 'SELECT current_user')"
+    echo "ERROR: connection role '$CONNECTION_ROLE' cannot SET ROLE '$MIGRATION_SET_ROLE'." >&2
+    exit 1
+  fi
+
+  # PGOPTIONS is inherited by every independent psql process below. Setting the
+  # `role` GUC at connection start is equivalent to SET ROLE for that session,
+  # so definer-policy checks, migrations, ledger writes and role-grant checks
+  # all see the same effective schema owner. session_user remains the actual
+  # authenticated connection identity.
+  export PGOPTIONS="$BASE_PGOPTIONS -c role=$MIGRATION_SET_ROLE"
+
+  EFFECTIVE_ROLE="$(psql "$DATABASE_URL" -tAc 'SELECT current_user')"
+  CONNECTION_ROLE="$(psql "$DATABASE_URL" -tAc 'SELECT session_user')"
+  if [ "$EFFECTIVE_ROLE" != "$MIGRATION_SET_ROLE" ]; then
+    echo "ERROR: requested migration role '$MIGRATION_SET_ROLE' but effective role is '$EFFECTIVE_ROLE'." >&2
+    exit 1
+  fi
+  echo "preflight: connected as '$CONNECTION_ROLE', assuming migration role '$EFFECTIVE_ROLE'"
+fi
 
 # =========================================================== PREFLIGHT
 #
