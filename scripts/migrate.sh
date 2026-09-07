@@ -32,20 +32,27 @@ if [ -n "${MIGRATION_SET_ROLE:-}" ]; then
 
   # Check the authenticated role's exact SET capability before changing any
   # session state. This is a read-only capability check and fails closed.
-  CAN_SET_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" psql "$DATABASE_URL" -tAc \
+  CAN_SET_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" PSQLRC=/dev/null psql "$DATABASE_URL" -tAc \
     "SELECT pg_has_role(current_user, '$MIGRATION_SET_ROLE', 'SET')")"
   if [ "$CAN_SET_ROLE" != "t" ]; then
-    CONNECTION_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" psql "$DATABASE_URL" -tAc 'SELECT current_user')"
+    CONNECTION_ROLE="$(PGOPTIONS="$BASE_PGOPTIONS" PSQLRC=/dev/null psql "$DATABASE_URL" -tAc 'SELECT current_user')"
     echo "ERROR: connection role '$CONNECTION_ROLE' cannot SET ROLE '$MIGRATION_SET_ROLE'." >&2
     exit 1
   fi
 
-  # PGOPTIONS is inherited by every independent psql process below. Setting the
-  # `role` GUC at connection start is equivalent to SET ROLE for that session,
-  # so definer-policy checks, migrations, ledger writes and role-grant checks
-  # all see the same effective schema owner. session_user remains the actual
-  # authenticated connection identity.
-  export PGOPTIONS="$BASE_PGOPTIONS -c role=$MIGRATION_SET_ROLE"
+  # Supavisor may ignore `role=...` supplied as a startup GUC in PGOPTIONS.
+  # psql's startup file is executed after the connection is authenticated and
+  # before any -c, -f, or stdin command, so an actual SQL SET ROLE applies to
+  # every independent psql session below without changing DATABASE_URL.
+  MIGRATION_PSQLRC="$(mktemp)"
+  chmod 600 "$MIGRATION_PSQLRC"
+  cat > "$MIGRATION_PSQLRC" <<SQL
+\\set QUIET 1
+SET ROLE $MIGRATION_SET_ROLE;
+\\set QUIET 0
+SQL
+  export PSQLRC="$MIGRATION_PSQLRC"
+  trap 'rm -f "$MIGRATION_PSQLRC"' EXIT
 
   EFFECTIVE_ROLE="$(psql "$DATABASE_URL" -tAc 'SELECT current_user')"
   CONNECTION_ROLE="$(psql "$DATABASE_URL" -tAc 'SELECT session_user')"
