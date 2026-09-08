@@ -59,9 +59,9 @@ open(out_path, 'w', encoding='utf-8').write(
     f'<link rel="apple-touch-icon" href="{ICON_URI}" />\n'
     '<title>دوائي Dawaee</title>\n'
     f'<style id="expo-reset">{css}\n'
-    'html,body,#root{{min-height:100%;background:#F2F6F5}}\n'
-    'body{{margin:0;overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}}\n'
-    'button,a,[role="button"]{{touch-action:manipulation}}\n'
+    'html,body,#root{min-height:100%;background:#F2F6F5}\n'
+    'body{margin:0;overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}\n'
+    'button,a,[role="button"]{touch-action:manipulation}\n'
     '</style>\n'
     '</head>\n<body>\n<div id="root"></div>\n'
     f'<script>\n{js}\n</script>\n</body>\n</html>\n')
