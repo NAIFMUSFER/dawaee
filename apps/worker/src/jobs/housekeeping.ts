@@ -68,10 +68,27 @@ export async function housekeepingJob(
     `DELETE FROM job_runs WHERE started_at < now() - interval '14 days'`,
   )).rowCount ?? 0);
 
-  // Objects whose upload was requested but never completed leave a dangling
-  // row and, potentially, a partial object.
+  /**
+   * Upload tickets do not currently have a server callback that flips
+   * `uploaded_at`: direct S3/R2 PUTs bypass the API. The previous cleanup used
+   * that nullable column as if it were an authoritative completion signal and
+   * therefore would delete the metadata for a successfully uploaded image 24h
+   * later — including an image already referenced by a medication,
+   * prescription or profile avatar. The physical private object would remain,
+   * but `/v1/uploads/url` would return 404 because its authorization metadata
+   * had been erased.
+   *
+   * Until completion is positively attested, only an OLD, UNREFERENCED ticket
+   * is safe to classify as abandoned. Re-check all three reference surfaces in
+   * the DELETE itself so a current reference prevents removal.
+   */
   await runStep(ctx, client, outcome, 'uploads', async () => (await client.query(
-    `DELETE FROM stored_objects WHERE uploaded_at IS NULL AND created_at < now() - interval '24 hours'`,
+    `DELETE FROM stored_objects so
+      WHERE so.uploaded_at IS NULL
+        AND so.created_at < now() - interval '24 hours'
+        AND NOT EXISTS (SELECT 1 FROM medications m WHERE m.image_key = so.object_key)
+        AND NOT EXISTS (SELECT 1 FROM prescriptions p WHERE p.image_key = so.object_key)
+        AND NOT EXISTS (SELECT 1 FROM patient_profiles pp WHERE pp.avatar_key = so.object_key)`,
   )).rowCount ?? 0);
 
   /**
