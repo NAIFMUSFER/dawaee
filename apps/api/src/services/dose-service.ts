@@ -142,7 +142,8 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     `UPDATE dose_occurrences
         SET status = $2::dose_status, confirmed_at = $3, confirmed_by_user_id = $4,
             confirmation_method = $5::confirmation_method, confirmation_device_id = $6,
-            client_event_id = $7, escalation_completed_at = COALESCE(escalation_completed_at, now())
+            client_event_id = $7, snoozed_until = NULL,
+            escalation_completed_at = COALESCE(escalation_completed_at, now())
       WHERE id = $1`,
     [dose.id, result.status, result.confirmedAt, input.userId, input.method, input.deviceId ?? null, input.clientEventId],
   );
@@ -299,7 +300,8 @@ export async function skipDoseAction(
   await tx.query(
     `UPDATE dose_occurrences
         SET status = 'skipped', confirmed_at = $2, confirmed_by_user_id = $3,
-            client_event_id = $4, escalation_completed_at = COALESCE(escalation_completed_at, now())
+            client_event_id = $4, snoozed_until = NULL,
+            escalation_completed_at = COALESCE(escalation_completed_at, now())
       WHERE id = $1`,
     [dose.id, input.now, input.userId, input.clientEventId],
   );
@@ -357,7 +359,7 @@ export async function undoDose(
   await tx.query(
     `UPDATE dose_occurrences
         SET status = 'upcoming', confirmed_at = NULL, confirmed_by_user_id = NULL,
-            confirmation_method = NULL, client_event_id = NULL
+            confirmation_method = NULL, client_event_id = NULL, snoozed_until = NULL
       WHERE id = $1`,
     [dose.id],
   );
