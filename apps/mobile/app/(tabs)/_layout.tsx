@@ -1,20 +1,18 @@
 import React from 'react';
+import { View } from 'react-native';
 import { Tabs } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { useApp } from '@/state/app-store';
+import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { TabIcon, type TabIconName } from '@/components/TabIcon';
 
-/**
- * Bottom navigation.
- *
- * Uses deterministic SVG icons instead of emoji so the same symbols render on
- * iOS, Android and web. Emoji varied by platform and could appear as missing or
- * differently-sized glyphs in Safari, which made a navigation target look
- * broken even when the route itself was healthy.
- */
 export default function TabsLayout() {
   const { t } = useI18n();
   const theme = useTheme();
+  const { profiles } = useApp();
+  const hasMultipleProfiles = profiles.length > 1;
 
   const icon = (name: TabIconName) => ({ color, focused }: { color: string; focused: boolean }) => (
     <TabIcon
@@ -23,6 +21,14 @@ export default function TabsLayout() {
       focused={focused}
       size={theme.elderlyMode ? 29 : 24}
     />
+  );
+
+  const profileHeader = () => (
+    <SafeAreaView edges={['top']} style={{ backgroundColor: theme.colors.surface }}>
+      <View style={{ paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.sm }}>
+        <ProfileSwitcher compact />
+      </View>
+    </SafeAreaView>
   );
 
   return (
@@ -43,8 +49,6 @@ export default function TabsLayout() {
           minWidth: 0,
           paddingHorizontal: 2,
         },
-        // Keep all five Arabic labels readable on narrow iPhones without
-        // allowing OS font scaling to clip one label and shift the others.
         tabBarLabelStyle: { fontSize: 12, fontWeight: '600', lineHeight: 16 },
         tabBarLabelPosition: 'below-icon',
         tabBarAllowFontScaling: false,
@@ -52,7 +56,15 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="today" options={{ title: t('nav.today'), tabBarIcon: icon('today') }} />
       <Tabs.Screen name="medications" options={{ title: t('nav.medications'), tabBarIcon: icon('medications') }} />
-      <Tabs.Screen name="history" options={{ title: t('nav.history'), tabBarIcon: icon('history') }} />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: t('nav.history'),
+          tabBarIcon: icon('history'),
+          headerShown: hasMultipleProfiles,
+          header: hasMultipleProfiles ? profileHeader : undefined,
+        }}
+      />
       <Tabs.Screen name="family" options={{ title: t('nav.family'), tabBarIcon: icon('family') }} />
       <Tabs.Screen name="settings" options={{ title: t('nav.settings'), tabBarIcon: icon('settings') }} />
     </Tabs>
