@@ -37,6 +37,20 @@ function simultaneousKey(dose: OpenDoseRow): string {
   return `${dose.patient_profile_id}|${dose.scheduled_at.toISOString()}`;
 }
 
+function patientDispatchKey(
+  dose: OpenDoseRow,
+  recipient: EscalationRecipient,
+  channel: NotificationChannel,
+): string {
+  return [
+    simultaneousKey(dose),
+    recipient.userId ?? '',
+    recipient.phoneE164 ?? '',
+    recipient.relationshipId ?? '',
+    channel,
+  ].join('|');
+}
+
 export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promise<{ itemsProcessed: number }> {
   const now = ctx.now();
 
@@ -65,19 +79,14 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
     [now],
   );
 
-  const simultaneous = new Map<string, OpenDoseRow[]>();
-  for (const dose of rows) {
-    const key = simultaneousKey(dose);
-    const group = simultaneous.get(key);
-    if (group) group.push(dose);
-    else simultaneous.set(key, [dose]);
-  }
-
-  // A patient with four medicines at 08:00 receives one initial alert, not
-  // four simultaneous banners/vibrations. Each dose still advances its own
-  // escalation state and remains independently confirmable in the app.
-  const initialPatientGroupsDispatched = new Set<string>();
-  let enqueued = 0;
+  // Evaluate every dose first. Group membership must be based on doses that are
+  // actually eligible for the same initial patient dispatch. Otherwise a dose
+  // whose medication-specific reminder policy is disabled could leak into the
+  // grouped text simply because it shares the same clock time.
+  const evaluated: Array<{
+    dose: OpenDoseRow;
+    decision: ReturnType<typeof evaluateEscalation>;
+  }> = [];
 
   for (const dose of rows) {
     const policy = await loadPolicy(client, dose.patient_profile_id, dose.medication_id);
@@ -87,54 +96,73 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
       missedAfterMinutes: dose.missed_after_minutes,
     });
 
-    const decision = evaluateEscalation({
-      occurrence: {
-        id: dose.id,
-        status: dose.status as never,
-        scheduledAt: dose.scheduled_at.toISOString(),
-        snoozedUntil: dose.snoozed_until?.toISOString() ?? null,
-        notifiedAt: dose.notified_at?.toISOString() ?? null,
-        escalationStage: dose.escalation_stage,
-        escalationCompletedAt: dose.escalation_completed_at?.toISOString() ?? null,
-      },
-      policy,
-      thresholds: {
-        lateAfterMinutes: dose.late_after_minutes,
-        missedAfterMinutes: dose.missed_after_minutes,
-      },
-      caregivers,
-      patient: {
-        userId: dose.patient_user_id ?? '',
-        phoneE164: dose.patient_phone,
-        displayName: dose.profile_name,
-        timezone: dose.profile_timezone,
-      },
-      consecutiveMissedCount: missedStreak,
-      now,
+    evaluated.push({
+      dose,
+      decision: evaluateEscalation({
+        occurrence: {
+          id: dose.id,
+          status: dose.status as never,
+          scheduledAt: dose.scheduled_at.toISOString(),
+          snoozedUntil: dose.snoozed_until?.toISOString() ?? null,
+          notifiedAt: dose.notified_at?.toISOString() ?? null,
+          escalationStage: dose.escalation_stage,
+          escalationCompletedAt: dose.escalation_completed_at?.toISOString() ?? null,
+        },
+        policy,
+        thresholds: {
+          lateAfterMinutes: dose.late_after_minutes,
+          missedAfterMinutes: dose.missed_after_minutes,
+        },
+        caregivers,
+        patient: {
+          userId: dose.patient_user_id ?? '',
+          phoneE164: dose.patient_phone,
+          displayName: dose.profile_name,
+          timezone: dose.profile_timezone,
+        },
+        consecutiveMissedCount: missedStreak,
+        now,
+      }),
     });
+  }
 
+  const eligibleInitialGroups = new Map<string, OpenDoseRow[]>();
+  for (const { dose, decision } of evaluated) {
+    if (decision.action !== 'dispatch' || decision.stageIndex !== 0) continue;
+    for (const recipient of decision.recipients) {
+      if (recipient.kind !== 'patient') continue;
+      for (const channel of recipient.channels) {
+        const key = patientDispatchKey(dose, recipient, channel);
+        const group = eligibleInitialGroups.get(key);
+        if (group) group.push(dose);
+        else eligibleInitialGroups.set(key, [dose]);
+      }
+    }
+  }
+
+  const initialPatientGroupsDispatched = new Set<string>();
+  let enqueued = 0;
+
+  for (const { dose, decision } of evaluated) {
     if (decision.action === 'complete') {
       await client.query('UPDATE dose_occurrences SET escalation_completed_at = now() WHERE id = $1', [dose.id]);
       continue;
     }
     if (decision.action !== 'dispatch' || decision.stageIndex === null) continue;
 
-    const sameTime = simultaneous.get(simultaneousKey(dose)) ?? [dose];
-
+    let simultaneousDoseCount = 1;
     for (const recipient of decision.recipients) {
       for (const channel of recipient.channels) {
-        const groupedInitial =
-          decision.stageIndex === 0 && recipient.kind === 'patient' && sameTime.length > 1;
+        const dispatchKey = patientDispatchKey(dose, recipient, channel);
+        const eligibleGroup = decision.stageIndex === 0 && recipient.kind === 'patient'
+          ? (eligibleInitialGroups.get(dispatchKey) ?? [dose])
+          : [dose];
+        const groupedInitial = eligibleGroup.length > 1;
+        simultaneousDoseCount = Math.max(simultaneousDoseCount, eligibleGroup.length);
+
         if (groupedInitial) {
-          const groupDispatchKey = [
-            simultaneousKey(dose),
-            recipient.userId ?? '',
-            recipient.phoneE164 ?? '',
-            recipient.relationshipId ?? '',
-            channel,
-          ].join('|');
-          if (initialPatientGroupsDispatched.has(groupDispatchKey)) continue;
-          initialPatientGroupsDispatched.add(groupDispatchKey);
+          if (initialPatientGroupsDispatched.has(dispatchKey)) continue;
+          initialPatientGroupsDispatched.add(dispatchKey);
         }
 
         const inserted = await enqueueNotification(client, {
@@ -144,7 +172,7 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
           stageIndex: decision.stageIndex,
           stage: decision.stage!,
           now,
-          groupDoses: groupedInitial ? sameTime : undefined,
+          groupDoses: groupedInitial ? eligibleGroup : undefined,
         });
         if (inserted) enqueued += 1;
       }
@@ -169,7 +197,7 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
           stage: decision.stageIndex,
           target: decision.stage!.target,
           recipients: decision.recipients.length,
-          simultaneousDoseCount: sameTime.length,
+          simultaneousDoseCount,
         }),
       ],
     );
