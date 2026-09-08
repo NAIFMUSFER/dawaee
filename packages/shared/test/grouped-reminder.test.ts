@@ -35,6 +35,19 @@ describe('simultaneous dose reminder text', () => {
     expect(mobile).toContain("...(grouped ? {} : { categoryIdentifier: MEDICATION_CATEGORY_ID })");
   });
 
+  it('deduplicates the same occurrence before deciding that a reminder is a group', () => {
+    const mobile = readFileSync(join(ROOT, 'apps/mobile/src/notifications/index.ts'), 'utf8');
+    expect(mobile).toContain('const seenDoseIds = new Set<string>()');
+    expect(mobile).toContain('if (seenDoseIds.has(dose.id)) continue');
+    expect(mobile).toContain('seenDoseIds.add(dose.id)');
+  });
+
+  it('consumes handled cold-start actions so an old Snooze is not replayed on a later app launch', () => {
+    const mobile = readFileSync(join(ROOT, 'apps/mobile/src/notifications/index.ts'), 'utf8');
+    expect(mobile).toContain('if (outcome) {');
+    expect(mobile).toContain('clearLastNotificationResponseAsync');
+  });
+
   it('routes a grouped notification tap to Today instead of leaving the patient on an unrelated screen', () => {
     const layout = readFileSync(join(ROOT, 'apps/mobile/app/_layout.tsx'), 'utf8');
     expect(layout).toContain("data.kind !== 'dose_group_reminder'");
