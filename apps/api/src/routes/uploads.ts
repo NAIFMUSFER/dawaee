@@ -87,9 +87,9 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
    * `avatar` is deliberately exempt: a profile picture is not medication data,
    * and every caregiver is meant to see whose profile they are looking at.
    *
-   * The uploader keeps access to what they uploaded. A caregiver may hold
-   * `add_medication` without `view_medications`, and taking their own upload
-   * away from them mid-flow would break the screen that just created it.
+   * The uploader keeps access to what they uploaded. Medication-image creation
+   * now explicitly depends on `view_medications`, so a caregiver who can create
+   * the image can also review the medication identity it represents.
    */
   app.get('/v1/uploads/url', async (req) => {
     const { objectKey } = req.query as { objectKey?: string };
@@ -179,6 +179,11 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
    * Returns a review payload, never a saved record. The response is explicitly
    * labelled as unconfirmed AI output, and no medication or schedule exists
    * until the user posts the confirmed values back through /v1/medications.
+   *
+   * The object is bound to the same patient profile and to the purpose it was
+   * uploaded for. RLS alone is not enough here: one account may legitimately
+   * own several patient profiles, so an object visible to that account still
+   * must not be relabelled as belonging to a different patient during OCR.
    */
   app.post('/v1/ocr/analyze', {
     config: { rateLimit: { max: 20, timeWindow: '5 minutes' } },
@@ -200,12 +205,26 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
           'Image analysis requires your consent to process medication images',
         );
       }
-      const { rows } = await tx.query<{ object_key: string; content_type: string }>(
-        'SELECT object_key, content_type FROM stored_objects WHERE object_key = $1',
+      const { rows } = await tx.query<{
+        object_key: string; content_type: string; patient_profile_id: string | null; purpose: string;
+      }>(
+        `SELECT object_key, content_type, patient_profile_id, purpose
+           FROM stored_objects WHERE object_key = $1`,
         [body.imageKey],
       );
-      if (!rows[0]) throw AppError.notFound('Image not found');
-      return rows[0];
+      const object = rows[0];
+      if (!object || object.patient_profile_id !== body.patientProfileId) {
+        // Do not let a visible object be rebound to another profile. Returning
+        // the same 404 as an unknown key keeps the object/profile relationship
+        // from becoming an oracle for callers who do not already know it.
+        throw AppError.notFound('Image not found');
+      }
+
+      const expectedPurpose = body.kind === 'medication_label' ? 'medication_image' : 'prescription_image';
+      if (object.purpose !== expectedPurpose) {
+        throw AppError.badRequest(ERROR_CODES.UPLOAD_REJECTED, 'Image purpose does not match OCR request');
+      }
+      return object;
     });
 
     let buffer: Buffer;
