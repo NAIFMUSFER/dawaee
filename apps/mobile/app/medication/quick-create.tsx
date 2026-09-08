@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { MultiPicker, Picker } from '@/components/Picker';
+import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { TimeField, isValidTime } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
@@ -17,7 +18,7 @@ const WEEKDAY_ANCHORS = [
   '2024-01-07', '2024-01-08', '2024-01-09', '2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13',
 ] as const;
 const THRESHOLD_CHOICES = ['3', '5', '7', '10', '14'] as const;
-const DOSE_QUANTITY_CHOICES = ['0.5', '1', '1.5', '2'] as const;
+const DOSE_QUANTITY_CHOICES = ['0.5', '1', '1.5', '2', '3'] as const;
 
 type Prefill = {
   name?: string;
@@ -50,6 +51,8 @@ export default function QuickCreateMedicationScreen() {
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
   const { activeProfile, preferences } = useApp();
+  const arabic = preferences.locale === 'ar';
+  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
 
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
@@ -89,7 +92,7 @@ export default function QuickCreateMedicationScreen() {
   };
 
   const save = async (acknowledgeDuplicate = false) => {
-    if (!activeProfile) return;
+    if (!activeProfile || !canAdd) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setNameError(t('medication.nameRequired'));
@@ -168,6 +171,19 @@ export default function QuickCreateMedicationScreen() {
     <SafeAreaView style={{ flex: 1 }}>
       <Screen>
         <Txt variant="h2" weight="bold" accessibilityRole="header">{t('medication.createTitle')}</Txt>
+        <ProfileSwitcher compact />
+        {activeProfile ? (
+          <Banner
+            tone="info"
+            title={arabic ? `الدواء سيُضاف إلى: ${activeProfile.displayName}` : `Medication will be added to: ${activeProfile.displayName}`}
+          />
+        ) : null}
+        {!canAdd ? (
+          <Banner
+            tone="warning"
+            title={arabic ? 'لا تملك صلاحية إضافة دواء لهذا الملف' : 'You cannot add medication to this profile'}
+          />
+        ) : null}
         {error ? <Banner tone="danger" title={error} /> : null}
         {duplicate ? (
           <Banner
@@ -178,76 +194,91 @@ export default function QuickCreateMedicationScreen() {
           />
         ) : null}
 
-        <Card>
-          <Field label={t('medication.name')} value={name} onChangeText={setName} error={nameError} autoFocus={!prefill.name} />
-        </Card>
+        {canAdd ? (
+          <>
+            <Card>
+              <Field label={t('medication.name')} value={name} onChangeText={setName} error={nameError} autoFocus={!prefill.name} />
+            </Card>
 
-        <SectionTitle>{t('medication.dose')}</SectionTitle>
-        <Card>
-          <Field label={t('schedule.doseQuantity')} value={doseQuantity} onChangeText={setDoseQuantity} keyboardType="decimal-pad" />
-          <Row wrap gap={theme.spacing.sm}>
-            {DOSE_QUANTITY_CHOICES.map((value) => (
-              <Button
-                key={value}
-                label={formatNumber(Number(value))}
-                tone={doseQuantity === value ? 'primary' : 'secondary'}
-                fullWidth={false}
-                onPress={() => setDoseQuantity(value)}
+            <SectionTitle>{t('medication.dose')}</SectionTitle>
+            <Card>
+              <Txt variant="bodySmall" weight="bold">
+                {arabic ? 'كم تأخذ في كل مرة؟' : 'How much do you take each time?'}
+              </Txt>
+              <Row wrap gap={theme.spacing.sm}>
+                {DOSE_QUANTITY_CHOICES.map((value) => (
+                  <Button
+                    key={value}
+                    label={formatNumber(Number(value))}
+                    tone={doseQuantity === value ? 'primary' : 'secondary'}
+                    fullWidth={false}
+                    onPress={() => setDoseQuantity(value)}
+                  />
+                ))}
+              </Row>
+              <Field
+                label={arabic ? 'كمية أخرى' : 'Other amount'}
+                value={doseQuantity}
+                onChangeText={setDoseQuantity}
+                keyboardType="decimal-pad"
               />
-            ))}
-          </Row>
-          <Picker label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
-        </Card>
+              <Picker label={arabic ? 'الوحدة' : 'Unit'} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
+              <Txt variant="caption" color={theme.colors.ink500}>
+                {arabic ? 'مثال: ٢ حبة في كل موعد. تُستخدم هذه الكمية أيضًا لحساب موعد نفاد الدواء.' : 'Example: 2 tablets at each scheduled time. This amount is also used to forecast when stock will run out.'}
+              </Txt>
+            </Card>
 
-        <SectionTitle>{t('schedule.title')}</SectionTitle>
-        <Card>
-          <MultiPicker
-            label={t('schedule.weekdays')}
-            options={weekdayOptions}
-            values={weekdays}
-            onToggle={(value) => setWeekdays((current) => current.includes(value)
-              ? current.filter((day) => day !== value)
-              : [...current, value])}
-            error={weekdays.length === 0 ? t('schedule.weekdaysRequired') : null}
-          />
-          <Divider />
-          {times.map((time, index) => (
-            <Row key={`${index}-${time}`} gap={theme.spacing.sm} align="flex-end">
-              <View style={{ flex: 1 }}>
-                <TimeField
-                  label={`${t('schedule.times')} ${formatNumber(index + 1)}`}
-                  value={time}
-                  onChange={(value) => setTimes((current) => current.map((entry, position) => position === index ? value : entry))}
-                  error={!isValidTime(time) ? t('schedule.invalidTime') : null}
-                />
-              </View>
-              {times.length > 1 ? (
-                <Button label={t('common.remove')} tone="ghost" fullWidth={false} onPress={() => setTimes((current) => current.filter((_, position) => position !== index))} />
-              ) : null}
-            </Row>
-          ))}
-          {times.length < 12 ? <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, '08:00'])} /> : null}
-        </Card>
+            <SectionTitle>{t('schedule.title')}</SectionTitle>
+            <Card>
+              <MultiPicker
+                label={t('schedule.weekdays')}
+                options={weekdayOptions}
+                values={weekdays}
+                onToggle={(value) => setWeekdays((current) => current.includes(value)
+                  ? current.filter((day) => day !== value)
+                  : [...current, value])}
+                error={weekdays.length === 0 ? t('schedule.weekdaysRequired') : null}
+              />
+              <Divider />
+              {times.map((time, index) => (
+                <Row key={`${index}-${time}`} gap={theme.spacing.sm} align="flex-end">
+                  <View style={{ flex: 1 }}>
+                    <TimeField
+                      label={`${t('schedule.times')} ${formatNumber(index + 1)}`}
+                      value={time}
+                      onChange={(value) => setTimes((current) => current.map((entry, position) => position === index ? value : entry))}
+                      error={!isValidTime(time) ? t('schedule.invalidTime') : null}
+                    />
+                  </View>
+                  {times.length > 1 ? (
+                    <Button label={t('common.remove')} tone="ghost" fullWidth={false} onPress={() => setTimes((current) => current.filter((_, position) => position !== index))} />
+                  ) : null}
+                </Row>
+              ))}
+              {times.length < 12 ? <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, '08:00'])} /> : null}
+            </Card>
 
-        <Card>
-          <DateField label={t('schedule.startDate')} value={startDate} onChange={setStartDate} />
-          <DateField label={t('schedule.endDate')} value={endDate} onChange={setEndDate} optional />
-        </Card>
+            <Card>
+              <DateField label={t('schedule.startDate')} value={startDate} onChange={setStartDate} />
+              <DateField label={t('schedule.endDate')} value={endDate} onChange={setEndDate} optional />
+            </Card>
 
-        <SectionTitle>{t('stock.title')}</SectionTitle>
-        <Card>
-          <Field
-            label={t('stock.currentQuantity')}
-            value={remainingQuantity}
-            onChangeText={setRemainingQuantity}
-            keyboardType="decimal-pad"
-            placeholder={t('stock.enterNewQuantity')}
-            hint={t('common.optional')}
-          />
-          <Picker label={t('stock.thresholdLabel')} options={thresholdOptions} value={thresholdDays} onChange={setThresholdDays} />
-        </Card>
+            <SectionTitle>{t('stock.title')}</SectionTitle>
+            <Card>
+              <Field
+                label={t('stock.currentQuantity')}
+                value={remainingQuantity}
+                onChangeText={setRemainingQuantity}
+                keyboardType="decimal-pad"
+                placeholder={t('stock.enterNewQuantity')}
+                hint={t('common.optional')}
+              />
+              <Picker label={t('stock.thresholdLabel')} options={thresholdOptions} value={thresholdDays} onChange={setThresholdDays} />
+            </Card>
 
-        <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
+            <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
+          </>
+        ) : null}
         <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
       </Screen>
     </SafeAreaView>
