@@ -79,7 +79,7 @@ export default function AddMedicationScreen() {
           : null}
 
         <Card
-          onPress={() => router.push('/medication/edit?mode=create')}
+          onPress={() => router.push('/medication/quick-create')}
           accessibilityLabel={`${t('medication.manualEntry')}. ${t('medication.manualEntryHint')}`}
         >
           <Row gap={theme.spacing.md} align="center">
