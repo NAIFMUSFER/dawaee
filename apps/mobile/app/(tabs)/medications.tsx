@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Banner, Button, Card, EmptyState, Loading, Row, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
+import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
@@ -11,23 +12,15 @@ import { api, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView, TodayResponse } from '@/api/types';
 import type { MessageKey } from '@dawaee/shared';
 
-/**
- * The medication list.
- *
- * The next dose time comes from `/v1/today` rather than being recomputed from
- * the schedule rules on the device: the server already materialised the
- * occurrences, and a second implementation of the expansion here could drift
- * from the one that actually fires the reminders.
- */
-
 type Filter = 'active' | 'paused' | 'all';
-
 const ACTIONABLE: ReadonlySet<DoseView['status']> = new Set(['upcoming', 'due', 'pending_confirmation', 'snoozed']);
 
 export default function MedicationsScreen() {
   const { t, formatTime, formatDate, formatMeasure } = useI18n();
   const theme = useTheme();
-  const { activeProfile, offline, setOffline } = useApp();
+  const { activeProfile, offline, setOffline, preferences } = useApp();
+  const arabic = preferences.locale === 'ar';
+  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
 
   const [filter, setFilter] = useState<Filter>('active');
   const [medications, setMedications] = useState<MedicationView[]>([]);
@@ -37,6 +30,7 @@ export default function MedicationsScreen() {
 
   const load = useCallback(async (selected: Filter) => {
     if (!activeProfile) return;
+    setLoading(true);
     try {
       const [list, today] = await Promise.all([
         api.get<{ medications: MedicationView[] }>('/v1/medications', {
@@ -45,14 +39,12 @@ export default function MedicationsScreen() {
         }),
         api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id }),
       ]);
-
       const soonest: Record<string, DoseView> = {};
       for (const dose of [...today.today, ...today.prefetch]) {
         if (!ACTIONABLE.has(dose.status)) continue;
         const current = soonest[dose.medicationId];
         if (!current || dose.scheduledAt < current.scheduledAt) soonest[dose.medicationId] = dose;
       }
-
       setMedications(list.medications);
       setNextDoses(soonest);
       setOffline(false);
@@ -66,14 +58,11 @@ export default function MedicationsScreen() {
 
   useEffect(() => { void load(filter); }, [load, filter]);
 
-  const filterOptions = useMemo(
-    () => [
-      { value: 'active' as const, label: t('medication.status.active') },
-      { value: 'paused' as const, label: t('medication.status.paused') },
-      { value: 'all' as const, label: t('common.all') },
-    ],
-    [t],
-  );
+  const filterOptions = useMemo(() => [
+    { value: 'active' as const, label: t('medication.status.active') },
+    { value: 'paused' as const, label: t('medication.status.paused') },
+    { value: 'all' as const, label: t('common.all') },
+  ], [t]);
 
   const describe = (medication: MedicationView): string => {
     const strength = medication.strengthValue !== null
@@ -87,72 +76,56 @@ export default function MedicationsScreen() {
     if (!dose) return t('medication.noSchedule');
     const time = formatTime(dose.scheduledAt, dose.scheduledTimezone);
     const isToday = dose.scheduledLocalDate === new Date().toISOString().slice(0, 10);
-    return isToday
-      ? time
-      : `${formatDate(dose.scheduledAt, dose.scheduledTimezone, { day: 'numeric', month: 'short' })} · ${time}`;
+    return isToday ? time : `${formatDate(dose.scheduledAt, dose.scheduledTimezone, { day: 'numeric', month: 'short' })} · ${time}`;
   };
-
-  if (loading && medications.length === 0) {
-    return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
-  }
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xxxl }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(filter); }} />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(filter); }} />}
       >
         <Txt variant="h2" weight="bold" accessibilityRole="header">{t('medication.listTitle')}</Txt>
-
+        <ProfileSwitcher />
+        {activeProfile ? (
+          <Txt variant="bodySmall" color={theme.colors.ink500}>
+            {arabic ? `تعرض الآن أدوية: ${activeProfile.displayName}` : `Showing medications for: ${activeProfile.displayName}`}
+          </Txt>
+        ) : null}
         {offline ? <Banner tone="warning" title={t('notifications.offlineBanner')} /> : null}
 
-        <Button
-          label={t('medication.add')}
-          size="large"
-          onPress={() => router.push('/medication/add')}
-          accessibilityHint={t('medication.addHow')}
-          testID="add-medication"
-        />
+        {canAdd ? (
+          <Button
+            label={t('medication.add')}
+            size="large"
+            onPress={() => router.push('/medication/add')}
+            accessibilityHint={t('medication.addHow')}
+            testID="add-medication"
+          />
+        ) : (
+          <Banner
+            tone="info"
+            title={arabic ? 'هذا الملف للعرض فقط' : 'This profile is view-only'}
+            body={arabic ? 'لم يمنحك المريض صلاحية إضافة الأدوية.' : 'The patient has not granted medication-add permission.'}
+          />
+        )}
 
-        <Picker
-          label={t('common.filter')}
-          options={filterOptions}
-          value={filter}
-          onChange={(next) => { setLoading(true); setFilter(next); }}
-        />
+        <Picker label={t('common.filter')} options={filterOptions} value={filter} onChange={(next) => { setLoading(true); setFilter(next); }} />
 
-        {medications.length === 0 ? (
+        {loading ? <Loading label={t('common.loading')} /> : medications.length === 0 ? (
           <EmptyState
             title={filter === 'active' ? t('medication.empty') : t('medication.emptyFiltered')}
             body={filter === 'active' ? t('medication.emptyBody') : undefined}
-            action={
-              <Button
-                label={t('medication.add')}
-                fullWidth={false}
-                onPress={() => router.push('/medication/add')}
-              />
-            }
+            action={canAdd ? <Button label={t('medication.add')} fullWidth={false} onPress={() => router.push('/medication/add')} /> : undefined}
           />
         ) : (
           <View style={{ gap: theme.spacing.sm }}>
             {medications.map((medication) => {
               const low = medication.stockForecast?.isLow === true;
-              const label = [
-                medication.name,
-                describe(medication),
-                `${t('medication.nextDose')}: ${nextDoseText(medication)}`,
-                low ? t('stock.lowBadge') : null,
-              ].filter(Boolean).join('، ');
-
+              const label = [medication.name, describe(medication), `${t('medication.nextDose')}: ${nextDoseText(medication)}`, low ? t('stock.lowBadge') : null].filter(Boolean).join('، ');
               return (
-                <Card
-                  key={medication.id}
-                  accessibilityLabel={label}
-                  onPress={() => router.push(`/medication/${medication.id}`)}
-                >
+                <Card key={medication.id} accessibilityLabel={label} onPress={() => router.push(`/medication/${medication.id}`)}>
                   <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md} align="flex-start">
                     <View style={{ flex: 1, gap: 2 }}>
                       <Txt variant="bodyLarge" weight="bold" numberOfLines={2}>{medication.name}</Txt>
@@ -160,28 +133,15 @@ export default function MedicationsScreen() {
                     </View>
                     <View style={{ alignItems: 'flex-end', gap: theme.spacing.xs }}>
                       <Txt variant="caption" color={theme.colors.ink500}>{t('medication.nextDose')}</Txt>
-                      <Txt variant="bodyLarge" weight="bold" color={theme.colors.primary700}>
-                        {nextDoseText(medication)}
-                      </Txt>
+                      <Txt variant="bodyLarge" weight="bold" color={theme.colors.primary700}>{nextDoseText(medication)}</Txt>
                     </View>
                   </Row>
-
                   {low || medication.status !== 'active' ? (
                     <Row wrap gap={theme.spacing.sm}>
                       {medication.status !== 'active' ? (
-                        <Badge
-                          label={t(`medication.status.${medication.status}` as MessageKey)}
-                          fg={theme.colors.ink700}
-                          bg={theme.colors.ink100}
-                        />
+                        <Badge label={t(`medication.status.${medication.status}` as MessageKey)} fg={theme.colors.ink700} bg={theme.colors.ink100} />
                       ) : null}
-                      {low ? (
-                        <Badge
-                          label={t('stock.lowBadge')}
-                          fg={theme.colors.warning700}
-                          bg={theme.colors.warning100}
-                        />
-                      ) : null}
+                      {low ? <Badge label={t('stock.lowBadge')} fg={theme.colors.warning700} bg={theme.colors.warning100} /> : null}
                     </Row>
                   ) : null}
                 </Card>

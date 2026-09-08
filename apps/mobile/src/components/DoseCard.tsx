@@ -7,17 +7,6 @@ import { statusColors } from '../theme/index.js';
 import type { DoseView } from '../api/types.js';
 import { canUndo } from '@dawaee/core';
 
-/**
- * One scheduled dose.
- *
- * Two presentations from one component:
- *  - `prominent` is the "next medication" hero on Today: big image slot, big
- *    name, and a Taken button an unsteady hand can hit.
- *  - the compact form is the timeline row.
- *
- * Elderly mode does not switch to a different component; it scales this one,
- * so there is only ever one behaviour to reason about.
- */
 export function DoseCard({
   dose, prominent = false, onTaken, onSnooze, onSkip, onUndo, onPress, busy,
 }: {
@@ -26,7 +15,6 @@ export function DoseCard({
   onTaken?: () => void;
   onSnooze?: () => void;
   onSkip?: () => void;
-  /** Offered only while the server would still accept it. See below. */
   onUndo?: () => void;
   onPress?: () => void;
   busy?: boolean;
@@ -41,26 +29,9 @@ export function DoseCard({
     : null;
   const food = t(`food.${dose.medication.foodInstruction}` as never);
   const actionable = ['upcoming', 'due', 'pending_confirmation', 'snoozed'].includes(dose.status);
-
-  /**
-   * Whether to offer "Undo".
-   *
-   * The server has always accepted an undo within ten minutes, and no screen
-   * ever asked — so a patient who confirmed the wrong medication had no way to
-   * correct it, and the adherence record and the pill count both stayed wrong.
-   * Adding the lock-screen action buttons made that worse rather than better:
-   * a button tapped on a lock screen, half-awake, is far easier to hit by
-   * mistake than one inside the app.
-   *
-   * `canUndo` from the domain package is THE rule — the same function the
-   * server's undo path is written against — rather than a copy of it here. A
-   * copy would drift, and the failure mode of drift is offering a button that
-   * is refused, or hiding one that would have worked.
-   */
+  const canAct = actionable && onTaken !== undefined;
   const undoable = onUndo !== undefined && canUndo(dose, new Date());
 
-  // One accessible label carrying everything a screen reader user needs, so
-  // VoiceOver does not read six disconnected fragments.
   const a11yLabel = [
     dose.medication.name,
     strength,
@@ -94,7 +65,7 @@ export function DoseCard({
           {food ? <Txt variant="body" color={theme.colors.ink500} align="center">{food}</Txt> : null}
         </View>
 
-        {actionable ? (
+        {canAct ? (
           <View style={{ gap: theme.spacing.md }}>
             <Button
               label={t('today.taken')}
@@ -107,11 +78,11 @@ export function DoseCard({
             />
             <Row gap={theme.spacing.md}>
               <View style={{ flex: 1 }}>
-                <Button label={t('today.remindLater')} tone="secondary" onPress={() => onSnooze?.()} />
+                {onSnooze ? <Button label={t('today.remindLater')} tone="secondary" onPress={onSnooze} /> : null}
               </View>
-              {!theme.elderlyMode ? (
+              {!theme.elderlyMode && onSkip ? (
                 <View style={{ flex: 1 }}>
-                  <Button label={t('today.skip')} tone="ghost" onPress={() => onSkip?.()} />
+                  <Button label={t('today.skip')} tone="ghost" onPress={onSkip} />
                 </View>
               ) : null}
             </Row>
@@ -149,13 +120,6 @@ export function DoseCard({
       {dose.status === 'taken_late' && dose.minutesLate ? (
         <Txt variant="caption" color={theme.colors.warning700}>{t('dose.lateBy', { minutes: dose.minutesLate })}</Txt>
       ) : null}
-      {/*
-        Undo lives here, on the timeline row, and not only on the hero above.
-        The hero is whichever dose is NEXT — so the moment a patient confirms
-        one, the hero advances to the following dose and an undo button drawn
-        there would vanish in the same instant they might want it. The row is
-        where the dose they just tapped is still sitting.
-      */}
       {undoable ? (
         <View style={{ alignItems: 'flex-start', marginTop: theme.spacing.xs }}>
           <Button label={t('today.undo')} tone="ghost" loading={busy} fullWidth={false}

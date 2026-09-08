@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, EmptyState, Loading, SafetyNote, SectionTitle, Txt } from '@/components/ui';
 import { DoseCard } from '@/components/DoseCard';
+import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
@@ -14,15 +15,6 @@ import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCache
 import { inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 
-/**
- * Today — the screen that has to work when nothing else does.
- *
- * It shows what matters now and nothing else. Behind that simplicity:
- *  - the server's prefetch window is cached, so this renders offline
- *  - "Taken" is applied locally first and queued, so it never fails
- *  - local notifications are rebuilt from the same cache on every load
- */
-/** The calendar date in the profile's own zone, not the device's. */
 function localDateIn(timeZone: string): string {
   try {
     return new Intl.DateTimeFormat('en-CA', {
@@ -33,14 +25,6 @@ function localDateIn(timeZone: string): string {
   }
 }
 
-/**
- * Widens a cached dose back into the shape the screen renders.
- *
- * The cache deliberately stores only what Today displays, so the fields the
- * server would send but this screen never reads are filled with honest empties
- * rather than invented values — nothing here is presented to the patient as if
- * it came from the server.
- */
 function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
   return {
     id: d.id,
@@ -74,6 +58,9 @@ export default function TodayScreen() {
   const { t, formatDate } = useI18n();
   const theme = useTheme();
   const { activeProfile, user, preferences, deviceId, offline, setOffline, pendingSyncCount, syncNow } = useApp();
+  const arabic = preferences.locale === 'ar';
+  const canAddMedication = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canConfirmDose = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('confirm_dose')));
 
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -103,31 +90,26 @@ export default function TodayScreen() {
         })),
       });
 
-      // Rebuilt from the freshly cached window so a phone that loses signal
-      // right after this still reminds on time.
-      const schedule = await rescheduleLocalNotifications(
-        [...res.today, ...res.prefetch], preferences.locale,
-        {
-          voiceEnabled: preferences.voiceRemindersEnabled,
-          showMedication: preferences.showMedicationInNotifications,
-        },
-      );
-
-      // The scheduling attempt is the only thing that can discover Android has
-      // taken exact alarms away. This used to be computed and discarded, so a
-      // patient whose reminders had started arriving late was shown a screen
-      // saying everything was fine.
-      setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+      // Direct local medication reminders belong only to the signed-in patient's
+      // own profile. A caregiver viewing another profile must not silently turn
+      // that patient's schedule into reminders on the caregiver's phone.
+      if (activeProfile.isSelf) {
+        const schedule = await rescheduleLocalNotifications(
+          [...res.today, ...res.prefetch], preferences.locale,
+          {
+            voiceEnabled: preferences.voiceRemindersEnabled,
+            showMedication: preferences.showMedicationInNotifications,
+          },
+        );
+        setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+      } else {
+        setExactAlarmsUnavailable(false);
+      }
     } catch (err) {
       if (err instanceof NetworkError) {
         setOffline(true);
         const cached = await readCachedSchedule(activeProfile.id);
         if (cached && !data) {
-          // Render from cache: a missing network must not blank the screen a
-          // patient relies on. Actions taken while offline are still sitting
-          // in the queue, so they are applied on top — otherwise a dose the
-          // patient just confirmed would reappear as still due, and they
-          // could take it twice.
           const queued = await readQueue();
           const merged = applyQueuedToCache(cached, queued);
           const localDate = localDateIn(cached.timezone);
@@ -150,9 +132,15 @@ export default function TodayScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeProfile, preferences.locale, preferences.voiceRemindersEnabled, setOffline, data]);
+  }, [activeProfile, preferences.locale, preferences.voiceRemindersEnabled, preferences.showMedicationInNotifications, setOffline, data]);
 
-  useEffect(() => { void load(); }, [activeProfile?.id]);
+  useEffect(() => {
+    setData(null);
+    setLocalOverrides({});
+    setSnoozeFor(null);
+    setLoading(true);
+    void load();
+  }, [activeProfile?.id]);
 
   useEffect(() => {
     void (async () => {
@@ -161,16 +149,8 @@ export default function TodayScreen() {
     })();
   }, [t]);
 
-  /**
-   * Reverse a confirmation the patient did not mean.
-   *
-   * The server has accepted this within a ten-minute window from the start,
-   * and nothing ever called it. Deliberately NOT queued when offline: undo is
-   * time-bounded, so a request replayed twenty minutes later would be refused
-   * anyway, and silently queueing it would tell the patient their correction
-   * was accepted when it was not. It says plainly that the window passed.
-   */
   const undo = useCallback(async (dose: DoseView) => {
+    if (!canConfirmDose) return;
     setBusyDoseId(dose.id);
     try {
       await api.post(`/v1/doses/${dose.id}/undo`, {});
@@ -186,16 +166,14 @@ export default function TodayScreen() {
     } finally {
       setBusyDoseId(null);
     }
-  }, [load, setOffline, t]);
+  }, [canConfirmDose, load, setOffline, t]);
 
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
+      if (!canConfirmDose) return;
       setBusyDoseId(dose.id);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
-
-      // Optimistic locally, queued for the server. The patient's tap is never
-      // lost to a bad connection.
       setLocalOverrides((o) => ({ ...o, [dose.id]: action === 'taken' ? 'taken' : 'skipped' }));
 
       try {
@@ -224,10 +202,11 @@ export default function TodayScreen() {
         setBusyDoseId(null);
       }
     },
-    [deviceId, load, setOffline],
+    [canConfirmDose, deviceId, load, setOffline],
   );
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
+    if (!canConfirmDose) return;
     setSnoozeFor(null);
     setBusyDoseId(dose.id);
     const clientEventId = newClientEventId();
@@ -242,7 +221,7 @@ export default function TodayScreen() {
     } finally {
       setBusyDoseId(null);
     }
-  }, [deviceId, load, setOffline]);
+  }, [canConfirmDose, deviceId, load, setOffline]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -257,24 +236,7 @@ export default function TodayScreen() {
 
   const todayList = (data?.today ?? []).map(withOverride);
   const nextAnyDay = data?.next ? withOverride(data.next) : null;
-
-  /**
-   * The hero card, but only for a dose that belongs to today.
-   *
-   * The server's `next` is the next unresolved dose on any day. So the moment
-   * a patient confirmed their last dose of the day, the hero swapped to
-   * TOMORROW's — same medication, same time, indistinguishable at a glance —
-   * still carrying a "Taken" button. One tap, at the exact moment of most
-   * confusion, recorded a dose roughly twenty-four hours early. For an elderly
-   * patient that is not a cosmetic problem.
-   *
-   * A dose on a later date is not hidden, it is simply not offered as
-   * something to act on now: "you are done for today" is the honest thing to
-   * show, and the timeline below still lists everything.
-   */
-  const next = nextAnyDay && data && nextAnyDay.scheduledLocalDate === data.localDate
-    ? nextAnyDay
-    : null;
+  const next = nextAnyDay && data && nextAnyDay.scheduledLocalDate === data.localDate ? nextAnyDay : null;
   const allDone = todayList.length > 0 && todayList.every((d) => !['upcoming', 'due', 'pending_confirmation', 'snoozed'].includes(d.status));
 
   return (
@@ -293,6 +255,17 @@ export default function TodayScreen() {
           ) : null}
         </View>
 
+        <ProfileSwitcher />
+        {activeProfile && !activeProfile.isSelf ? (
+          <Banner
+            tone="info"
+            title={arabic ? `أنت تتابع الآن: ${activeProfile.displayName}` : `You are now viewing: ${activeProfile.displayName}`}
+            body={canConfirmDose
+              ? (arabic ? 'يمكنك تأكيد الجرعات حسب الصلاحية الممنوحة لك.' : 'You can confirm doses under your granted permission.')
+              : (arabic ? 'هذا الملف للمتابعة فقط؛ لا يمكنك تأكيد الجرعات.' : 'This profile is view-only for dose confirmation.')}
+          />
+        ) : null}
+
         {offline ? (
           <Banner
             tone="warning"
@@ -302,16 +275,9 @@ export default function TodayScreen() {
           />
         ) : null}
 
-        {notificationWarning ? (
-          <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} />
-        ) : null}
-
+        {notificationWarning ? <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} /> : null}
         {exactAlarmsUnavailable ? (
-          <Banner
-            tone="warning"
-            title={t('notifications.exactAlarmsOff')}
-            body={t('notifications.exactAlarmsOffBody')}
-          />
+          <Banner tone="warning" title={t('notifications.exactAlarmsOff')} body={t('notifications.exactAlarmsOffBody')} />
         ) : null}
 
         {next ? (
@@ -321,10 +287,10 @@ export default function TodayScreen() {
               dose={next}
               prominent
               busy={busyDoseId === next.id}
-              onTaken={() => void act(next, 'taken')}
-              onUndo={() => void undo(next)}
-              onSnooze={() => setSnoozeFor(next)}
-              onSkip={() => void act(next, 'skip')}
+              onTaken={canConfirmDose ? () => void act(next, 'taken') : undefined}
+              onUndo={canConfirmDose ? () => void undo(next) : undefined}
+              onSnooze={canConfirmDose ? () => setSnoozeFor(next) : undefined}
+              onSkip={canConfirmDose ? () => void act(next, 'skip') : undefined}
             />
           </>
         ) : allDone || nextAnyDay ? (
@@ -335,7 +301,7 @@ export default function TodayScreen() {
         {todayList.length === 0 ? (
           <EmptyState
             title={t('today.noMedications')}
-            action={<Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} />}
+            action={canAddMedication ? <Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} /> : undefined}
           />
         ) : (
           <View style={{ gap: theme.spacing.sm }}>
@@ -344,7 +310,7 @@ export default function TodayScreen() {
                 key={dose.id}
                 dose={dose}
                 busy={busyDoseId === dose.id}
-                onUndo={() => void undo(dose)}
+                onUndo={canConfirmDose ? () => void undo(dose) : undefined}
                 onPress={() => router.push(`/medication/${dose.medicationId}`)}
               />
             ))}
@@ -354,7 +320,7 @@ export default function TodayScreen() {
         <SafetyNote textKey="missed.guidance" />
       </ScrollView>
 
-      {snoozeFor ? (
+      {snoozeFor && canConfirmDose ? (
         <SnoozeSheet
           defaultMinutes={preferences.defaultSnoozeMinutes}
           onSelect={(m) => void snooze(snoozeFor, m)}
