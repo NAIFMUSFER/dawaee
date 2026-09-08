@@ -28,6 +28,12 @@ interface CareCircleResponse {
   presets: Record<string, readonly CaregiverPermission[]>;
 }
 
+interface UiError {
+  title: string;
+  body: string;
+  retryLoad: boolean;
+}
+
 const CHANGE_PERMISSIONS: readonly CaregiverPermission[] = [
   'edit_schedule', 'add_medication', 'edit_medication', 'update_stock', 'confirm_dose', 'manage_caregivers',
 ];
@@ -44,7 +50,7 @@ export default function FamilyScreen() {
   const [data, setData] = useState<CareCircleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<UiError | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   // The server's error codes are the primary source; its message is the
@@ -67,13 +73,16 @@ export default function FamilyScreen() {
       setError(null);
       setOffline(false);
     } catch (err) {
-      if (err instanceof NetworkError) setOffline(true);
-      else setError(describe(err));
+      if (err instanceof NetworkError) {
+        setOffline(true);
+      } else {
+        setError({ title: t('family.loadError'), body: describe(err), retryLoad: true });
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeProfile, describe, setOffline]);
+  }, [activeProfile, describe, setOffline, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -113,12 +122,19 @@ export default function FamilyScreen() {
           onPress: () => {
             void (async () => {
               setBusyId(caregiver.id);
+              setError(null);
               try {
                 await api.delete(`/v1/caregivers/${caregiver.id}`);
+                setOffline(false);
                 await load();
               } catch (err) {
-                if (err instanceof NetworkError) setOffline(true);
-                else setError(describe(err));
+                const actionTitle = selfRemoval ? t('family.leaveCircle') : t('family.revokeAccess');
+                if (err instanceof NetworkError) {
+                  setOffline(true);
+                  setError({ title: actionTitle, body: t('error.internal_error'), retryLoad: false });
+                } else {
+                  setError({ title: actionTitle, body: describe(err), retryLoad: false });
+                }
               } finally {
                 setBusyId(null);
               }
@@ -127,7 +143,7 @@ export default function FamilyScreen() {
         },
       ],
     );
-  }, [activeProfile?.displayName, describe, load, setOffline, t]);
+  }, [activeProfile?.displayName, bidi, describe, load, setOffline, t]);
 
   if (loading) {
     return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
@@ -156,9 +172,11 @@ export default function FamilyScreen() {
         {error ? (
           <Banner
             tone="danger"
-            title={t('family.loadError')}
-            body={error}
-            action={<Button label={t('common.retry')} tone="ghost" fullWidth={false} onPress={() => void load()} />}
+            title={error.title}
+            body={error.body}
+            action={error.retryLoad
+              ? <Button label={t('common.retry')} tone="ghost" fullWidth={false} onPress={() => void load()} />
+              : undefined}
           />
         ) : null}
 
