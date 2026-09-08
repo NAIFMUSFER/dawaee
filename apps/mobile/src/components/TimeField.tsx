@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
 import { Button, Card, Row, Txt } from './ui.js';
 import { useTheme } from '../hooks/useTheme.js';
+import { useI18n } from '../i18n/index.js';
 
 export function isValidTime(value: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(value)) return false;
@@ -21,11 +22,14 @@ export function TimeField({ label, value, onChange, optional, error }: {
   error?: string | null;
 }) {
   const theme = useTheme();
+  const { t, locale } = useI18n();
   const initial = isValidTime(value) ? value.split(':') : ['08', '00'];
   const [open, setOpen] = useState(false);
   const [hour, setHour] = useState(initial[0] ?? '08');
   const [minute, setMinute] = useState(initial[1] ?? '00');
   const display = useMemo(() => isValidTime(value) ? value : (optional ? '—' : '08:00'), [optional, value]);
+  const hourLabel = locale === 'ar' ? 'الساعة' : 'Hour';
+  const minuteLabel = locale === 'ar' ? 'الدقائق' : 'Minutes';
 
   const openPicker = () => {
     const parts = isValidTime(value) ? value.split(':') : ['08', '00'];
@@ -50,13 +54,13 @@ export function TimeField({ label, value, onChange, optional, error }: {
             <Card>
               <Txt variant="h3" weight="bold" align="center">{label}</Txt>
               <Txt variant="display" weight="bold" align="center">{hour}:{minute}</Txt>
-              <Txt variant="bodySmall" weight="bold">الساعة</Txt>
+              <Txt variant="bodySmall" weight="bold">{hourLabel}</Txt>
               <Row wrap>{HOURS.map((h) => <Button key={h} label={h} tone={h === hour ? 'primary' : 'secondary'} fullWidth={false} onPress={() => setHour(h)} />)}</Row>
-              <Txt variant="bodySmall" weight="bold">الدقائق</Txt>
+              <Txt variant="bodySmall" weight="bold">{minuteLabel}</Txt>
               <Row wrap>{MINUTES.map((m) => <Button key={m} label={m} tone={m === minute ? 'primary' : 'secondary'} fullWidth={false} onPress={() => setMinute(m)} />)}</Row>
-              <Button label="تم" onPress={() => { onChange(`${hour}:${minute}`); setOpen(false); }} />
-              {optional ? <Button label="بدون" tone="ghost" onPress={() => { onChange(''); setOpen(false); }} /> : null}
-              <Button label="إلغاء" tone="ghost" onPress={() => setOpen(false)} />
+              <Button label={t('common.done')} onPress={() => { onChange(`${hour}:${minute}`); setOpen(false); }} />
+              {optional ? <Button label={t('common.none')} tone="ghost" onPress={() => { onChange(''); setOpen(false); }} /> : null}
+              <Button label={t('common.cancel')} tone="ghost" onPress={() => setOpen(false)} />
             </Card>
           </Pressable>
         </Pressable>
