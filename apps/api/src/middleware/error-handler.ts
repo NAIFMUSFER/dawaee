@@ -46,18 +46,9 @@ export function registerErrorHandler(app: FastifyInstance): void {
         error: { code: ERROR_CODES.CONFLICT, message: 'This record already exists', requestId },
       } satisfies ApiErrorBody);
     }
-    // A malformed id (bad UUID, bad enum value) is the caller's mistake, not a
-    // server fault. Reported as a 400 with no database detail attached.
-    //
-    // `22007` and `2201W` were added after measuring what the API actually
-    // returned for ordinary bad input. `22P02` was already covered, so a bad
-    // UUID or enum was correctly a 400 — but a malformed date (`?from=abc`,
-    // and `?endDate=abc` via `addDays`, which yields the string
-    // "0NaN-NaN-NaN") raises `22007`, and `?limit=-5` raises `2201W`. Neither
-    // was mapped, so both fell through to the 500 branch: logged as an
-    // unhandled server error and reported to the client as one. Route-level
-    // validation now rejects these earlier; this stays as the backstop, so a
-    // future route that forgets returns a 400 rather than a false 500.
+
+    // These are genuine malformed caller values. They remain validation errors
+    // because the user can actually correct the request.
     if (
       isPgError(err, PG_ERRORS.INVALID_TEXT_REPRESENTATION) ||
       isPgError(err, PG_ERRORS.INVALID_DATETIME_FORMAT) ||
@@ -67,42 +58,41 @@ export function registerErrorHandler(app: FastifyInstance): void {
         error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the supplied values is malformed', requestId },
       } satisfies ApiErrorBody);
     }
-    /**
-     * A foreign key violation is almost always a caller referring to something
-     * that is not there — a stale offline queue replaying a note for a dose
-     * since deleted — and it was reaching the 500 branch, so an ordinary
-     * client mistake was reported as a server fault and logged as an unhandled
-     * error.
-     *
-     * Unlike the malformed-input codes above, this one is genuinely ambiguous:
-     * it can also mean a real bug, a race or a missing cascade. So it is
-     * mapped to a 400 for the caller *and* logged with its constraint, which
-     * is the field that says which of the two it was. The constraint name is
-     * safe to log; `detail`, which quotes the offending value, is dropped by
-     * the error serializer.
-     */
+
+    // A foreign-key failure usually means the client is operating on stale
+    // state (for example an offline action referring to a row already removed),
+    // not that the person typed something incorrectly. Report it as a conflict
+    // and log the constraint for diagnosis without exposing schema details.
     if (isPgError(err, PG_ERRORS.FOREIGN_KEY_VIOLATION)) {
       req.log.warn(
         { requestId, constraint: (err as { constraint?: string }).constraint },
-        'request referenced a row that does not exist',
+        'request referenced a row that no longer exists',
       );
-      return reply.status(400).send({
-        error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the referenced records does not exist', requestId },
+      return reply.status(409).send({
+        error: { code: ERROR_CODES.CONFLICT, message: 'The operation could not be completed because related data changed', requestId },
       } satisfies ApiErrorBody);
     }
 
+    // Zod and route-level parsing already handle user-correctable values. A
+    // database CHECK/RAISE reaching this layer is therefore much more likely
+    // to be state drift, a race, or a server-side invariant than something the
+    // patient can fix. Do not tell them to "check the information entered".
     if (isPgError(err, PG_ERRORS.CHECK_VIOLATION) || isPgError(err, PG_ERRORS.RAISE_EXCEPTION)) {
-      return reply.status(400).send({
-        error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'The request violates a data rule', requestId },
+      req.log.warn(
+        {
+          requestId,
+          pgCode: (err as { code?: string }).code,
+          constraint: (err as { constraint?: string }).constraint,
+        },
+        'database data rule rejected the operation',
+      );
+      return reply.status(409).send({
+        error: { code: ERROR_CODES.CONFLICT, message: 'The operation could not be completed in the current state', requestId },
       } satisfies ApiErrorBody);
     }
 
     const statusCode = (err as FastifyError).statusCode;
 
-    // Rate limiting is thrown, not returned, and its payload is not a
-    // FastifyError. Naming it here means the caller is told to slow down —
-    // with the Retry-After the plugin has already set on the reply — rather
-    // than being handed the generic message below.
     if (statusCode === 429) {
       req.log.info({ requestId }, 'rate limited');
       return reply.status(429).send({
@@ -110,9 +100,21 @@ export function registerErrorHandler(app: FastifyInstance): void {
       } satisfies ApiErrorBody);
     }
 
+    // Do not collapse every 4xx generated by Fastify/plugins into
+    // VALIDATION_FAILED. Doing so produced misleading UI such as "check the
+    // information you entered" for authorization and missing-resource errors.
     if (statusCode && statusCode < 500) {
+      const code = statusCode === 401
+        ? ERROR_CODES.UNAUTHENTICATED
+        : statusCode === 403
+          ? ERROR_CODES.FORBIDDEN
+          : statusCode === 404
+            ? ERROR_CODES.NOT_FOUND
+            : statusCode === 409
+              ? ERROR_CODES.CONFLICT
+              : ERROR_CODES.VALIDATION_FAILED;
       return reply.status(statusCode).send({
-        error: { code: ERROR_CODES.VALIDATION_FAILED, message: err.message, requestId },
+        error: { code, message: err.message, requestId },
       } satisfies ApiErrorBody);
     }
 
