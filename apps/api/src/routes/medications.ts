@@ -192,6 +192,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
   /**
    * Create a medication, optionally with its first schedule and stock, in one
    * transaction so a half-created medication can never exist.
+   *
+   * `add_medication` authorizes the medication row itself. The optional nested
+   * writes keep their own product permissions: `edit_schedule` for timing and
+   * `update_stock` for inventory. PostgreSQL RLS already enforces those table
+   * boundaries independently; checking them here turns a low-level policy
+   * rejection into an explicit 403 before the transaction writes anything.
    */
   app.post('/v1/medications', async (req) => {
     const body = createMedicationSchema.parse(req.body);
@@ -200,6 +206,8 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, body.patientProfileId, 'add_medication');
+      if (body.schedule) await requireProfileAccess(tx, userId, body.patientProfileId, 'edit_schedule');
+      if (body.stock) await requireProfileAccess(tx, userId, body.patientProfileId, 'update_stock');
 
       if (!body.acknowledgeDuplicate) {
         const { rows: existing } = await tx.query(
@@ -217,8 +225,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           })),
         );
         if (duplicates.length) {
-          // 409 with the candidates attached: the client shows
-          // "View existing / Add anyway" and retries with acknowledgeDuplicate.
           throw AppError.conflict(
             ERROR_CODES.DUPLICATE_MEDICATION,
             'This medication may already exist in the medication list',
@@ -301,14 +307,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     });
   });
 
-  /**
-   * Update a medication.
-   *
-   * Changes that alter what the patient physically takes require
-   * `confirmHighRiskChange`. This is a usability safeguard against a mis-tap,
-   * NOT clinical validation — the app has no opinion on whether the new value
-   * is medically appropriate and never suggests one.
-   */
   app.patch('/v1/medications/:medicationId', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
     const body = updateMedicationSchema.parse(req.body);
@@ -363,17 +361,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       );
       const after = mapMedication(rows[0]!);
 
-      // Pausing, completing or archiving must stop future reminders — but
-      // never touch doses the patient has already acted on.
       let cancelled = 0;
       if (body.status && ['paused', 'completed', 'archived', 'expired'].includes(body.status)) {
         cancelled = await cancelFutureDoses(tx, medicationId, now);
       }
       let revived = 0;
       if (body.status === 'active' && before.status !== 'active') {
-        // Resuming must undo the pause, not just stop cancelling: the doses
-        // cancelled on pause still occupy their slots, so they are revived
-        // first and only then is the horizon topped up.
         revived = await reviveCancelledDoses(tx, medicationId, now);
         const schedules = await loadSchedules(tx, medicationId);
         for (const s of schedules) {
@@ -395,11 +388,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     });
   });
 
-  /**
-   * Delete. Archival is strongly preferred and enforced: a medication with
-   * dose history can only be archived, because deleting it would erase the
-   * patient's adherence record.
-   */
   app.delete('/v1/medications/:medicationId', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
     const { force } = req.query as { force?: string };
@@ -439,8 +427,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       return { deleted: true, archived: false };
     });
   });
-
-  // ------------------------------------------------------------ schedules
 
   app.post('/v1/medications/:medicationId/schedules', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
@@ -566,7 +552,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
       await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
-      // Deactivate rather than delete: the dose history references it.
       await tx.query('UPDATE medication_schedules SET active = false WHERE id = $1', [scheduleId]);
       const { rowCount } = await tx.query(
         `UPDATE dose_occurrences SET status = 'cancelled'
