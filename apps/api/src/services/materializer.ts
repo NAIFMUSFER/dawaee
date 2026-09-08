@@ -139,7 +139,7 @@ export async function rematerializeSchedule(
 export async function cancelFutureDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
   const { rowCount } = await tx.query(
     `UPDATE dose_occurrences
-        SET status = 'cancelled'
+        SET status = 'cancelled', snoozed_until = NULL
       WHERE medication_id = $1
         AND scheduled_at > $2
         AND status IN ('upcoming','due','pending_confirmation','snoozed')`,
@@ -160,7 +160,8 @@ export async function cancelFutureDoses(tx: PoolClient, medicationId: string, no
 export async function reviveCancelledDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
   const { rowCount } = await tx.query(
     `UPDATE dose_occurrences
-        SET status = 'upcoming', notified_at = NULL, escalation_stage = 0, escalation_completed_at = NULL
+        SET status = 'upcoming', snoozed_until = NULL, notified_at = NULL,
+            escalation_stage = 0, escalation_completed_at = NULL
       WHERE medication_id = $1
         AND scheduled_at > $2
         AND status = 'cancelled'
