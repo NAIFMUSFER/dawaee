@@ -59,20 +59,25 @@ export function registerErrorHandler(app: FastifyInstance): void {
       } satisfies ApiErrorBody);
     }
 
+    // A foreign-key failure usually means the client is operating on stale
+    // state (for example an offline action referring to a row already removed),
+    // not that the person typed something incorrectly. Report it as a conflict
+    // and log the constraint for diagnosis without exposing schema details.
     if (isPgError(err, PG_ERRORS.FOREIGN_KEY_VIOLATION)) {
       req.log.warn(
         { requestId, constraint: (err as { constraint?: string }).constraint },
-        'request referenced a row that does not exist',
+        'request referenced a row that no longer exists',
       );
-      return reply.status(400).send({
-        error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'One of the referenced records does not exist', requestId },
+      return reply.status(409).send({
+        error: { code: ERROR_CODES.CONFLICT, message: 'The operation could not be completed because related data changed', requestId },
       } satisfies ApiErrorBody);
     }
 
+    // Zod and route-level parsing already handle user-correctable values. A
+    // database CHECK/RAISE reaching this layer is therefore much more likely
+    // to be state drift, a race, or a server-side invariant than something the
+    // patient can fix. Do not tell them to "check the information entered".
     if (isPgError(err, PG_ERRORS.CHECK_VIOLATION) || isPgError(err, PG_ERRORS.RAISE_EXCEPTION)) {
-      // Keep the client payload free of schema details, but log the safe
-      // discriminator fields so a production failure can be diagnosed without
-      // blaming the user for an infrastructure or migration defect.
       req.log.warn(
         {
           requestId,
@@ -81,8 +86,8 @@ export function registerErrorHandler(app: FastifyInstance): void {
         },
         'database data rule rejected the operation',
       );
-      return reply.status(400).send({
-        error: { code: ERROR_CODES.VALIDATION_FAILED, message: 'The request violates a data rule', requestId },
+      return reply.status(409).send({
+        error: { code: ERROR_CODES.CONFLICT, message: 'The operation could not be completed in the current state', requestId },
       } satisfies ApiErrorBody);
     }
 
