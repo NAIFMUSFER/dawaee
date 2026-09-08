@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
-import { reminderText, t } from '@dawaee/shared';
+import { groupedReminderText, reminderText, t } from '@dawaee/shared';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
@@ -56,19 +56,6 @@ export interface NotificationCapability {
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
 }
 
-/**
- * What the last real scheduling attempt observed about exact alarms.
- *
- * Android does not let Expo ask whether SCHEDULE_EXACT_ALARM is still held;
- * only trying to schedule reveals it. `rescheduleLocalNotifications` learned
- * that and returned it — and both screens that report on reminders threw the
- * answer away and derived `canScheduleExact` from notification permission
- * instead, which is a different thing entirely. So a phone whose exact-alarm
- * permission had been revoked was told its reminders were fine, while they
- * quietly drifted or failed to schedule at all.
- *
- * Remembered here because this module makes the call that observes it.
- */
 let exactAlarmsObservedUnavailable = false;
 
 export async function inspectCapability(): Promise<NotificationCapability> {
@@ -77,8 +64,7 @@ export async function inspectCapability(): Promise<NotificationCapability> {
 
   const settings = await N.getPermissionsAsync();
   const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
-  const canScheduleExact =
-    Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
+  const canScheduleExact = Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
   return {
     supported: true,
     permissionGranted: granted,
@@ -104,12 +90,6 @@ export async function configureChannels(): Promise<void> {
     importance: N.AndroidImportance.MAX,
     sound: 'default',
     vibrationPattern: [0, 400, 200, 400],
-    // PRIVATE, not PUBLIC. Android then shows the app's name on the lock
-    // screen and withholds the text until the phone is unlocked, at which
-    // point the shade shows it in full — so the elderly-accessibility cost is
-    // close to zero while the "phone face-up on a desk" disclosure is closed.
-    // This is independent of the patient's opt-in and applies in both modes,
-    // because it costs nothing in the mode that has nothing to hide.
     lockscreenVisibility: N.AndroidNotificationVisibility.PRIVATE,
     bypassDnd: false,
     enableVibrate: true,
@@ -120,8 +100,6 @@ export async function configureChannels(): Promise<void> {
 export async function configureCategories(locale: Locale): Promise<void> {
   const N = await load();
   if (!N) return;
-  // Lock-screen actions: the patient can confirm without opening the app,
-  // which is the difference between a tap and a forgotten dose.
   await N.setNotificationCategoryAsync(MEDICATION_CATEGORY_ID, [
     { identifier: ACTION_TAKEN, buttonTitle: t(locale, 'today.taken'), options: { opensAppToForeground: false } },
     { identifier: ACTION_SNOOZE, buttonTitle: t(locale, 'today.remindLater'), options: { opensAppToForeground: false } },
@@ -129,16 +107,6 @@ export async function configureCategories(locale: Locale): Promise<void> {
   ]);
 }
 
-/**
- * Starts listening for taps on those buttons.
- *
- * Without this the buttons are decoration: registering a category tells the OS
- * to DRAW them, and nothing more. Returns a function that stops listening.
- *
- * `getLastNotificationResponseAsync` covers the case the listener cannot: the
- * app was not running when the patient tapped, and is launched by the tap. A
- * confirmation must not depend on the app having been alive.
- */
 export async function startNotificationActionListener(
   onHandled?: (outcome: ActionOutcome) => void,
 ): Promise<() => void> {
@@ -156,7 +124,6 @@ export async function startNotificationActionListener(
     if (outcome) onHandled?.(outcome);
   };
 
-  // A tap that launched the app cold, which the subscription below misses.
   const last = await N.getLastNotificationResponseAsync();
   if (last) await handle(last as Parameters<typeof handle>[0]);
 
@@ -166,14 +133,6 @@ export async function startNotificationActionListener(
   return () => sub.remove();
 }
 
-/**
- * Silences this device.
- *
- * Signing out has to clear the LOCAL schedule too, not only the server-side
- * registration: those notifications were already handed to the OS, name the
- * patient's medications, and would keep firing on a phone nobody is signed in
- * to for as long as the prefetch window lasts.
- */
 export async function cancelAllLocalNotifications(): Promise<void> {
   const N = await load();
   if (!N) return;
@@ -186,12 +145,27 @@ export interface ScheduleResult {
   exactAlarmsUnavailable: boolean;
 }
 
+function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
+  const groups = new Map<string, DoseView[]>();
+  for (const dose of doses) {
+    const at = new Date(dose.scheduledAt).getTime();
+    if (at <= now) continue;
+    if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
+    const bucket = groups.get(dose.scheduledAt);
+    if (bucket) bucket.push(dose);
+    else groups.set(dose.scheduledAt, [dose]);
+  }
+  return [...groups.values()].sort((a, b) => a[0]!.scheduledAt.localeCompare(b[0]!.scheduledAt));
+}
+
 /**
  * Rebuilds the local notification schedule from the cached doses.
  *
- * Everything is cancelled and re-created rather than diffed: the set is small
- * (a week of doses), and a stale reminder for a medication that was stopped is
- * far worse than a redundant reschedule.
+ * Doses at the same instant are deliberately collapsed into one alert. Four
+ * medicines at 08:00 must not vibrate four times or tempt an elderly patient
+ * to press a single lock-screen action that could be misunderstood as applying
+ * to all four. A grouped alert has no Taken/Snooze/Skip category: tapping it
+ * opens Dawaee, where every dose remains independently confirmable.
  */
 export async function rescheduleLocalNotifications(
   doses: DoseView[],
@@ -208,42 +182,44 @@ export async function rescheduleLocalNotifications(
   let exactAlarmsUnavailable = false;
   const now = Date.now();
 
-  for (const dose of doses) {
-    const at = new Date(dose.scheduledAt).getTime();
-    if (at <= now) continue;
-    if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
-
-    const food = t(locale, `food.${dose.medication.foodInstruction}` as never);
-    // One shared builder with the worker — see packages/shared/reminder-text.
-    // Two implementations meant a patient could switch the setting off, watch
-    // their local notifications go generic, and still be named by every push
-    // the server sent.
-    const text = reminderText({
-      locale,
-      showMedication: opts.showMedication,
-      medicationName: dose.medication.name,
-      doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
-      time: dose.scheduledLocalTime,
-      food,
-    });
+  for (const group of groupSchedulableDoses(doses, now)) {
+    const first = group[0]!;
+    const grouped = group.length > 1;
+    const text = grouped
+      ? groupedReminderText({
+          locale,
+          showMedication: opts.showMedication,
+          time: first.scheduledLocalTime,
+          medications: group.map((dose) => ({
+            name: dose.medication.name,
+            doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
+          })),
+        })
+      : reminderText({
+          locale,
+          showMedication: opts.showMedication,
+          medicationName: first.medication.name,
+          doseText: `${first.doseQuantity} ${first.doseUnit}`,
+          time: first.scheduledLocalTime,
+          food: t(locale, `food.${first.medication.foodInstruction}` as never),
+        });
 
     try {
       await N.scheduleNotificationAsync({
         content: {
           title: text.title,
           body: text.body,
-          data: { doseId: dose.id, medicationId: dose.medicationId, kind: 'dose_reminder' },
+          data: grouped
+            ? { doseIds: group.map((dose) => dose.id), kind: 'dose_group_reminder' }
+            : { doseId: first.id, medicationId: first.medicationId, kind: 'dose_reminder' },
           sound: 'default',
-          categoryIdentifier: MEDICATION_CATEGORY_ID,
+          ...(grouped ? {} : { categoryIdentifier: MEDICATION_CATEGORY_ID }),
           interruptionLevel: 'timeSensitive',
-          // The spoken line follows the SAME flag: saying a drug name aloud in
-          // a room is a wider disclosure than printing it on a screen, so it
-          // cannot be the looser of the two settings.
           ...(opts.voiceEnabled ? { subtitle: text.voice } : {}),
         },
         trigger: {
           type: N.SchedulableTriggerInputTypes.DATE,
-          date: new Date(dose.scheduledAt),
+          date: new Date(first.scheduledAt),
           channelId: MEDICATION_CHANNEL_ID,
         },
       });
@@ -254,23 +230,12 @@ export async function rescheduleLocalNotifications(
     }
   }
 
-  // Remembered so `inspectCapability` can report it. Only ever set to true by
-  // an actual rejection, and cleared by a run that scheduled something without
-  // one, so a permission the patient restores is picked up on the next load.
   if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
   else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
 
   return { scheduled, failed, exactAlarmsUnavailable };
 }
 
-/**
- * The device's Expo push token, or null if this device cannot receive one.
- *
- * `projectId` is not optional in a standalone build. Expo's SDK can infer it
- * while running under Expo Go, and cannot once the app is built for the store —
- * where it throws instead, which is exactly the environment a patient runs.
- * It is read from the manifest so there is one place it is configured.
- */
 export async function registerPushToken(): Promise<string | null> {
   const N = await load();
   if (!N) return null;
@@ -285,20 +250,6 @@ export async function registerPushToken(): Promise<string | null> {
   }
 }
 
-/**
- * Asks for permission, obtains a token, and tells the server about it.
- *
- * Nothing called this before. The token was fetched by a function no screen
- * invoked and returned to nobody, so `push_tokens` stayed empty, and the
- * dispatcher's honest `no_active_device` was the end of every escalation —
- * the whole reminder chain terminated one step before a phone. It is called
- * on every start of a signed-in session, because a token can be reissued by
- * the OS at any time and a stale one is a silently missed dose.
- *
- * Returns false when this device simply cannot receive push (web, a simulator,
- * a refused permission). That is a real state the settings screen reports, not
- * an error to swallow.
- */
 export async function syncPushRegistration(deviceId: string): Promise<boolean> {
   const N = await load();
   if (!N) return false;
@@ -321,20 +272,6 @@ export async function syncPushRegistration(deviceId: string): Promise<boolean> {
   return true;
 }
 
-/**
- * Rebuild the scheduled reminders from the encrypted local cache.
- *
- * Exists because the text of a notification is baked in when it is scheduled —
- * the operating system holds the rendered string, not a template — and
- * reminders are created up to a week ahead. Without this, a patient who turns
- * medication detail OFF keeps receiving named reminders for days from
- * notifications created before they changed their mind, and reasonably
- * concludes the privacy setting does nothing.
- *
- * Reads the cache rather than the network so it works on a phone with no
- * signal, which is the same phone the offline reminder schedule exists for.
- * The doses are unchanged; only the wording is rebuilt.
- */
 export async function rebuildRemindersFromCache(
   profileId: string | null,
   locale: Locale,

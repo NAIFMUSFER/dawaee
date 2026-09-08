@@ -3,17 +3,11 @@ import {
   consecutiveMissed, DEFAULT_ESCALATION_STAGES, escalationDedupeKey, evaluateEscalation,
   localTimeInZone, type CaregiverContext, type EscalationRecipient,
 } from '@dawaee/core';
-import { caregiverMissedText, reminderText, t, type EscalationStage, type Locale, type NotificationChannel } from '@dawaee/shared';
+import {
+  caregiverMissedText, groupedReminderText, reminderText, t,
+  type EscalationStage, type Locale, type NotificationChannel,
+} from '@dawaee/shared';
 import type { WorkerContext } from '../context.js';
-
-/**
- * The reminder and escalation tick.
- *
- * For every dose that is open and past its time, this evaluates the patient's
- * escalation policy and ENQUEUES notifications. It does not send them — that
- * is the dispatcher's job — so a provider outage cannot stall the escalation
- * clock, and a crash mid-tick loses nothing.
- */
 
 interface OpenDoseRow {
   id: string;
@@ -39,6 +33,24 @@ interface OpenDoseRow {
   patient_locale: string;
 }
 
+function simultaneousKey(dose: OpenDoseRow): string {
+  return `${dose.patient_profile_id}|${dose.scheduled_at.toISOString()}`;
+}
+
+function patientDispatchKey(
+  dose: OpenDoseRow,
+  recipient: EscalationRecipient,
+  channel: NotificationChannel,
+): string {
+  return [
+    simultaneousKey(dose),
+    recipient.userId ?? '',
+    recipient.phoneE164 ?? '',
+    recipient.relationshipId ?? '',
+    channel,
+  ].join('|');
+}
+
 export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promise<{ itemsProcessed: number }> {
   const now = ctx.now();
 
@@ -51,10 +63,6 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
             pp.timezone AS profile_timezone, pp.display_name AS profile_name,
             COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
             u.phone_e164 AS patient_phone, COALESCE(u.locale,'ar') AS patient_locale,
-            -- The patient's own disclosure choice governs the push body too.
-            -- COALESCE to false so a row predating the column, or a patient
-            -- with no preferences row at all, gets the private text — the
-            -- default has to be private on every path, not only the happy one.
             COALESCE(up.show_medication_in_notifications, false) AS show_medication
        FROM dose_occurrences d
        JOIN medication_schedules s ON s.id = d.schedule_id
@@ -64,8 +72,6 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
        LEFT JOIN user_preferences up ON up.user_id = u.id
       WHERE d.status IN ('upcoming','due','pending_confirmation','snoozed')
         AND d.scheduled_at <= $1
-        -- Nothing older than a day: a dose that far past is history, and
-        -- waking the family about it would be noise, not care.
         AND d.scheduled_at > $1 - interval '24 hours'
         AND m.status = 'active'
       ORDER BY d.scheduled_at
@@ -73,7 +79,14 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
     [now],
   );
 
-  let enqueued = 0;
+  // Evaluate every dose first. Group membership must be based on doses that are
+  // actually eligible for the same initial patient dispatch. Otherwise a dose
+  // whose medication-specific reminder policy is disabled could leak into the
+  // grouped text simply because it shares the same clock time.
+  const evaluated: Array<{
+    dose: OpenDoseRow;
+    decision: ReturnType<typeof evaluateEscalation>;
+  }> = [];
 
   for (const dose of rows) {
     const policy = await loadPolicy(client, dose.patient_profile_id, dose.medication_id);
@@ -83,52 +96,88 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
       missedAfterMinutes: dose.missed_after_minutes,
     });
 
-    const decision = evaluateEscalation({
-      occurrence: {
-        id: dose.id,
-        status: dose.status as never,
-        scheduledAt: dose.scheduled_at.toISOString(),
-        snoozedUntil: dose.snoozed_until?.toISOString() ?? null,
-        notifiedAt: dose.notified_at?.toISOString() ?? null,
-        escalationStage: dose.escalation_stage,
-        escalationCompletedAt: dose.escalation_completed_at?.toISOString() ?? null,
-      },
-      policy,
-      thresholds: {
-        lateAfterMinutes: dose.late_after_minutes,
-        missedAfterMinutes: dose.missed_after_minutes,
-      },
-      caregivers,
-      patient: {
-        userId: dose.patient_user_id ?? '',
-        phoneE164: dose.patient_phone,
-        displayName: dose.profile_name,
-        timezone: dose.profile_timezone,
-      },
-      consecutiveMissedCount: missedStreak,
-      now,
+    evaluated.push({
+      dose,
+      decision: evaluateEscalation({
+        occurrence: {
+          id: dose.id,
+          status: dose.status as never,
+          scheduledAt: dose.scheduled_at.toISOString(),
+          snoozedUntil: dose.snoozed_until?.toISOString() ?? null,
+          notifiedAt: dose.notified_at?.toISOString() ?? null,
+          escalationStage: dose.escalation_stage,
+          escalationCompletedAt: dose.escalation_completed_at?.toISOString() ?? null,
+        },
+        policy,
+        thresholds: {
+          lateAfterMinutes: dose.late_after_minutes,
+          missedAfterMinutes: dose.missed_after_minutes,
+        },
+        caregivers,
+        patient: {
+          userId: dose.patient_user_id ?? '',
+          phoneE164: dose.patient_phone,
+          displayName: dose.profile_name,
+          timezone: dose.profile_timezone,
+        },
+        consecutiveMissedCount: missedStreak,
+        now,
+      }),
     });
+  }
 
+  const eligibleInitialGroups = new Map<string, OpenDoseRow[]>();
+  for (const { dose, decision } of evaluated) {
+    if (decision.action !== 'dispatch' || decision.stageIndex !== 0) continue;
+    for (const recipient of decision.recipients) {
+      if (recipient.kind !== 'patient') continue;
+      for (const channel of recipient.channels) {
+        const key = patientDispatchKey(dose, recipient, channel);
+        const group = eligibleInitialGroups.get(key);
+        if (group) group.push(dose);
+        else eligibleInitialGroups.set(key, [dose]);
+      }
+    }
+  }
+
+  const initialPatientGroupsDispatched = new Set<string>();
+  let enqueued = 0;
+
+  for (const { dose, decision } of evaluated) {
     if (decision.action === 'complete') {
       await client.query('UPDATE dose_occurrences SET escalation_completed_at = now() WHERE id = $1', [dose.id]);
       continue;
     }
     if (decision.action !== 'dispatch' || decision.stageIndex === null) continue;
 
+    let simultaneousDoseCount = 1;
     for (const recipient of decision.recipients) {
       for (const channel of recipient.channels) {
+        const dispatchKey = patientDispatchKey(dose, recipient, channel);
+        const eligibleGroup = decision.stageIndex === 0 && recipient.kind === 'patient'
+          ? (eligibleInitialGroups.get(dispatchKey) ?? [dose])
+          : [dose];
+        const groupedInitial = eligibleGroup.length > 1;
+        simultaneousDoseCount = Math.max(simultaneousDoseCount, eligibleGroup.length);
+
+        if (groupedInitial) {
+          if (initialPatientGroupsDispatched.has(dispatchKey)) continue;
+          initialPatientGroupsDispatched.add(dispatchKey);
+        }
+
         const inserted = await enqueueNotification(client, {
-          dose, recipient, channel,
+          dose,
+          recipient,
+          channel,
           stageIndex: decision.stageIndex,
           stage: decision.stage!,
           now,
+          groupDoses: groupedInitial ? eligibleGroup : undefined,
         });
         if (inserted) enqueued += 1;
       }
     }
 
-    // The stage pointer advances even when a stage produced no recipients,
-    // otherwise an unreachable stage would block every later one forever.
     await client.query(
       `UPDATE dose_occurrences
           SET escalation_stage = $2,
@@ -141,9 +190,15 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
       `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, metadata)
        VALUES ($1,$2,$3,$4)`,
       [
-        dose.id, dose.patient_profile_id,
+        dose.id,
+        dose.patient_profile_id,
         decision.stage!.target === 'patient' ? 'notified' : 'escalated',
-        JSON.stringify({ stage: decision.stageIndex, target: decision.stage!.target, recipients: decision.recipients.length }),
+        JSON.stringify({
+          stage: decision.stageIndex,
+          target: decision.stage!.target,
+          recipients: decision.recipients.length,
+          simultaneousDoseCount,
+        }),
       ],
     );
   }
@@ -163,7 +218,6 @@ async function loadPolicy(client: PoolClient, profileId: string, medicationId: s
     [profileId, medicationId],
   );
   const row = rows[0];
-  // No configured policy means the sane default ladder, not "no reminders".
   if (!row) {
     return { enabled: true, stages: DEFAULT_ESCALATION_STAGES, quietHoursStart: null, quietHoursEnd: null };
   }
@@ -251,46 +305,82 @@ async function enqueueNotification(
     stageIndex: number;
     stage: EscalationStage;
     now: Date;
+    groupDoses?: OpenDoseRow[];
   },
 ): Promise<boolean> {
   const { dose, recipient, channel, stageIndex } = input;
-  const dedupeKey = escalationDedupeKey(dose.id, stageIndex, recipient, channel);
   const locale = (dose.patient_locale === 'en' ? 'en' : 'ar') as Locale;
+  const isPatient = recipient.kind === 'patient';
+  const grouped = isPatient && stageIndex === 0 && (input.groupDoses?.length ?? 0) > 1;
+
+  const dedupeKey = grouped
+    ? [
+        'dose-group',
+        dose.patient_profile_id,
+        dose.scheduled_at.toISOString(),
+        stageIndex,
+        recipient.userId ?? '',
+        recipient.phoneE164 ?? '',
+        channel,
+      ].join(':')
+    : escalationDedupeKey(dose.id, stageIndex, recipient, channel);
 
   const doseText = `${Number(dose.dose_quantity)} ${dose.dose_unit}`;
   const scheduledLocal = localTimeInZone(dose.scheduled_at, dose.profile_timezone);
   const foodKey = `food.${dose.food_instruction}` as never;
   const food = t(locale, foodKey);
-
-  const isPatient = recipient.kind === 'patient';
-  /**
-   * The patient's disclosure choice, applied server-side.
-   *
-   * The same flag the phone uses, read from the same column, and applied to
-   * the caregiver copy as well — it is the patient's medication being named,
-   * so it is the patient's decision, and the caregiver's lock screen is
-   * outside this app's control either way.
-   *
-   * When false, the medication name never enters `body`, never reaches the
-   * push provider, and is never written to notification_deliveries below.
-   */
   const showMedication = dose.show_medication === true;
   const title = isPatient ? t(locale, 'reminder.title') : t(locale, 'caregiver.alertTitle');
-  const body = isPatient
-    ? stageIndex === 0
-      ? reminderText({
-          locale, showMedication, medicationName: dose.medication_name,
-          doseText, time: scheduledLocal, food,
-        }).body
-      : showMedication
-        ? t(locale, 'reminder.repeat', { medication: dose.medication_name, time: scheduledLocal })
-        : t(locale, 'reminder.repeatPrivate', { time: scheduledLocal })
-    // Caregiver copy carries the minimum needed to act: who, when, unconfirmed
-    // — and the medication only if the patient allows it.
-    : caregiverMissedText({
-        locale, showMedication, patientName: dose.profile_name,
-        medicationName: dose.medication_name, time: scheduledLocal,
-      }).body;
+
+  const body = grouped
+    ? groupedReminderText({
+        locale,
+        showMedication,
+        time: scheduledLocal,
+        medications: input.groupDoses!.map((item) => ({
+          name: item.medication_name,
+          doseText: `${Number(item.dose_quantity)} ${item.dose_unit}`,
+        })),
+      }).body
+    : isPatient
+      ? stageIndex === 0
+        ? reminderText({
+            locale, showMedication, medicationName: dose.medication_name,
+            doseText, time: scheduledLocal, food,
+          }).body
+        : showMedication
+          ? t(locale, 'reminder.repeat', { medication: dose.medication_name, time: scheduledLocal })
+          : t(locale, 'reminder.repeatPrivate', { time: scheduledLocal })
+      : caregiverMissedText({
+          locale, showMedication, patientName: dose.profile_name,
+          medicationName: dose.medication_name, time: scheduledLocal,
+        }).body;
+
+  const payload = grouped
+    ? {
+        grouped: true,
+        doseIds: input.groupDoses!.map((item) => item.id),
+        medicationIds: input.groupDoses!.map((item) => item.medication_id),
+        scheduledAt: dose.scheduled_at.toISOString(),
+        scheduledLocalTime: scheduledLocal,
+        actions: [],
+        patientName: dose.profile_name,
+        ...(showMedication ? {
+          medications: input.groupDoses!.map((item) => ({
+            name: item.medication_name,
+            doseText: `${Number(item.dose_quantity)} ${item.dose_unit}`,
+          })),
+        } : {}),
+      }
+    : {
+        doseId: dose.id,
+        medicationId: dose.medication_id,
+        scheduledAt: dose.scheduled_at.toISOString(),
+        actions: isPatient ? ['taken', 'snooze', 'skip'] : [],
+        patientName: dose.profile_name,
+        ...(showMedication ? { medicationName: dose.medication_name } : {}),
+        scheduledLocalTime: scheduledLocal,
+      };
 
   const { rowCount } = await client.query(
     `INSERT INTO notification_deliveries
@@ -312,20 +402,7 @@ async function enqueueNotification(
       locale,
       title,
       body,
-      JSON.stringify({
-        doseId: dose.id,
-        medicationId: dose.medication_id,
-        scheduledAt: dose.scheduled_at.toISOString(),
-        // Action buttons the notification renders on the lock screen.
-        actions: isPatient ? ['taken', 'snooze', 'skip'] : [],
-        patientName: dose.profile_name,
-        // Withheld from the stored payload as well when disclosure is off.
-        // notification_deliveries rows are read back by the dispatcher and by
-        // anyone with database access; leaving the name here would keep the
-        // PHI in the system while the visible text pretended otherwise.
-        ...(showMedication ? { medicationName: dose.medication_name } : {}),
-        scheduledLocalTime: scheduledLocal,
-      }),
+      JSON.stringify(payload),
       dedupeKey,
       input.now,
     ],

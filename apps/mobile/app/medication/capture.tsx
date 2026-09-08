@@ -9,65 +9,29 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MessageKey } from '@dawaee/shared';
 
-/**
- * Capture an image of a medication box or a prescription and send it for
- * analysis.
- *
- * Two things drive the shape of this screen:
- *
- *  - `expo-camera` and `expo-image-picker` are treated as optional. They are
- *    native modules; under the web export, or in a build that does not include
- *    them, importing them statically would break the bundle. So they are
- *    resolved at runtime and their absence is a supported state with a real
- *    way forward (type it in), not an error dialog.
- *  - Sending a photo of a label to a vision provider is a disclosure of health
- *    data. The API answers 428 until a consent exists; that is surfaced as an
- *    explicit, refusable prompt rather than a silent grant.
- *
- * Nothing on this screen creates a medication. The analysis result is a
- * suggestion that the next screen makes the user confirm.
- */
-
 type CaptureMode = 'photo' | 'upload' | 'barcode' | 'prescription';
 
 const MODES: ReadonlySet<string> = new Set(['photo', 'upload', 'barcode', 'prescription']);
-
 const ALLOWED_CONTENT_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
 
-// ------------------------------------------------------- optional modules
-
 interface CapturedPhoto { uri: string }
-
-interface CameraHandle {
-  takePictureAsync(options: { quality: number }): Promise<CapturedPhoto | undefined>;
-}
-
+interface CameraHandle { takePictureAsync(options: { quality: number }): Promise<CapturedPhoto | undefined>; }
 interface CameraViewProps {
   style?: StyleProp<ViewStyle>;
   facing?: 'back' | 'front';
   ref?: React.MutableRefObject<CameraHandle | null>;
 }
-
 interface CameraModule {
   CameraView: React.FunctionComponent<CameraViewProps>;
   requestCameraPermissionsAsync?: () => Promise<{ granted: boolean }>;
   getCameraPermissionsAsync?: () => Promise<{ granted: boolean }>;
 }
-
 interface PickedAsset { uri: string; mimeType?: string | null }
-
 interface ImagePickerModule {
-  launchImageLibraryAsync(options: { quality: number; mediaTypes: string[] }): Promise<{
-    canceled: boolean;
-    assets?: PickedAsset[] | null;
-  }>;
+  launchImageLibraryAsync(options: { quality: number; mediaTypes: string[] }): Promise<{ canceled: boolean; assets?: PickedAsset[] | null }>;
   requestMediaLibraryPermissionsAsync(): Promise<{ granted: boolean }>;
 }
 
-/**
- * Resolved through an aliased `require` so the bundler does not treat an
- * optional native module as a hard dependency of the web build.
- */
 function loadOptionalModule(name: string): unknown {
   if (Platform.OS === 'web') return null;
   try {
@@ -90,17 +54,13 @@ function loadImagePicker(): ImagePickerModule | null {
   return null;
 }
 
-// ------------------------------------------------------------ OCR shapes
-
 interface OcrField { value: string | number; confidence: number }
-
 interface MedicationLabelResponse {
   kind: 'medication_label';
   language: string;
   detected: Record<string, OcrField | undefined>;
   rawText: string;
 }
-
 interface PrescriptionLine {
   medicationName?: OcrField;
   dosage?: OcrField;
@@ -108,28 +68,23 @@ interface PrescriptionLine {
   duration?: OcrField;
   rawLine: string;
 }
-
 interface PrescriptionResponse {
   kind: 'prescription';
   language: string;
   lines: PrescriptionLine[];
   rawText: string;
 }
-
 type OcrResponse = MedicationLabelResponse | PrescriptionResponse;
-
 interface UploadTicketResponse {
   objectKey: string;
   upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string>; expiresAt: string };
 }
 
-/** What `confirm.tsx` reads out of the navigation params. */
 export interface ConfirmPayload {
   imageKey: string;
   kind: 'medication_label' | 'prescription';
   detected: Record<string, { value: string; confidence: number }>;
   rawText: string;
-  /** Prescription lines beyond the first, which must be added separately. */
   remainingLines: number;
 }
 
@@ -141,10 +96,7 @@ function field(source: OcrField | undefined): { value: string; confidence: numbe
 }
 
 function fromLabel(response: MedicationLabelResponse): ConfirmPayload['detected'] {
-  const keys = [
-    'name', 'brandName', 'genericName', 'form', 'strengthValue', 'strengthUnit',
-    'manufacturer', 'barcode', 'expiryDate', 'instructions',
-  ] as const;
+  const keys = ['name', 'brandName', 'genericName', 'form', 'strengthValue', 'strengthUnit', 'manufacturer', 'barcode', 'expiryDate', 'instructions'] as const;
   const detected: ConfirmPayload['detected'] = {};
   for (const key of keys) {
     const parsed = field(response.detected[key]);
@@ -157,12 +109,8 @@ function fromPrescription(response: PrescriptionResponse): ConfirmPayload['detec
   const first = response.lines[0];
   if (!first) return {};
   const detected: ConfirmPayload['detected'] = {};
-
   const name = field(first.medicationName);
   if (name) detected.name = name;
-
-  // The prescriber's wording is kept verbatim as instructions. It is never
-  // parsed into a schedule — the user builds that themselves on the next step.
   const parts = [field(first.dosage), field(first.frequency), field(first.duration)]
     .filter((part): part is { value: string; confidence: number } => part !== null);
   if (parts.length > 0) {
@@ -174,14 +122,11 @@ function fromPrescription(response: PrescriptionResponse): ConfirmPayload['detec
   return detected;
 }
 
-// ------------------------------------------------------------- the screen
-
 type Stage = 'camera' | 'preview' | 'working' | 'consent' | 'unavailable';
 
 export default function CaptureScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode: CaptureMode = MODES.has(params.mode ?? '') ? (params.mode as CaptureMode) : 'photo';
-
   const { t } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
@@ -189,7 +134,6 @@ export default function CaptureScreen() {
   const cameraRef = useRef<CameraHandle | null>(null);
   const [camera] = useState<CameraModule | null>(() => (mode === 'upload' ? null : loadCamera()));
   const [picker] = useState<ImagePickerModule | null>(() => (mode === 'upload' ? loadImagePicker() : null));
-
   const [stage, setStage] = useState<Stage>(mode === 'upload' ? 'preview' : 'camera');
   const [permissionGranted, setPermissionGranted] = useState<boolean | null>(null);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -241,23 +185,9 @@ export default function CaptureScreen() {
         patientProfileId: activeProfile.id,
         kind: mode === 'prescription' ? 'prescription' : 'medication_label',
       });
-
       const payload: ConfirmPayload = response.kind === 'prescription'
-        ? {
-          imageKey: key,
-          kind: 'prescription',
-          detected: fromPrescription(response),
-          rawText: response.rawText,
-          remainingLines: Math.max(0, response.lines.length - 1),
-        }
-        : {
-          imageKey: key,
-          kind: 'medication_label',
-          detected: fromLabel(response),
-          rawText: response.rawText,
-          remainingLines: 0,
-        };
-
+        ? { imageKey: key, kind: 'prescription', detected: fromPrescription(response), rawText: response.rawText, remainingLines: Math.max(0, response.lines.length - 1) }
+        : { imageKey: key, kind: 'medication_label', detected: fromLabel(response), rawText: response.rawText, remainingLines: 0 };
       router.replace(`/medication/confirm?data=${encodeURIComponent(JSON.stringify(payload))}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'consent_required') {
@@ -279,21 +209,14 @@ export default function CaptureScreen() {
     try {
       const blob = await (await fetch(uri)).blob();
       const contentType = ALLOWED_CONTENT_TYPES.has(blob.type) ? blob.type : 'image/jpeg';
-
       const ticket = await api.post<UploadTicketResponse>('/v1/uploads/request', {
         purpose: mode === 'prescription' ? 'prescription_image' : 'medication_image',
         contentType,
         byteSize: blob.size,
         patientProfileId: activeProfile.id,
       });
-
-      const put = await fetch(ticket.upload.uploadUrl, {
-        method: ticket.upload.method,
-        headers: ticket.upload.headers,
-        body: blob,
-      });
+      const put = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob });
       if (!put.ok) throw new ApiError('upload_rejected', put.status, 'upload failed');
-
       setImageKey(ticket.objectKey);
       await analyze(ticket.objectKey);
     } catch (err) {
@@ -350,36 +273,15 @@ export default function CaptureScreen() {
     }
   }, [analyze, failWith, imageKey, t]);
 
-  const instructionKey: MessageKey =
-    mode === 'barcode' ? 'capture.instructionBarcode'
-      : mode === 'prescription' ? 'capture.instructionPrescription'
-        : 'capture.instructionLabel';
-
-  const titleKey: MessageKey =
-    mode === 'barcode' ? 'medication.scanBarcode'
-      : mode === 'prescription' ? 'medication.scanPrescription'
-        : mode === 'upload' ? 'medication.uploadImage'
-          : 'medication.takePhoto';
+  const instructionKey: MessageKey = mode === 'barcode' ? 'capture.instructionBarcode' : mode === 'prescription' ? 'capture.instructionPrescription' : 'capture.instructionLabel';
+  const titleKey: MessageKey = mode === 'barcode' ? 'medication.scanBarcode' : mode === 'prescription' ? 'medication.scanPrescription' : mode === 'upload' ? 'medication.uploadImage' : 'medication.takePhoto';
 
   const manualEntry = (
-    <Button
-      label={t('medication.manualEntry')}
-      tone="secondary"
-      onPress={() => router.replace('/medication/edit?mode=create')}
-    />
+    <Button label={t('medication.manualEntry')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
   );
 
-  // ---------------------------------------------------------- rendering
-
   if (stage === 'working') {
-    return (
-      <SafeAreaView style={{ flex: 1 }}>
-        <Screen>
-          <Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
-          <Loading label={busyLabel ?? t('common.loading')} />
-        </Screen>
-      </SafeAreaView>
-    );
+    return <SafeAreaView style={{ flex: 1 }}><Screen><Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt><Loading label={busyLabel ?? t('common.loading')} /></Screen></SafeAreaView>;
   }
 
   if (stage === 'consent') {
@@ -387,15 +289,9 @@ export default function CaptureScreen() {
       <SafeAreaView style={{ flex: 1 }}>
         <Screen>
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t('consent.ocrTitle')}</Txt>
-          <Card>
-            <Txt variant="body">{t('consent.ocrBody')}</Txt>
-          </Card>
+          <Card><Txt variant="body">{t('consent.ocrBody')}</Txt></Card>
           <Button label={t('consent.grant')} size="large" onPress={() => void grantConsent()} />
-          <Button
-            label={t('consent.decline')}
-            tone="secondary"
-            onPress={() => router.replace('/medication/edit?mode=create')}
-          />
+          <Button label={t('consent.decline')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
           <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
         </Screen>
       </SafeAreaView>
@@ -407,11 +303,7 @@ export default function CaptureScreen() {
       <SafeAreaView style={{ flex: 1 }}>
         <Screen>
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
-          <Banner
-            tone="info"
-            title={t('capture.unavailableTitle')}
-            body={t('capture.unavailableBody')}
-          />
+          <Banner tone="info" title={t('capture.unavailableTitle')} body={t('capture.unavailableBody')} />
           {manualEntry}
           <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
         </Screen>
@@ -420,9 +312,7 @@ export default function CaptureScreen() {
   }
 
   if (stage === 'camera' && camera) {
-    if (permissionGranted === null) {
-      return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
-    }
+    if (permissionGranted === null) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
     if (!permissionGranted) {
       return (
         <SafeAreaView style={{ flex: 1 }}>
@@ -436,21 +326,13 @@ export default function CaptureScreen() {
         </SafeAreaView>
       );
     }
-
-    const cameraProps: CameraViewProps = {
-      style: { flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden' },
-      facing: 'back',
-      ref: cameraRef,
-    };
-
+    const cameraProps: CameraViewProps = { style: { flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden' }, facing: 'back', ref: cameraRef };
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
         <View style={{ flex: 1, padding: theme.spacing.lg, gap: theme.spacing.md }}>
           <Txt variant="h3" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
           <Txt variant="body" color={theme.colors.ink500}>{t(instructionKey)}</Txt>
-          <View style={{ flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden', backgroundColor: theme.colors.ink900 }}>
-            {React.createElement(camera.CameraView, cameraProps)}
-          </View>
+          <View style={{ flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden', backgroundColor: theme.colors.ink900 }}>{React.createElement(camera.CameraView, cameraProps)}</View>
           {error ? <Banner tone="danger" title={error} /> : null}
           <Button label={t('capture.shutter')} size="large" onPress={() => void takePhoto()} testID="capture-shutter" />
           <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
@@ -464,25 +346,15 @@ export default function CaptureScreen() {
       <Screen>
         <Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
         <Txt variant="body" color={theme.colors.ink500}>{t(instructionKey)}</Txt>
-
-        {error ? (
-          <Banner tone="danger" title={error} body={t('capture.unavailableBody')} />
-        ) : null}
-
+        {error ? <Banner tone="danger" title={error} body={t('capture.unavailableBody')} /> : null}
         {mode === 'upload' ? (
           <Button label={t('capture.chooseFile')} size="large" onPress={() => void pickImage()} />
         ) : (
           <>
-            <Button
-              label={t('capture.use')}
-              size="large"
-              disabled={!photoUri}
-              onPress={() => { if (photoUri) void uploadAndAnalyze(photoUri); }}
-            />
+            <Button label={t('capture.use')} size="large" disabled={!photoUri} onPress={() => { if (photoUri) void uploadAndAnalyze(photoUri); }} />
             <Button label={t('capture.retake')} tone="secondary" onPress={() => { setPhotoUri(null); setStage('camera'); }} />
           </>
         )}
-
         {manualEntry}
         <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
       </Screen>
