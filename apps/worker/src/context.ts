@@ -25,28 +25,11 @@ export interface WorkerContext {
   now: () => Date;
 }
 
-/**
- * The worker's logger, as a function so a test can build the real one.
- *
- * Extracted from `createWorkerContext` for exactly that reason. The context
- * accepts a `log` override, so a test that passes its own instance proves
- * nothing about the one the worker actually runs with — which is how the
- * redaction drift below survived: it was never constructed under test.
- *
- * `destination` is only for that. In the worker it is undefined and pino
- * writes to file descriptor 1 as usual.
- */
 export function createWorkerLogger(config: Config, destination?: pino.DestinationStream): pino.Logger {
   return pino({
     level: config.LOG_LEVEL,
     base: { service: 'dawaee-worker', env: config.NODE_ENV },
     timestamp: pino.stdTimeFunctions.isoTime,
-    // The same redaction policy object the API uses, from the same package.
-    // This used to be a second list with a comment claiming it matched the
-    // API's. It did not: the API's had grown to twenty-one paths while this
-    // one still had seven, missing allergies, invitedPhone and every
-    // free-text note field — and nothing would have failed if it drifted
-    // further, because the claim lived in a comment rather than in code.
     redact: LOG_REDACTION,
     serializers: { err: serializeLoggedError },
   }, destination as pino.DestinationStream);
@@ -62,15 +45,21 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
       connectionString: withRole(
         process.env.WORKER_DATABASE_URL ?? config.DATABASE_URL,
         process.env.WORKER_DATABASE_ROLE ?? config.DATABASE_ROLE,
-        process.env.WORKER_DATABASE_PASSWORD ?? config.DATABASE_ROLE_PASSWORD,
+        // `scripts/migrate.sh` sets the `dawaee_worker` database password from
+        // DAWAEE_WORKER_PASSWORD on every worker deploy. Runtime used to ignore
+        // that variable and authenticate with DATABASE_ROLE_PASSWORD instead.
+        // A deploy therefore rotated Postgres to one secret and started the
+        // worker with another; production reproduced it as
+        // "password authentication failed for user dawaee_worker" on every tick.
+        // An explicit WORKER_DATABASE_PASSWORD still wins when an environment
+        // intentionally separates the migration and runtime inputs.
+        process.env.WORKER_DATABASE_PASSWORD
+          ?? process.env.DAWAEE_WORKER_PASSWORD
+          ?? config.DATABASE_ROLE_PASSWORD,
       ),
       max: 5,
       idleTimeoutMillis: 30_000,
       statement_timeout: 30_000,
-      // The SAME policy object the API uses, from the same function. The
-      // worker holds the same credentials and reads the same medication rows,
-      // so a weaker connection here would simply move the vulnerability rather
-      // than remove it — and two copies of the rule is how that happens.
       ssl: databaseTlsOptions(config),
     });
 
@@ -85,20 +74,6 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
 
 /**
  * A job that finished with some of its work failing is NOT a successful run.
- *
- * P8-2 was a cleanup that had never once completed and said nothing about it
- * for the life of the deployment. P10-3 made each housekeeping step fail on its
- * own so one broken step no longer aborts the rest — but per-step isolation
- * only removes the collateral damage, it does not make the fault visible. A job
- * that swallows step failures and then records `succeeded = true` recreates the
- * exact condition P8-2 was about, one level down: an operator reading `job_runs`
- * sees clean successes while a retention class silently never runs.
- *
- * So a job may report partial failure by returning `failures`, and this records
- * the run as failed with the failing steps named. The steps that DID succeed
- * still commit — the isolation is the point — and the next scheduled tick
- * retries the failed class, because nothing marks a step as done.
- *
  * Every row also carries the worker's validated build commit. The API and worker
  * are deployed independently on Render; without this stamp, /health/ready
  * cannot distinguish a current worker from one still executing an older
@@ -157,7 +132,6 @@ export async function runJob<T>(
     await client.query('ROLLBACK').catch(() => undefined);
     const safe = sanitizeOperationalError(err);
     ctx.log.error({ job: jobName, err: safe }, 'job failed');
-    // Recorded on its own connection so the failure survives the rollback.
     await ctx.pool
       .query(
         `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message, metadata)
