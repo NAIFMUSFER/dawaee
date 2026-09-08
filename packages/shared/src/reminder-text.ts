@@ -73,6 +73,53 @@ export function reminderText(input: ReminderTextInput): ReminderText {
 }
 
 /**
+ * One reminder for several doses due at exactly the same time.
+ *
+ * A grouped reminder intentionally has NO lock-screen "Taken" action. One tap
+ * must never confirm several medicines that the patient may not actually have
+ * taken. The notification opens the app, where each medicine remains an
+ * independent dose occurrence and can be confirmed separately.
+ */
+export function groupedReminderText(input: {
+  locale: Locale;
+  showMedication?: boolean;
+  time: string;
+  medications: Array<{ name: string; doseText: string }>;
+}): ReminderText {
+  const title = t(input.locale, 'reminder.title');
+  const count = input.medications.length;
+
+  if (!input.showMedication) {
+    return {
+      title,
+      body: input.locale === 'ar'
+        ? `حان موعد ${count} أدوية الساعة ${input.time}. افتح دوائي لعرضها وتأكيد كل دواء.`
+        : `${count} medications are due at ${input.time}. Open Dawaee to review and confirm each one.`,
+      voice: input.locale === 'ar'
+        ? `حان موعد ${count} أدوية. افتح دوائي لمراجعتها.`
+        : `${count} medications are due. Open Dawaee to review them.`,
+      containsMedicationDetail: false,
+    };
+  }
+
+  const visible = input.medications.slice(0, 3);
+  const list = visible.map((m) => `${m.name} (${m.doseText})`).join(input.locale === 'ar' ? '، ' : ', ');
+  const more = count > visible.length
+    ? (input.locale === 'ar' ? `، و${count - visible.length} أخرى` : `, and ${count - visible.length} more`)
+    : '';
+  return {
+    title,
+    body: input.locale === 'ar'
+      ? `حان موعد ${count} أدوية الساعة ${input.time}: ${list}${more}. افتح دوائي للتأكيد.`
+      : `${count} medications are due at ${input.time}: ${list}${more}. Open Dawaee to confirm them.`,
+    voice: input.locale === 'ar'
+      ? `حان موعد ${count} أدوية. افتح دوائي لمراجعتها وتأكيدها.`
+      : `${count} medications are due. Open Dawaee to review and confirm them.`,
+    containsMedicationDetail: true,
+  };
+}
+
+/**
  * The escalation text sent to a caregiver.
  *
  * Governed by the PATIENT's preference, not the caregiver's, because it is the
