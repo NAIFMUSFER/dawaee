@@ -37,6 +37,12 @@ async function setPermissions(permissions: string[]) {
   expect(res.statusCode, res.body).toBe(200);
 }
 
+async function patientMedicationList() {
+  return h.app.inject({
+    method: 'GET', url: `/v1/medications?profileId=${patient.profileId}`, headers: authHeaders(patient),
+  });
+}
+
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
@@ -69,8 +75,19 @@ beforeAll(async () => {
 
 afterAll(async () => { await h.close(); });
 
-describe('P20 medication creation checks every permission its nested writes need', () => {
-  it('add_medication alone can create a bare medication', async () => {
+describe('P20 medication creation checks every permission its reads and nested writes need', () => {
+  it('refuses the incoherent custom grant add_medication without view_medications before any write', async () => {
+    const name = medName('add-only-denied');
+    const res = await postMedication(name);
+    expect(res.statusCode, res.body).toBe(403);
+    expect(res.json<{ error: { message: string } }>().error.message).toContain('view_medications');
+
+    const list = await patientMedicationList();
+    expect(list.body).not.toContain(name);
+  });
+
+  it('add_medication plus view_medications can create a bare medication', async () => {
+    await setPermissions(['add_medication', 'view_medications']);
     const res = await postMedication(medName('bare'));
     expect(res.statusCode, res.body).toBe(200);
   });
@@ -88,9 +105,7 @@ describe('P20 medication creation checks every permission its nested writes need
     expect(res.statusCode, res.body).toBe(403);
     expect(res.json<{ error: { message: string } }>().error.message).toContain('edit_schedule');
 
-    const list = await h.app.inject({
-      method: 'GET', url: `/v1/medications?profileId=${patient.profileId}`, headers: authHeaders(patient),
-    });
+    const list = await patientMedicationList();
     expect(list.body).not.toContain(name);
   });
 
@@ -102,14 +117,12 @@ describe('P20 medication creation checks every permission its nested writes need
     expect(res.statusCode, res.body).toBe(403);
     expect(res.json<{ error: { message: string } }>().error.message).toContain('update_stock');
 
-    const list = await h.app.inject({
-      method: 'GET', url: `/v1/medications?profileId=${patient.profileId}`, headers: authHeaders(patient),
-    });
+    const list = await patientMedicationList();
     expect(list.body).not.toContain(name);
   });
 
-  it('positive control: the matching grants make the complete create succeed', async () => {
-    await setPermissions(['add_medication', 'edit_schedule', 'update_stock']);
+  it('positive control: every matching grant makes the complete create succeed', async () => {
+    await setPermissions(['add_medication', 'view_medications', 'edit_schedule', 'update_stock']);
     const res = await postMedication(medName('complete'), {
       schedule: {
         rule: { kind: 'fixed_times', times: ['08:00', '20:00'] },
