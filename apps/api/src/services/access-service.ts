@@ -42,8 +42,6 @@ export async function loadProfileAccess(
   );
 
   const row = rows[0];
-  // RLS already hides other patients' profiles; this turns "invisible" into a
-  // clean 404 rather than a confusing empty response.
   if (!row) throw AppError.notFound('Patient profile not found');
 
   const ctx: AccessContext = {
@@ -73,22 +71,32 @@ export async function loadProfileAccess(
 }
 
 /**
- * Product-level permission dependencies that the database necessarily imposes.
+ * Product-level permission dependencies imposed by the queries behind a
+ * capability.
  *
- * `add_medication` is not a usable standalone grant. The create route performs
- * duplicate checks against `medications`, its INSERT uses RETURNING to build the
- * response, and the caller must be able to see the medication it just added.
- * PostgreSQL correctly protects those reads with `view_medications`. During the
- * P20 audit, a caregiver holding only `add_medication` therefore received an
- * opaque RLS-driven 404 even for a bare create. Make that dependency explicit
- * here so the request is refused before any write with an actionable 403.
+ * Custom caregiver grants are allowed, but a write capability cannot work if
+ * the very first lookup or RETURNING/ON CONFLICT path is hidden by RLS. The
+ * standard nurse preset already contains these bundles; this table makes the
+ * same invariant hold for custom permission sets and turns opaque RLS-driven
+ * 404s into explicit 403s before a write starts.
  *
- * The standard `nurse` preset already grants both capabilities. This guard is
- * for custom permission sets, where the patient is free to pick individual
- * capabilities and could otherwise create an internally inconsistent bundle.
+ * P20 evidence:
+ * - add_medication without view_medications could not complete its own
+ *   duplicate/RETURNING path;
+ * - edit_schedule without view_schedule failed while materializing the first
+ *   occurrences because the ON CONFLICT path must see the schedule/doses;
+ * - edit_medication/update_stock first resolve a medication row, which itself
+ *   requires view_medications;
+ * - confirm_dose first resolves the dose occurrence and then renders medication
+ *   identity, so the confirmation grant is useful only with schedule + medicine
+ *   visibility.
  */
 const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
   add_medication: ['view_medications'],
+  edit_medication: ['view_medications'],
+  edit_schedule: ['view_schedule', 'view_medications'],
+  update_stock: ['view_medications'],
+  confirm_dose: ['view_schedule', 'view_medications'],
 };
 
 /**
@@ -107,12 +115,6 @@ const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly Care
  * `view_medications`. So the application layer said `view_schedule` was
  * enough while the database required two permissions, and the disagreement
  * surfaced as an empty screen rather than as a refusal.
- *
- * Resolved in favour of the database's answer, per the product decision that
- * seeing the schedule entails seeing which medication it is for: the routes
- * now ask for what they read. A caregiver missing `view_medications` gets
- * `Missing permission: view_medications`, which is the true reason and is
- * actionable — the patient can grant it.
  *
  * The permissions are checked in the order given, so the message names the
  * route's primary permission first when both are absent. Dependencies are
@@ -144,18 +146,10 @@ export async function requireProfileAccess(
   return access;
 }
 
-/**
- * The permission set required to read a dose row.
- *
- * `view_medications` is in every one of these because `DOSE_LIST_SELECT` and
- * the report query inner join `medications`. If those joins ever become LEFT
- * joins — showing a caregiver "a dose at 08:00" without saying which medicine,
- * which is the other coherent product answer — this constant is the one place
- * that has to change.
- */
+/** The permission set required to read a dose row. */
 export const DOSE_READ = ['view_schedule', 'view_medications'] as const;
 export const DOSE_HISTORY_READ = ['view_history', 'view_medications'] as const;
-export const DOSE_CONFIRM = ['confirm_dose', 'view_medications'] as const;
+export const DOSE_CONFIRM = ['confirm_dose', 'view_schedule', 'view_medications'] as const;
 export const REPORT_READ = ['view_reports', 'view_medications'] as const;
 
 export async function requireProfileOwner(
