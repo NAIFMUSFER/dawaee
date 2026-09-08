@@ -43,7 +43,7 @@ function asEnum<T extends string>(allowed: readonly T[], value: string | undefin
 export default function ConfirmMedicationScreen() {
   const params = useLocalSearchParams<{ data?: string }>();
   const payload = useMemo(() => parsePayload(params.data), [params.data]);
-  const { t, formatNumber } = useI18n();
+  const { t, formatNumber, locale } = useI18n();
   const theme = useTheme();
 
   const detected = payload?.detected ?? {};
@@ -70,6 +70,7 @@ export default function ConfirmMedicationScreen() {
     () => STRENGTH_UNITS.map((value) => ({ value, label: t(`strengthUnit.${value}` as MessageKey) })),
     [t],
   );
+  const moreLabel = locale === 'ar' ? 'تفاصيل إضافية' : 'Additional details';
 
   const continueToSchedule = () => {
     const trimmed = name.trim();
@@ -139,11 +140,7 @@ export default function ConfirmMedicationScreen() {
           </Card>
         ) : null}
 
-        <Button
-          label={showMore ? t('common.close') : t('medication.additionalDetails')}
-          tone="secondary"
-          onPress={() => setShowMore((value) => !value)}
-        />
+        <Button label={showMore ? t('common.close') : moreLabel} tone="secondary" onPress={() => setShowMore((value) => !value)} />
 
         {showMore ? (
           <Card>
@@ -171,16 +168,8 @@ function Provenance({ source }: { source: { value: string; confidence: number } 
   return (
     <View style={{ gap: theme.spacing.xxs }}>
       <Row wrap gap={theme.spacing.xs}>
-        <Badge
-          label={t('medication.detectedByAi')}
-          fg={low ? theme.colors.warning700 : theme.colors.info700}
-          bg={low ? theme.colors.warning100 : theme.colors.info100}
-        />
-        <Badge
-          label={t('medication.confidence', { percent })}
-          fg={low ? theme.colors.warning700 : theme.colors.ink500}
-          bg={low ? theme.colors.warning100 : theme.colors.ink100}
-        />
+        <Badge label={t('medication.detectedByAi')} fg={low ? theme.colors.warning700 : theme.colors.info700} bg={low ? theme.colors.warning100 : theme.colors.info100} />
+        <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
       </Row>
       {low ? <Txt variant="caption" color={theme.colors.warning700}>{t('medication.lowConfidence')}</Txt> : null}
     </View>
