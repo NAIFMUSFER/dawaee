@@ -6,6 +6,7 @@ import { assessWorkerHeartbeat, runtimeCommit } from '../src/lib/deployment-cohe
 const NOW = new Date('2026-09-09T00:00:00.000Z');
 const API = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const WORKER = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const ROOT = resolve(import.meta.dirname, '../../..');
 
 describe('P20 deployment coherence: API readiness includes the worker release', () => {
   it('accepts a fresh successful heartbeat from the same commit', () => {
@@ -60,12 +61,20 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
   });
 
   it('the worker persists its build identity and production readiness reads it', () => {
-    const root = resolve(import.meta.dirname, '../../..');
-    const worker = readFileSync(resolve(root, 'apps/worker/src/context.ts'), 'utf8');
-    const health = readFileSync(resolve(root, 'apps/api/src/routes/health.ts'), 'utf8');
+    const worker = readFileSync(resolve(ROOT, 'apps/worker/src/context.ts'), 'utf8');
+    const health = readFileSync(resolve(ROOT, 'apps/api/src/routes/health.ts'), 'utf8');
     expect(worker).toContain('buildCommit = runtimeCommit()');
     expect(worker).toContain('JSON.stringify({ buildCommit })');
     expect(health).toContain("metadata->>'buildCommit'");
     expect(health).toContain('checks.worker = worker');
+  });
+
+  it('runtime authenticates with the same worker secret that pre-deploy writes to Postgres', () => {
+    const worker = readFileSync(resolve(ROOT, 'apps/worker/src/context.ts'), 'utf8');
+    const migrate = readFileSync(resolve(ROOT, 'scripts/migrate.sh'), 'utf8');
+    expect(migrate).toContain("ALTER ROLE dawaee_worker WITH PASSWORD '${DAWAEE_WORKER_PASSWORD");
+    expect(worker).toContain('process.env.DAWAEE_WORKER_PASSWORD');
+    expect(worker.indexOf('process.env.DAWAEE_WORKER_PASSWORD'))
+      .toBeLessThan(worker.indexOf('config.DATABASE_ROLE_PASSWORD'));
   });
 });
