@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
@@ -11,19 +11,46 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
-import { DOSE_UNITS, type DoseUnit, type MessageKey } from '@dawaee/shared';
+import { DOSE_UNITS, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
 
 const WEEKDAY_ANCHORS = [
   '2024-01-07', '2024-01-08', '2024-01-09', '2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13',
 ] as const;
 const THRESHOLD_CHOICES = ['3', '5', '7', '10', '14'] as const;
 
+type Prefill = {
+  name?: string;
+  form?: MedicationForm;
+  strengthValue?: number | null;
+  strengthUnit?: StrengthUnit | null;
+  brandName?: string | null;
+  genericName?: string | null;
+  manufacturer?: string | null;
+  barcode?: string | null;
+  instructions?: string | null;
+  expiryDate?: string | null;
+  imageKey?: string | null;
+  identitySource?: 'user' | 'ocr_confirmed_by_user' | 'barcode_confirmed_by_user';
+};
+
+function parsePrefill(raw: string | undefined): Prefill {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as Prefill;
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function QuickCreateMedicationScreen() {
+  const params = useLocalSearchParams<{ prefill?: string }>();
+  const prefill = useMemo(() => parsePrefill(params.prefill), [params.prefill]);
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
   const { activeProfile, preferences } = useApp();
 
-  const [name, setName] = useState('');
+  const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
   const [doseUnit, setDoseUnit] = useState<DoseUnit>('tablet');
   const [times, setTimes] = useState<string[]>(['08:00']);
@@ -89,10 +116,19 @@ export default function QuickCreateMedicationScreen() {
       const created = await api.post<{ medication: MedicationView }>('/v1/medications', {
         patientProfileId: activeProfile.id,
         name: trimmedName,
-        form: 'other',
+        brandName: prefill.brandName ?? null,
+        genericName: prefill.genericName ?? null,
+        form: prefill.form ?? 'other',
+        strengthValue: prefill.strengthValue ?? null,
+        strengthUnit: prefill.strengthUnit ?? null,
+        manufacturer: prefill.manufacturer ?? null,
+        barcode: prefill.barcode ?? null,
+        imageKey: prefill.imageKey ?? null,
+        instructions: prefill.instructions ?? null,
         startDate,
         endDate: endDate || null,
-        identitySource: 'user',
+        expiryDate: prefill.expiryDate ?? null,
+        identitySource: prefill.identitySource ?? 'user',
         schedule: {
           rule: {
             kind: 'days_of_week',
@@ -142,23 +178,12 @@ export default function QuickCreateMedicationScreen() {
         ) : null}
 
         <Card>
-          <Field
-            label={t('medication.name')}
-            value={name}
-            onChangeText={setName}
-            error={nameError}
-            autoFocus
-          />
+          <Field label={t('medication.name')} value={name} onChangeText={setName} error={nameError} autoFocus={!prefill.name} />
         </Card>
 
         <SectionTitle>{t('medication.dose')}</SectionTitle>
         <Card>
-          <Field
-            label={t('schedule.doseQuantity')}
-            value={doseQuantity}
-            onChangeText={setDoseQuantity}
-            keyboardType="decimal-pad"
-          />
+          <Field label={t('schedule.doseQuantity')} value={doseQuantity} onChangeText={setDoseQuantity} keyboardType="decimal-pad" />
           <Picker label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
         </Card>
 
@@ -185,18 +210,11 @@ export default function QuickCreateMedicationScreen() {
                 />
               </View>
               {times.length > 1 ? (
-                <Button
-                  label={t('common.remove')}
-                  tone="ghost"
-                  fullWidth={false}
-                  onPress={() => setTimes((current) => current.filter((_, position) => position !== index))}
-                />
+                <Button label={t('common.remove')} tone="ghost" fullWidth={false} onPress={() => setTimes((current) => current.filter((_, position) => position !== index))} />
               ) : null}
             </Row>
           ))}
-          {times.length < 12 ? (
-            <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, '08:00'])} />
-          ) : null}
+          {times.length < 12 ? <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, '08:00'])} /> : null}
         </Card>
 
         <Card>
@@ -214,12 +232,7 @@ export default function QuickCreateMedicationScreen() {
             placeholder={t('stock.enterNewQuantity')}
             hint={t('common.optional')}
           />
-          <Picker
-            label={t('stock.thresholdLabel')}
-            options={thresholdOptions}
-            value={thresholdDays}
-            onChange={setThresholdDays}
-          />
+          <Picker label={t('stock.thresholdLabel')} options={thresholdOptions} value={thresholdDays} onChange={setThresholdDays} />
         </Card>
 
         <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
