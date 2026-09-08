@@ -4,13 +4,6 @@
 The entry bundle, the CSS reset and every referenced image are inlined into one
 HTML file, so the first paint is a single response with no second origin and no
 static file server.
-
-Metro also emits lazily-imported chunks. On this platform none of them is
-reachable — the two dynamic imports in the app both sit behind a check that is
-false on web — but "unreachable today" is not something a build should stake a
-blank screen on, so the chunks are copied out beside the document and served
-under the exact paths Metro asks for. Nothing has to stay true for the app to
-keep working.
 """
 import base64, glob, os, re, shutil, sys
 
@@ -40,9 +33,6 @@ js = js.replace('</script', '<\\/script')
 html = open(os.path.join(dist, 'index.html'), encoding='utf-8').read()
 css = re.search(r'<style id="expo-reset">(.*?)</style>', html, re.S).group(1)
 
-# Inlined rather than served from a path: without it the browser asks for
-# /favicon.ico on every load and gets the API's JSON 404, which is a puzzling
-# thing to find in the console of a healthy page.
 ICON = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
     '<rect width="32" height="32" rx="8" fill="#0E7A6E"/>'
@@ -57,26 +47,33 @@ os.makedirs(os.path.dirname(out_path), exist_ok=True)
 open(out_path, 'w', encoding='utf-8').write(
     '<!doctype html>\n<html lang="ar" dir="rtl">\n<head>\n'
     '<meta charset="utf-8" />\n'
-    '<meta name="viewport" content="width=device-width, initial-scale=1, '
-    'viewport-fit=cover" />\n'
+    '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />\n'
     '<meta name="theme-color" content="#0E7A6E" />\n'
+    '<meta name="color-scheme" content="light" />\n'
+    '<meta name="format-detection" content="telephone=no" />\n'
+    '<meta name="mobile-web-app-capable" content="yes" />\n'
+    '<meta name="apple-mobile-web-app-capable" content="yes" />\n'
+    '<meta name="apple-mobile-web-app-status-bar-style" content="default" />\n'
+    '<meta name="apple-mobile-web-app-title" content="دوائي" />\n'
     f'<link rel="icon" href="{ICON_URI}" />\n'
+    f'<link rel="apple-touch-icon" href="{ICON_URI}" />\n'
     '<title>دوائي Dawaee</title>\n'
-    f'<style id="expo-reset">{css}\nbody{{margin:0}}</style>\n'
+    f'<style id="expo-reset">{css}\n'
+    'html,body,#root{min-height:100%;background:#F2F6F5}\n'
+    'body{margin:0;overscroll-behavior-y:none;-webkit-tap-highlight-color:transparent}\n'
+    'button,a,[role="button"]{touch-action:manipulation}\n'
+    '</style>\n'
     '</head>\n<body>\n<div id="root"></div>\n'
     f'<script>\n{js}\n</script>\n</body>\n</html>\n')
 print(f'{os.path.getsize(out_path)} bytes')
 
-# The lazily-imported chunks, at the paths Metro's loader will ask for. The
-# directory is rebuilt each time so a chunk from an older build cannot linger
-# and be served against a newer document.
 chunk_out = os.path.join(os.path.dirname(out_path), CHUNK_DIR)
 shutil.rmtree(chunk_out, ignore_errors=True)
 os.makedirs(chunk_out, exist_ok=True)
 copied = 0
 for path in sorted(glob.glob(os.path.join(dist, CHUNK_DIR, '*.js'))):
     if path == entries[0]:
-        continue  # inlined above
+        continue
     shutil.copyfile(path, os.path.join(chunk_out, os.path.basename(path)))
     copied += 1
 print(f'{copied} lazily-loaded chunk(s) copied')

@@ -44,6 +44,22 @@ COPY apps/api apps/api
 COPY apps/worker apps/worker
 RUN npx tsc -b packages/shared packages/core apps/api apps/worker
 
+# ----------------------------------------------------------- web artefact
+# Build the browser UI from the exact mobile source in this commit. Previously
+# the image copied the last committed apps/api/public bundle, so a reviewed UI
+# fix could deploy while Safari kept serving older JavaScript indefinitely.
+FROM deps AS web
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY packages packages
+COPY apps/mobile apps/mobile
+COPY scripts scripts
+RUN cd apps/mobile \
+ && npm ci --include=dev --legacy-peer-deps --no-audit --no-fund --ignore-scripts \
+ && cd /app \
+ && API_URL="" bash ./scripts/build-web.sh
+
 # -------------------------------------------------------------- runtime
 FROM base AS runtime
 ENV NODE_ENV=production
@@ -66,10 +82,9 @@ COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/
 COPY db ./db
 COPY scripts ./scripts
-# The web build, served from this same origin. A browser build hosted anywhere
-# else cannot call this API: static hosts forbid cross-origin fetch outright,
-# so the request never leaves the page and CORS cannot rescue it.
-COPY apps/api/public ./apps/api/public
+# The web build, served from this same origin. It is generated in the `web`
+# stage above from this exact commit rather than copied from a stale artefact.
+COPY --from=web /app/apps/api/public ./apps/api/public
 
 # Development dependencies are not shipped. npm is needed only to perform this
 # prune during image construction; neither runtime entrypoint nor migrate.sh uses

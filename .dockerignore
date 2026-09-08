@@ -1,20 +1,9 @@
 # How much of the working tree the builder is allowed to see.
 #
-# Measured, with the classic builder: 492.2 MB of context without this file,
-# 4.9 MB with it. The bulk is apps/mobile's node_modules, but the part that
-# matters is that .env — a real local secrets file — and the full .git history
-# were both inside it.
-#
-# Whether that context actually leaves the machine depends on the builder.
-# BuildKit transfers lazily, only files a COPY pattern matches, so it never
-# shipped .env; the classic builder sends the entire context up front, secrets
-# included. The Dockerfile requests BuildKit via its syntax directive, but that
-# is a preference, not a guarantee — DOCKER_BUILDKIT=0 and older or third-party
-# build systems fall back. This file removes the dependency on which builder
-# happens to run.
-#
-# Nothing here is referenced by any COPY in the Dockerfile; the build was
-# verified end to end after each exclusion was added.
+# The production image now builds the web UI from the exact mobile source in
+# this commit, so apps/mobile itself must be in the build context. Large or
+# machine-local artefacts below remain excluded; Docker installs dependencies
+# from the lockfile inside the image.
 
 # Secrets. First, because this is the one that matters.
 .env
@@ -30,16 +19,20 @@
 .gitignore
 .github
 
-# Installed dependencies. The image runs `npm ci` from the lockfile; shipping a
-# host node_modules would also ship whatever architecture it was built for.
+# Installed dependencies. The image runs npm ci from lockfiles; shipping host
+# node_modules would also ship whichever architecture the developer used.
 node_modules
 **/node_modules
 
-# The mobile app is not part of the backend image — it is not a workspace member
-# and nothing in the Dockerfile copies it. On its own this is 420 MB.
-apps/mobile
+# Mobile source is required by the Docker web-build stage. Exclude only local
+# build/cache/test output that is not an input to the production web bundle.
+apps/mobile/.expo
+apps/mobile/dist
+apps/mobile/dist-*
+apps/mobile/coverage
+apps/mobile/test
 
-# Build and test output.
+# Build and test output elsewhere.
 dist
 coverage
 *.tsbuildinfo
@@ -55,7 +48,8 @@ Thumbs.db
 tmp
 *.log
 
-# Docs are not read at runtime.
+# Docs are not read at runtime. Keep source code and runtime/config manifests.
 docs
 *.md
 !README.md
+!apps/mobile/SCREEN_BRIEF.md
