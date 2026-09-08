@@ -35,6 +35,13 @@ describe('simultaneous dose reminder text', () => {
     expect(mobile).toContain("...(grouped ? {} : { categoryIdentifier: MEDICATION_CATEGORY_ID })");
   });
 
+  it('routes a grouped notification tap to Today instead of leaving the patient on an unrelated screen', () => {
+    const layout = readFileSync(join(ROOT, 'apps/mobile/app/_layout.tsx'), 'utf8');
+    expect(layout).toContain("data.kind !== 'dose_group_reminder'");
+    expect(layout).toContain("router.replace('/(tabs)/today')");
+    expect(layout).toContain('clearLastNotificationResponseAsync');
+  });
+
   it('groups the first server reminder and disables its single-dose category', () => {
     const worker = readFileSync(join(ROOT, 'apps/worker/src/jobs/reminders.ts'), 'utf8');
     const dispatcher = readFileSync(join(ROOT, 'apps/worker/src/jobs/dispatcher.ts'), 'utf8');
