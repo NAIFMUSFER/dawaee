@@ -121,7 +121,13 @@ export async function startNotificationActionListener(
       response.actionIdentifier,
       response.notification.request.content.data ?? {},
     );
-    if (outcome) onHandled?.(outcome);
+    if (outcome) {
+      onHandled?.(outcome);
+      // Expo keeps the cold-start response available until explicitly cleared.
+      // Without consuming it, reopening the app can replay the same Snooze with
+      // a brand-new clientEventId and move the reminder again.
+      await N.clearLastNotificationResponseAsync?.();
+    }
   };
 
   const last = await N.getLastNotificationResponseAsync();
@@ -147,7 +153,16 @@ export interface ScheduleResult {
 
 function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
   const groups = new Map<string, DoseView[]>();
+  const seenDoseIds = new Set<string>();
   for (const dose of doses) {
+    // `/v1/today` intentionally returns the local-day list AND a forward
+    // prefetch window. A future dose later today therefore exists in both
+    // arrays. The caller combines those arrays for offline scheduling, so the
+    // notification layer must treat occurrence id as identity before it groups
+    // by time; otherwise one real dose becomes a fake "2 medications" alert.
+    if (seenDoseIds.has(dose.id)) continue;
+    seenDoseIds.add(dose.id);
+
     const at = new Date(dose.scheduledAt).getTime();
     if (at <= now) continue;
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
