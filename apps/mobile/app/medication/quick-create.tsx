@@ -17,6 +17,7 @@ const WEEKDAY_ANCHORS = [
   '2024-01-07', '2024-01-08', '2024-01-09', '2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13',
 ] as const;
 const THRESHOLD_CHOICES = ['3', '5', '7', '10', '14'] as const;
+const DOSE_QUANTITY_CHOICES = ['0.5', '1', '1.5', '2'] as const;
 
 type Prefill = {
   name?: string;
@@ -184,6 +185,17 @@ export default function QuickCreateMedicationScreen() {
         <SectionTitle>{t('medication.dose')}</SectionTitle>
         <Card>
           <Field label={t('schedule.doseQuantity')} value={doseQuantity} onChangeText={setDoseQuantity} keyboardType="decimal-pad" />
+          <Row wrap gap={theme.spacing.sm}>
+            {DOSE_QUANTITY_CHOICES.map((value) => (
+              <Button
+                key={value}
+                label={formatNumber(Number(value))}
+                tone={doseQuantity === value ? 'primary' : 'secondary'}
+                fullWidth={false}
+                onPress={() => setDoseQuantity(value)}
+              />
+            ))}
+          </Row>
           <Picker label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
         </Card>
 
