@@ -109,7 +109,26 @@ describe('P20 medication creation checks every permission its reads and nested w
     expect(list.body).not.toContain(name);
   });
 
-  it('and initial stock explicitly requires update_stock', async () => {
+  it('edit_schedule without view_schedule is also refused before materialization', async () => {
+    await setPermissions(['add_medication', 'view_medications', 'edit_schedule']);
+    const name = medName('schedule-hidden-denied');
+    const res = await postMedication(name, {
+      schedule: {
+        rule: { kind: 'fixed_times', times: ['08:00'] },
+        doseQuantity: 1,
+        doseUnit: 'tablet',
+        startDate: '2026-09-09',
+      },
+    });
+    expect(res.statusCode, res.body).toBe(403);
+    expect(res.json<{ error: { message: string } }>().error.message).toContain('view_schedule');
+
+    const list = await patientMedicationList();
+    expect(list.body).not.toContain(name);
+  });
+
+  it('initial stock explicitly requires update_stock', async () => {
+    await setPermissions(['add_medication', 'view_medications']);
     const name = medName('stock-denied');
     const res = await postMedication(name, {
       stock: { trackingEnabled: true, initialQuantity: 30, unit: 'tablet' },
@@ -122,7 +141,7 @@ describe('P20 medication creation checks every permission its reads and nested w
   });
 
   it('positive control: every matching grant makes the complete create succeed', async () => {
-    await setPermissions(['add_medication', 'view_medications', 'edit_schedule', 'update_stock']);
+    await setPermissions(['add_medication', 'view_medications', 'edit_schedule', 'view_schedule', 'update_stock']);
     const res = await postMedication(medName('complete'), {
       schedule: {
         rule: { kind: 'fixed_times', times: ['08:00', '20:00'] },
