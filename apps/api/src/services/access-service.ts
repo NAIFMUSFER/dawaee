@@ -73,6 +73,25 @@ export async function loadProfileAccess(
 }
 
 /**
+ * Product-level permission dependencies that the database necessarily imposes.
+ *
+ * `add_medication` is not a usable standalone grant. The create route performs
+ * duplicate checks against `medications`, its INSERT uses RETURNING to build the
+ * response, and the caller must be able to see the medication it just added.
+ * PostgreSQL correctly protects those reads with `view_medications`. During the
+ * P20 audit, a caregiver holding only `add_medication` therefore received an
+ * opaque RLS-driven 404 even for a bare create. Make that dependency explicit
+ * here so the request is refused before any write with an actionable 403.
+ *
+ * The standard `nurse` preset already grants both capabilities. This guard is
+ * for custom permission sets, where the patient is free to pick individual
+ * capabilities and could otherwise create an internally inconsistent bundle.
+ */
+const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
+  add_medication: ['view_medications'],
+};
+
+/**
  * Requires every permission a route's query actually needs.
  *
  * Accepts a list because a permission check that names one thing while the
@@ -96,7 +115,8 @@ export async function loadProfileAccess(
  * actionable — the patient can grant it.
  *
  * The permissions are checked in the order given, so the message names the
- * route's primary permission first when both are absent.
+ * route's primary permission first when both are absent. Dependencies are
+ * checked immediately after their primary permission.
  */
 export async function requireProfileAccess(
   tx: PoolClient,
@@ -105,8 +125,21 @@ export async function requireProfileAccess(
   permission: CaregiverPermission | readonly CaregiverPermission[],
 ): Promise<ProfileAccess> {
   const access = await loadProfileAccess(tx, userId, profileId);
-  for (const p of Array.isArray(permission) ? permission : [permission as CaregiverPermission]) {
-    assertCan(access, p);
+  const requested = Array.isArray(permission)
+    ? permission as readonly CaregiverPermission[]
+    : [permission as CaregiverPermission];
+
+  const checked = new Set<CaregiverPermission>();
+  for (const p of requested) {
+    if (!checked.has(p)) {
+      assertCan(access, p);
+      checked.add(p);
+    }
+    for (const dependency of PERMISSION_DEPENDENCIES[p] ?? []) {
+      if (checked.has(dependency)) continue;
+      assertCan(access, dependency);
+      checked.add(dependency);
+    }
   }
   return access;
 }
