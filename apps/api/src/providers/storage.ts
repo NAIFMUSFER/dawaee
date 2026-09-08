@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 import type { StorageProvider, UploadTicket } from './types.js';
@@ -16,11 +16,7 @@ import type { Config } from '../config.js';
 
 export const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
 
-/**
- * Magic-byte check. A caller can claim any Content-Type, so the bytes decide.
- * This is what stops a polyglot file (valid image header, executable payload)
- * or a renamed script from entering the bucket.
- */
+/** Magic-byte check. The bytes, not the caller's Content-Type, decide. */
 export function sniffImageType(buf: Buffer): string | null {
   if (buf.length < 12) return null;
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
@@ -47,14 +43,15 @@ export class LocalStorageProvider implements StorageProvider {
   readonly name = 'local';
   private readonly root: string;
   private readonly secret: string;
+  private readonly maxBytes: number;
 
   constructor(cfg: Config) {
     this.root = resolve(cfg.STORAGE_LOCAL_DIR);
     this.secret = cfg.JWT_SECRET;
+    this.maxBytes = cfg.UPLOAD_MAX_BYTES;
   }
 
   private path(objectKey: string): string {
-    // Defeat traversal: the resolved path must stay under the root.
     const target = resolve(join(this.root, objectKey));
     if (!target.startsWith(this.root + '/') && target !== this.root) {
       throw new Error('object key escapes the storage root');
@@ -78,28 +75,10 @@ export class LocalStorageProvider implements StorageProvider {
     };
   }
 
-  /**
-   * Compared in constant time, and the expiry is required to be a real number.
-   *
-   * `===` on a hex digest leaks how many leading characters matched through
-   * timing, which is the shape of attack that recovers a signature byte by
-   * byte. Not reachable in production — `STORAGE_PROVIDER=local` is refused
-   * there (config.ts) — but a signature check that is only safe because of
-   * where it happens to be deployed is one deployment change away from being
-   * the real thing.
-   *
-   * `Number(expires)` at the call site yields NaN for a non-numeric or
-   * repeated query parameter, and `Date.now() > NaN` is false, so a malformed
-   * expiry skipped the freshness check and fell through to the digest
-   * comparison. It could never match — the server signs the numeric value, not
-   * "NaN" — but the guard belongs here rather than resting on that.
-   */
   verifyLocalSignature(objectKey: string, expires: number, sig: string, op: string): boolean {
     if (!Number.isFinite(expires) || Date.now() > expires) return false;
     const expected = Buffer.from(this.sign(objectKey, expires, op), 'utf8');
     const given = Buffer.from(sig, 'utf8');
-    // timingSafeEqual throws on a length mismatch, which would itself be a
-    // (much coarser) oracle; length is public information about a hex digest.
     if (expected.length !== given.length) return false;
     return timingSafeEqual(expected, given);
   }
@@ -110,13 +89,17 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async putObject(objectKey: string, body: Buffer): Promise<void> {
+    if (body.length > this.maxBytes) throw new Error('object exceeds configured upload limit');
     const target = this.path(objectKey);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, body);
   }
 
   async getObject(objectKey: string): Promise<Buffer> {
-    return readFile(this.path(objectKey));
+    const target = this.path(objectKey);
+    const info = await stat(target);
+    if (info.size > this.maxBytes) throw new Error('object exceeds configured upload limit');
+    return readFile(target);
   }
 
   async deleteObject(objectKey: string): Promise<void> {
@@ -135,6 +118,7 @@ export class S3StorageProvider implements StorageProvider {
   private readonly region: string;
   private readonly accessKeyId: string;
   private readonly secretAccessKey: string;
+  private readonly maxBytes: number;
 
   constructor(cfg: Config) {
     if (!cfg.STORAGE_BUCKET || !cfg.STORAGE_ACCESS_KEY_ID || !cfg.STORAGE_SECRET_ACCESS_KEY) {
@@ -145,10 +129,15 @@ export class S3StorageProvider implements StorageProvider {
     this.region = cfg.STORAGE_REGION;
     this.accessKeyId = cfg.STORAGE_ACCESS_KEY_ID;
     this.secretAccessKey = cfg.STORAGE_SECRET_ACCESS_KEY;
+    this.maxBytes = cfg.UPLOAD_MAX_BYTES;
     this.endpoint = (cfg.STORAGE_ENDPOINT ?? `https://s3.${cfg.STORAGE_REGION}.amazonaws.com`).replace(/\/$/, '');
   }
 
-  private presign(method: 'PUT' | 'GET', objectKey: string, ttlSeconds: number, extraQuery: Record<string, string> = {}): string {
+  /**
+   * The HTTP method is part of SigV4's canonical request. A URL signed for PUT
+   * cannot authorize DELETE, even if every path/query byte is identical.
+   */
+  private presign(method: 'PUT' | 'GET' | 'DELETE', objectKey: string, ttlSeconds: number, extraQuery: Record<string, string> = {}): string {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const dateStamp = amzDate.slice(0, 8);
@@ -200,14 +189,52 @@ export class S3StorageProvider implements StorageProvider {
     return this.presign('GET', objectKey, ttlSeconds);
   }
 
+  /**
+   * Never buffer an unbounded remote object.
+   *
+   * The upload ticket is a direct S3/R2 PUT. The API validates the size the
+   * caller DECLARES before issuing it, but the bucket receives the actual bytes
+   * without passing through Fastify. Before this guard, a caller could declare
+   * a small image, PUT a very large body, then ask OCR to fetch it. arrayBuffer()
+   * allocated the entire object before any byte check existed, making one
+   * authenticated request enough to put memory pressure on the API process.
+   *
+   * Content-Length rejects the common case before reading. The streaming count
+   * is the authoritative guard for chunked/missing/lying metadata.
+   */
   async getObject(objectKey: string): Promise<Buffer> {
     const res = await fetch(this.presign('GET', objectKey, 120), { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`object fetch failed with ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+
+    const length = Number(res.headers.get('content-length'));
+    if (Number.isFinite(length) && length > this.maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('object exceeds configured upload limit');
+    }
+    if (!res.body) return Buffer.alloc(0);
+
+    const reader = res.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > this.maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error('object exceeds configured upload limit');
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
   }
 
   async deleteObject(objectKey: string): Promise<void> {
-    const res = await fetch(this.presign('PUT', objectKey, 120).replace('X-Amz-Expires', 'X-Amz-Expires'), {
+    const res = await fetch(this.presign('DELETE', objectKey, 120), {
       method: 'DELETE',
       signal: AbortSignal.timeout(15_000),
     });
@@ -215,17 +242,7 @@ export class S3StorageProvider implements StorageProvider {
   }
 }
 
-/**
- * No object storage configured.
- *
- * Photos of a medication box are one feature, not the whole system. Refusing
- * to start without them would mean reminders, adherence and the care circle
- * are all unavailable because nobody has created a bucket yet — so instead
- * this provider starts, names itself honestly to /health/ready, and refuses
- * only the operations that actually need a bucket. Writing to local disk in
- * production stays refused: an image on an ephemeral filesystem disappears
- * without telling anyone, which is worse than a clear error.
- */
+/** No object storage configured. */
 export class UnconfiguredStorageProvider implements StorageProvider {
   readonly name = 'unconfigured';
 
