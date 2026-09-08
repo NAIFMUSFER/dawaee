@@ -38,7 +38,3 @@ export function ProfileSwitcher({ compact = false }: { compact?: boolean }) {
     </Card>
   );
 }
-
-export function canAddMedicationToActiveProfile() {
-  return true;
-}
