@@ -6,6 +6,7 @@ import {
 import { loadConfig, type Config } from '@dawaee/api/config';
 import { withRole } from '@dawaee/api/lib/db';
 import { databaseTlsOptions } from '@dawaee/api/lib/db-tls';
+import { runtimeCommit } from '@dawaee/api/lib/deployment-coherence';
 import { buildProviders, type Providers } from '@dawaee/api/providers';
 
 /**
@@ -83,11 +84,6 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
 }
 
 /**
- * Runs a job under an advisory lock and records the outcome, so two worker
- * instances never process the same tick and the admin panel can answer "did
- * the reminder job run?" without touching medical rows.
- */
-/**
  * A job that finished with some of its work failing is NOT a successful run.
  *
  * P8-2 was a cleanup that had never once completed and said nothing about it
@@ -102,6 +98,11 @@ export function createWorkerContext(overrides?: Partial<WorkerContext>): WorkerC
  * the run as failed with the failing steps named. The steps that DID succeed
  * still commit — the isolation is the point — and the next scheduled tick
  * retries the failed class, because nothing marks a step as done.
+ *
+ * Every row also carries the worker's validated build commit. The API and worker
+ * are deployed independently on Render; without this stamp, /health/ready
+ * cannot distinguish a current worker from one still executing an older
+ * reminder implementation.
  */
 export interface JobFailure {
   step: string;
@@ -115,6 +116,7 @@ export async function runJob<T>(
 ): Promise<{ ran: boolean; itemsProcessed: number; result?: T }> {
   const client = await ctx.pool.connect();
   const startedAt = new Date();
+  const buildCommit = runtimeCommit();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query<{ locked: boolean }>('SELECT app.try_job_lock($1) AS locked', [jobName]);
@@ -133,21 +135,12 @@ export async function runJob<T>(
         jobName, startedAt, failures.length === 0, outcome.itemsProcessed,
         failures.length === 0 ? null
           : `${failures.length} step(s) failed: ${failures.map((f) => f.step).join(', ')}`.slice(0, OPERATIONAL_ERROR_MAX),
-        // Step names, and each step's error reduced to something safe to keep.
-        //
-        // The previous comment here said "Step names and error text only. No
-        // row contents". The step names were true; "error text" was doing more
-        // work than it looked. Measured through this exact path: a unique
-        // violation stored the patient's phone number, and this schema's own
-        // `medication % not found` trigger stored a medication id — into a
-        // table in the same database as the medical records, which nothing
-        // purges. `job_runs.error_message` was at least capped at 500; this
-        // copy had no limit at all.
-        JSON.stringify(
-          failures.length
+        JSON.stringify({
+          buildCommit,
+          ...(failures.length
             ? { failedSteps: failures.map((f) => ({ step: f.step, error: sanitizeOperationalError(f.error) })) }
-            : {},
-        ),
+            : {}),
+        }),
       ],
     );
     await client.query('COMMIT');
@@ -167,9 +160,9 @@ export async function runJob<T>(
     // Recorded on its own connection so the failure survives the rollback.
     await ctx.pool
       .query(
-        `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message)
-         VALUES ($1,$2,now(),false,$3)`,
-        [jobName, startedAt, safe],
+        `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message, metadata)
+         VALUES ($1,$2,now(),false,$3,$4)`,
+        [jobName, startedAt, safe, JSON.stringify({ buildCommit })],
       )
       .catch(() => undefined);
     return { ran: true, itemsProcessed: 0 };
