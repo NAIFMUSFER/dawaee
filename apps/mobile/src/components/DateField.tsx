@@ -44,10 +44,13 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
   error?: string | null;
   optional?: boolean;
 }) {
-  const { t } = useI18n();
+  const { t, locale, numeralSystem, calendar } = useI18n();
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => initialMonth(value));
+  const displayLocale = locale === 'ar'
+    ? `ar-SA-u-nu-${numeralSystem}-ca-${calendar}`
+    : 'en-GB';
 
   const days = useMemo(() => {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -58,9 +61,9 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
     return cells;
   }, [month]);
 
-  const monthTitle = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(month);
+  const monthTitle = new Intl.DateTimeFormat(displayLocale, { month: 'long', year: 'numeric' }).format(month);
   const display = value && isValidLocalDate(value)
-    ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${value}T12:00:00`))
+    ? new Intl.DateTimeFormat(displayLocale, { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${value}T12:00:00`))
     : (optional ? t('common.none') : t('schedule.startDate'));
 
   return (
@@ -92,6 +95,7 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {days.map((day, index) => {
                   const selected = day ? wireDate(day) === value : false;
+                  const dayLabel = day ? new Intl.NumberFormat(displayLocale).format(day.getDate()) : '';
                   return (
                     <View key={`${index}-${day?.getDate() ?? 'x'}`} style={{ width: '14.285%', padding: 2 }}>
                       {day ? (
@@ -100,7 +104,7 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
                           onPress={() => { onChange(wireDate(day)); setOpen(false); }}
                           style={{ minHeight: 42, borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? theme.colors.primary700 : theme.colors.surface }}
                         >
-                          <Txt variant="body" weight={selected ? 'bold' : 'regular'} color={selected ? theme.colors.surface : theme.colors.ink900}>{day.getDate()}</Txt>
+                          <Txt variant="body" weight={selected ? 'bold' : 'regular'} color={selected ? theme.colors.surface : theme.colors.ink900}>{dayLabel}</Txt>
                         </Pressable>
                       ) : null}
                     </View>
