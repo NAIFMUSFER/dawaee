@@ -70,21 +70,21 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
         accessibilityRole="button"
         accessibilityLabel={label}
         onPress={() => { setMonth(initialMonth(value)); setOpen(true); }}
-        style={{ borderWidth: 1, borderColor: error ? theme.colors.danger600 : theme.colors.ink200, borderRadius: theme.radius.md, padding: theme.spacing.md, minHeight: 48, justifyContent: 'center' }}
+        style={{ borderWidth: 1, borderColor: error ? theme.colors.danger700 : theme.colors.ink200, borderRadius: theme.radius.md, padding: theme.spacing.md, minHeight: 48, justifyContent: 'center' }}
       >
-        <Row align="center" justify="between">
+        <Row align="center" style={{ justifyContent: 'space-between' }}>
           <Txt variant="body">📅 {display}</Txt>
           <Txt variant="body" color={theme.colors.primary700}>›</Txt>
         </Row>
       </Pressable>
       {hint ? <Txt variant="bodySmall" color={theme.colors.ink500}>{hint}</Txt> : null}
-      {error ? <Txt variant="bodySmall" color={theme.colors.danger600}>{error}</Txt> : null}
+      {error ? <Txt variant="bodySmall" color={theme.colors.danger700}>{error}</Txt> : null}
 
       <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable onPress={() => setOpen(false)} style={{ flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'center', padding: theme.spacing.lg }}>
           <Pressable onPress={(e) => e.stopPropagation()}>
             <Card style={{ gap: theme.spacing.md }}>
-              <Row align="center" justify="between">
+              <Row align="center" style={{ justifyContent: 'space-between' }}>
                 <Button label="‹" tone="ghost" onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} />
                 <Txt variant="h3" weight="bold">{monthTitle}</Txt>
                 <Button label="›" tone="ghost" onPress={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} />
