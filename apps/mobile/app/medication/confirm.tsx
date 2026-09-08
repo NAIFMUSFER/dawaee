@@ -44,7 +44,6 @@ export default function ConfirmMedicationScreen() {
   const params = useLocalSearchParams<{ data?: string }>();
   const payload = useMemo(() => parsePayload(params.data), [params.data]);
   const { t, formatNumber, locale } = useI18n();
-  const theme = useTheme();
 
   const detected = payload?.detected ?? {};
   const reading = (key: string): string => detected[key]?.value ?? '';
