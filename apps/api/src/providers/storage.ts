@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { mkdir, open, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 import type { StorageProvider, UploadTicket } from './types.js';
@@ -51,12 +52,18 @@ export class LocalStorageProvider implements StorageProvider {
     this.maxBytes = cfg.UPLOAD_MAX_BYTES;
   }
 
+  /**
+   * Treat the externally visible object key as a logical identifier, never as a
+   * filesystem path. The old implementation resolved the key under the storage
+   * root and then checked the resulting prefix. That blocked simple `../`
+   * traversal, but CodeQL correctly still classified the filesystem path as
+   * user-controlled and also flagged the separate stat/read sequence below as
+   * a race. Hashing the logical key gives the local provider the same property
+   * as an object-store backend: keys name objects, not host paths.
+   */
   private path(objectKey: string): string {
-    const target = resolve(join(this.root, objectKey));
-    if (!target.startsWith(this.root + '/') && target !== this.root) {
-      throw new Error('object key escapes the storage root');
-    }
-    return target;
+    const digest = createHash('sha256').update(objectKey, 'utf8').digest('hex');
+    return join(this.root, digest.slice(0, 2), digest);
   }
 
   private sign(objectKey: string, expiresAt: number, op: string): string {
@@ -92,14 +99,31 @@ export class LocalStorageProvider implements StorageProvider {
     if (body.length > this.maxBytes) throw new Error('object exceeds configured upload limit');
     const target = this.path(objectKey);
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, body);
+    const handle = await open(
+      target,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await handle.writeFile(body);
+    } finally {
+      await handle.close();
+    }
   }
 
   async getObject(objectKey: string): Promise<Buffer> {
     const target = this.path(objectKey);
-    const info = await stat(target);
-    if (info.size > this.maxBytes) throw new Error('object exceeds configured upload limit');
-    return readFile(target);
+    // One descriptor for both the size check and the bytes removes the old
+    // stat/read TOCTOU window. O_NOFOLLOW also refuses a planted symlink at the
+    // hashed object path.
+    const handle = await open(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const info = await handle.stat();
+      if (info.size > this.maxBytes) throw new Error('object exceeds configured upload limit');
+      return await handle.readFile();
+    } finally {
+      await handle.close();
+    }
   }
 
   async deleteObject(objectKey: string): Promise<void> {
