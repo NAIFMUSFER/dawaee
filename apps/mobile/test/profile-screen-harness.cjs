@@ -25,7 +25,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   const h = { requests: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
   h.app = {
     user: { id: 'synthetic-account', displayName: 'Caregiver' },
-    activeProfile: { id: 'A', displayName: 'Patient A', timezone: 'Asia/Riyadh', isSelf: false, permissions: ['view_medications', 'view_adherence', 'confirm_dose'], ...profile },
+    activeProfile: { id: 'A', displayName: 'Patient A', timezone: 'Asia/Riyadh', isSelf: false, permissions: ['view_medications', 'view_schedule', 'view_adherence', 'confirm_dose'], ...profile },
     preferences: { locale: 'en', voiceRemindersEnabled: false, showMedicationInNotifications: false },
     deviceId: 'synthetic-device', pendingSyncCount: 0, offline: false,
     setOffline: (value) => { h.offlineWrites.push(value); h.app.offline = value; h.dirty = true; },
