@@ -105,8 +105,13 @@ describe('P20 local object storage treats keys as identifiers, not host paths', 
     const target = physicalLocalPath(root, key);
     await mkdir(join(root, createHash('sha256').update(key).digest('hex').slice(0, 2)), { recursive: true });
 
-    const outside = join(tmpdir(), `dawaee-outside-${Date.now()}-${Math.random()}.txt`);
-    tempRoots.push(outside);
+    // Use an OS-created private temporary directory rather than a predictable
+    // filename directly under the shared temp root. This keeps the adversarial
+    // symlink target external to the provider root without introducing a test
+    // fixture that CodeQL correctly treats as an insecure temporary-file pattern.
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'dawaee-outside-'));
+    tempRoots.push(outsideRoot);
+    const outside = join(outsideRoot, 'sensitive.txt');
     await writeFile(outside, Buffer.from('sensitive-outside-file'));
     await symlink(outside, target);
 
@@ -178,18 +183,19 @@ describe('P20 S3 deletion signs the method it actually sends', () => {
     const now = new Date('2026-09-09T00:00:00.000Z');
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    let requestedUrl = '';
-    let requestedMethod = '';
+
+    let requested = '';
+    let method = '';
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      requestedUrl = String(input);
-      requestedMethod = init?.method ?? 'GET';
+      requested = String(input);
+      method = init?.method ?? 'GET';
       return new Response(null, { status: 204 });
     }));
 
-    const key = 'prescription_image/2026-09-09/abcd1234/deadbeef.jpg';
+    const key = 'prescription/2026-09-09/account/rx 1.png';
     await provider().deleteObject(key);
 
-    expect(requestedMethod).toBe('DELETE');
-    expect(requestedUrl).toBe(expectedPresignedDelete(key, now));
+    expect(method).toBe('DELETE');
+    expect(requested).toBe(expectedPresignedDelete(key, now));
   });
 });
