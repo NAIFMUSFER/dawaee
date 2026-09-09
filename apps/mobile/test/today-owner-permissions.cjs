@@ -5,6 +5,10 @@ const assert = require('node:assert/strict');
 const { createHarness, NetworkError } = require('./profile-screen-harness.cjs');
 const owner = { id: 'DEPENDENT', displayName: 'Dependent', isSelf: false, role: 'owner', permissions: null };
 const helper = { id: 'PATIENT', displayName: 'Patient', isSelf: false, role: 'caregiver', permissions: ['view_medications', 'view_schedule'] };
+const observer = {
+  id: 'OBSERVER', displayName: 'Observer patient', isSelf: false, role: 'caregiver',
+  permissions: ['view_schedule', 'view_adherence', 'receive_notifications'],
+};
 const actions = ['onTaken', 'onUndo', 'onSnooze', 'onSkip'];
 
 async function load(file, hook, profile, empty = false) {
@@ -89,6 +93,28 @@ function scenarios(file, hook) {
   add('caregiver with add_medication keeps the granted add action', { ...helper, permissions: [...helper.permissions, 'add_medication'] }, true, async h => {
     assert.ok(h.find('Button', p => p.label === 'medication.add'));
   });
+  cases.push({ name: 'observer without medication visibility never requests Today and sees a restricted state', run: async () => {
+    const h = createHarness(file, hook, observer);
+    await h.flush();
+    try {
+      const pending = h.batch();
+      assert.equal(
+        pending.length,
+        0,
+        'view_schedule without view_medications must not call /v1/today because that response includes medication identity',
+      );
+      assert.equal(h.cachedReads.length, 0, 'a caregiver without medication visibility must not read a medication-bearing Today cache');
+      assert.ok(
+        h.find('Banner', p => p.tone === 'warning'),
+        'the screen must explain that Today is restricted instead of rendering a false no-medications state',
+      );
+      assert.equal(
+        h.find('EmptyState', p => p.title === 'today.noMedications'),
+        null,
+        'authorization restriction must not be indistinguishable from a genuinely empty medication list',
+      );
+    } finally { h.unmount(); }
+  } });
   add('self-profile owner keeps confirmation controls and its own reminder scheduling', { ...owner, id: 'SELF', isSelf: true }, false, async h => {
     const card = h.find('DoseCard', p => p.prominent);
     assert.ok(card);
