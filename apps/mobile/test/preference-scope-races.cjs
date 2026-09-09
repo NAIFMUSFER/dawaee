@@ -8,6 +8,18 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+// An extracted async callback runs in another VM realm. Awaiting its adopted
+// promise can require more than one microtask turn; do not mistake that host
+// scheduling detail for a missing product request. Bounded and timer-free.
+async function waitForRequest(h, method, route) {
+  for (let turn = 0; turn < 20; turn++) {
+    const request = h.pending(method, route)[0];
+    if (request) return request;
+    await Promise.resolve();
+  }
+  throw new Error(`request not issued: ${method} ${route}`);
+}
+
 class NetworkError extends Error {}
 
 const DEFAULT_PREFERENCES = {
@@ -54,6 +66,7 @@ function makeHarness(file, options = {}) {
   const sessionGeneration = { current: 7 };
   // Supplied even on the red baseline so the same harness executes the fix.
   const preferenceGeneration = { current: 0 };
+  const preferenceWrites = { current: { session: -1, pending: 0, tail: Promise.resolve() } };
   let signedIn = true;
   const requests = [];
   const rebuilds = [];
@@ -73,7 +86,7 @@ function makeHarness(file, options = {}) {
     stateRef.current = state;
   };
   const context = {
-    api, stateRef, mounted, sessionGeneration, preferenceGeneration,
+    api, stateRef, mounted, sessionGeneration, preferenceGeneration, preferenceWrites,
     setState, DEFAULT_PREFERENCES, NetworkError,
     isSignedIn: () => signedIn,
     setCacheOwner: (id) => cacheOwners.push(id),
@@ -179,10 +192,18 @@ function scenarios(file) {
         const olderReq = h.pending('PATCH')[0];
         const newer = h.updatePreferences({ locale: 'en' });
         const newerReq = h.pending('PATCH').find((r) => r !== olderReq);
-        h.resolve(newerReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
-        await newer;
+        if (newerReq) {
+          h.resolve(newerReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
+          await newer;
+        }
         h.resolve(olderReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
         await older;
+        if (!newerReq) {
+          h.resolve(await waitForRequest(h, 'PATCH', '/v1/me/preferences'), {
+            preferences: { ...DEFAULT_PREFERENCES, locale: 'en' },
+          });
+          await newer;
+        }
         if (h.state().preferences.locale !== 'en') throw new Error(`stale locale resurrected: ${h.state().preferences.locale}`);
       },
     },
@@ -219,9 +240,7 @@ function scenarios(file) {
         const load = h.loadMe();
         const meReq = h.pending('GET', '/v1/me')[0];
         h.resolve(meReq, { user: { id: 'ACCOUNT-A', displayName: 'A', phoneE164: null }, preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
-        await Promise.resolve();
-        const profilesReq = h.pending('GET', '/v1/profiles')[0];
-        if (!profilesReq) throw new Error('loadMe did not reach profiles request');
+        const profilesReq = await waitForRequest(h, 'GET', '/v1/profiles');
 
         const update = h.updatePreferences({ locale: 'en' });
         const patchReq = h.pending('PATCH')[0];
@@ -239,8 +258,7 @@ function scenarios(file) {
         const h = makeHarness(file, { preferences: { locale: 'en' } });
         const load = h.loadMe();
         h.resolve(h.pending('GET', '/v1/me')[0], { user: { id: 'ACCOUNT-A', displayName: 'A', phoneE164: null }, preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
-        await Promise.resolve();
-        h.resolve(h.pending('GET', '/v1/profiles')[0], { profiles: [selfProfile()] });
+        h.resolve(await waitForRequest(h, 'GET', '/v1/profiles'), { profiles: [selfProfile()] });
         await load;
         if (h.state().preferences.locale !== 'ar') throw new Error('fresh loadMe preference was incorrectly suppressed');
       },

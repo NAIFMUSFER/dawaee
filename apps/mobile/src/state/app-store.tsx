@@ -146,6 +146,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * older response must not undo a newer privacy/accessibility choice.
    */
   const preferenceGeneration = useRef(0);
+  const preferenceWrites = useRef({
+    session: -1, pending: 0, tail: Promise.resolve() as Promise<void>,
+  });
 
   /**
    * Forced sign-out cleanup is asynchronous. A very fast re-login must not
@@ -157,6 +160,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loadMe = useCallback(async () => {
     const generation = sessionGeneration.current;
     const preferenceSnapshot = preferenceGeneration.current;
+    const preferencesPendingAtStart = preferenceWrites.current.session === generation
+      && preferenceWrites.current.pending > 0;
     const me = await api.get<{
       user: { id: string; displayName: string; phoneE164: string | null };
       preferences: Preferences;
@@ -175,7 +180,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // /v1/profiles response can restore the pre-save locale/privacy settings
     // after the newer PATCH has already committed. Keep the profile refresh,
     // and apply only the preference portion if no newer local intent exists.
-    const preferencesAreCurrent = preferenceSnapshot === preferenceGeneration.current;
+    // A GET started during a pending save may also read the pre-save row,
+    // even if the save finishes before that GET response reaches this code.
+    const preferencesAreCurrent = preferenceSnapshot === preferenceGeneration.current
+      && !preferencesPendingAtStart
+      && !(preferenceWrites.current.session === generation && preferenceWrites.current.pending > 0);
     const serverPreferences = { ...DEFAULT_PREFERENCES, ...me.preferences };
     const restartRequired = preferencesAreCurrent
       ? applyNativeDirection(serverPreferences.locale).restartRequired
@@ -296,12 +305,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, activeProfile: s.profiles.find((p) => p.id === profileId) ?? s.activeProfile }));
     },
     updatePreferences: async (patch) => {
+      if (!mounted.current) return;
       const generation = sessionGeneration.current;
       const preferenceIntent = ++preferenceGeneration.current;
 
       // Optimistic: accessibility changes must feel instant to someone who
       // enabled them because the text was too small to read.
       const before = stateRef.current.preferences;
+      const next = { ...before, ...patch };
+      // Event handlers can run twice before React renders. Publish the latest
+      // preference intent to other handlers now, not only on the next render.
+      stateRef.current = { ...stateRef.current, preferences: next };
       setState((s) => ({ ...s, preferences: { ...s.preferences, ...patch } }));
 
       /**
@@ -322,8 +336,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         || (patch.voiceRemindersEnabled !== undefined
           && patch.voiceRemindersEnabled !== before.voiceRemindersEnabled);
       if (disclosureChanged) {
-        const next = { ...before, ...patch };
-        const selfProfileId = stateRef.current.profiles.find((profile) => profile.isSelf)?.id ?? null;
+        // Account preferences govern this person's device, never the patient
+        // currently being viewed. Check role too for older API self flags.
+        const selfProfileId = stateRef.current.profiles.find((profile) => profile.isSelf && profile.role === 'owner')?.id ?? null;
         void rebuildRemindersFromCache(
           selfProfileId,
           next.locale,
@@ -345,30 +360,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // kept locally and travels with the sign-up request instead.
       if (!isSignedIn()) return;
 
-      try {
-        const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
-        if (
-          !mounted.current
-          || generation !== sessionGeneration.current
-          || preferenceIntent !== preferenceGeneration.current
-          || !isSignedIn()
-        ) return;
-        setState((s) => ({ ...s, preferences: { ...s.preferences, ...res.preferences } }));
-      } catch (err) {
-        // A response/error from an older preference intent or authenticated
-        // session belongs to that request, not to whoever is using the app now.
-        if (
-          !mounted.current
-          || generation !== sessionGeneration.current
-          || preferenceIntent !== preferenceGeneration.current
-          || !isSignedIn()
-        ) return;
-
-        // Only a request that never reached the server means offline. A
-        // rejection from the server is a different failure and must not put
-        // the whole app into its cached-data mode.
-        if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
+      // Serialize persistence as well as ignoring old responses: otherwise an
+      // earlier PATCH can commit last and restore the old choice on next login.
+      // A new session has its own tail so a stalled old request cannot block it.
+      if (preferenceWrites.current.session !== generation) {
+        preferenceWrites.current = { session: generation, pending: 0, tail: Promise.resolve() };
       }
+      const writes = preferenceWrites.current;
+      const idle = writes.pending === 0;
+      writes.pending++;
+      const save = async () => {
+        try {
+          if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
+          const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
+          if (
+            !mounted.current
+            || generation !== sessionGeneration.current
+            || preferenceIntent !== preferenceGeneration.current
+            || !isSignedIn()
+          ) return;
+
+          // The response is a row snapshot, not a new intent for unrelated
+          // fields. Accept only submitted fields that the response actually
+          // provides; the optimistic patch remains for other fields.
+          const savedPatch = Object.fromEntries(Object.keys(patch)
+            .filter((key) => Object.prototype.hasOwnProperty.call(res.preferences, key))
+            .map((key) => [key, res.preferences[key as keyof Preferences]])) as Partial<Preferences>;
+          stateRef.current = {
+            ...stateRef.current, preferences: { ...stateRef.current.preferences, ...savedPatch },
+          };
+          setState((s) => ({ ...s, preferences: { ...s.preferences, ...savedPatch } }));
+        } catch (err) {
+          // A response/error from an older preference intent or authenticated
+          // session belongs to that request, not to whoever is using the app now.
+          if (
+            !mounted.current
+            || generation !== sessionGeneration.current
+            || preferenceIntent !== preferenceGeneration.current
+            || !isSignedIn()
+          ) return;
+
+          // Only a request that never reached the server means offline. A
+          // rejection from the server is a different failure and must not put
+          // the whole app into its cached-data mode.
+          if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
+        } finally {
+          writes.pending--;
+        }
+      };
+      const work = idle ? save() : writes.tail.then(save, save);
+      writes.tail = work;
+      await work;
     },
     syncNow,
     setOffline: (offline) => setState((s) => ({ ...s, offline })),
