@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { claimInviteAttempt, clearPendingInvite, peekPendingInvite, stashPendingInvite } from '@/storage/pending-invite';
+import {
+  claimInviteAttempt,
+  clearPendingInvite,
+  peekPendingInvite,
+  releaseInviteAttempt,
+  stashPendingInvite,
+} from '@/storage/pending-invite';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, EmptyState, Loading, Screen, Txt } from '@/components/ui';
@@ -91,20 +97,26 @@ export default function AcceptInvitationScreen() {
       if (err instanceof ApiError) {
         // Expired, already used, or invalid: each is a permanent result for
         // this stored bearer. Forget it so the next sign-in cannot route the
-        // person back to a capability the server has already refused. Network
-        // errors stay above this block because they are retryable.
+        // person back to a capability the server has already refused. Release
+        // the process-wide claim too, so reopening the exact same refused link
+        // in this process reaches the API again instead of remaining on Loading.
+        // Success deliberately does NOT release its claim because an invitation
+        // is single-use and a second mounted accept screen must not resubmit it.
         if (err.status === 410 || err.code === 'invitation_expired') {
           await clearPendingInvite();
+          releaseInviteAttempt(value);
           setOutcome({ kind: 'expired' });
           return;
         }
         if (err.status === 409 || err.code === 'invitation_already_used') {
           await clearPendingInvite();
+          releaseInviteAttempt(value);
           setOutcome({ kind: 'used' });
           return;
         }
         if (err.code === 'invitation_invalid') {
           await clearPendingInvite();
+          releaseInviteAttempt(value);
           const key = `error.${err.code}` as 'error.internal_error';
           const text = t(key);
           setOutcome({ kind: 'invalid', message: text === key ? err.message : text });
