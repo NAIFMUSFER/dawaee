@@ -356,7 +356,8 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
            strength_unit = CASE WHEN $22::boolean THEN $7::strength_unit ELSE strength_unit END,
            manufacturer = CASE WHEN $23::boolean THEN $8 ELSE manufacturer END,
            barcode = CASE WHEN $24::boolean THEN $9 ELSE barcode END,
-           image_key = COALESCE($10, image_key),
+           image_key = CASE WHEN $30::boolean THEN $10 ELSE image_key END,
+           prescription_id = CASE WHEN $32::boolean THEN $31::uuid ELSE prescription_id END,
            instructions = CASE WHEN $25::boolean THEN $11 ELSE instructions END,
            doctor_instructions = CASE WHEN $26::boolean THEN $12 ELSE doctor_instructions END,
            food_instruction = COALESCE($13::food_instruction, food_instruction),
@@ -386,6 +387,9 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.notes !== undefined,
           body.endDate !== undefined,
           body.expiryDate !== undefined,
+          body.imageKey !== undefined,
+          body.prescriptionId ?? null,
+          body.prescriptionId !== undefined,
         ],
       );
       const after = mapMedication(rows[0]!);
