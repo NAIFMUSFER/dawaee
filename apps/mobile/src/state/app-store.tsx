@@ -161,13 +161,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * clear credentials, erase cache data, or publish signed-out UI state.
    */
   const authCleanupInFlight = useRef<Promise<void>>(Promise.resolve());
+  // An explicit logout keeps its credentials only for remote deregistration.
+  // No new account may enter until its entire local privacy sweep has settled.
+  const signOutInFlight = useRef<Promise<void> | null>(null);
 
   const loadMe = useCallback(async () => {
     const generation = sessionGeneration.current;
     const request = ++profileLoadGeneration.current;
     const isCurrent = () => mounted.current && generation === sessionGeneration.current
       && request === profileLoadGeneration.current && isSignedIn();
-    if (!isCurrent()) return;
+    if (!isCurrent() || signOutInFlight.current) return;
     const preferenceSnapshot = preferenceGeneration.current;
     const preferencesPendingAtStart = preferenceWrites.current.session === generation
       && preferenceWrites.current.pending > 0;
@@ -229,12 +232,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCacheOwner(hasSession ? await getRestoredSessionUserId() : null);
 
       setUnauthenticatedHandler(async () => {
+        // Explicit logout already owns the privacy sweep. A rejection of its
+        // retiring credentials must not replace that barrier or invalidate a
+        // newer login intent which is waiting for the same cleanup.
+        if (signOutInFlight.current) return;
         // Invalidate every profile/bootstrap request that started under the
         // session the server has just rejected before doing any async cleanup.
         sessionGeneration.current++;
         const previousUserId = stateRef.current.user?.id ?? null;
         setCacheOwner(null);
-        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
+        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null, credentialVerifiedAt: null }));
 
         const cleanup = (async () => {
           // A revoked/disabled session is still a sign-out on this physical
@@ -271,7 +278,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const request = ++syncGeneration.current;
     const isCurrent = () => mounted.current && generation === sessionGeneration.current
       && request === syncGeneration.current && isSignedIn();
-    if (!isCurrent()) return;
+    if (!isCurrent() || signOutInFlight.current) return;
     const deviceId = await getDeviceId();
     if (!isCurrent()) return;
     const result = await flushQueue(deviceId);
@@ -284,48 +291,66 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
-      // A sign-out may still be clearing the previous account's credentials,
-      // reminders or local cache. Never create the next session inside that tail.
+      // Capture intent BEFORE waiting. A later logout or login must supersede
+      // this attempt even while earlier local privacy cleanup is still running.
+      const generation = ++sessionGeneration.current;
+      const isCurrent = () => mounted.current && generation === sessionGeneration.current;
       await authCleanupInFlight.current.catch(() => undefined);
-      sessionGeneration.current++;
+      if (!isCurrent()) return;
       await storeSession(tokens);
+      if (!isCurrent()) return;
       await loadMe();
-      // The only place `credentialVerifiedAt` is ever set. Both auth screens
-      // call this immediately after the server accepted a password, so it marks
-      // a fresh credential and nothing else — not a restored session, not a
-      // silent refresh, not a route change. The app lock's recovery route keys
-      // off it for exactly that reason.
+      if (!isCurrent() || !isSignedIn()) return;
+      // Only completion of this current password sign-in may unlock recovery.
+      // A stale loadMe returning early is NOT fresh credential verification.
       setState((s) => ({ ...s, ready: true, credentialVerifiedAt: Date.now() }));
     },
     signOut: async () => {
-      // Anything that was reading profiles under this session is stale from
-      // this instant onward, even if the network calls below take time.
+      // Invalidate login/read/write intent immediately, including a login that
+      // is waiting behind an already-running logout. Duplicate logout requests
+      // share cleanup rather than performing another global sweep later.
       sessionGeneration.current++;
-      // Capture the owner before any await can allow another render/session to
-      // replace stateRef. Cleanup must always target the account that signed out.
+      if (signOutInFlight.current) return signOutInFlight.current;
       const previousUserId = stateRef.current.user?.id ?? null;
+      const precedingCleanup = authCleanupInFlight.current;
+      setCacheOwner(null);
+      stateRef.current = {
+        ...stateRef.current, signedIn: false, user: null, profiles: [],
+        activeProfile: null, credentialVerifiedAt: null,
+      };
+      setState((s) => ({
+        ...s, signedIn: false, user: null, profiles: [],
+        activeProfile: null, credentialVerifiedAt: null,
+      }));
 
+      // Invalidate OS-held reminders now, not after a device lookup or network
+      // timeout. Retiring credentials are used only to deactivate remote push
+      // and revoke this session, before clearing the credential store.
+      const cancellation = cancelAllLocalNotifications().catch(() => undefined);
       const cleanup = (async () => {
-        // Deactivate this device FIRST, while the old token still authorises it.
-        // Signing out used to leave the push registration live, so medication
-        // reminders could keep arriving on a phone that had been signed out.
-        const deviceId = await getDeviceId();
-        await api.delete(`/v1/devices/push-token/${encodeURIComponent(deviceId)}`).catch(() => undefined);
-        await cancelAllLocalNotifications().catch(() => undefined);
-        await api.post('/v1/auth/logout').catch(() => undefined);
-        await clearSession();
-
-        // Destroy the outgoing account's local medication cache and its key, in
-        // that order and both best effort. Publishing this whole transition to
-        // authCleanupInFlight makes a newer password sign-in wait until no old
-        // sign-out continuation can clear its credentials, cache owner or UI.
-        await purgeLocalCaches(previousUserId).catch(() => undefined);
-        if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
-        setCacheOwner(null);
-        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
+        try {
+          const deviceId = await getDeviceId().catch(() => null);
+          if (deviceId) {
+            await api.delete(`/v1/devices/push-token/${encodeURIComponent(deviceId)}`).catch(() => undefined);
+          }
+          await api.post('/v1/auth/logout').catch(() => undefined);
+        } finally {
+          // A keychain deletion failure must not skip cache/key destruction.
+          // Both are best effort; no later login may overlap either operation.
+          await clearSession().catch(() => undefined);
+          await cancellation;
+          await precedingCleanup.catch(() => undefined);
+          await purgeLocalCaches(previousUserId).catch(() => undefined);
+          if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
+        }
       })();
+      signOutInFlight.current = cleanup;
       authCleanupInFlight.current = cleanup;
-      await cleanup;
+      try {
+        await cleanup;
+      } finally {
+        if (signOutInFlight.current === cleanup) signOutInFlight.current = null;
+      }
     },
     refreshProfiles: loadMe,
     setActiveProfile: (profileId) => {
@@ -385,7 +410,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // the old catch-all below read as "offline" — so choosing Arabic raised
       // an offline banner on a perfectly healthy connection. The choice is
       // kept locally and travels with the sign-up request instead.
-      if (!isSignedIn()) return;
+      if (!isSignedIn() || signOutInFlight.current) return;
 
       // Serialize persistence as well as ignoring old responses: otherwise an
       // earlier PATCH can commit last and restore the old choice on next login.
@@ -398,7 +423,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       writes.pending++;
       const save = async () => {
         try {
-          if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
+          if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn() || signOutInFlight.current) return;
           const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
           if (
             !mounted.current
