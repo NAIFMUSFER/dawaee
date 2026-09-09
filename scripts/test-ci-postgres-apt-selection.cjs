@@ -17,14 +17,31 @@ function workflowUpdateArgs(workflowFile) {
   const updates = body.replace(/\\\n\s*/g, ' ').split('\n').map(line => line.trim())
     .filter(line => line.startsWith('sudo apt-get ') && /\bupdate$/.test(line));
   assert.equal(updates.length, 1, 'expected exactly one APT index update invocation');
-  // Capture shell tokenization only. Never execute the workflow's update command.
-  const result = spawnSync('bash', ['-c', String.raw`
-    set -euo pipefail
-    sudo() { [ "$1" = apt-get ]; shift; printf '%s\0' "$@"; }
-  ` + updates[0]], { encoding: 'utf8', timeout: 5000 });
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout.split('\0').filter(Boolean);
+  // The checked-in command uses a deliberately small grammar. Never evaluate
+  // workflow text as shell, and never forward arbitrary APT configuration.
+  const tokens = updates[0].split(/\s+/);
+  assert.equal(tokens.shift(), 'sudo');
+  assert.equal(tokens.shift(), 'apt-get');
+  assert.equal(tokens.pop(), 'update');
+  const args = [];
+  for (let i = 0; i < tokens.length; i += 2) {
+    assert.equal(tokens[i], '-o', 'unsupported APT update option syntax');
+    // Return fixed literals, not the input token: APT configuration includes
+    // executable hooks, so an unknown setting is not harmless argument text.
+    switch (tokens[i + 1]) {
+      case 'Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list':
+        args.push('-o', 'Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list'); break;
+      case 'Dir::Etc::sourceparts=-':
+        args.push('-o', 'Dir::Etc::sourceparts=-'); break;
+      case 'APT::Get::List-Cleanup=0':
+        args.push('-o', 'APT::Get::List-Cleanup=0'); break;
+      case 'APT::Update::Error-Mode=any':
+        args.push('-o', 'APT::Update::Error-Mode=any'); break;
+      default:
+        throw new Error('unsupported APT update configuration');
+    }
+  }
+  return [...args, 'update'];
 }
 
 function selectedUris(updateArgs) {
@@ -55,6 +72,32 @@ function selectedUris(updateArgs) {
 
 function scenarios(workflowFile) {
   return [
+    {
+      name: 'workflow parsing rejects shell substitution without executing it',
+      run() {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dawaee-apt-parser-'));
+        try {
+          const marker = path.join(directory, 'must-not-exist');
+          const fixture = path.join(directory, 'workflow.yml');
+          fs.writeFileSync(fixture, `      - name: Install PostgreSQL client matching the server\n        run: |\n          sudo apt-get -o Probe=$(touch ${marker}) update\n`);
+          let error;
+          try { workflowUpdateArgs(fixture); } catch (caught) { error = caught; }
+          assert.equal(fs.existsSync(marker), false, 'argument parsing must not execute shell input');
+          assert.match(error?.message || '', /unsupported APT update/);
+        } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+      },
+    },
+    {
+      name: 'workflow parsing rejects arbitrary APT configuration before spawning APT',
+      run() {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dawaee-apt-parser-'));
+        try {
+          const fixture = path.join(directory, 'workflow.yml');
+          fs.writeFileSync(fixture, '      - name: Install PostgreSQL client matching the server\n        run: |\n          sudo apt-get -o APT::Update::Pre-Invoke::=true update\n');
+          assert.throws(() => workflowUpdateArgs(fixture), /unsupported APT update/);
+        } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+      },
+    },
     {
       name: 'positive control: unscoped APT discovers PGDG and an unrelated repository',
       run() {
