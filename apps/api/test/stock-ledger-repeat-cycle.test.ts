@@ -55,8 +55,8 @@ afterAll(async () => {
   await h.close();
 });
 
-describe('stock ledger across take/undo/re-take', () => {
-  it('records every quantity movement, not only the first take and undo for a dose', async () => {
+describe('stock ledger across repeated dose corrections', () => {
+  it('records every take/undo movement and never reverses stock when undoing a later skip', async () => {
     // Put the server at the occurrence itself. This is a ledger test, not an
     // early-confirmation test, and production rejects distant future actions.
     setClockSource(() => new Date(scheduledAt));
@@ -78,17 +78,45 @@ describe('stock ledger across take/undo/re-take', () => {
     });
     expect(take2.statusCode, take2.body).toBe(200);
 
-    const stock = await h.app.inject({
+    const afterRetake = await h.app.inject({
       method: 'GET', url: `/v1/medications/${medicationId}/stock`, headers: authHeaders(user),
     });
-    expect(stock.statusCode, stock.body).toBe(200);
-    const transactions = stock.json().transactions as Array<{ reason: string; delta: number }>;
+    expect(afterRetake.statusCode, afterRetake.body).toBe(200);
+    let transactions = afterRetake.json().transactions as Array<{ reason: string; delta: number }>;
 
     // The table is documented as a reconstructable quantity ledger. Before the
     // fix, its unique (dose_occurrence_id, reason) index suppressed the second
     // dose_taken row even though the balance was decremented a second time.
     expect(transactions.filter((t) => t.reason === 'dose_taken')).toHaveLength(2);
     expect(transactions.filter((t) => t.reason === 'dose_undone')).toHaveLength(1);
-    expect(stock.json().stock.remainingQuantity).toBe(9);
+    expect(afterRetake.json().stock.remainingQuantity).toBe(9);
+
+    const undo2 = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${doseId}/undo`, headers: authHeaders(user),
+    });
+    expect(undo2.statusCode, undo2.body).toBe(200);
+
+    const skipped = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${doseId}/skip`, headers: authHeaders(user),
+      payload: { clientEventId: 'ledger-cycle-skip-1', reason: 'not taking this occurrence' },
+    });
+    expect(skipped.statusCode, skipped.body).toBe(200);
+
+    const undoSkip = await h.app.inject({
+      method: 'POST', url: `/v1/doses/${doseId}/undo`, headers: authHeaders(user),
+    });
+    expect(undoSkip.statusCode, undoSkip.body).toBe(200);
+
+    const finalStock = await h.app.inject({
+      method: 'GET', url: `/v1/medications/${medicationId}/stock`, headers: authHeaders(user),
+    });
+    expect(finalStock.statusCode, finalStock.body).toBe(200);
+    transactions = finalStock.json().transactions as Array<{ reason: string; delta: number }>;
+
+    // Two takes and two take-undos are the only quantity movements. Undoing a
+    // skip must not find an old take transaction and add stock a third time.
+    expect(transactions.filter((t) => t.reason === 'dose_taken')).toHaveLength(2);
+    expect(transactions.filter((t) => t.reason === 'dose_undone')).toHaveLength(2);
+    expect(finalStock.json().stock.remainingQuantity).toBe(10);
   });
 });
