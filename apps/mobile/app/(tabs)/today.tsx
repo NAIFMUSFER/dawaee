@@ -67,6 +67,14 @@ function TodayProfileScreen() {
   const arabic = preferences.locale === 'ar';
   const canAddMedication = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
   const canConfirmDose = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('confirm_dose')));
+  const canViewToday = Boolean(activeProfile && (
+    activeProfile.role === 'owner'
+    || activeProfile.isSelf
+    || (
+      activeProfile.permissions?.includes('view_schedule')
+      && activeProfile.permissions?.includes('view_medications')
+    )
+  ));
 
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,6 +91,17 @@ function TodayProfileScreen() {
     const isCurrent = beginLoad();
     if (!isCurrent()) return;
     if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
+    // /v1/today contains medication identity as well as the schedule. Mirror the
+    // server's composite read contract before any network or secure-cache read.
+    // This also clears previously authorised data if caregiver permissions are
+    // revoked while the same profile remains selected.
+    if (!canViewToday) {
+      setData(null);
+      setExactAlarmsUnavailable(false);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     const remindersAreCurrent = captureLocalReminderContext();
     try {
       const res = await api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id });
@@ -159,7 +178,7 @@ function TodayProfileScreen() {
         setRefreshing(false);
       }
     }
-  }, [beginLoad, activeProfile, preferences.locale, preferences.voiceRemindersEnabled, preferences.showMedicationInNotifications, setOffline, data]);
+  }, [beginLoad, activeProfile, canViewToday, preferences.locale, preferences.voiceRemindersEnabled, preferences.showMedicationInNotifications, setOffline, data]);
 
   useEffect(() => {
     setData(null);
@@ -167,7 +186,7 @@ function TodayProfileScreen() {
     setSnoozeFor(null);
     setLoading(true);
     void load();
-  }, [activeProfile?.id]);
+  }, [activeProfile?.id, canViewToday]);
 
   useEffect(() => {
     void (async () => {
@@ -289,13 +308,23 @@ function TodayProfileScreen() {
 
         <ProfileSwitcher />
         {activeProfile && !activeProfile.isSelf ? (
-          <Banner
-            tone="info"
-            title={arabic ? `أنت تتابع الآن: ${activeProfile.displayName}` : `You are now viewing: ${activeProfile.displayName}`}
-            body={canConfirmDose
-              ? (arabic ? 'يمكنك تأكيد الجرعات حسب الصلاحية الممنوحة لك.' : 'You can confirm doses under your granted permission.')
-              : (arabic ? 'هذا الملف للمتابعة فقط؛ لا يمكنك تأكيد الجرعات.' : 'This profile is view-only for dose confirmation.')}
-          />
+          canViewToday ? (
+            <Banner
+              tone="info"
+              title={arabic ? `أنت تتابع الآن: ${activeProfile.displayName}` : `You are now viewing: ${activeProfile.displayName}`}
+              body={canConfirmDose
+                ? (arabic ? 'يمكنك تأكيد الجرعات حسب الصلاحية الممنوحة لك.' : 'You can confirm doses under your granted permission.')
+                : (arabic ? 'هذا الملف للمتابعة فقط؛ لا يمكنك تأكيد الجرعات.' : 'This profile is view-only for dose confirmation.')}
+            />
+          ) : (
+            <Banner
+              tone="warning"
+              title={arabic ? 'صلاحية صفحة اليوم غير متاحة' : 'Today is restricted for this profile'}
+              body={arabic
+                ? 'مستوى الوصول الحالي لا يتضمن تفاصيل الدواء اللازمة لعرض جرعات اليوم.'
+                : 'This access level does not include the medication details required to show today’s doses.'}
+            />
+          )
         ) : null}
 
         {offline ? (
@@ -312,44 +341,48 @@ function TodayProfileScreen() {
           <Banner tone="warning" title={t('notifications.exactAlarmsOff')} body={t('notifications.exactAlarmsOffBody')} />
         ) : null}
 
-        {next ? (
+        {canViewToday ? (
           <>
-            <SectionTitle>{t('today.nextMedication')}</SectionTitle>
-            <DoseCard
-              dose={next}
-              prominent
-              busy={busyDoseId === next.id}
-              onTaken={canConfirmDose ? () => void act(next, 'taken') : undefined}
-              onUndo={canConfirmDose ? () => void undo(next) : undefined}
-              onSnooze={canConfirmDose ? () => setSnoozeFor(next) : undefined}
-              onSkip={canConfirmDose ? () => void act(next, 'skip') : undefined}
-            />
-          </>
-        ) : allDone || nextAnyDay ? (
-          <Card><Txt variant="h3" weight="bold" align="center">{t('today.allDone')}</Txt></Card>
-        ) : null}
+            {next ? (
+              <>
+                <SectionTitle>{t('today.nextMedication')}</SectionTitle>
+                <DoseCard
+                  dose={next}
+                  prominent
+                  busy={busyDoseId === next.id}
+                  onTaken={canConfirmDose ? () => void act(next, 'taken') : undefined}
+                  onUndo={canConfirmDose ? () => void undo(next) : undefined}
+                  onSnooze={canConfirmDose ? () => setSnoozeFor(next) : undefined}
+                  onSkip={canConfirmDose ? () => void act(next, 'skip') : undefined}
+                />
+              </>
+            ) : allDone || nextAnyDay ? (
+              <Card><Txt variant="h3" weight="bold" align="center">{t('today.allDone')}</Txt></Card>
+            ) : null}
 
-        <SectionTitle>{t('today.title')}</SectionTitle>
-        {todayList.length === 0 ? (
-          <EmptyState
-            title={t('today.noMedications')}
-            action={canAddMedication ? <Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} /> : undefined}
-          />
-        ) : (
-          <View style={{ gap: theme.spacing.sm }}>
-            {todayList.map((dose) => (
-              <DoseCard
-                key={dose.id}
-                dose={dose}
-                busy={busyDoseId === dose.id}
-                onUndo={canConfirmDose ? () => void undo(dose) : undefined}
-                onPress={() => router.push(`/medication/${dose.medicationId}`)}
+            <SectionTitle>{t('today.title')}</SectionTitle>
+            {todayList.length === 0 ? (
+              <EmptyState
+                title={t('today.noMedications')}
+                action={canAddMedication ? <Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} /> : undefined}
               />
-            ))}
-          </View>
-        )}
+            ) : (
+              <View style={{ gap: theme.spacing.sm }}>
+                {todayList.map((dose) => (
+                  <DoseCard
+                    key={dose.id}
+                    dose={dose}
+                    busy={busyDoseId === dose.id}
+                    onUndo={canConfirmDose ? () => void undo(dose) : undefined}
+                    onPress={() => router.push(`/medication/${dose.medicationId}`)}
+                  />
+                ))}
+              </View>
+            )}
 
-        <SafetyNote textKey="missed.guidance" />
+            <SafetyNote textKey="missed.guidance" />
+          </>
+        ) : null}
       </ScrollView>
 
       {snoozeFor && canConfirmDose ? (
