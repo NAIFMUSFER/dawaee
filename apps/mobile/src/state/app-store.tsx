@@ -275,7 +275,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Invalidate every profile/bootstrap request that started under the
         // session the server has just rejected before doing any async cleanup.
         sessionGeneration.current++;
-        const previousUserId = stateRef.current.user?.id ?? null;
+        // On a cold-start rejection /v1/me may never have populated React
+        // state. The owner recovered from the secure session is still the
+        // authoritative local namespace that must be purged and cryptoshredded.
+        const previousUserId = stateRef.current.user?.id ?? restoredUserId ?? null;
         const precedingSnapshotWrites = offlineBootstrapWrites.current;
         setCacheOwner(null);
         setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null, credentialVerifiedAt: null }));
