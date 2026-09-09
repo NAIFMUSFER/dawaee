@@ -115,6 +115,85 @@ export const CAREGIVER_PERMISSIONS = [
 ] as const;
 export type CaregiverPermission = (typeof CAREGIVER_PERMISSIONS)[number];
 
+/**
+ * Visibility dependencies of caregiver capabilities.
+ *
+ * These are not "extra powers": they are tables the corresponding operation
+ * necessarily reads. RLS hides those tables when the dependency is absent, so
+ * a grant without its dependencies is a permission that the UI says is on but
+ * the API must reject (or, before the audit hardening, returned an empty 200).
+ * Keeping the map shared prevents the API enforcement and the mobile presets /
+ * custom toggles from drifting apart again.
+ */
+export const CAREGIVER_PERMISSION_DEPENDENCIES: Partial<
+  Record<CaregiverPermission, readonly CaregiverPermission[]>
+> = {
+  add_medication: ['view_medications'],
+  edit_medication: ['view_medications'],
+  edit_schedule: ['view_schedule', 'view_medications'],
+  update_stock: ['view_medications'],
+  confirm_dose: ['view_schedule', 'view_medications'],
+  view_reports: ['view_medications', 'view_schedule'],
+  view_adherence: ['view_schedule'],
+  // Dose history joins both schedule and medication rows.
+  view_history: ['view_medications', 'view_schedule'],
+};
+
+function inCanonicalPermissionOrder(values: ReadonlySet<CaregiverPermission>): CaregiverPermission[] {
+  return CAREGIVER_PERMISSIONS.filter((permission) => values.has(permission));
+}
+
+/** Add every dependency required by a set of permissions, recursively. */
+export function completeCaregiverPermissions(
+  permissions: readonly CaregiverPermission[],
+): CaregiverPermission[] {
+  const completed = new Set<CaregiverPermission>(permissions);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const permission of [...completed]) {
+      for (const dependency of CAREGIVER_PERMISSION_DEPENDENCIES[permission] ?? []) {
+        if (!completed.has(dependency)) {
+          completed.add(dependency);
+          changed = true;
+        }
+      }
+    }
+  }
+  return inCanonicalPermissionOrder(completed);
+}
+
+/**
+ * Toggle one custom permission without leaving a relationship internally
+ * contradictory. Enabling a capability adds what it needs. Disabling a
+ * dependency removes capabilities that can no longer work, recursively.
+ */
+export function toggleCaregiverPermission(
+  current: readonly CaregiverPermission[],
+  permission: CaregiverPermission,
+): CaregiverPermission[] {
+  const next = new Set<CaregiverPermission>(current);
+  if (!next.has(permission)) {
+    next.add(permission);
+    return completeCaregiverPermissions([...next]);
+  }
+
+  next.delete(permission);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of [...next]) {
+      const missingDependency = (CAREGIVER_PERMISSION_DEPENDENCIES[candidate] ?? [])
+        .some((dependency) => !next.has(dependency));
+      if (missingDependency) {
+        next.delete(candidate);
+        changed = true;
+      }
+    }
+  }
+  return inCanonicalPermissionOrder(next);
+}
+
 export const CAREGIVER_RELATIONSHIP_STATUSES = ['pending', 'active', 'revoked', 'declined', 'expired'] as const;
 export type CaregiverRelationshipStatus = (typeof CAREGIVER_RELATIONSHIP_STATUSES)[number];
 
