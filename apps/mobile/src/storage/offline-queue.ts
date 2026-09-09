@@ -3,6 +3,7 @@ import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js
 import type { CacheSlot } from './secure-cache.js';
 import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
 import { OFFLINE_BOOTSTRAP_SLOT } from './offline-bootstrap.js';
+export { readOfflineBootstrap, writeOfflineBootstrap } from './offline-bootstrap.js';
 
 /**
  * The offline queue.
