@@ -148,9 +148,10 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     [dose.id, result.status, result.confirmedAt, input.userId, input.method, input.deviceId ?? null, input.clientEventId],
   );
 
-  await tx.query(
+  const { rows: eventRows } = await tx.query<{ id: string }>(
     `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, at, actor_user_id, method, device_id, metadata)
-     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7)`,
+     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7)
+     RETURNING id`,
     [
       dose.id, dose.patient_profile_id, result.confirmedAt, input.userId, input.method,
       input.deviceId ?? null,
@@ -158,7 +159,7 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     ],
   );
 
-  const stock = await applyStockForDose(tx, dose, input.userId);
+  const stock = await applyStockForDose(tx, dose, input.userId, eventRows[0]!.id);
 
   if (input.note && (input.note.tags.length > 0 || input.note.text)) {
     // Stored verbatim. The system never interprets a symptom or links it to an
@@ -194,6 +195,7 @@ async function applyStockForDose(
   tx: PoolClient,
   dose: DoseRow,
   userId: string,
+  doseEventId: string,
 ): Promise<{ remainingQuantity: number; clamped: boolean } | null> {
   const { rows } = await tx.query<{ remaining_quantity: string | null; tracking_enabled: boolean }>(
     'SELECT remaining_quantity, tracking_enabled FROM medication_stock WHERE medication_id = $1 FOR UPDATE',
@@ -212,14 +214,16 @@ async function applyStockForDose(
   await tx.query('UPDATE medication_stock SET remaining_quantity = $2 WHERE medication_id = $1', [
     dose.medication_id, applied.balanceAfter,
   ]);
-  // The unique index on (dose_occurrence_id, reason) is the second line of
-  // defence against a replayed confirmation decrementing twice.
+
+  // One append-only dose event causes one stock movement. Offline replay never
+  // creates a second event, while a legitimate take -> undo -> take cycle does.
+  // This keeps the ledger reconstructable without sacrificing idempotency.
   await tx.query(
     `INSERT INTO stock_transactions
-       (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, balance_after, actor_user_id)
-     VALUES ($1,$2,$3,'dose_taken',$4,$5,$6)
-     ON CONFLICT (dose_occurrence_id, reason) WHERE dose_occurrence_id IS NOT NULL DO NOTHING`,
-    [dose.medication_id, dose.patient_profile_id, applied.delta, dose.id, applied.balanceAfter, userId],
+       (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
+        balance_after, actor_user_id)
+     VALUES ($1,$2,$3,'dose_taken',$4,$5,$6,$7)`,
+    [dose.medication_id, dose.patient_profile_id, applied.delta, dose.id, doseEventId, applied.balanceAfter, userId],
   );
 
   return { remainingQuantity: applied.balanceAfter, clamped: applied.clamped };
@@ -336,8 +340,24 @@ export async function undoDose(
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'The undo window for this dose has passed');
   }
 
+  // Record the undo first so any stock reversal can point at the exact event
+  // that caused it. Everything is in one transaction; a later failure rolls
+  // the event back as well.
+  const { rows: undoEventRows } = await tx.query<{ id: string }>(
+    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata)
+     VALUES ($1,$2,'undone',$3,$4)
+     RETURNING id`,
+    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status })],
+  );
+
+  // The latest take movement is the one represented by the currently recorded
+  // dose. Repeated take/undo cycles are legitimate, so there may be older ones.
   const { rows: txRows } = await tx.query<{ delta: string }>(
-    `SELECT delta FROM stock_transactions WHERE dose_occurrence_id = $1 AND reason = 'dose_taken'`,
+    `SELECT delta
+       FROM stock_transactions
+      WHERE dose_occurrence_id = $1 AND reason = 'dose_taken'
+      ORDER BY created_at DESC
+      LIMIT 1`,
     [dose.id],
   );
   if (txRows[0]) {
@@ -348,10 +368,10 @@ export async function undoDose(
     );
     await tx.query(
       `INSERT INTO stock_transactions
-         (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, balance_after, actor_user_id)
-       VALUES ($1,$2,$3,'dose_undone',$4,$5,$6)
-       ON CONFLICT (dose_occurrence_id, reason) WHERE dose_occurrence_id IS NOT NULL DO NOTHING`,
-      [dose.medication_id, dose.patient_profile_id, delta, dose.id,
+         (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
+          balance_after, actor_user_id)
+       VALUES ($1,$2,$3,'dose_undone',$4,$5,$6,$7)`,
+      [dose.medication_id, dose.patient_profile_id, delta, dose.id, undoEventRows[0]!.id,
        stockRows[0]?.remaining_quantity ?? null, input.userId],
     );
   }
@@ -362,11 +382,6 @@ export async function undoDose(
             confirmation_method = NULL, client_event_id = NULL, snoozed_until = NULL
       WHERE id = $1`,
     [dose.id],
-  );
-  await tx.query(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata)
-     VALUES ($1,$2,'undone',$3,$4)`,
-    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status })],
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.undone',
