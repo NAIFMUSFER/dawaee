@@ -66,6 +66,35 @@ ALTER TABLE stored_objects
   ADD CONSTRAINT stored_objects_owner_user_id_fkey
   FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE SET NULL;
 
+-- `dawaee_worker` has SELECT on stored_objects but, under FORCE RLS, no DELETE
+-- policy. The old housekeeping `DELETE FROM stored_objects` therefore matched
+-- zero rows rather than raising an error: abandoned metadata was never actually
+-- removed. Keep DELETE out of the worker role and expose only this narrow
+-- operation. The worker first removes the physical private object; this
+-- function removes metadata only if the ticket is old and still unreferenced at
+-- the instant of deletion.
+CREATE OR REPLACE FUNCTION app.remove_abandoned_object_metadata(p_object_key text)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, app AS $$
+BEGIN
+  IF p_object_key IS NULL OR length(p_object_key) < 1 OR length(p_object_key) > 512 THEN
+    RAISE EXCEPTION 'remove_abandoned_object_metadata: invalid object key';
+  END IF;
+
+  DELETE FROM stored_objects so
+   WHERE so.object_key = p_object_key
+     AND so.uploaded_at IS NULL
+     AND so.created_at < now() - interval '24 hours'
+     AND NOT EXISTS (SELECT 1 FROM medications m WHERE m.image_key = so.object_key)
+     AND NOT EXISTS (SELECT 1 FROM prescriptions p WHERE p.image_key = so.object_key)
+     AND NOT EXISTS (SELECT 1 FROM patient_profiles pp WHERE pp.avatar_key = so.object_key);
+
+  RETURN FOUND;
+END $$;
+
+REVOKE EXECUTE ON FUNCTION app.remove_abandoned_object_metadata(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app.remove_abandoned_object_metadata(text) TO dawaee_worker;
+
 -- The worker deliberately has no DELETE privilege on users. Expose exactly one
 -- operation: erase one account only when its durable request is at least the
 -- configured grace period old. The function returns a boolean, never account
@@ -92,6 +121,11 @@ BEGIN
     RETURN false;
   END IF;
 
+  -- Unattached objects have no patient_profile cascade to remove their metadata.
+  -- The worker has already deleted their physical bytes before calling here.
+  DELETE FROM stored_objects
+   WHERE owner_user_id = p_user_id AND patient_profile_id IS NULL;
+
   DELETE FROM users WHERE id = p_user_id;
   RETURN FOUND;
 END $$;
@@ -99,5 +133,7 @@ END $$;
 REVOKE EXECUTE ON FUNCTION app.erase_due_account(uuid, int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.erase_due_account(uuid, int) TO dawaee_worker;
 
+COMMENT ON FUNCTION app.remove_abandoned_object_metadata(text) IS
+  'Worker-only metadata cleanup after physical object deletion; refuses referenced or recent objects.';
 COMMENT ON FUNCTION app.erase_due_account(uuid, int) IS
   'Worker-only final account erasure. Refuses users whose deletion request has not completed its grace period.';
