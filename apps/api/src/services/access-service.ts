@@ -74,11 +74,11 @@ export async function loadProfileAccess(
  * Product-level permission dependencies imposed by the queries behind a
  * capability.
  *
- * Custom caregiver grants are allowed, but a write capability cannot work if
- * the very first lookup or RETURNING/ON CONFLICT path is hidden by RLS. The
- * standard nurse preset already contains these bundles; this table makes the
- * same invariant hold for custom permission sets and turns opaque RLS-driven
- * 404s into explicit 403s before a write starts.
+ * Custom caregiver grants are allowed, but a write/read capability cannot work
+ * if a table its handler necessarily joins is hidden by RLS. The standard nurse
+ * preset already contains these bundles; this table makes the same invariant
+ * hold for custom permission sets and turns opaque RLS-driven empty responses
+ * into explicit 403s before the query starts.
  *
  * P20 evidence:
  * - add_medication without view_medications could not complete its own
@@ -89,7 +89,11 @@ export async function loadProfileAccess(
  *   requires view_medications;
  * - confirm_dose first resolves the dose occurrence and then renders medication
  *   identity, so the confirmation grant is useful only with schedule + medicine
- *   visibility.
+ *   visibility;
+ * - reports inner-join dose_occurrences, medications AND medication_schedules.
+ *   A custom caregiver holding view_reports + view_medications but not
+ *   view_schedule therefore passed the API check and received HTTP 200 with an
+ *   empty report because the schedule RLS policy removed every joined row.
  */
 const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
   add_medication: ['view_medications'],
@@ -97,6 +101,7 @@ const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly Care
   edit_schedule: ['view_schedule', 'view_medications'],
   update_stock: ['view_medications'],
   confirm_dose: ['view_schedule', 'view_medications'],
+  view_reports: ['view_medications', 'view_schedule'],
 };
 
 /**
@@ -146,11 +151,11 @@ export async function requireProfileAccess(
   return access;
 }
 
-/** The permission set required to read a dose row. */
+/** The permission sets required by compound reads. */
 export const DOSE_READ = ['view_schedule', 'view_medications'] as const;
 export const DOSE_HISTORY_READ = ['view_history', 'view_medications'] as const;
 export const DOSE_CONFIRM = ['confirm_dose', 'view_schedule', 'view_medications'] as const;
-export const REPORT_READ = ['view_reports', 'view_medications'] as const;
+export const REPORT_READ = ['view_reports', 'view_medications', 'view_schedule'] as const;
 
 export async function requireProfileOwner(
   tx: PoolClient,
