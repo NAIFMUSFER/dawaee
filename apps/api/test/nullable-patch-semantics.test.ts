@@ -22,7 +22,7 @@ describe('PATCH preserves omitted fields but clears explicitly-null optional val
         patientProfileId: user.profileId,
         name: 'Nullable medication probe', brandName: 'Brand A', genericName: 'Generic A',
         form: 'tablet', strengthValue: 250, strengthUnit: 'mg', manufacturer: 'Manufacturer A',
-        barcode: '1234567890123', imageKey: 'medications/nullable-probe.jpg', instructions: 'Take with water',
+        barcode: '1234567890123', instructions: 'Take with water',
         doctorInstructions: 'Doctor instruction', notes: 'Temporary note',
         startDate: '2026-09-01', endDate: '2026-12-31', expiryDate: '2027-06-30',
       },
@@ -34,14 +34,14 @@ describe('PATCH preserves omitted fields but clears explicitly-null optional val
       method: 'PATCH', url: `/v1/medications/${medicationId}`, headers: authHeaders(user),
       payload: {
         brandName: null, genericName: null, strengthValue: null, strengthUnit: null,
-        manufacturer: null, barcode: null, imageKey: null, instructions: null, doctorInstructions: null,
+        manufacturer: null, barcode: null, instructions: null, doctorInstructions: null,
         notes: null, endDate: null, expiryDate: null, confirmHighRiskChange: true,
       },
     });
     expect(patched.statusCode, patched.body).toBe(200);
     expect(patched.json().medication).toMatchObject({
       brandName: null, genericName: null, strengthValue: null, strengthUnit: null,
-      manufacturer: null, barcode: null, imageKey: null, instructions: null, doctorInstructions: null,
+      manufacturer: null, barcode: null, instructions: null, doctorInstructions: null,
       notes: null, endDate: null, expiryDate: null,
     });
     expect(patched.json().medication.name).toBe('Nullable medication probe');
@@ -79,8 +79,8 @@ describe('PATCH preserves omitted fields but clears explicitly-null optional val
     const created = await h.app.inject({
       method: 'POST', url: '/v1/medications', headers: authHeaders(user),
       payload: {
-        patientProfileId: user.profileId, name: 'Strength unit confirmation probe', form: 'tablet',
-        strengthValue: 500, strengthUnit: 'mg', startDate: '2026-09-01',
+        patientProfileId: user.profileId, name: 'Unit conversion sentinel ZQ9', form: 'tablet',
+        strengthValue: 73, strengthUnit: 'mg', startDate: '2026-09-01',
       },
     });
     expect(created.statusCode, created.body).toBe(200);
