@@ -9,7 +9,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
-import { api, NetworkError } from '@/api/client';
+import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
@@ -84,6 +84,7 @@ function TodayProfileScreen() {
   const [notificationWarning, setNotificationWarning] = useState<string | null>(null);
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
+  const [serviceUnavailable, setServiceUnavailable] = useState(false);
 
   const { begin: beginLoad, capture: captureScope } = useRequestScope();
 
@@ -98,15 +99,18 @@ function TodayProfileScreen() {
     if (!canViewToday) {
       setData(null);
       setExactAlarmsUnavailable(false);
+      setServiceUnavailable(false);
       setLoading(false);
       setRefreshing(false);
       return;
     }
+    setServiceUnavailable(false);
     const remindersAreCurrent = captureLocalReminderContext();
     try {
       const res = await api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id });
       if (!isCurrent()) return;
       setData(res);
+      setServiceUnavailable(false);
       setOffline(false);
 
       await cacheSchedule({
@@ -171,6 +175,12 @@ function TodayProfileScreen() {
             prefetchDays: 7,
           });
         }
+      } else if (err instanceof ApiError && err.status === 503) {
+        // Render can return an HTTP 503 while a sleeping instance wakes. Since
+        // that response reached the server edge, it is not a transport-offline
+        // event and must never be rendered as "no medications".
+        setOffline(false);
+        setServiceUnavailable(true);
       }
     } finally {
       if (isCurrent()) {
@@ -184,6 +194,7 @@ function TodayProfileScreen() {
     setData(null);
     setLocalOverrides({});
     setSnoozeFor(null);
+    setServiceUnavailable(false);
     setLoading(true);
     void load();
   }, [activeProfile?.id, canViewToday]);
@@ -361,7 +372,16 @@ function TodayProfileScreen() {
             ) : null}
 
             <SectionTitle>{t('today.title')}</SectionTitle>
-            {todayList.length === 0 ? (
+            {serviceUnavailable ? (
+              <Banner
+                tone="warning"
+                title={arabic ? 'الخدمة غير متاحة مؤقتاً' : 'Service temporarily unavailable'}
+                body={arabic
+                  ? 'تعذر تحميل جدول اليوم الآن. أعد المحاولة بعد لحظات؛ لن نعرض حالة فارغة بدلاً من الجرعات.'
+                  : 'Today’s schedule could not be loaded right now. Retry shortly; an empty schedule is not being shown in place of unavailable data.'}
+                action={<Button label={t('common.retry')} tone="ghost" fullWidth={false} onPress={() => void load()} />}
+              />
+            ) : todayList.length === 0 ? (
               <EmptyState
                 title={t('today.noMedications')}
                 action={canAddMedication ? <Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} /> : undefined}
