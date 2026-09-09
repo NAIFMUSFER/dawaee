@@ -39,9 +39,41 @@ export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT, LOW_STOCK_SLOT];
  * legitimate to go.
  */
 let currentUserId: string | null = null;
+let ownerGeneration = 0;
+type QueueOwner = { userId: string; generation: number };
+const queueMutations = new Map<string, Promise<void>>();
 
 export function setCacheOwner(userId: string | null): void {
+  if (userId !== currentUserId) ownerGeneration++;
   currentUserId = userId;
+}
+
+function captureOwner(): QueueOwner | null {
+  return currentUserId ? { userId: currentUserId, generation: ownerGeneration } : null;
+}
+
+function isCurrentOwner(owner: QueueOwner): boolean {
+  return owner.userId === currentUserId && owner.generation === ownerGeneration;
+}
+
+function requireCurrentOwner(owner: QueueOwner): void {
+  if (!isCurrentOwner(owner)) throw new QueuePersistFailed('account changed');
+}
+
+/** Serialize local read/modify/write operations, never the network request. */
+function mutateQueue<T>(owner: QueueOwner, operation: () => Promise<T>): Promise<T> {
+  const previous = queueMutations.get(owner.userId) ?? Promise.resolve();
+  const result = previous.then(() => {
+    requireCurrentOwner(owner);
+    return operation();
+  });
+  // A failed disk write must not poison the next action's turn.
+  const settled = result.then(() => undefined, () => undefined);
+  queueMutations.set(owner.userId, settled);
+  void settled.then(() => {
+    if (queueMutations.get(owner.userId) === settled) queueMutations.delete(owner.userId);
+  });
+  return result;
 }
 
 /** Raised when a dose action could not be persisted. Carries no medication data. */
@@ -78,10 +110,16 @@ export function newClientEventId(): string {
  * not in here.
  */
 export async function readQueue(): Promise<QueuedAction[]> {
-  if (!currentUserId) return [];
+  const owner = captureOwner();
+  if (!owner) return [];
+  const actions = await readQueueFor(owner.userId);
+  return isCurrentOwner(owner) ? actions : [];
+}
+
+async function readQueueFor(userId: string): Promise<QueuedAction[]> {
   let raw: string | null;
   try {
-    raw = await readSlot(QUEUE_SLOT, currentUserId);
+    raw = await readSlot(QUEUE_SLOT, userId);
   } catch {
     return [];
   }
@@ -103,18 +141,27 @@ export async function readQueue(): Promise<QueuedAction[]> {
  * which silently reinstates the vulnerability on exactly the devices where the
  * secure path is broken.
  */
-async function writeQueue(actions: QueuedAction[]): Promise<void> {
-  if (!currentUserId) throw new QueuePersistFailed('signed out');
-  const result = await writeSlot(QUEUE_SLOT, currentUserId, JSON.stringify(actions.slice(-500)));
+async function writeQueue(actions: QueuedAction[], owner: QueueOwner): Promise<void> {
+  requireCurrentOwner(owner);
+  const result = await writeSlot(QUEUE_SLOT, owner.userId, JSON.stringify(actions));
+  requireCurrentOwner(owner);
   if (!result.ok) throw new QueuePersistFailed(result.reason);
 }
 
 export async function enqueue(action: QueuedAction): Promise<void> {
-  const queue = await readQueue();
-  // Guard against a double tap producing two entries for one intent.
-  if (queue.some((a) => a.clientEventId === action.clientEventId)) return;
-  queue.push(action);
-  await writeQueue(queue);
+  const owner = captureOwner();
+  if (!owner) throw new QueuePersistFailed('signed out');
+  await mutateQueue(owner, async () => {
+    const queue = await readQueueFor(owner.userId);
+    requireCurrentOwner(owner);
+    // Guard against a double tap producing two entries for one intent.
+    if (queue.some((a) => a.clientEventId === action.clientEventId)) return;
+    // Match the sync API's 500-action bound without silently discarding an
+    // older, unsent dose confirmation. The caller already handles this error.
+    if (queue.length >= 500) throw new QueuePersistFailed('queue full');
+    queue.push(action);
+    await writeQueue(queue, owner);
+  });
 }
 
 export interface FlushResult {
@@ -132,7 +179,10 @@ export interface FlushResult {
  * block the queue; anything else stays for the next attempt.
  */
 export async function flushQueue(deviceId: string): Promise<FlushResult> {
-  const queue = await readQueue();
+  const owner = captureOwner();
+  if (!owner) return { attempted: 0, applied: 0, replayed: 0, failed: 0, offline: false };
+  const queue = await mutateQueue(owner, () => readQueueFor(owner.userId));
+  requireCurrentOwner(owner);
   if (queue.length === 0) return { attempted: 0, applied: 0, replayed: 0, failed: 0, offline: false };
 
   try {
@@ -142,10 +192,18 @@ export async function flushQueue(deviceId: string): Promise<FlushResult> {
     }>('/v1/doses/sync', { deviceId, actions: queue });
 
     const permanent = new Set(['not_found', 'forbidden', 'dose_already_resolved', 'validation_failed', 'dose_not_actionable']);
+    const sentIds = new Set(queue.map((a) => a.clientEventId));
     const settled = new Set(
-      res.results.filter((r) => r.ok || permanent.has(r.error ?? '')).map((r) => r.clientEventId),
+      res.results.filter((r) => sentIds.has(r.clientEventId) && (r.ok || permanent.has(r.error ?? '')))
+        .map((r) => r.clientEventId),
     );
-    await writeQueue(queue.filter((a) => !settled.has(a.clientEventId)));
+    await mutateQueue(owner, async () => {
+      // The request's snapshot is not the current queue: a patient can tap
+      // another dose while the network is in flight. Remove only acknowledged
+      // actions from a fresh read, under the same lock used by enqueue.
+      const current = await readQueueFor(owner.userId);
+      await writeQueue(current.filter((a) => !settled.has(a.clientEventId)), owner);
+    });
 
     return { attempted: queue.length, applied: res.applied, replayed: res.replayed, failed: res.failed, offline: false };
   } catch (err) {
