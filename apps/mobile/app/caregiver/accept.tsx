@@ -89,8 +89,10 @@ export default function AcceptInvitationScreen() {
         return;
       }
       if (err instanceof ApiError) {
-        // Expired or already used: the token is spent. Forget it, or it
-        // follows this person back to the same dead end after every sign-in.
+        // Expired, already used, or invalid: each is a permanent result for
+        // this stored bearer. Forget it so the next sign-in cannot route the
+        // person back to a capability the server has already refused. Network
+        // errors stay above this block because they are retryable.
         if (err.status === 410 || err.code === 'invitation_expired') {
           await clearPendingInvite();
           setOutcome({ kind: 'expired' });
@@ -99,6 +101,13 @@ export default function AcceptInvitationScreen() {
         if (err.status === 409 || err.code === 'invitation_already_used') {
           await clearPendingInvite();
           setOutcome({ kind: 'used' });
+          return;
+        }
+        if (err.code === 'invitation_invalid') {
+          await clearPendingInvite();
+          const key = `error.${err.code}` as 'error.internal_error';
+          const text = t(key);
+          setOutcome({ kind: 'invalid', message: text === key ? err.message : text });
           return;
         }
         const key = `error.${err.code}` as 'error.internal_error';
