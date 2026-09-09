@@ -68,24 +68,19 @@ export async function housekeepingJob(
    * `uploaded_at`: direct S3/R2 PUTs bypass the API. Only OLD, UNREFERENCED
    * tickets are therefore safe to classify as abandoned.
    *
-   * The old cleanup deleted only the database row. If the direct upload had in
-   * fact succeeded, the private object remained in S3/R2 forever with no
-   * metadata left to find it again. There was also no worker DELETE policy on
-   * this FORCE-RLS table, so that direct DELETE could silently match zero rows.
+   * P20 CI reproduced the least-privilege production boundary here: doing the
+   * reference test directly required SELECT on `prescriptions`, which the
+   * worker intentionally does not have, and `permission denied` aborted the
+   * entire housekeeping function before account erasure could run. Do not widen
+   * the worker to prescription PHI. Migration 0039 exposes only a bounded list
+   * of safe object keys through a pinned SECURITY DEFINER function.
    *
-   * Delete the physical bytes first, then ask a narrow SECURITY DEFINER
-   * function to remove metadata only if the same reference checks still hold.
-   * Each object gets its own savepoint: one provider outage does not retain all
-   * the other objects or stop unrelated housekeeping classes.
+   * Delete the physical bytes first, then ask the narrow metadata-removal
+   * function to re-check the references at deletion time. Each object gets its
+   * own savepoint, so one provider outage does not retain all other objects.
    */
   const { rows: abandonedObjects } = await client.query<{ object_key: string }>(
-    `SELECT so.object_key
-       FROM stored_objects so
-      WHERE so.uploaded_at IS NULL
-        AND so.created_at < now() - interval '24 hours'
-        AND NOT EXISTS (SELECT 1 FROM medications m WHERE m.image_key = so.object_key)
-        AND NOT EXISTS (SELECT 1 FROM prescriptions p WHERE p.image_key = so.object_key)
-        AND NOT EXISTS (SELECT 1 FROM patient_profiles pp WHERE pp.avatar_key = so.object_key)`,
+    'SELECT object_key FROM app.list_abandoned_object_keys(24, 100)',
   );
   for (const object of abandonedObjects) {
     await runStep(ctx, client, outcome, 'uploads', async () => {
@@ -101,40 +96,26 @@ export async function housekeepingJob(
   /**
    * Final account erasure.
    *
-   * The HTTP route has always returned a concrete `scheduledFor` value fourteen
-   * days after `deletion_requested_at`, but before P20 no job consumed that
-   * marker at all. A deletion request could sit in `users` forever.
+   * The HTTP route returns a concrete `scheduledFor` fourteen days after the
+   * durable request marker. The worker now consumes that marker, but it does so
+   * without broadening its database reach: migration 0039 returns only ids that
+   * are already due and only object keys that belong to the departing user's
+   * own data. A caregiver-uploaded image attached to somebody else's profile is
+   * that patient's medical record and is deliberately not returned.
    *
-   * For a due user, remove only object bytes that would disappear with THEIR
-   * data: unattached uploads and uploads attached to profiles they own. An
-   * image a caregiver uploaded into somebody else's profile is that patient's
-   * medical record and must survive; migration 0038 makes uploader attribution
-   * nullable so erasure can remove the person without deleting another
-   * patient's data.
-   *
-   * The database delete itself is worker-only SECURITY DEFINER and independently
-   * re-checks the grace period under a row lock. Physical deletion happens
-   * first. If object storage is unavailable, the account remains scheduled and
-   * the failed step is retried rather than falsely claiming erasure while bytes
-   * remain outside PostgreSQL.
+   * The database delete independently re-checks the grace period under a row
+   * lock. Physical deletion happens first. If object storage is unavailable,
+   * the account remains scheduled and the failed step is retried rather than
+   * falsely claiming erasure while bytes remain outside PostgreSQL.
    */
-  const { rows: dueAccounts } = await client.query<{ id: string }>(
-    `SELECT id
-       FROM users
-      WHERE deletion_requested_at IS NOT NULL
-        AND deletion_requested_at <= now() - interval '14 days'
-      ORDER BY deletion_requested_at
-      LIMIT 100`,
+  const { rows: dueAccounts } = await client.query<{ user_id: string }>(
+    'SELECT user_id FROM app.list_due_account_ids(14, 100)',
   );
   for (const account of dueAccounts) {
     await runStep(ctx, client, outcome, 'accountDeletion', async () => {
       const { rows: objects } = await client.query<{ object_key: string }>(
-        `SELECT so.object_key
-           FROM stored_objects so
-           LEFT JOIN patient_profiles pp ON pp.id = so.patient_profile_id
-          WHERE so.owner_user_id = $1
-            AND (so.patient_profile_id IS NULL OR pp.owner_user_id = $1)`,
-        [account.id],
+        'SELECT object_key FROM app.list_due_account_object_keys($1, 14)',
+        [account.user_id],
       );
       for (const object of objects) {
         await ctx.providers.storage.deleteObject(object.object_key);
@@ -142,7 +123,7 @@ export async function housekeepingJob(
 
       const { rows } = await client.query<{ erased: boolean }>(
         'SELECT app.erase_due_account($1, 14) AS erased',
-        [account.id],
+        [account.user_id],
       );
       return rows[0]?.erased ? 1 : 0;
     });
