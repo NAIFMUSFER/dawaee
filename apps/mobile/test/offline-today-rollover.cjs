@@ -109,13 +109,23 @@ function scenarios(screenFile, hookFile) {
   return cases;
 }
 module.exports = { scenarios };
-if (require.main === module) (async () => {
-  let failed = 0;
-  const cases = scenarios(process.argv[2], process.argv[3]);
-  for (const scenario of cases) {
-    try { await scenario.run(); console.log(`PASS ${scenario.name}`); }
-    catch (error) { failed++; console.log(`FAIL ${scenario.name}\n  ${error.message}`); }
+if (require.main === module) {
+  // This runner executes source. CLI input must never select which file or
+  // hook gets evaluated; use only the checked-in screen relative to this file.
+  if (process.argv.length !== 2) {
+    console.error('This runner accepts no file or hook arguments.');
+    process.exitCode = 64;
+  } else {
+    (async () => {
+      let failed = 0;
+      const screen = require('node:path').join(__dirname, '../app/(tabs)/today.tsx');
+      const cases = scenarios(screen);
+      for (const scenario of cases) {
+        try { await scenario.run(); console.log(`PASS ${scenario.name}`); }
+        catch (error) { failed++; console.log(`FAIL ${scenario.name}\n  ${error.message}`); }
+      }
+      console.log(JSON.stringify({ total: cases.length, passed: cases.length - failed, failed }));
+      process.exitCode = failed ? 1 : 0;
+    })();
   }
-  console.log(JSON.stringify({ total: cases.length, passed: cases.length - failed, failed }));
-  process.exitCode = failed ? 1 : 0;
-})();
+}
