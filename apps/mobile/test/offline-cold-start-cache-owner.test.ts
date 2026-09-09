@@ -84,6 +84,7 @@ async function boot(file: string, hasStoredSession: boolean) {
   };
 
   const context = {
+    NetworkError,
     getDeviceId: async () => 'device-a',
     loadStoredSession: async () => hasStoredSession,
     getRestoredSessionUserId: () => hasStoredSession ? 'ACCOUNT-A' : null,

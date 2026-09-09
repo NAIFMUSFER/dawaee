@@ -300,13 +300,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       try {
         await loadMe();
-      } catch {
-        // A cold start with no network must not sign the user out. Restore only
-        // an encrypted snapshot bound to this exact session owner. It contains
-        // the owned self profile and preferences, never delegated caregiver
-        // access; credential verification deliberately remains process-local.
+      } catch (err) {
+        // Only a transport failure permits offline restoration. An HTTP denial,
+        // service error or invalid response must not become cached authority.
+        // Keep credentials and queued actions for recovery without exposing the
+        // snapshot. Genuine offline starts retain the owned self profile and
+        // preferences; credential verification remains process-local.
         if (
-          !cancelled
+          err instanceof NetworkError
+          && !cancelled
           && isSignedIn()
           && bootstrapGeneration === sessionGeneration.current
         ) {
