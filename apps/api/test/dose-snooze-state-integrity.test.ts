@@ -12,10 +12,12 @@ const BASE = (() => {
 })();
 const day = (offset: number) => new Date(BASE + offset * 86_400_000).toISOString().slice(0, 10);
 
+type DoseRef = { id: string; scheduledAt: string };
+
 let h: Harness;
 let user: TestUser;
 let targetDate = '';
-let doses: Array<{ id: string }> = [];
+let doses: DoseRef[] = [];
 
 beforeAll(async () => {
   resetDatabase();
@@ -42,7 +44,8 @@ beforeAll(async () => {
     headers: authHeaders(user),
   });
   expect(list.statusCode, list.body).toBe(200);
-  doses = list.json<{ doses: Array<{ id: string }> }>().doses;
+  doses = list.json<{ doses: DoseRef[] }>().doses
+    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
   expect(doses.length).toBeGreaterThanOrEqual(2);
 }, 120_000);
 
@@ -56,42 +59,48 @@ async function detail(doseId: string) {
   return res.json<{ dose: { status: string; snoozedUntil: string | null } }>().dose;
 }
 
+function atDose(dose: DoseRef): void {
+  h.setServerNow(new Date(dose.scheduledAt));
+}
+
 describe('P20 snooze metadata follows dose state', () => {
   it('clears snoozedUntil when a snoozed dose is taken', async () => {
-    const id = doses[0]!.id;
+    const dose = doses[0]!;
+    atDose(dose);
     const snooze = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${id}/snooze`, headers: authHeaders(user),
+      method: 'POST', url: `/v1/doses/${dose.id}/snooze`, headers: authHeaders(user),
       payload: { minutes: 15, clientEventId: 'state-snooze-taken-1' },
     });
     expect(snooze.statusCode, snooze.body).toBe(200);
-    expect((await detail(id)).snoozedUntil).not.toBeNull();
+    expect((await detail(dose.id)).snoozedUntil).not.toBeNull();
 
     const taken = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${id}/taken`, headers: authHeaders(user),
+      method: 'POST', url: `/v1/doses/${dose.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: 'state-taken-after-snooze-1', method: 'app' },
     });
     expect(taken.statusCode, taken.body).toBe(200);
 
-    const after = await detail(id);
+    const after = await detail(dose.id);
     expect(['taken', 'taken_late']).toContain(after.status);
     expect(after.snoozedUntil).toBeNull();
   });
 
   it('clears snoozedUntil when a snoozed dose is skipped', async () => {
-    const id = doses[1]!.id;
+    const dose = doses[1]!;
+    atDose(dose);
     const snooze = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${id}/snooze`, headers: authHeaders(user),
+      method: 'POST', url: `/v1/doses/${dose.id}/snooze`, headers: authHeaders(user),
       payload: { minutes: 15, clientEventId: 'state-snooze-skip-1' },
     });
     expect(snooze.statusCode, snooze.body).toBe(200);
 
     const skipped = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${id}/skip`, headers: authHeaders(user),
+      method: 'POST', url: `/v1/doses/${dose.id}/skip`, headers: authHeaders(user),
       payload: { clientEventId: 'state-skip-after-snooze-1' },
     });
     expect(skipped.statusCode, skipped.body).toBe(200);
 
-    const after = await detail(id);
+    const after = await detail(dose.id);
     expect(after.status).toBe('skipped');
     expect(after.snoozedUntil).toBeNull();
   });
