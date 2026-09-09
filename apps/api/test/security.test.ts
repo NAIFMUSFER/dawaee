@@ -547,25 +547,35 @@ describe('a client event id belongs to one dose, not to the whole database', () 
       method: 'GET', url: `/v1/doses?profileId=${alice.profileId}&from=${riyadhDay(1)}&to=${riyadhDay(6)}`,
       headers: authHeaders(alice),
     });
-    const list = (doses.json().doses as Array<{ id: string; status: string }>)
+    const list = (doses.json().doses as Array<{ id: string; status: string; scheduledAt: string }>)
       .filter((d) => ['upcoming', 'due', 'pending_confirmation'].includes(d.status));
     expect(list.length, 'the suite needs two unresolved doses to collide').toBeGreaterThan(1);
-    const [first, second] = list as [{ id: string }, { id: string }];
+    const [first, second] = list as [
+      { id: string; scheduledAt: string },
+      { id: string; scheduledAt: string },
+    ];
 
+    const restoreNow = new Date();
     const shared = 'evt-collision-probe-1';
-    const a = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${first.id}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(a.statusCode).toBe(200);
-    expect(a.json().doseId).toBe(first.id);
+    try {
+      h.setServerNow(new Date(first.scheduledAt));
+      const a = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${first.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: first.scheduledAt },
+      });
+      expect(a.statusCode).toBe(200);
+      expect(a.json().doseId).toBe(first.id);
 
-    // Same id, different dose. It must NOT quietly answer with the first one.
-    const b = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${second.id}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(b.json().doseId ?? second.id).not.toBe(first.id);
+      // Same id, different dose. It must NOT quietly answer with the first one.
+      h.setServerNow(new Date(second.scheduledAt));
+      const b = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${second.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: second.scheduledAt },
+      });
+      expect(b.json().doseId ?? second.id).not.toBe(first.id);
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 
   /**
@@ -579,21 +589,28 @@ describe('a client event id belongs to one dose, not to the whole database', () 
         method: 'GET', url: `/v1/doses?profileId=${u.profileId}&from=${riyadhDay(7)}&to=${riyadhDay(7)}`,
         headers: authHeaders(u),
       });
-      return (res.json().doses as Array<{ id: string }>)[0]!.id;
+      return (res.json().doses as Array<{ id: string; scheduledAt: string }>)[0]!;
     };
     const aliceDose = await doseOf(alice);
     const bobDose = await doseOf(bob);
+    const restoreNow = new Date();
 
-    const one = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${aliceDose}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    const two = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${bobDose}/taken`, headers: authHeaders(bob),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(one.statusCode).toBe(200);
-    expect(two.statusCode, two.body).toBe(200);
+    try {
+      h.setServerNow(new Date(aliceDose.scheduledAt));
+      const one = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${aliceDose.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: aliceDose.scheduledAt },
+      });
+      h.setServerNow(new Date(bobDose.scheduledAt));
+      const two = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${bobDose.id}/taken`, headers: authHeaders(bob),
+        payload: { clientEventId: shared, method: 'app', takenAt: bobDose.scheduledAt },
+      });
+      expect(one.statusCode).toBe(200);
+      expect(two.statusCode, two.body).toBe(200);
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 });
 
