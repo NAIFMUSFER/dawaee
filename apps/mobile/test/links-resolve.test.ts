@@ -5,22 +5,18 @@ import { describe, expect, it } from 'vitest';
 /**
  * Every link the server hands out must land on a screen that exists.
  *
- * Two did not, for the entire life of the project, and both failed at the
- * worst possible moment:
+ * Two link families have caused real failures and remain pinned here:
  *
- *  - `/invite/<token>`, built by the caregiver invitation route, had no
- *    screen. The family member who received the invitation reached
- *    "Unmatched Route", so the care circle could not be formed at all — and
- *    every escalation past the patient therefore had nobody to reach.
- *  - `/e/<token>`, encoded into the emergency QR, had no screen. A paramedic
- *    scanning an unconscious patient's card got a blank error instead of
- *    blood type, allergies and contacts.
+ *  - `/invite/<token>`, built by the caregiver invitation route, must land on
+ *    the invitation screen so the care circle can actually be formed.
+ *  - `/e#<token>`, encoded into the emergency QR, must land on the fixed `/e`
+ *    screen. The bearer capability deliberately lives in the URL fragment so
+ *    it is not sent in the HTTP request path/query or ordinary access logs.
  *
- * Neither is visible from the server side: the route builds a correct-looking
- * URL, and nothing checks that the other half exists. So this test reads the
- * URLs the API actually constructs and asserts expo-router has a file for
- * each — from both directions, so a screen renamed or a URL changed breaks
- * here rather than in someone's hands.
+ * Neither is visible from the server side alone: a route can build a
+ * correct-looking URL while expo-router has no matching screen. This test
+ * therefore reads the URLs the API actually constructs and asserts that the
+ * path portion resolves in the mobile/web router.
  */
 const ROOT = resolve(import.meta.dirname, '../../..');
 const APP_DIR = join(ROOT, 'apps/mobile/app');
@@ -55,6 +51,8 @@ const resolves = (path: string) => ROUTES.some((r) => matcher(r).test(path));
 /**
  * The paths the API builds from PUBLIC_APP_URL, read out of the source rather
  * than restated here — a URL changed in the route must break this test.
+ * Fragments are intentionally excluded because routing depends on pathname;
+ * the emergency-capability transport suite separately pins fragment handling.
  */
 function publicPathsBuiltByTheApi(): Array<{ file: string; path: string }> {
   const found: Array<{ file: string; path: string }> = [];
@@ -83,9 +81,12 @@ describe('links the server hands out', () => {
     }
   });
 
-  it('serves the two links whose absence broke invitations and the emergency card', () => {
+  it('serves the invitation path and the fixed emergency-card path', () => {
     expect(resolves('/invite/abc123')).toBe(true);
-    expect(resolves('/e/abc123')).toBe(true);
+    expect(resolves('/e')).toBe(true);
+    // The old path-token transport must stay absent: the capability belongs in
+    // the fragment, not in a route segment that can reach HTTP logs.
+    expect(resolves('/e/abc123')).toBe(false);
   });
 
   it('still does not pretend to serve a path nobody defined', () => {
