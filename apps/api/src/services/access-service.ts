@@ -1,5 +1,9 @@
 import type { PoolClient } from 'pg';
-import { AppError, type CaregiverPermission } from '@dawaee/shared';
+import {
+  AppError,
+  CAREGIVER_PERMISSION_DEPENDENCIES,
+  type CaregiverPermission,
+} from '@dawaee/shared';
 import { assertCan, resolveRole, type AccessContext } from '@dawaee/core';
 
 /**
@@ -72,15 +76,12 @@ export async function loadProfileAccess(
 
 /**
  * Product-level permission dependencies imposed by the queries behind a
- * capability.
+ * capability are defined in @dawaee/shared, not privately here. The mobile
+ * preset/custom controls and this API guard must consume the same map; their
+ * previous drift produced an "Observer" preset that advertised adherence but
+ * created a relationship that this service correctly rejected with 403.
  *
- * Custom caregiver grants are allowed, but a write/read capability cannot work
- * if a table its handler necessarily joins is hidden by RLS. The standard nurse
- * preset already contains these bundles; this table makes the same invariant
- * hold for custom permission sets and turns opaque RLS-driven empty responses
- * into explicit 403s before the query starts.
- *
- * P20 evidence:
+ * P20 evidence behind the shared map:
  * - add_medication without view_medications could not complete its own
  *   duplicate/RETURNING path;
  * - edit_schedule without view_schedule failed while materializing the first
@@ -99,15 +100,6 @@ export async function loadProfileAccess(
  *   view_adherence, but the joined schedule does not, so view_adherence alone
  *   otherwise produces an empty 200 rather than usable analytics.
  */
-const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
-  add_medication: ['view_medications'],
-  edit_medication: ['view_medications'],
-  edit_schedule: ['view_schedule', 'view_medications'],
-  update_stock: ['view_medications'],
-  confirm_dose: ['view_schedule', 'view_medications'],
-  view_reports: ['view_medications', 'view_schedule'],
-  view_adherence: ['view_schedule'],
-};
 
 /**
  * Requires every permission a route's query actually needs.
@@ -147,7 +139,7 @@ export async function requireProfileAccess(
       assertCan(access, p);
       checked.add(p);
     }
-    for (const dependency of PERMISSION_DEPENDENCIES[p] ?? []) {
+    for (const dependency of CAREGIVER_PERMISSION_DEPENDENCIES[p] ?? []) {
       if (checked.has(dependency)) continue;
       assertCan(access, dependency);
       checked.add(dependency);
