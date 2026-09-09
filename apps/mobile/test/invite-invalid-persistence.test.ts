@@ -29,9 +29,9 @@ describe('permanent invalid caregiver invitation cleanup', () => {
       src.indexOf("app.patch('/v1/caregivers/:relationshipId/permissions'"),
     );
 
-    expect(acceptRoute).toContain("ERROR_CODES.INVITATION_INVALID");
-    expect(acceptRoute).toContain("AppError.badRequest(ERROR_CODES.INVITATION_INVALID");
-    expect(acceptRoute).toContain("new AppError(ERROR_CODES.INVITATION_INVALID, 404");
+    expect(acceptRoute).toContain('ERROR_CODES.INVITATION_INVALID');
+    expect(acceptRoute).toContain('AppError.badRequest(ERROR_CODES.INVITATION_INVALID');
+    expect(acceptRoute).toContain('new AppError(ERROR_CODES.INVITATION_INVALID, 404');
   });
 
   it('clears a stashed token when invitation_invalid is permanent', () => {
@@ -41,7 +41,7 @@ describe('permanent invalid caregiver invitation cleanup', () => {
       src.indexOf("setOutcome({ kind: 'invalid', message: t('error.internal_error') })"),
     );
 
-    const invalidBranch = /if\s*\([^)]*err\.code\s*===\s*['\"]invitation_invalid['\"][^)]*\)\s*\{([\s\S]*?)\n\s*\}/.exec(apiErrors)?.[1] ?? '';
+    const invalidBranch = /if\s*\([^)]*err\.code\s*===\s*['"]invitation_invalid['"][^)]*\)\s*\{([\s\S]*?)\n\s*\}/.exec(apiErrors)?.[1] ?? '';
     expect(invalidBranch, 'invitation_invalid must have its own permanent-error branch').not.toBe('');
     expect(invalidBranch).toContain('await clearPendingInvite()');
     expect(invalidBranch).toContain("setOutcome({ kind: 'invalid'");
