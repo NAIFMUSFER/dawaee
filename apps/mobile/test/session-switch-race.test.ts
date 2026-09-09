@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -15,15 +16,28 @@ import { describe, expect, it } from 'vitest';
  * account-switch/revocation scenarios live in app-provider-request-races.
  */
 const root = resolve(import.meta.dirname, '../../..');
-const source = readFileSync(resolve(root, 'apps/mobile/src/state/app-store.tsx'), 'utf8');
-const loadStart = source.indexOf('const loadMe = useCallback(async () => {');
-const loadEnd = source.indexOf('\n  }, []);', loadStart);
-const loadMe = source.slice(loadStart, loadEnd);
+const file = resolve(root, 'apps/mobile/src/state/app-store.tsx');
+const source = readFileSync(file, 'utf8');
+const sf = ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+let loadMe = '';
+
+function visit(node: ts.Node): void {
+  if (
+    ts.isVariableDeclaration(node)
+    && node.name.getText(sf) === 'loadMe'
+    && node.initializer
+    && ts.isCallExpression(node.initializer)
+  ) {
+    loadMe = node.initializer.getText(sf);
+    return;
+  }
+  ts.forEachChild(node, visit);
+}
+visit(sf);
 
 describe('profile bootstrap belongs to the session that started it', () => {
   it('captures and rechecks a session generation across network awaits', () => {
-    expect(loadStart).toBeGreaterThanOrEqual(0);
-    expect(loadEnd).toBeGreaterThan(loadStart);
+    expect(loadMe, 'AST extraction must find the complete loadMe callback').not.toBe('');
     expect(loadMe).toMatch(/const generation\s*=\s*sessionGeneration\.current/);
     expect(loadMe).toMatch(/const isCurrent = \(\) => mounted\.current && generation === sessionGeneration\.current\s*&& request === profileLoadGeneration\.current && isSignedIn\(\);/);
     const meRead = loadMe.indexOf("('/v1/me');");
