@@ -158,10 +158,18 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   /**
-   * The HTTP method is part of SigV4's canonical request. A URL signed for PUT
-   * cannot authorize DELETE, even if every path/query byte is identical.
+   * The HTTP method and every declared signed header are part of SigV4's
+   * canonical request. A URL signed for PUT cannot authorize DELETE, and an
+   * upload ticket signed for image/png cannot be reused with another
+   * Content-Type while keeping the same signature.
    */
-  private presign(method: 'PUT' | 'GET' | 'DELETE', objectKey: string, ttlSeconds: number, extraQuery: Record<string, string> = {}): string {
+  private presign(
+    method: 'PUT' | 'GET' | 'DELETE',
+    objectKey: string,
+    ttlSeconds: number,
+    extraQuery: Record<string, string> = {},
+    extraSignedHeaders: Record<string, string> = {},
+  ): string {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const dateStamp = amzDate.slice(0, 8);
@@ -169,13 +177,25 @@ export class S3StorageProvider implements StorageProvider {
     const host = new URL(this.endpoint).host;
     const canonicalUri = `/${this.bucket}/${objectKey.split('/').map(encodeURIComponent).join('/')}`;
 
+    const headerValues: Record<string, string> = { host };
+    for (const [name, value] of Object.entries(extraSignedHeaders)) {
+      headerValues[name.toLowerCase()] = value.trim().replace(/\s+/g, ' ');
+    }
+    const signedHeaderNames = Object.keys(headerValues).sort();
+    const signedHeaders = signedHeaderNames.join(';');
+    const canonicalHeaders = signedHeaderNames
+      .map((name) => `${name}:${headerValues[name]!}\n`)
+      .join('');
+
     const query: Record<string, string> = {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${this.accessKeyId}/${credentialScope}`,
       'X-Amz-Date': amzDate,
       'X-Amz-Expires': String(ttlSeconds),
-      'X-Amz-SignedHeaders': 'host',
       ...extraQuery,
+      // Do not let a caller-supplied query override the actual canonical
+      // header set used below.
+      'X-Amz-SignedHeaders': signedHeaders,
     };
     const canonicalQuery = Object.keys(query)
       .sort()
@@ -183,7 +203,7 @@ export class S3StorageProvider implements StorageProvider {
       .join('&');
 
     const canonicalRequest = [
-      method, canonicalUri, canonicalQuery, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD',
+      method, canonicalUri, canonicalQuery, canonicalHeaders, signedHeaders, 'UNSIGNED-PAYLOAD',
     ].join('\n');
 
     const stringToSign = [
@@ -202,7 +222,7 @@ export class S3StorageProvider implements StorageProvider {
     const ttl = 900;
     return {
       objectKey: input.objectKey,
-      uploadUrl: this.presign('PUT', input.objectKey, ttl),
+      uploadUrl: this.presign('PUT', input.objectKey, ttl, {}, { 'content-type': input.contentType }),
       method: 'PUT',
       headers: { 'content-type': input.contentType },
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
