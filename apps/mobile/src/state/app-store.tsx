@@ -156,9 +156,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
 
   /**
-   * Forced sign-out cleanup is asynchronous. A very fast re-login must not
-   * create cache data while the previous account's sweep is still running, so
-   * password sign-in waits for the last local privacy cleanup to settle.
+   * Sign-out/privacy cleanup is asynchronous. A very fast re-login must not
+   * create a newer session or cache namespace while an older sign-out can still
+   * clear credentials, erase cache data, or publish signed-out UI state.
    */
   const authCleanupInFlight = useRef<Promise<void>>(Promise.resolve());
 
@@ -284,8 +284,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
-      // A forced sign-out may still be deleting the previous account's local
-      // cache/key. Do not let a new account enter that cleanup window.
+      // A sign-out may still be clearing the previous account's credentials,
+      // reminders or local cache. Never create the next session inside that tail.
       await authCleanupInFlight.current.catch(() => undefined);
       sessionGeneration.current++;
       await storeSession(tokens);
@@ -301,30 +301,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Anything that was reading profiles under this session is stale from
       // this instant onward, even if the network calls below take time.
       sessionGeneration.current++;
-
-      // Deactivate this device FIRST, while the token still authorises it.
-      // Signing out used to leave the push registration live, so medication
-      // reminders naming the patient's drugs kept arriving on a phone they had
-      // signed out of — including one they had sold or lost. Best effort: a
-      // failure here must not trap someone in a session they are trying to
-      // leave, and cancelling the local schedule below still silences this
-      // device either way.
-      const deviceId = await getDeviceId();
-      await api.delete(`/v1/devices/push-token/${encodeURIComponent(deviceId)}`).catch(() => undefined);
-      await cancelAllLocalNotifications().catch(() => undefined);
-      await api.post('/v1/auth/logout').catch(() => undefined);
-      await clearSession();
-
-      // Destroy the local medication cache and the key that opens it, in that
-      // order and both best effort. Either one alone is sufficient — ciphertext
-      // without a key is noise — so both failing is what it would take for
-      // anything to survive, and the sweep runs again on the next sign-in.
+      // Capture the owner before any await can allow another render/session to
+      // replace stateRef. Cleanup must always target the account that signed out.
       const previousUserId = stateRef.current.user?.id ?? null;
-      await purgeLocalCaches(previousUserId).catch(() => undefined);
-      if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
-      setCacheOwner(null);
 
-      setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
+      const cleanup = (async () => {
+        // Deactivate this device FIRST, while the old token still authorises it.
+        // Signing out used to leave the push registration live, so medication
+        // reminders could keep arriving on a phone that had been signed out.
+        const deviceId = await getDeviceId();
+        await api.delete(`/v1/devices/push-token/${encodeURIComponent(deviceId)}`).catch(() => undefined);
+        await cancelAllLocalNotifications().catch(() => undefined);
+        await api.post('/v1/auth/logout').catch(() => undefined);
+        await clearSession();
+
+        // Destroy the outgoing account's local medication cache and its key, in
+        // that order and both best effort. Publishing this whole transition to
+        // authCleanupInFlight makes a newer password sign-in wait until no old
+        // sign-out continuation can clear its credentials, cache owner or UI.
+        await purgeLocalCaches(previousUserId).catch(() => undefined);
+        if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
+        setCacheOwner(null);
+        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
+      })();
+      authCleanupInFlight.current = cleanup;
+      await cleanup;
     },
     refreshProfiles: loadMe,
     setActiveProfile: (profileId) => {
@@ -447,7 +448,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useApp(): AppState & AppActions {
-  const ctx = useContext(AppContext);
+  const ctx = useAppContext();
   if (!ctx) throw new Error('useApp must be used inside AppProvider');
   return ctx;
 }
@@ -457,4 +458,8 @@ export function useActiveProfile(): ProfileSummary {
   const { activeProfile } = useApp();
   if (!activeProfile) throw new Error('no active patient profile selected');
   return activeProfile;
+}
+
+function useAppContext(): (AppState & AppActions) | null {
+  return useContext(AppContext);
 }
