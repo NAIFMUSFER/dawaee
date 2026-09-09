@@ -324,28 +324,46 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const before = mapMedication(beforeRows[0]);
 
       const highRisk = detectHighRiskChanges({
-        before: { name: before.name as string, strengthValue: before.strengthValue as number | null },
-        after: { name: body.name, strengthValue: body.strengthValue ?? undefined },
+        before: {
+          name: before.name as string,
+          strengthValue: before.strengthValue as number | null,
+          strengthUnit: before.strengthUnit as string | null,
+        },
+        after: { name: body.name, strengthValue: body.strengthValue, strengthUnit: body.strengthUnit },
       });
       if (highRisk.length && !body.confirmHighRiskChange) {
         throw AppError.conflict(
           ERROR_CODES.HIGH_RISK_CONFIRMATION_REQUIRED,
           'This change affects the medication identity or strength and needs explicit confirmation',
-          { changes: highRisk, before: { name: before.name, strengthValue: before.strengthValue } },
+          {
+            changes: highRisk,
+            before: {
+              name: before.name,
+              strengthValue: before.strengthValue,
+              strengthUnit: before.strengthUnit,
+            },
+          },
         );
       }
 
       const { rows } = await tx.query(
         `UPDATE medications SET
-           name = COALESCE($2, name), brand_name = COALESCE($3, brand_name),
-           generic_name = COALESCE($4, generic_name), form = COALESCE($5::medication_form, form),
-           strength_value = COALESCE($6, strength_value), strength_unit = COALESCE($7::strength_unit, strength_unit),
-           manufacturer = COALESCE($8, manufacturer), barcode = COALESCE($9, barcode),
-           image_key = COALESCE($10, image_key), instructions = COALESCE($11, instructions),
-           doctor_instructions = COALESCE($12, doctor_instructions),
+           name = COALESCE($2, name),
+           brand_name = CASE WHEN $19::boolean THEN $3 ELSE brand_name END,
+           generic_name = CASE WHEN $20::boolean THEN $4 ELSE generic_name END,
+           form = COALESCE($5::medication_form, form),
+           strength_value = CASE WHEN $21::boolean THEN $6 ELSE strength_value END,
+           strength_unit = CASE WHEN $22::boolean THEN $7::strength_unit ELSE strength_unit END,
+           manufacturer = CASE WHEN $23::boolean THEN $8 ELSE manufacturer END,
+           barcode = CASE WHEN $24::boolean THEN $9 ELSE barcode END,
+           image_key = COALESCE($10, image_key),
+           instructions = CASE WHEN $25::boolean THEN $11 ELSE instructions END,
+           doctor_instructions = CASE WHEN $26::boolean THEN $12 ELSE doctor_instructions END,
            food_instruction = COALESCE($13::food_instruction, food_instruction),
-           notes = COALESCE($14, notes), start_date = COALESCE($15, start_date),
-           end_date = COALESCE($16, end_date), expiry_date = COALESCE($17, expiry_date),
+           notes = CASE WHEN $27::boolean THEN $14 ELSE notes END,
+           start_date = COALESCE($15, start_date),
+           end_date = CASE WHEN $28::boolean THEN $16 ELSE end_date END,
+           expiry_date = CASE WHEN $29::boolean THEN $17 ELSE expiry_date END,
            status = COALESCE($18::medication_status, status),
            archived_at = CASE WHEN $18::medication_status = 'archived' THEN now() ELSE archived_at END
          WHERE id = $1
@@ -357,6 +375,17 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.instructions ?? null, body.doctorInstructions ?? null, body.foodInstruction ?? null,
           body.notes ?? null, body.startDate ?? null, body.endDate ?? null, body.expiryDate ?? null,
           body.status ?? null,
+          body.brandName !== undefined,
+          body.genericName !== undefined,
+          body.strengthValue !== undefined,
+          body.strengthUnit !== undefined,
+          body.manufacturer !== undefined,
+          body.barcode !== undefined,
+          body.instructions !== undefined,
+          body.doctorInstructions !== undefined,
+          body.notes !== undefined,
+          body.endDate !== undefined,
+          body.expiryDate !== undefined,
         ],
       );
       const after = mapMedication(rows[0]!);
@@ -508,7 +537,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
            dose_unit = COALESCE($5::dose_unit, dose_unit),
            timezone = COALESCE($6, timezone),
            start_date = COALESCE($7, start_date),
-           end_date = COALESCE($8, end_date),
+           end_date = CASE WHEN $12::boolean THEN $8 ELSE end_date END,
            missed_after_minutes = COALESCE($9, missed_after_minutes),
            late_after_minutes = COALESCE($10, late_after_minutes),
            active = COALESCE($11, active)
@@ -522,6 +551,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.startDate ?? null, body.endDate === undefined ? null : body.endDate,
           body.missedAfterMinutes ?? null, body.lateAfterMinutes ?? null,
           body.active === undefined ? null : body.active,
+          body.endDate !== undefined,
         ],
       );
 
