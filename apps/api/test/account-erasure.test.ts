@@ -19,6 +19,8 @@ function adminSql(sql: string): void {
 async function runHousekeeping(): Promise<void> {
   const result = await runJob(h.worker, 'account-erasure-test', (client) => housekeepingJob(h.worker, client));
   expect(result.ran).toBe(true);
+  const failures = (result as typeof result & { failures?: Array<{ step: string; error: string }> }).failures ?? [];
+  expect(failures, `housekeeping failed before erasure: ${JSON.stringify(failures)}`).toEqual([]);
 }
 
 beforeAll(async () => {
@@ -51,6 +53,13 @@ describe('scheduled account erasure', () => {
       payload: { confirm: true },
     });
     expect(requested.statusCode, requested.body).toBe(200);
+
+    // The narrow worker enumeration must not expose object keys for a user who
+    // is not due yet, even if the worker supplies that user's id directly.
+    const premature = await h.worker.pool.query<{ object_key: string }>(
+      'SELECT object_key FROM app.list_due_account_object_keys($1, 14)', [bob.userId],
+    );
+    expect(premature.rows).toEqual([]);
 
     await runHousekeeping();
 
@@ -88,20 +97,28 @@ describe('scheduled account erasure', () => {
 
 describe('erasure schema boundaries', () => {
   it('keeps creator/uploader attribution nullable with ON DELETE SET NULL', async () => {
-    const { rows } = await h.worker.pool.query<{ table_name: string; column_name: string; is_nullable: string; delete_rule: string }>(
-      `SELECT kcu.table_name, kcu.column_name, cols.is_nullable, rc.delete_rule
-         FROM information_schema.table_constraints tc
-         JOIN information_schema.key_column_usage kcu
-           ON tc.constraint_name = kcu.constraint_name AND tc.constraint_schema = kcu.constraint_schema
-         JOIN information_schema.constraint_column_usage ccu
-           ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
-         JOIN information_schema.referential_constraints rc
-           ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.constraint_schema
-         JOIN information_schema.columns cols
-           ON cols.table_schema = kcu.table_schema AND cols.table_name = kcu.table_name AND cols.column_name = kcu.column_name
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND ccu.table_name = 'users'
-          AND (kcu.table_name, kcu.column_name) IN (
+    // information_schema hides metadata from roles that do not hold table
+    // privileges. The worker intentionally cannot read several of these PHI
+    // tables, so asking information_schema as the worker produced an empty set
+    // and made a correct schema look broken. pg_catalog describes the schema
+    // itself without requiring data-plane SELECT on those tables.
+    const { rows } = await h.worker.pool.query<{
+      table_name: string; column_name: string; is_nullable: boolean; delete_action: string;
+    }>(
+      `SELECT c.relname AS table_name,
+              a.attname AS column_name,
+              NOT a.attnotnull AS is_nullable,
+              con.confdeltype::text AS delete_action
+         FROM pg_constraint con
+         JOIN pg_class c ON c.oid = con.conrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         JOIN LATERAL unnest(con.conkey) AS k(attnum) ON true
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+         JOIN pg_class parent ON parent.oid = con.confrelid
+        WHERE n.nspname = 'public'
+          AND con.contype = 'f'
+          AND parent.relname = 'users'
+          AND (c.relname, a.attname) IN (
             ('medications','created_by'),
             ('medication_schedules','created_by'),
             ('prescriptions','created_by'),
@@ -111,12 +128,13 @@ describe('erasure schema boundaries', () => {
             ('caregiver_relationships','invited_by_user_id'),
             ('stored_objects','owner_user_id')
           )
-        ORDER BY kcu.table_name, kcu.column_name`,
+        ORDER BY c.relname, a.attname`,
     );
 
     expect(rows).toHaveLength(8);
-    expect(rows.every((r) => r.is_nullable === 'YES')).toBe(true);
-    expect(rows.every((r) => r.delete_rule === 'SET NULL')).toBe(true);
+    expect(rows.every((r) => r.is_nullable)).toBe(true);
+    // pg_constraint confdeltype 'n' = SET NULL.
+    expect(rows.every((r) => r.delete_action === 'n')).toBe(true);
   });
 
   it('does not expose erasure helpers to PUBLIC', async () => {
@@ -131,10 +149,13 @@ describe('erasure schema boundaries', () => {
          FROM pg_proc p
          JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'app'
-          AND p.proname IN ('erase_due_account','remove_abandoned_object_metadata')
+          AND p.proname IN (
+            'erase_due_account','remove_abandoned_object_metadata',
+            'list_due_account_ids','list_due_account_object_keys','list_abandoned_object_keys'
+          )
         ORDER BY p.proname`,
     );
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(5);
     expect(rows.every((r) => r.public_exec === false)).toBe(true);
     expect(rows.every((r) => r.worker_exec === true)).toBe(true);
   });
