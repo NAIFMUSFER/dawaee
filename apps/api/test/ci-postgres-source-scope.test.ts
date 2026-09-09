@@ -54,6 +54,25 @@ function runInstaller(major: '16' | '17', fault: 'none' | 'key' | 'index' | 'ins
   }
 }
 
+const KEY_PATH = '/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc';
+const KEY_URL = 'https://www.postgresql.org/media/keys/ACCC4CF8.asc';
+const REPOSITORY_URL = 'https://apt.postgresql.org/pub/repos/apt';
+
+/** Compare complete captured argument records, not URL substrings. A literal
+ * dot must not match another hostname character, and a trusted URL embedded in
+ * an unrelated URL must not pass. Reject missing/extra source or curl records,
+ * and bind the downloaded key path to the signed-by path. This parses data only;
+ * it neither evaluates shell input nor passes arguments to another process. */
+function assertSignedSources(commands: string): void {
+  const records = commands.trim().split('\n').map((line) => line.trim().split(/\s+/));
+  assert.deepEqual(records.filter(([command]) => command === 'curl'), [
+    ['curl', '-fsSL', '-o', KEY_PATH, KEY_URL],
+  ], 'the installer must download exactly the expected signing key');
+  assert.deepEqual(records.filter(([command]) => command?.startsWith('source:')), [
+    ['source:deb', `[signed-by=${KEY_PATH}]`, REPOSITORY_URL, 'noble-pgdg', 'main'],
+  ], 'the installer must configure exactly the expected signed repository');
+}
+
 describe('CI PostgreSQL installer scopes repository refresh without weakening trust', () => {
   for (const major of ['16', '17'] as const) {
     it(`installs PostgreSQL ${major} despite an unrelated broken repository`, () => {
@@ -61,8 +80,7 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.commands, new RegExp(`apt-get install -y postgresql-client-${major}`));
       assert.match(result.commands, /verified-client-version/);
-      assert.match(result.commands, /source:deb \[signed-by=\/usr\/share\/postgresql-common\/pgdg\/apt.postgresql.org.asc\]/);
-      assert.match(result.commands, /https:\/\/apt.postgresql.org\/pub\/repos\/apt noble-pgdg main/);
+      assertSignedSources(result.commands);
     });
   }
 
@@ -86,7 +104,7 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
 
   it('does not bypass signatures, hashes, or errors to make the install green', () => {
     assert.match(script, /set -euo pipefail/);
-    assert.match(script, /https:\/\/www.postgresql.org\/media\/keys\/ACCC4CF8.asc/);
+    assertSignedSources(runInstaller('17').commands);
     assert.doesNotMatch(script, /allow-unauthenticated|allow-insecure|trusted\s*=\s*yes|Verify-Peer\s*=\s*false|\|\|\s*(true|:)/i);
     assert.doesNotMatch(script, /Acquire::Allow|APT::Get::Allow|Check-Valid-Until/i);
   });
@@ -97,4 +115,32 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
     assert.match(workflow, /- name: Unit and integration tests\n {8}run: npm test/);
     assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
   });
+});
+
+// Mutate only inert command-log text, never executable workflow text. The same
+// assertion guards the real captured installer commands and these adversarial
+// controls, so a permissive hostname/substring check cannot silently return.
+describe('CI source assertions reject lookalikes and embedded URLs', () => {
+  const mutations: Array<[string, (commands: string) => string]> = [
+    ['repository hostname with substituted dots', (text) => text.replace(REPOSITORY_URL, 'https://aptXpostgresqlYorg/pub/repos/apt')],
+    ['key hostname with substituted dots', (text) => text.replace(KEY_URL, 'https://wwwXpostgresqlYorg/media/keys/ACCC4CF8.asc')],
+    ['key filename with substituted dot', (text) => text.replace(KEY_URL, KEY_URL.replace('.asc', 'Xasc'))],
+    ['extra key filename suffix', (text) => text.replace(KEY_URL, `${KEY_URL}.untrusted`)],
+    ['trusted repository URL embedded in another URL', (text) => text.replace(REPOSITORY_URL, `https://unrelated.invalid/?redirect=${REPOSITORY_URL}`)],
+    ['trusted key URL embedded in another URL', (text) => text.replace(KEY_URL, `https://unrelated.invalid/?redirect=${KEY_URL}`)],
+    ['additional repository despite one valid source', (text) => `${text}source:deb [signed-by=${KEY_PATH}] https://unrelated.invalid/apt noble-pgdg main\n`],
+    ['additional key download despite one valid download', (text) => `${text}curl -fsSL -o ${KEY_PATH} https://unrelated.invalid/key.asc\n`],
+    ['missing key download', (text) => text.split('\n').filter((line) => !line.startsWith('curl ')).join('\n')],
+    ['missing repository record', (text) => text.split('\n').filter((line) => !line.startsWith('source:')).join('\n')],
+  ];
+  for (const [name, mutate] of mutations) {
+    it(`rejects ${name}`, () => {
+      const result = runInstaller('17');
+      assert.equal(result.status, 0, result.stderr);
+      assertSignedSources(result.commands);
+      const changed = mutate(result.commands);
+      assert.notEqual(changed, result.commands, 'the mutation must actually change the fixture');
+      assert.throws(() => assertSignedSources(changed), assert.AssertionError);
+    });
+  }
 });
