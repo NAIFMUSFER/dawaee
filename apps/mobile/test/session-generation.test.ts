@@ -177,7 +177,9 @@ describe('a request belongs to the session that started it', () => {
     const b = deferred<Response>();
     handler = async (url, init) => url.endsWith('/v1/auth/refresh')
       ? (JSON.parse(String(init.body)).refreshToken === A.refreshToken ? a.promise : b.promise)
-      : expired();
+      // B2 is valid in this success scenario; a second 401 would be revocation.
+      : new Headers(init.headers).get('authorization') === `Bearer ${B2.accessToken}`
+        ? reply(200, { ok: true }) : expired();
     const old = settle(client.api.get('/v1/me'));
     await until(() => refreshCalls().length === 1);
     await client.storeSession(B);
@@ -190,7 +192,9 @@ describe('a request belongs to the session that started it', () => {
       const third = settle(client.api.get('/v1/profiles'));
       await until(() => calls.some((c) => c.url.endsWith('/v1/profiles')));
       b.resolve(reply(200, B2));
-      await Promise.all([current, third]);
+      const results = await Promise.all([current, third]);
+      expect(results.every((result) => result.ok)).toBe(true);
+      expect(signedOut).toBe(0);
       expect(refreshCalls()).toHaveLength(2);
       expect(storage.session).toEqual(B2);
     } finally {
