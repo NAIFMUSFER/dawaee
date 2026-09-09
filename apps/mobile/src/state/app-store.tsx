@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import * as Localization from 'expo-localization';
 import type { Locale } from '@dawaee/shared';
 import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
+import { getRestoredSessionUserId } from '../api/restored-session-owner.js';
 import type { ProfileSummary } from '../api/types.js';
 import { flushQueue, purgeLocalCaches, queueSize, setCacheOwner } from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
@@ -209,6 +210,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const deviceId = await getDeviceId();
       const hasSession = await loadStoredSession();
+
+      // `loadMe` normally binds this from /v1/me. On a genuine offline process
+      // restart that request cannot complete, yet the product deliberately keeps
+      // the stored session signed in so its encrypted schedule and queued dose
+      // actions remain usable. Recover only the local account namespace from the
+      // Keychain/Keystore-backed Dawaee token before the first cache operation.
+      // Malformed/unfamiliar tokens resolve to null and storage stays fail-closed.
+      setCacheOwner(hasSession ? await getRestoredSessionUserId() : null);
+
       setUnauthenticatedHandler(async () => {
         // Invalidate every profile/bootstrap request that started under the
         // session the server has just rejected before doing any async cleanup.
