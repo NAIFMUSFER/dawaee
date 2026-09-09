@@ -618,10 +618,23 @@ describe('nothing new writes plaintext to AsyncStorage', () => {
         if (statSync(join(ROOT, rel)).isDirectory()) { walk(rel); continue; }
         if (!/\.(ts|tsx)$/.test(entry)) continue;
         const src = readFileSync(join(ROOT, rel), 'utf8');
+        const encryptedOnlyDeclarations = [...src.matchAll(
+          /plaintextKey:\s*'(dawaee\.[A-Za-z0-9_.]+)'\s*,[\s\S]{0,240}?migratePlaintext:\s*false/g,
+        )].map((m) => ({ key: m[1]!, start: m.index!, end: m.index! + m[0].length }));
         for (const m of src.matchAll(/'(dawaee\.[A-Za-z0-9_.]+)'/g)) {
           const key = m[1]!;
           // SecureStore namespaces are not AsyncStorage keys.
           if (key.startsWith('dawaee.cacheKey.') || key === 'dawaee.session.v1') continue;
+          // A new encrypted-only CacheSlot still has a logical plaintextKey
+          // name because secure-cache derives the ciphertext namespace from it.
+          // Ignore only the literal INSIDE a declaration that explicitly says
+          // no plaintext migration. Any second occurrence — including a direct
+          // AsyncStorage write elsewhere in this file or another one — remains
+          // visible to this inventory gate.
+          const declarationOnly = encryptedOnlyDeclarations.some((d) =>
+            d.key === key && m.index! >= d.start && m.index! < d.end,
+          );
+          if (declarationOnly) continue;
           if (!found.has(key)) found.set(key, rel);
         }
       }
@@ -639,11 +652,13 @@ describe('nothing new writes plaintext to AsyncStorage', () => {
     expect(missing, 'the allow-list names keys that no longer exist').toEqual([]);
   });
 
-  it('and every encrypted slot still declares a plaintext predecessor, not a live key', () => {
+  it('and encrypted slots do not write their logical plaintext names directly', () => {
     const queue = readFileSync(join(ROOT, 'apps/mobile/src/storage/offline-queue.ts'), 'utf8');
     const snooze = readFileSync(join(ROOT, 'apps/mobile/src/storage/low-stock-snooze.ts'), 'utf8');
-    for (const [label, src] of [['offline-queue', queue], ['low-stock-snooze', snooze]]) {
-      expect(src, `${label} writes AsyncStorage directly`).not.toMatch(/AsyncStorage\.setItem\(\s*(QUEUE_SLOT|CACHE_SLOT|SLOT)\.plaintextKey/);
+    const bootstrap = readFileSync(join(ROOT, 'apps/mobile/src/storage/offline-bootstrap.ts'), 'utf8');
+    for (const [label, src] of [['offline-queue', queue], ['low-stock-snooze', snooze], ['offline-bootstrap', bootstrap]]) {
+      expect(src, `${label} writes AsyncStorage directly`).not.toMatch(/AsyncStorage\.(setItem|multiSet)\(/);
     }
+    expect(bootstrap).toMatch(/plaintextKey:\s*'dawaee\.offlineBootstrap'[\s\S]{0,240}?migratePlaintext:\s*false/);
   });
 });
