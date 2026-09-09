@@ -4,8 +4,10 @@ import type { Locale } from '@dawaee/shared';
 import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
 import { getRestoredSessionUserId } from '../api/restored-session-owner.js';
 import type { ProfileSummary } from '../api/types.js';
-import { flushQueue, purgeLocalCaches, queueSize, setCacheOwner } from '../storage/offline-queue.js';
-import { readOfflineBootstrap, writeOfflineBootstrap } from '../storage/offline-bootstrap.js';
+import {
+  flushQueue, purgeLocalCaches, queueSize, readOfflineBootstrap,
+  setCacheOwner, writeOfflineBootstrap,
+} from '../storage/offline-queue.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
