@@ -1,0 +1,236 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require(process.env.TYPESCRIPT_PATH || 'typescript');
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+class NetworkError extends Error {}
+
+const DEFAULT_PREFERENCES = {
+  locale: 'en', numeralSystem: 'latn', calendarSystem: 'gregory', elderlyMode: false,
+  textScale: 1, highContrast: false, voiceRemindersEnabled: false,
+  voiceConfirmationEnabled: false, showMedicationInNotifications: false,
+  appLockEnabled: false, appLockAreas: [], quietHoursStart: null, quietHoursEnd: null,
+  defaultSnoozeMinutes: 10, lowStockThresholdDays: 7, expiryWarningDays: 30,
+};
+
+function extractFunctions(file) {
+  const sourceText = fs.readFileSync(file, 'utf8');
+  const sf = ts.createSourceFile(file, sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  let updatePreferences = null;
+  let loadMe = null;
+  function visit(node) {
+    if (ts.isPropertyAssignment(node) && node.name.getText(sf) === 'updatePreferences') {
+      updatePreferences = node.initializer.getText(sf);
+    }
+    if (ts.isVariableDeclaration(node) && node.name.getText(sf) === 'loadMe' && ts.isCallExpression(node.initializer)) {
+      loadMe = node.initializer.arguments[0]?.getText(sf) || null;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sf);
+  if (!updatePreferences || !loadMe) throw new Error('could not extract app-store callbacks');
+  return { updatePreferences, loadMe };
+}
+
+function makeHarness(file, options = {}) {
+  const extracted = extractFunctions(file);
+  let state = {
+    ready: true, signedIn: true,
+    user: { id: 'ACCOUNT-A', displayName: 'A', phoneE164: null },
+    preferences: { ...DEFAULT_PREFERENCES, ...(options.preferences || {}) },
+    profiles: options.profiles || [
+      { id: 'SELF', displayName: 'Self', isSelf: true, role: 'owner', permissions: null },
+    ],
+    activeProfile: options.activeProfile || { id: 'SELF', displayName: 'Self', isSelf: true, role: 'owner', permissions: null },
+    offline: false, restartRequiredForRtl: false,
+  };
+  const stateRef = { current: state };
+  const mounted = { current: true };
+  const sessionGeneration = { current: 7 };
+  // Supplied even on the red baseline so the same harness executes the fix.
+  const preferenceGeneration = { current: 0 };
+  let signedIn = true;
+  const requests = [];
+  const rebuilds = [];
+  const cacheOwners = [];
+
+  const request = (method, route, payload) => {
+    const gate = deferred();
+    requests.push({ method, route, payload, completed: false, ...gate });
+    return gate.promise;
+  };
+  const api = {
+    get: (route) => request('GET', route),
+    patch: (route, payload) => request('PATCH', route, payload),
+  };
+  const setState = (updater) => {
+    state = typeof updater === 'function' ? updater(state) : updater;
+    stateRef.current = state;
+  };
+  const context = {
+    api, stateRef, mounted, sessionGeneration, preferenceGeneration,
+    setState, DEFAULT_PREFERENCES, NetworkError,
+    isSignedIn: () => signedIn,
+    setCacheOwner: (id) => cacheOwners.push(id),
+    applyNativeDirection: () => ({ restartRequired: false }),
+    rebuildRemindersFromCache: async (profileId, locale, opts) => {
+      rebuilds.push({ profileId, locale, opts });
+      return { scheduled: profileId ? 1 : 0, failed: 0, exactAlarmsUnavailable: false };
+    },
+    console,
+  };
+  const evaluate = (text) => vm.runInNewContext(`(${text})`, context, { filename: file });
+  const updatePreferences = evaluate(extracted.updatePreferences);
+  const loadMe = evaluate(extracted.loadMe);
+
+  return {
+    updatePreferences, loadMe, requests, rebuilds, cacheOwners,
+    state: () => state,
+    sessionGeneration, preferenceGeneration,
+    setSignedIn: (value) => { signedIn = value; },
+    replaceState: (next) => { state = { ...state, ...next }; stateRef.current = state; },
+    pending: (method, route) => requests.filter((r) => !r.completed && (!method || r.method === method) && (!route || r.route === route)),
+    resolve: (req, value) => { req.completed = true; req.resolve(value); },
+    reject: (req, error) => { req.completed = true; req.reject(error); },
+  };
+}
+
+function selfProfile(id = 'SELF') {
+  return { id, displayName: id, isSelf: true, role: 'owner', permissions: null };
+}
+function otherProfile(id = 'PATIENT', role = 'caregiver') {
+  return { id, displayName: id, isSelf: false, role, permissions: role === 'caregiver' ? ['view_medications'] : null };
+}
+
+function scenarios(file) {
+  return [
+    {
+      name: 'notification privacy rebuild targets the caller self profile even while viewing a caregiver patient',
+      run: async () => {
+        const self = selfProfile(); const other = otherProfile();
+        const h = makeHarness(file, { profiles: [other, self], activeProfile: other });
+        const p = h.updatePreferences({ showMedicationInNotifications: true });
+        const req = h.pending('PATCH')[0];
+        h.resolve(req, { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
+        await p;
+        if (h.rebuilds.length !== 1 || h.rebuilds[0].profileId !== 'SELF') {
+          throw new Error(`privacy rebuild used ${h.rebuilds[0]?.profileId}; expected caller SELF`);
+        }
+      },
+    },
+    {
+      name: 'notification privacy rebuild targets caller self while an owned dependent is selected',
+      run: async () => {
+        const self = selfProfile(); const dependent = otherProfile('DEPENDENT', 'owner');
+        const h = makeHarness(file, { profiles: [dependent, self], activeProfile: dependent });
+        const p = h.updatePreferences({ voiceRemindersEnabled: true });
+        h.resolve(h.pending('PATCH')[0], { preferences: { ...DEFAULT_PREFERENCES, voiceRemindersEnabled: true } });
+        await p;
+        if (h.rebuilds[0]?.profileId !== 'SELF') throw new Error(`dependent cache selected: ${h.rebuilds[0]?.profileId}`);
+      },
+    },
+    {
+      name: 'positive control: notification privacy rebuild still uses an active self profile',
+      run: async () => {
+        const self = selfProfile();
+        const h = makeHarness(file, { profiles: [self], activeProfile: self });
+        const p = h.updatePreferences({ showMedicationInNotifications: true });
+        h.resolve(h.pending('PATCH')[0], { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
+        await p;
+        if (h.rebuilds[0]?.profileId !== 'SELF') throw new Error('self rebuild was lost');
+      },
+    },
+    {
+      name: 'no caller-self profile never turns a selected foreign cache into local reminders',
+      run: async () => {
+        const other = otherProfile();
+        const h = makeHarness(file, { profiles: [other], activeProfile: other });
+        const p = h.updatePreferences({ showMedicationInNotifications: true });
+        h.resolve(h.pending('PATCH')[0], { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
+        await p;
+        if (h.rebuilds[0]?.profileId !== null) throw new Error(`foreign cache reached rebuild: ${h.rebuilds[0]?.profileId}`);
+      },
+    },
+    {
+      name: 'a delayed older locale PATCH response cannot overwrite a newer locale choice',
+      run: async () => {
+        const h = makeHarness(file, { preferences: { locale: 'en' } });
+        const older = h.updatePreferences({ locale: 'ar' });
+        const olderReq = h.pending('PATCH')[0];
+        const newer = h.updatePreferences({ locale: 'en' });
+        const newerReq = h.pending('PATCH').find((r) => r !== olderReq);
+        h.resolve(newerReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
+        await newer;
+        h.resolve(olderReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
+        await older;
+        if (h.state().preferences.locale !== 'en') throw new Error(`stale locale resurrected: ${h.state().preferences.locale}`);
+      },
+    },
+    {
+      name: 'a preference response from the previous authenticated session cannot alter the next account',
+      run: async () => {
+        const h = makeHarness(file, { preferences: { locale: 'en' } });
+        const old = h.updatePreferences({ locale: 'ar' });
+        const req = h.pending('PATCH')[0];
+        h.sessionGeneration.current++;
+        h.replaceState({ user: { id: 'ACCOUNT-B', displayName: 'B', phoneE164: null }, preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
+        h.resolve(req, { preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
+        await old;
+        if (h.state().preferences.locale !== 'en') throw new Error('old account response changed new account locale');
+      },
+    },
+    {
+      name: 'a stale NetworkError from the previous session cannot mark the next account offline',
+      run: async () => {
+        const h = makeHarness(file);
+        const old = h.updatePreferences({ locale: 'ar' });
+        const req = h.pending('PATCH')[0];
+        h.sessionGeneration.current++;
+        h.replaceState({ user: { id: 'ACCOUNT-B', displayName: 'B', phoneE164: null }, offline: false, preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
+        h.reject(req, new NetworkError('old request lost network'));
+        await old;
+        if (h.state().offline) throw new Error('old session network error contaminated new account state');
+      },
+    },
+    {
+      name: 'loadMe started before a preference change cannot restore its older preferences afterwards',
+      run: async () => {
+        const h = makeHarness(file, { preferences: { locale: 'en' } });
+        const load = h.loadMe();
+        const meReq = h.pending('GET', '/v1/me')[0];
+        h.resolve(meReq, { user: { id: 'ACCOUNT-A', displayName: 'A', phoneE164: null }, preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
+        await Promise.resolve();
+        const profilesReq = h.pending('GET', '/v1/profiles')[0];
+        if (!profilesReq) throw new Error('loadMe did not reach profiles request');
+
+        const update = h.updatePreferences({ locale: 'en' });
+        const patchReq = h.pending('PATCH')[0];
+        h.resolve(patchReq, { preferences: { ...DEFAULT_PREFERENCES, locale: 'en' } });
+        await update;
+
+        h.resolve(profilesReq, { profiles: [selfProfile()] });
+        await load;
+        if (h.state().preferences.locale !== 'en') throw new Error(`loadMe restored stale locale ${h.state().preferences.locale}`);
+      },
+    },
+    {
+      name: 'positive control: loadMe applies server preferences when no newer local preference intent exists',
+      run: async () => {
+        const h = makeHarness(file, { preferences: { locale: 'en' } });
+        const load = h.loadMe();
+        h.resolve(h.pending('GET', '/v1/me')[0], { user: { id: 'ACCOUNT-A', displayName: 'A', phoneE164: null }, preferences: { ...DEFAULT_PREFERENCES, locale: 'ar' } });
+        await Promise.resolve();
+        h.resolve(h.pending('GET', '/v1/profiles')[0], { profiles: [selfProfile()] });
+        await load;
+        if (h.state().preferences.locale !== 'ar') throw new Error('fresh loadMe preference was incorrectly suppressed');
+      },
+    },
+  ];
+}
+
+module.exports = { scenarios, makeHarness, NetworkError };
