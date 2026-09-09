@@ -151,10 +151,17 @@ describe('schedule deletion remains authoritative across medication resume', () 
     await stop(med.scheduleId);
     await status(med.medicationId, 'paused');
     await status(med.medicationId, 'active');
+    // Probe the deleted dose at its own first patient-reminder stage. Testing
+    // only an hour later can pass because the selected caregiver stage has no
+    // recipient, not because the deleted schedule was respected.
+    h.setWorkerNow(new Date(`${DATE}T08:00:00.000Z`));
+    await runReminderTick();
+    const stoppedAtDue = await deliveriesFor(stopped.id);
     h.setWorkerNow(new Date(`${DATE}T09:00:00.000Z`));
     await runReminderTick();
-    expect(await deliveriesFor(stopped.id)).toBe(0);
     expect(await deliveriesFor(active.id)).toBeGreaterThan(0);
+    expect(stoppedAtDue).toBe(0);
+    expect(await deliveriesFor(stopped.id)).toBe(0);
   });
 
   it('DELETE clears snooze metadata while retaining the original dose, event history and stock', async () => {
