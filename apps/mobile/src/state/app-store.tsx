@@ -141,6 +141,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const sessionGeneration = useRef(0);
 
   /**
+   * Preference writes are optimistic and may overlap. Only the newest local
+   * intent may commit an asynchronous response/error back into app state; an
+   * older response must not undo a newer privacy/accessibility choice.
+   */
+  const preferenceGeneration = useRef(0);
+
+  /**
    * Forced sign-out cleanup is asynchronous. A very fast re-login must not
    * create cache data while the previous account's sweep is still running, so
    * password sign-in waits for the last local privacy cleanup to settle.
@@ -279,6 +286,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, activeProfile: s.profiles.find((p) => p.id === profileId) ?? s.activeProfile }));
     },
     updatePreferences: async (patch) => {
+      const generation = sessionGeneration.current;
+      const preferenceIntent = ++preferenceGeneration.current;
+
       // Optimistic: accessibility changes must feel instant to someone who
       // enabled them because the text was too small to read.
       const before = stateRef.current.preferences;
@@ -303,8 +313,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           && patch.voiceRemindersEnabled !== before.voiceRemindersEnabled);
       if (disclosureChanged) {
         const next = { ...before, ...patch };
+        const selfProfileId = stateRef.current.profiles.find((profile) => profile.isSelf)?.id ?? null;
         void rebuildRemindersFromCache(
-          stateRef.current.activeProfile?.id ?? null,
+          selfProfileId,
           next.locale,
           {
             voiceEnabled: next.voiceRemindersEnabled,
@@ -326,8 +337,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
+        if (
+          !mounted.current
+          || generation !== sessionGeneration.current
+          || preferenceIntent !== preferenceGeneration.current
+          || !isSignedIn()
+        ) return;
         setState((s) => ({ ...s, preferences: { ...s.preferences, ...res.preferences } }));
       } catch (err) {
+        // A response/error from an older preference intent or authenticated
+        // session belongs to that request, not to whoever is using the app now.
+        if (
+          !mounted.current
+          || generation !== sessionGeneration.current
+          || preferenceIntent !== preferenceGeneration.current
+          || !isSignedIn()
+        ) return;
+
         // Only a request that never reached the server means offline. A
         // rejection from the server is a different failure and must not put
         // the whole app into its cached-data mode.
