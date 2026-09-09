@@ -120,11 +120,11 @@ const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly Care
  * `/v1/doses/:id`. Not a permission error anywhere; just nothing, with no
  * indication why.
  *
- * The cause is that a dose is not readable on its own. Every dose query inner
- * joins `medications` to render the row, and that table's RLS policy requires
- * `view_medications`. So the application layer said `view_schedule` was
- * enough while the database required two permissions, and the disagreement
- * surfaced as an empty screen rather than as a refusal.
+ * The cause is that a dose is not readable on its own. Every dose list/detail
+ * query inner joins `medications` AND `medication_schedules`. Those tables' RLS
+ * policies require medicine and schedule visibility respectively. A history
+ * route that checked only view_history + view_medications therefore still
+ * returned an empty 200 when view_schedule was absent.
  *
  * The permissions are checked in the order given, so the message names the
  * route's primary permission first when both are absent. Dependencies are
@@ -158,7 +158,7 @@ export async function requireProfileAccess(
 
 /** The permission sets required by compound reads. */
 export const DOSE_READ = ['view_schedule', 'view_medications'] as const;
-export const DOSE_HISTORY_READ = ['view_history', 'view_medications'] as const;
+export const DOSE_HISTORY_READ = ['view_history', 'view_medications', 'view_schedule'] as const;
 export const DOSE_CONFIRM = ['confirm_dose', 'view_schedule', 'view_medications'] as const;
 export const REPORT_READ = ['view_reports', 'view_medications', 'view_schedule'] as const;
 
