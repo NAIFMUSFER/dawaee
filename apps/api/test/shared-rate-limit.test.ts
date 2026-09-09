@@ -232,15 +232,31 @@ describe('the limiter stores nothing that identifies anyone', () => {
 // ══════════════════════════════════════ retention and failure
 
 describe('bounded growth and a stated failure mode', () => {
-  it('old windows are purged', async () => {
-    await consumeBudget('login:ip', `retention-${Date.now()}`);
-    await owner.query("UPDATE auth_rate_buckets SET window_start = now() - interval '48 hours'");
+  it('old windows are purged without rewriting unrelated live buckets', async () => {
+    const { createHash } = await import('node:crypto');
+    const marker = Date.now().toString();
+    const staleKey = createHash('sha256').update(`retention-stale-${marker}`).digest('hex');
+    const freshKey = createHash('sha256').update(`retention-fresh-${marker}`).digest('hex');
+
+    // Own only this fixture. The previous test globally rewrote window_start on
+    // every bucket, which can collapse two legitimate windows for one key onto
+    // the table's (scope,key_hash,window_start) primary key and fail before it
+    // ever tests purge_rate_buckets.
+    await owner.query(
+      `INSERT INTO auth_rate_buckets (scope, key_hash, window_start, count)
+       VALUES ('login:ip', $1, now() - interval '48 hours', 1),
+              ('login:ip', $2, now(), 1)`,
+      [staleKey, freshKey],
+    );
+
     const { rows } = await owner.query<{ purge_rate_buckets: number }>('SELECT app.purge_rate_buckets(24)');
     expect(rows[0]!.purge_rate_buckets).toBeGreaterThan(0);
-    const { rows: left } = await owner.query<{ n: string }>(
-      "SELECT count(*) AS n FROM auth_rate_buckets WHERE window_start < now() - interval '24 hours'",
+
+    const { rows: markers } = await owner.query<{ key_hash: string }>(
+      'SELECT key_hash FROM auth_rate_buckets WHERE key_hash = ANY($1::text[]) ORDER BY key_hash',
+      [[staleKey, freshKey]],
     );
-    expect(Number(left[0]!.n)).toBe(0);
+    expect(markers.map((row) => row.key_hash)).toEqual([freshKey]);
   });
 
   /**
