@@ -163,7 +163,7 @@ describe('caregiver permission scope', () => {
       method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(alice),
       payload: {
         patientProfileId: alice.profileId, invitedName: 'Son', invitedPhone: son.phone,
-        role: 'son', permissions: ['view_adherence', 'receive_notifications'], escalationPriority: 1,
+        role: 'son', permissions: ['view_adherence', 'view_schedule', 'receive_notifications'], escalationPriority: 1,
       },
     })).json().invitationLink;
     const token = link.split('/invite/')[1]!;
@@ -173,7 +173,8 @@ describe('caregiver permission scope', () => {
     });
     expect(accept.statusCode).toBe(200);
 
-    // Granted: adherence.
+    // Granted: adherence. Its schedule-threshold join requires view_schedule,
+    // while medication identity remains withheld without view_medications.
     const adherence = await h.app.inject({
       method: 'GET', url: `/v1/adherence?profileId=${alice.profileId}&from=2026-09-01&to=2026-09-30`,
       headers: authHeaders(son),
@@ -485,9 +486,11 @@ describe('the emergency card publishes only what the patient chose', () => {
       headers: authHeaders(bob), payload: {},
     });
     expect(enable.statusCode).toBe(200);
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    const token = enable.json().token as string;
 
-    const scan = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` });
+    const scan = await h.app.inject({
+      method: 'GET', url: '/v1/emergency/scan/card', headers: { authorization: `Bearer ${token}` },
+    });
     expect(scan.statusCode).toBe(200);
     const card = scan.json();
     expect(card.medications).toEqual([]);
@@ -514,8 +517,10 @@ describe('the emergency card publishes only what the patient chose', () => {
       method: 'POST', url: `/v1/emergency/qr/enable?profileId=${bob.profileId}`,
       headers: authHeaders(bob), payload: {},
     });
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
-    const card = (await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` })).json();
+    const token = enable.json().token as string;
+    const card = (await h.app.inject({
+      method: 'GET', url: '/v1/emergency/scan/card', headers: { authorization: `Bearer ${token}` },
+    })).json();
 
     expect(card.allergies).toEqual(['penicillin']);
     expect(card.bloodType).toBe('O-');
@@ -626,9 +631,12 @@ describe('the public emergency scan cannot be forced to demand a login', () => {
       method: 'POST', url: `/v1/emergency/qr/enable?profileId=${alice.profileId}`,
       headers: authHeaders(alice), payload: {},
     });
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    const token = enable.json().token as string;
     for (const suffix of ['', '?x=/stock', '?y=/refill', '?z=/medications']) {
-      const res = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}${suffix}` });
+      const res = await h.app.inject({
+        method: 'GET', url: `/v1/emergency/scan/card${suffix}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
       expect(res.statusCode, suffix).toBe(200);
     }
   });
