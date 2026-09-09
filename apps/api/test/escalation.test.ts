@@ -81,12 +81,21 @@ beforeAll(async () => {
   son = await signIn(h, '0533000002');
   daughter = await signIn(h, '0533000003');
 
-  // Adherence rows include medication identity/name, so the hardened permission
-  // contract requires view_medications alongside view_adherence. The dedicated
-  // dependency suite proves view_adherence alone is rejected; this scenario is
-  // about escalation visibility after a correctly scoped relationship exists.
-  const sonRel = await acceptInvite(patient, son, ['view_adherence', 'view_medications', 'receive_notifications'], 1);
-  const daughterRel = await acceptInvite(patient, daughter, ['view_adherence', 'view_medications', 'receive_notifications'], 5);
+  // Adherence joins medication_schedules for each schedule's late/missed
+  // thresholds, so view_schedule is a real data dependency of view_adherence.
+  // This scenario also asserts that the son can see Panadol by name, hence the
+  // separate view_medications grant. The dedicated dependency suite proves
+  // view_adherence alone is rejected rather than returning an empty 200.
+  const sonRel = await acceptInvite(
+    patient, son,
+    ['view_adherence', 'view_schedule', 'view_medications', 'receive_notifications'],
+    1,
+  );
+  const daughterRel = await acceptInvite(
+    patient, daughter,
+    ['view_adherence', 'view_schedule', 'view_medications', 'receive_notifications'],
+    5,
+  );
 
   for (const rel of [sonRel, daughterRel]) {
     await h.app.inject({
@@ -231,7 +240,7 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
 });
 
 describe('caregiver visibility of the outcome', () => {
-  it('lets the son see adherence when its medication-data dependency is also granted', async () => {
+  it('lets the son see adherence when its schedule and medication dependencies are granted', async () => {
     const adherence = await h.app.inject({
       method: 'GET', url: `/v1/adherence?profileId=${patient.profileId}&from=${SCENARIO_DATE}&to=${SCENARIO_DATE}`,
       headers: authHeaders(son),
