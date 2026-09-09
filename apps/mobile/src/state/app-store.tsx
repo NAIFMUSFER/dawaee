@@ -132,13 +132,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  /**
+   * An async profile/bootstrap request belongs to exactly one authenticated
+   * session. Logout, forced unauthentication and a fresh password sign-in all
+   * bump this generation, making any response already in flight stale before
+   * it can bind cache ownership or resurrect signed-in state.
+   */
+  const sessionGeneration = useRef(0);
+
+  /**
+   * Forced sign-out cleanup is asynchronous. A very fast re-login must not
+   * create cache data while the previous account's sweep is still running, so
+   * password sign-in waits for the last local privacy cleanup to settle.
+   */
+  const authCleanupInFlight = useRef<Promise<void>>(Promise.resolve());
+
   const loadMe = useCallback(async () => {
+    const generation = sessionGeneration.current;
     const me = await api.get<{
       user: { id: string; displayName: string; phoneE164: string | null };
       preferences: Preferences;
     }>('/v1/me');
     const profilesRes = await api.get<{ profiles: ProfileSummary[] }>('/v1/profiles');
-    if (!mounted.current) return;
+    if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
 
     // Bind local encrypted storage to this account BEFORE any cache read or
     // write can happen. Every slot is keyed and encrypted per user, so this is
@@ -167,8 +183,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const deviceId = await getDeviceId();
       const hasSession = await loadStoredSession();
-      setUnauthenticatedHandler(() => {
+      setUnauthenticatedHandler(async () => {
+        // Invalidate every profile/bootstrap request that started under the
+        // session the server has just rejected before doing any async cleanup.
+        sessionGeneration.current++;
+        const previousUserId = stateRef.current.user?.id ?? null;
+        setCacheOwner(null);
         setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null }));
+
+        const cleanup = (async () => {
+          // A revoked/disabled session is still a sign-out on this physical
+          // device. Cancel OS-held medication reminders and remove local PHI;
+          // otherwise a shared/lost phone can keep displaying a former
+          // account's reminders after the UI says it is signed out.
+          await cancelAllLocalNotifications().catch(() => undefined);
+          await purgeLocalCaches(previousUserId).catch(() => undefined);
+          if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
+        })();
+        authCleanupInFlight.current = cleanup;
+        await cleanup;
       });
 
       if (!hasSession) {
@@ -180,7 +213,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // A cold start with no network must not sign the user out; the cached
         // schedule still drives Today and local reminders.
-        if (!cancelled) setState((s) => ({ ...s, offline: true, signedIn: true }));
+        if (!cancelled && isSignedIn()) setState((s) => ({ ...s, offline: true, signedIn: true }));
       }
       const pending = await queueSize();
       if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId, pendingSyncCount: pending }));
@@ -199,6 +232,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
+      // A forced sign-out may still be deleting the previous account's local
+      // cache/key. Do not let a new account enter that cleanup window.
+      await authCleanupInFlight.current.catch(() => undefined);
+      sessionGeneration.current++;
       await storeSession(tokens);
       await loadMe();
       // The only place `credentialVerifiedAt` is ever set. Both auth screens
@@ -209,6 +246,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, ready: true, credentialVerifiedAt: Date.now() }));
     },
     signOut: async () => {
+      // Anything that was reading profiles under this session is stale from
+      // this instant onward, even if the network calls below take time.
+      sessionGeneration.current++;
+
       // Deactivate this device FIRST, while the token still authorises it.
       // Signing out used to leave the push registration live, so medication
       // reminders naming the patient's drugs kept arriving on a phone they had
