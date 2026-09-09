@@ -53,18 +53,19 @@ let ownerPool: pg.Pool;
  * the next borrower of the pooled connection.
  */
 async function asUser<T extends pg.QueryResultRow = pg.QueryResultRow>(
-  actor: string | null, sql: string, params: unknown[] = [],
-): Promise<{ rows: T[]; rowCount: number; error: string | null }> {
+  actor: string | null, sql: string, params: unknown[] = [], rollback = false,
+): Promise<{ rows: T[]; rowCount: number; error: string | null; errorCode: string | null }> {
   const client = await appPool.connect();
   try {
     await client.query('BEGIN');
     if (actor) await client.query('SELECT set_config($1,$2,true)', ['app.user_id', actor]);
     const res = await client.query<T>(sql, params);
-    await client.query('COMMIT');
-    return { rows: res.rows, rowCount: res.rowCount ?? 0, error: null };
+    await client.query(rollback ? 'ROLLBACK' : 'COMMIT');
+    return { rows: res.rows, rowCount: res.rowCount ?? 0, error: null, errorCode: null };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
-    return { rows: [], rowCount: 0, error: (err as Error).message };
+    return { rows: [], rowCount: 0, error: (err as Error).message,
+      errorCode: (err as { code?: string }).code ?? null };
   } finally {
     client.release();
   }
@@ -82,7 +83,21 @@ async function truth<T extends pg.QueryResultRow = pg.QueryResultRow>(
 const matrix: Array<{
   resource: string; actor: string; op: string; expected: 'DENY' | 'ALLOW';
   actual: 'DENIED' | 'ALLOWED' | 'ERROR'; status: 'PASS' | 'FAIL' | 'FINDING';
+  errorCode: string | null;
 }> = [];
+
+/** SQL/schema/connection failures are not evidence of an authorization denial. */
+function classifyAttempt(
+  expected: 'DENY' | 'ALLOW', rowCount: number, error: string | null,
+  errorCode: string | null, expectedErrorCode = '42501',
+) {
+  const actual: 'DENIED' | 'ALLOWED' | 'ERROR' =
+    error ? 'ERROR' : rowCount > 0 ? 'ALLOWED' : 'DENIED';
+  const ok = expected === 'DENY'
+    ? error ? errorCode === expectedErrorCode : rowCount === 0
+    : !error && rowCount > 0;
+  return { actual, ok };
+}
 
 /**
  * `finding` marks a row that is knowingly open and tracked as an open finding
@@ -93,13 +108,11 @@ const matrix: Array<{
 function record(
   resource: string, actor: string, op: string,
   expected: 'DENY' | 'ALLOW', rowCount: number, error: string | null,
-  finding = false,
+  errorCode: string | null = null, finding = false, expectedErrorCode = '42501',
 ) {
-  const actual: 'DENIED' | 'ALLOWED' | 'ERROR' =
-    error ? 'ERROR' : rowCount > 0 ? 'ALLOWED' : 'DENIED';
-  const ok = expected === 'DENY' ? actual !== 'ALLOWED' : actual === 'ALLOWED';
+  const { actual, ok } = classifyAttempt(expected, rowCount, error, errorCode, expectedErrorCode);
   matrix.push({
-    resource, actor, op, expected, actual,
+    resource, actor, op, expected, actual, errorCode,
     status: ok ? 'PASS' : finding ? 'FINDING' : 'FAIL',
   });
   return { actual, ok };
@@ -108,20 +121,20 @@ function record(
 /** Assert an attack was stopped, and say which resource and actor if it was not. */
 async function denied(
   resource: string, actor: string, op: string,
-  run: () => Promise<{ rowCount: number; error: string | null }>,
+  run: () => Promise<{ rowCount: number; error: string | null; errorCode?: string | null }>,
 ) {
   const res = await run();
-  const { actual } = record(resource, actor, op, 'DENY', res.rowCount, res.error);
-  expect(actual, `${actor} ${op} ${resource} — CROSS-ACCOUNT ACCESS`).not.toBe('ALLOWED');
+  const { ok } = record(resource, actor, op, 'DENY', res.rowCount, res.error, res.errorCode);
+  expect(ok, `${actor} ${op} ${resource} — access granted or invalid probe (${res.errorCode ?? 'none'}): ${res.error ?? ''}`).toBe(true);
 }
 
 /** Assert the legitimate owner is still able to do the thing. */
 async function allowed(
   resource: string, actor: string, op: string,
-  run: () => Promise<{ rowCount: number; error: string | null }>,
+  run: () => Promise<{ rowCount: number; error: string | null; errorCode?: string | null }>,
 ) {
   const res = await run();
-  const { actual } = record(resource, actor, op, 'ALLOW', res.rowCount, res.error);
+  const { actual } = record(resource, actor, op, 'ALLOW', res.rowCount, res.error, res.errorCode);
   expect(actual, `${actor} ${op} ${resource} was wrongly blocked: ${res.error ?? ''}`).toBe('ALLOWED');
 }
 
@@ -239,7 +252,7 @@ afterAll(async () => {
   const mark = { PASS: '  ', FINDING: 'F ', FAIL: '!!' } as const;
   const rows = matrix.map((m) =>
     `${mark[m.status]} ${m.resource.padEnd(34)} ${m.actor.padEnd(20)} ` +
-    `${m.op.padEnd(7)} expected=${m.expected.padEnd(5)} actual=${m.actual}`);
+    `${m.op.padEnd(7)} expected=${m.expected.padEnd(5)} actual=${m.actual} sqlstate=${m.errorCode ?? 'none'}`);
   const failures = matrix.filter((m) => m.status === 'FAIL').length;
   const findings = matrix.filter((m) => m.status === 'FINDING').length;
   console.log(
@@ -250,6 +263,7 @@ afterAll(async () => {
   await appPool.end();
   await ownerPool.end();
   await h.close();
+  expect(failures, 'the printed RLS matrix contains failed or invalid probes').toBe(0);
 });
 
 // ══════════════════════════════════════════ the roles themselves
@@ -300,7 +314,7 @@ describe('the runtime roles cannot escape row level security', () => {
       'notification_deliveries', 'push_tokens', 'auth_sessions', 'users',
     ]) {
       const res = await asUser(null, `SELECT count(*)::int AS n FROM ${table}`);
-      record(table, 'unauthenticated', 'SELECT', 'DENY', Number(res.rows[0]?.n ?? 0), res.error);
+      record(table, 'unauthenticated', 'SELECT', 'DENY', Number(res.rows[0]?.n ?? 0), res.error, res.errorCode);
       expect(Number(res.rows[0]?.n ?? -1), `${table} visible with no identity`).toBe(0);
     }
   });
@@ -332,7 +346,7 @@ describe('the runtime roles cannot escape row level security', () => {
     }
 
     const res = await asUser(alice.userId, 'SELECT count(*)::int AS n FROM user_credentials');
-    record('user_credentials', 'Patient A', 'SELECT', 'DENY', Number(res.rows[0]?.n ?? 0), res.error);
+    record('user_credentials', 'Patient A', 'SELECT', 'DENY', Number(res.rows[0]?.n ?? 0), res.error, res.errorCode);
     // Denied at the GRANT level, before RLS is even consulted — a stronger
     // refusal than an empty result set, and the one worth having for a table
     // of password hashes.
@@ -359,7 +373,7 @@ describe('Patient A supplies Patient B ids directly', () => {
         : which === 'scheduleId' ? bobScheduleId : bobDoseId;
       await denied(resource, 'Patient A', 'SELECT', async () => {
         const r = await asUser(alice.userId, sql, [id]);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -370,7 +384,7 @@ describe('Patient A supplies Patient B ids directly', () => {
         : which === 'scheduleId' ? aliceScheduleId : aliceDoseId;
       await denied(resource, 'Patient B', 'SELECT', async () => {
         const r = await asUser(bob.userId, sql, [id]);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -381,7 +395,7 @@ describe('Patient A supplies Patient B ids directly', () => {
         : which === 'scheduleId' ? aliceScheduleId : aliceDoseId;
       await allowed(resource, 'Patient A (own)', 'SELECT', async () => {
         const r = await asUser(alice.userId, sql, [id]);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -394,7 +408,7 @@ describe('Patient A writes to Patient B', () => {
       ['medications', "UPDATE medications SET name='pwned' WHERE id=$1", [bobMedId]],
       ['medication_schedules', 'UPDATE medication_schedules SET dose_quantity=99 WHERE id=$1', [bobScheduleId]],
       ['dose_occurrences', "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [bobDoseId]],
-      ['medication_stock', 'UPDATE medication_stock SET quantity=0 WHERE medication_id=$1', [bobMedId]],
+      ['medication_stock', 'UPDATE medication_stock SET remaining_quantity=0 WHERE medication_id=$1', [bobMedId]],
       ['emergency_cards', "UPDATE emergency_cards SET conditions_note='pwned' WHERE patient_profile_id=$1", [bob.profileId]],
       ['user_preferences', 'UPDATE user_preferences SET show_medication_in_notifications=true WHERE user_id=$1', [bob.userId]],
       ['users', "UPDATE users SET display_name='pwned' WHERE id=$1", [bob.userId]],
@@ -402,7 +416,7 @@ describe('Patient A writes to Patient B', () => {
     for (const [resource, sql, params] of cases) {
       await denied(resource, 'Patient A', 'UPDATE', async () => {
         const r = await asUser(alice.userId, sql, params);
-        return { rowCount: r.rowCount, error: r.error };
+        return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
       });
     }
     // Ground truth: nothing actually changed.
@@ -424,7 +438,7 @@ describe('Patient A writes to Patient B', () => {
     for (const [resource, sql, params] of cases) {
       await denied(resource, 'Patient A', 'DELETE', async () => {
         const r = await asUser(alice.userId, sql, params);
-        return { rowCount: r.rowCount, error: r.error };
+        return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
       });
     }
     const still = await truth<{ n: number }>('SELECT count(*)::int AS n FROM medications WHERE id=$1', [bobMedId]);
@@ -438,21 +452,26 @@ describe('Patient A writes to Patient B', () => {
    */
   it('cannot INSERT a row owned by B', async () => {
     const cases: Array<[string, string, unknown[]]> = [
-      ['medications', `INSERT INTO medications (patient_profile_id, name, form, start_date, created_by_user_id)
+      ['medications', `INSERT INTO medications (patient_profile_id, name, form, start_date, created_by)
                        VALUES ($1,'planted','tablet',$2,$3) RETURNING id`, [bob.profileId, DATE, alice.userId]],
-      ['symptom_notes', `INSERT INTO symptom_notes (patient_profile_id, noted_at, body, created_by_user_id)
+      ['symptom_notes', `INSERT INTO symptom_notes (patient_profile_id, recorded_at, text, created_by)
                          VALUES ($1, now(), 'planted', $2) RETURNING id`, [bob.profileId, alice.userId]],
-      ['health_measurements', `INSERT INTO health_measurements (patient_profile_id, kind, measured_at, value_numeric, created_by_user_id)
-                               VALUES ($1,'weight', now(), 1, $2) RETURNING id`, [bob.profileId, alice.userId]],
+      ['health_measurements', `INSERT INTO health_measurements (patient_profile_id, type, measured_at, value_primary, unit, created_by)
+                               VALUES ($1,'weight', now(), 1, 'kg', $2) RETURNING id`, [bob.profileId, alice.userId]],
       ['emergency_cards', `INSERT INTO emergency_cards (patient_profile_id, conditions_note)
                            VALUES ($1,'planted') RETURNING id`, [bob.profileId]],
-      ['dose_events', `INSERT INTO dose_events (dose_occurrence_id, event_type, actor_user_id)
-                       VALUES ($1,'taken',$2) RETURNING id`, [bobDoseId, alice.userId]],
+      ['dose_events', `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id)
+                       VALUES ($1,$2,'taken',$3) RETURNING id`, [bobDoseId, bob.profileId, alice.userId]],
     ];
     for (const [resource, sql, params] of cases) {
+      if (resource !== 'emergency_cards') {
+        const ownerParams = params.map((value) => value === alice.userId ? bob.userId : value);
+        await allowed(resource, 'Patient B (rollback control)', 'INSERT', () =>
+          asUser(bob.userId, sql, ownerParams, true));
+      }
       await denied(resource, 'Patient A', 'INSERT', async () => {
         const r = await asUser(alice.userId, sql, params);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
     const planted = await truth<{ n: number }>(
@@ -470,7 +489,7 @@ describe('Patient A writes to Patient B', () => {
     await denied('medications (reparent)', 'Patient A', 'UPDATE', async () => {
       const r = await asUser(alice.userId,
         'UPDATE medications SET patient_profile_id=$1 WHERE id=$2', [bob.profileId, aliceMedId]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
     const [m] = await truth<{ patient_profile_id: string }>(
       'SELECT patient_profile_id FROM medications WHERE id=$1', [aliceMedId],
@@ -490,7 +509,9 @@ describe('Patient A writes to Patient B', () => {
        RETURNING id, patient_profile_id`,
       [[aliceMedId, bobMedId]],
     );
-    record('medications (mixed ids)', 'Patient A', 'UPDATE', 'ALLOW', r.rows.length, r.error);
+    record('medications (mixed ids)', 'Patient A', 'UPDATE', 'ALLOW', r.rows.length, r.error, r.errorCode);
+    expect(r.error).toBeNull();
+    expect(r.rows.map((row) => row.id)).toEqual([aliceMedId]);
     for (const row of r.rows) {
       expect(row.patient_profile_id, 'B row returned by a mixed UPDATE').toBe(alice.profileId);
     }
@@ -503,7 +524,7 @@ describe('Patient A writes to Patient B', () => {
       alice.userId, 'SELECT id FROM medications WHERE id = ANY($1::uuid[])',
       [[aliceMedId, bobMedId]],
     );
-    record('medications (mixed ids)', 'Patient A', 'SELECT', 'ALLOW', r.rows.length, r.error);
+    record('medications (mixed ids)', 'Patient A', 'SELECT', 'ALLOW', r.rows.length, r.error, r.errorCode);
     expect(r.rows.map((x) => x.id)).toEqual([aliceMedId]);
   });
 
@@ -513,14 +534,17 @@ describe('Patient A writes to Patient B', () => {
    * assumed.
    */
   it('cannot create a dose occurrence linking A’s profile to B’s medication', async () => {
-    await denied('dose_occurrences (cross med)', 'Patient A', 'INSERT', async () => {
-      const r = await asUser(alice.userId,
-        `INSERT INTO dose_occurrences
-           (patient_profile_id, medication_id, schedule_id, scheduled_at, dose_quantity, dose_unit, status)
-         VALUES ($1,$2,$3, now(), 1, 'tablet', 'upcoming') RETURNING id`,
-        [alice.profileId, bobMedId, bobScheduleId]);
-      return { rowCount: r.rows.length, error: r.error };
-    });
+    const r = await asUser(alice.userId,
+      `INSERT INTO dose_occurrences
+         (patient_profile_id, medication_id, schedule_id, scheduled_at, dose_quantity, dose_unit,
+          status, scheduled_local_date, scheduled_local_time, scheduled_timezone)
+       VALUES ($1,$2,$3,$4,1,'tablet','upcoming',$5,'10:00','Asia/Riyadh') RETURNING id`,
+      [alice.profileId, bobMedId, bobScheduleId, at('10:00'), DATE]);
+    expect(r.errorCode, 'the profile-binding trigger did not refuse the cross-medication link').toBe('P0001');
+    expect(r.error).toBe(`medication ${bobMedId} not found`);
+    const { ok } = record('dose_occurrences (cross med)', 'Patient A', 'INSERT', 'DENY',
+      r.rowCount, r.error, r.errorCode, false, 'P0001');
+    expect(ok).toBe(true);
   });
 });
 
@@ -530,7 +554,7 @@ describe('a caregiver is scoped to the patient who invited them', () => {
   it('Caregiver of A can read A’s medications', async () => {
     await allowed('medications', 'Caregiver of A', 'SELECT', async () => {
       const r = await asUser(carol.userId, 'SELECT id FROM medications WHERE id=$1', [aliceMedId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
   });
 
@@ -544,7 +568,7 @@ describe('a caregiver is scoped to the patient who invited them', () => {
     ] as Array<[string, string, string]>) {
       await denied(resource, 'Caregiver of A', 'SELECT', async () => {
         const r = await asUser(carol.userId, sql, [id]);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -552,22 +576,22 @@ describe('a caregiver is scoped to the patient who invited them', () => {
   it('Caregiver of B cannot read A, symmetrically', async () => {
     await denied('medications', 'Caregiver of B', 'SELECT', async () => {
       const r = await asUser(dave.userId, 'SELECT id FROM medications WHERE id=$1', [aliceMedId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
   });
 
   it('Caregiver of A cannot substitute B’s profile id into a write', async () => {
     await denied('medications', 'Caregiver of A', 'INSERT', async () => {
       const r = await asUser(carol.userId,
-        `INSERT INTO medications (patient_profile_id, name, form, start_date, created_by_user_id)
+        `INSERT INTO medications (patient_profile_id, name, form, start_date, created_by)
          VALUES ($1,'planted-by-caregiver','tablet',$2,$3) RETURNING id`,
         [bob.profileId, DATE, carol.userId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
     await denied('dose_occurrences', 'Caregiver of A', 'UPDATE', async () => {
       const r = await asUser(carol.userId,
         "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [bobDoseId]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
   });
 
@@ -587,7 +611,7 @@ describe('a caregiver is scoped to the patient who invited them', () => {
         `UPDATE caregiver_relationships
             SET permissions = ARRAY['view_medications','confirm_dose','edit_medication','manage_caregivers']
           WHERE id=$1`, [rel[0]!.id]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
     const [after] = await truth<{ permissions: string[] }>(
       'SELECT permissions FROM caregiver_relationships WHERE id=$1', [rel[0]!.id],
@@ -600,10 +624,10 @@ describe('a caregiver is scoped to the patient who invited them', () => {
     await denied('caregiver_relationships', 'Caregiver of A', 'INSERT', async () => {
       const r = await asUser(carol.userId,
         `INSERT INTO caregiver_relationships
-           (patient_profile_id, caregiver_user_id, permissions, priority, status)
-         VALUES ($1,$2,ARRAY['view_medications'],1,'active') RETURNING id`,
+           (patient_profile_id, caregiver_user_id, permissions, escalation_priority, status, invited_by_user_id)
+         VALUES ($1,$2,ARRAY['view_medications'],1,'active',$2) RETURNING id`,
         [bob.profileId, carol.userId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
   });
 });
@@ -614,13 +638,13 @@ describe('a revoked caregiver keeps the ids and loses the access', () => {
       ['medications', 'SELECT id FROM medications WHERE id=$1', aliceMedId],
       ['patient_profiles', 'SELECT id FROM patient_profiles WHERE id=$1', alice.profileId],
       ['dose_occurrences', 'SELECT id FROM dose_occurrences WHERE id=$1', aliceDoseId],
-      ['medication_stock', 'SELECT id FROM medication_stock WHERE medication_id=$1', aliceMedId],
+      ['medication_stock', 'SELECT medication_id FROM medication_stock WHERE medication_id=$1', aliceMedId],
       ['emergency_cards', 'SELECT id FROM emergency_cards WHERE patient_profile_id=$1', alice.profileId],
       ['symptom_notes', 'SELECT id FROM symptom_notes WHERE patient_profile_id=$1', alice.profileId],
     ] as Array<[string, string, string]>) {
       await denied(resource, 'revoked caregiver', 'SELECT', async () => {
         const r = await asUser(mallory.userId, sql, [id]);
-        return { rowCount: r.rows.length, error: r.error };
+        return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -629,12 +653,12 @@ describe('a revoked caregiver keeps the ids and loses the access', () => {
     await denied('dose_occurrences', 'revoked caregiver', 'UPDATE', async () => {
       const r = await asUser(mallory.userId,
         "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [aliceDoseId]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
     await denied('medications', 'revoked caregiver', 'UPDATE', async () => {
       const r = await asUser(mallory.userId,
         "UPDATE medications SET name='pwned' WHERE id=$1", [aliceMedId]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
   });
 
@@ -642,7 +666,7 @@ describe('a revoked caregiver keeps the ids and loses the access', () => {
     await denied('caregiver_relationships', 'revoked caregiver', 'UPDATE', async () => {
       const r = await asUser(mallory.userId,
         "UPDATE caregiver_relationships SET status='active' WHERE id=$1", [malloryRelId]);
-      return { rowCount: r.rowCount, error: r.error };
+      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
     const [rel] = await truth<{ status: string }>(
       'SELECT status FROM caregiver_relationships WHERE id=$1', [malloryRelId],
@@ -703,7 +727,7 @@ describe('caregiver invitations', () => {
       const r = await asUser(bob.userId,
         "SELECT id FROM caregiver_relationships WHERE patient_profile_id=$1 AND status='pending'",
         [alice.profileId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
   });
 
@@ -712,7 +736,7 @@ describe('caregiver invitations', () => {
       const r = await asUser(bob.userId,
         'SELECT invitation_token_hash FROM caregiver_relationships WHERE patient_profile_id=$1',
         [alice.profileId]);
-      return { rowCount: r.rows.length, error: r.error };
+      return { rowCount: r.rows.length, error: r.error, errorCode: r.errorCode };
     });
   });
 });
@@ -754,7 +778,7 @@ describe('the SECURITY DEFINER functions are a boundary, not a hole', () => {
   it('can_read_profile and owns_profile refuse a stranger', async () => {
     for (const fn of ['app.can_read_profile', 'app.owns_profile', 'app.caregives_profile']) {
       const r = await asUser<{ ok: boolean }>(bob.userId, `SELECT ${fn}($1) AS ok`, [alice.profileId]);
-      record(fn, 'Patient B', 'CALL', 'DENY', r.rows[0]?.ok ? 1 : 0, r.error);
+      record(fn, 'Patient B', 'CALL', 'DENY', r.rows[0]?.ok ? 1 : 0, r.error, r.errorCode);
       expect(r.rows[0]?.ok, `${fn} said yes to a stranger`).not.toBe(true);
     }
     const own = await asUser<{ ok: boolean }>(alice.userId, 'SELECT app.owns_profile($1) AS ok', [alice.profileId]);
@@ -764,13 +788,13 @@ describe('the SECURITY DEFINER functions are a boundary, not a hole', () => {
   it('has_permission refuses a permission the patient never granted', async () => {
     const r = await asUser<{ ok: boolean }>(carol.userId,
       "SELECT app.has_permission($1,'edit_medication') AS ok", [alice.profileId]);
-    record('app.has_permission', 'Caregiver of A', 'CALL', 'DENY', r.rows[0]?.ok ? 1 : 0, r.error);
+    record('app.has_permission', 'Caregiver of A', 'CALL', 'DENY', r.rows[0]?.ok ? 1 : 0, r.error, r.errorCode);
     expect(r.rows[0]?.ok).not.toBe(true);
   });
 
   it('the emergency resolver discloses nothing for an unknown token', async () => {
     const r = await asUser(null, 'SELECT * FROM app.resolve_emergency_qr($1)', ['deadbeef'.repeat(8)]);
-    record('app.resolve_emergency_qr', 'unauthenticated', 'CALL', 'DENY', r.rows.length, r.error);
+    record('app.resolve_emergency_qr', 'unauthenticated', 'CALL', 'DENY', r.rows.length, r.error, r.errorCode);
     expect(r.rows.length).toBe(0);
   });
 
@@ -785,7 +809,7 @@ describe('the SECURITY DEFINER functions are a boundary, not a hole', () => {
     ] as Array<[string, string]>) {
       await denied('audit_logs', 'Patient A', op, async () => {
         const r = await asUser(alice.userId, sql);
-        return { rowCount: r.rowCount, error: r.error };
+        return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
       });
     }
   });
@@ -801,11 +825,11 @@ describe('the worker role is scoped to what a worker needs', () => {
   it('cannot read password hashes', async () => {
     const p = workerPool();
     try {
-      const res = await p.query('SELECT count(*)::int AS n FROM user_credentials')
-        .catch((e: Error) => ({ rows: [{ n: -1 }], err: e.message }));
-      const n = Number((res.rows[0] as { n: number }).n);
-      record('user_credentials', 'worker role', 'SELECT', 'DENY', n > 0 ? n : 0, null);
-      expect(n, 'worker can read user_credentials').toBeLessThanOrEqual(0);
+      const error = await p.query('SELECT count(*)::int AS n FROM user_credentials')
+        .then(() => null).catch((e: unknown) => e as { code?: string; message: string });
+      record('user_credentials', 'worker role', 'SELECT', 'DENY', error ? 0 : 1,
+        error?.message ?? null, error?.code ?? null);
+      expect(error, 'worker must be refused by privileges, not an empty table').toMatchObject({ code: '42501' });
     } finally { await p.end(); }
   });
 
@@ -829,11 +853,12 @@ describe('the worker role is scoped to what a worker needs', () => {
     try {
       const readable: string[] = [];
       for (const table of NEVER_QUERIED) {
-        const res = await p.query(`SELECT count(*)::int AS n FROM ${table}`)
-          .catch(() => ({ rows: [{ n: -1 }] }));
-        const n = Number((res.rows[0] as { n: number }).n);
-        record(table, 'worker role', 'SELECT', 'DENY', n >= 0 ? Math.max(n, 1) : 0, null);
-        if (n >= 0) readable.push(table);
+        const error = await p.query(`SELECT count(*)::int AS n FROM ${table}`)
+          .then(() => null).catch((e: unknown) => e as { code?: string; message: string });
+        record(table, 'worker role', 'SELECT', 'DENY', error ? 0 : 1,
+          error?.message ?? null, error?.code ?? null);
+        if (!error) readable.push(table);
+        else expect(error, `${table}: only an actual privilege refusal counts`).toMatchObject({ code: '42501' });
       }
       expect(readable, 'worker regained PHI read access').toEqual([]);
     } finally { await p.end(); }
@@ -848,10 +873,39 @@ describe('the worker role is scoped to what a worker needs', () => {
   it('cannot read session rows at all (P8-1 closed)', async () => {
     const p = workerPool();
     try {
-      const err = await p.query('SELECT count(*) FROM auth_sessions')
-        .then(() => null).catch((e: Error) => e.message);
-      record('auth_sessions', 'worker role', 'SELECT', 'DENY', 0, err);
-      expect(err, 'worker can still read sessions').toMatch(/permission denied/i);
+      const error = await p.query('SELECT count(*) FROM auth_sessions')
+        .then(() => null).catch((e: unknown) => e as { code?: string; message: string });
+      record('auth_sessions', 'worker role', 'SELECT', 'DENY', error ? 0 : 1,
+        error?.message ?? null, error?.code ?? null);
+      expect(error, 'worker can still read sessions').toMatchObject({ code: '42501' });
     } finally { await p.end(); }
+  });
+});
+
+
+describe('RLS evidence classifier rejects false-success', () => {
+  it.each(['42703', '42P01', '42601', '23502', '57014', '08006'])(
+    'SQLSTATE %s is not an authorization denial', (code) => {
+      expect(classifyAttempt('DENY', 0, 'invalid probe', code).ok).toBe(false);
+    },
+  );
+
+  it('accepts only an actual privilege refusal or a successful zero-row statement', () => {
+    expect(classifyAttempt('DENY', 0, 'permission denied', '42501').ok).toBe(true);
+    expect(classifyAttempt('DENY', 0, null, null).ok).toBe(true);
+    expect(classifyAttempt('DENY', 1, null, null).ok).toBe(false);
+    expect(classifyAttempt('DENY', 0, 'unknown error', null).ok).toBe(false);
+    expect(classifyAttempt('DENY', 0, 'unrelated trigger failed', 'P0001').ok).toBe(false);
+    expect(classifyAttempt('ALLOW', 0, null, null).ok).toBe(false);
+  });
+
+  it('a real undefined-column error is rejected by the same matrix classifier', async () => {
+    const r = await asUser(alice.userId, 'SELECT nonexistent_rls_audit_column FROM medications');
+    expect(r.errorCode).toBe('42703');
+    expect(classifyAttempt('DENY', r.rowCount, r.error, r.errorCode).ok).toBe(false);
+    // ROLLBACK must have restored the pooled connection for a valid query.
+    const own = await asUser(alice.userId, 'SELECT id FROM medications WHERE id=$1', [aliceMedId]);
+    expect(own.error).toBeNull();
+    expect(own.rows).toHaveLength(1);
   });
 });
