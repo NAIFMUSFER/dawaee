@@ -36,6 +36,9 @@ jobs:
           # proves unworkable the answer is to tune the query set here and say
           # so, never to stop failing on results.
           upload: always
+          output: codeql-results
+      - name: Record CodeQL finding locations without source snippets
+        run: node scripts/codeql-evidence.cjs
 
   # Secret scanning as a workflow rather than only as a repository setting.
   # GitHub's own push protection is a repository-level configuration this audit
