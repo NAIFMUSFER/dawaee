@@ -223,9 +223,17 @@ describe('nobody can be trapped behind it, and nothing weaker than a password ge
     const body = store.slice(start, end);
     expect(body).toContain('credentialVerifiedAt: Date.now()');
 
-    // The bootstrap that restores a stored session must not set it.
-    const bootstrap = store.slice(store.indexOf('const hasSession = await loadStoredSession'), start);
-    expect(bootstrap).not.toContain('credentialVerifiedAt');
+    // Restoring a session must never grant a fresh credential. The forced
+    // sign-out handler is registered here too, and may revoke one with null.
+    const bootstrapStart = store.indexOf('const hasSession = await loadStoredSession');
+    expect(bootstrapStart).toBeGreaterThan(-1);
+    expect(start).toBeGreaterThan(bootstrapStart);
+    expect(end).toBeGreaterThan(start);
+    const bootstrap = store.slice(bootstrapStart, start);
+    // Permit only a literal property reset, not null || Date.now(), a copied
+    // timestamp or any other expression that could grant verification.
+    const withoutRevocations = bootstrap.replace(/\bcredentialVerifiedAt:\s*null(?=\s*[,}])/g, '');
+    expect(withoutRevocations).not.toContain('credentialVerifiedAt');
   });
 
   it('is called only from the two screens that post a password', () => {
