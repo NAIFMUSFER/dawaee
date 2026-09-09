@@ -71,6 +71,7 @@ function makeHarness(file, options = {}) {
   const requests = [];
   const rebuilds = [];
   const cacheOwners = [];
+  const bootstrapWrites = [];
 
   const request = (method, route, payload) => {
     const gate = deferred();
@@ -97,6 +98,15 @@ function makeHarness(file, options = {}) {
       rebuilds.push({ profileId, locale, opts });
       return { scheduled: profileId ? 1 : 0, failed: 0, exactAlarmsUnavailable: false };
     },
+    // The extracted callbacks now persist the encrypted offline bootstrap after
+    // successful online state changes. These race tests are intentionally about
+    // request/session ordering rather than storage; provide a controlled async
+    // boundary so the real callback can complete without turning persistence
+    // into an undeclared ReferenceError. Dedicated offline-bootstrap tests cover
+    // encryption, account binding and fail-closed behavior.
+    persistOfflineBootstrap: async (user, preferences, selfProfile) => {
+      bootstrapWrites.push({ user, preferences, selfProfile });
+    },
     console,
   };
   const evaluate = (text) => {
@@ -119,7 +129,7 @@ function makeHarness(file, options = {}) {
   const loadMe = evaluate(extracted.loadMe);
 
   return {
-    updatePreferences, loadMe, requests, rebuilds, cacheOwners,
+    updatePreferences, loadMe, requests, rebuilds, cacheOwners, bootstrapWrites,
     state: () => state,
     sessionGeneration, preferenceGeneration,
     setSignedIn: (value) => { signedIn = value; },
