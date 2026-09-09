@@ -9,9 +9,9 @@ Expo's web Linking implementation currently treats every window ``message`` as
 a URL event without authenticating the sender, and the SDK version pinned by
 this repository also double-encodes/decodes query values around URLSearchParams.
 Both behaviors cross a security boundary in a browser.  The production build
-hardens those exact dependency snippets here, at the deterministic bundling
+hardens those dependency shapes here, at the deterministic bundling
 boundary.  The replacements are intentionally fail-closed: an Expo upgrade that
-changes any expected snippet stops the build instead of silently dropping the
+changes any expected structure stops the build instead of silently dropping the
 hardening.
 """
 import base64, glob, hashlib, os, re, shutil, sys
@@ -26,45 +26,64 @@ if len(entries) != 1:
 
 js = open(entries[0], encoding='utf-8').read()
 
-def replace_exact(source, old, new, label, expected=1):
-    count = source.count(old)
-    if count != expected:
-        raise SystemExit(
-            f'web hardening drift: expected {expected} {label} snippet(s), found {count}')
-    return source.replace(old, new)
+# Minified local names and string quotes vary with the entry graph. Bind
+# repeated identifiers to the same capture instead of trusting fixed names.
+# Everything else in the four known SDK shapes remains mandatory, including
+# exactly one occurrence per shape. This is not a general JS sanitizer.
+IDENTIFIER = r'[A-Za-z_$][A-Za-z0-9_$]*'
 
-# expo-linking web listeners use message events only as a signal to re-read the
-# current location.  A cross-origin opener must not be able to synthesize that
-# signal.  Same-origin messages remain supported (including worker-originated
-# messages) so this is the narrowest boundary that removes the cross-origin
-# trigger without changing the SDK's public API.
-js = replace_exact(
-    js,
-    "const v=n=>o({url:window.location.href,nativeEvent:n});return window.addEventListener('message',v,!1)",
-    "const v=n=>{if(n.origin!==window.location.origin)return;o({url:window.location.href,nativeEvent:n})};return window.addEventListener('message',v,!1)",
+def replace_structure(source, pattern, replacement, label):
+    matches = list(re.finditer(pattern, source))
+    if len(matches) != 1:
+        raise SystemExit(
+            f'web hardening drift: expected 1 {label} snippet(s), found {len(matches)}')
+    match = matches[0]
+    return source[:match.start()] + replacement(match) + source[match.end():]
+
+handler = (
+    rf'const (?P<handler>{IDENTIFIER})=(?P<event>{IDENTIFIER})=>'
+    rf'(?P<listener>{IDENTIFIER})\(\{{url:window\.location\.href,nativeEvent:(?P=event)\}}\);return '
+)
+registration = (
+    r"window\.addEventListener\((?P<quote>['\"])message(?P=quote),(?P=handler),!1\)"
+)
+
+def guard_handler(match):
+    event = match['event']
+    return (
+        f"const {match['handler']}={event}=>{{"
+        f'if({event}.origin!==window.location.origin)return;'
+        f"{match['listener']}({{url:window.location.href,nativeEvent:{event}}})"
+        '};return ' + match['registration']
+    )
+
+# Both Expo web Linking callbacks only re-read this window's URL. Reject
+# cross-origin signals while preserving same-origin callbacks and removers.
+js = replace_structure(
+    js, handler + rf'(?P<registration>{registration})', guard_handler,
     'ExpoLinking.addListener message handler',
 )
-js = replace_exact(
-    js,
-    "const v=n=>s({url:window.location.href,nativeEvent:n});return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)",
-    "const v=n=>{if(n.origin!==window.location.origin)return;s({url:window.location.href,nativeEvent:n})};return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)",
-    'RNLinking.addEventListener message handler',
+js = replace_structure(
+    js, handler + (
+        rf'(?P<registration>{IDENTIFIER}\.push\(\{{listener:(?P=listener),'
+        rf'nativeListener:(?P=handler)\}}\),{registration})'
+    ), guard_handler, 'RNLinking.addEventListener message handler',
 )
 
-# URLSearchParams.set() already performs percent-encoding and forEach() already
-# returns decoded values.  Applying encode/decodeURIComponent around them
-# changes literal percent sequences and can throw while parsing otherwise-valid
-# query strings.
-js = replace_exact(
+# URLSearchParams already encodes on set and decodes on iteration. Preserve
+# literal percent sequences by removing only the redundant wrappers.
+js = replace_structure(
     js,
-    'o.searchParams.set(t,encodeURIComponent(n))',
-    'o.searchParams.set(t,n)',
+    rf'(?<![A-Za-z0-9_$.])(?P<url>{IDENTIFIER})\.searchParams\.set\('
+    rf'(?P<key>{IDENTIFIER}),encodeURIComponent\((?P<value>{IDENTIFIER})\)\)',
+    lambda match: f"{match['url']}.searchParams.set({match['key']},{match['value']})",
     'Expo Linking query encoding',
 )
-js = replace_exact(
+js = replace_structure(
     js,
-    'o[n]=decodeURIComponent(t)',
-    'o[n]=t',
+    rf'(?<![A-Za-z0-9_$.])(?P<target>{IDENTIFIER})\[(?P<key>{IDENTIFIER})\]='
+    rf'decodeURIComponent\((?P<value>{IDENTIFIER})\)',
+    lambda match: f"{match['target']}[{match['key']}]={match['value']}",
     'Expo Linking query decoding',
 )
 

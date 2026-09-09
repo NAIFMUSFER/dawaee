@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -56,70 +57,99 @@ function scriptBody(html: string): string {
   return html.slice(start + marker.length, end);
 }
 
+// Identifier spelling and quote choice are minifier output, not SDK semantics.
+// Keep the exact original fixture and also execute alpha-equivalent variants.
+const renamedFixture = vulnerableFixture.replace(/\b[ovnst]\b/g, (name) =>
+  ({ o: 'target', v: 'handler', n: 'event', s: 'callback', t: 'key' } as Record<string, string>)[name] ?? name);
+const dollarFixture = vulnerableFixture.replace(/\b[ovnst]\b/g, (name) =>
+  ({ o: '$target', v: 'h_1', n: '$event', s: 'c_2', t: '$key' } as Record<string, string>)[name] ?? name);
+const equivalentFixtures: Array<[string, string]> = [
+  ['original', vulnerableFixture],
+  ['renamed identifiers', renamedFixture],
+  ['double-quoted event name', vulnerableFixture.replaceAll("'message'", '\"message\"')],
+  ['renamed identifiers and double quotes', renamedFixture.replaceAll("'message'", '\"message\"')],
+  ['dollar and underscore identifiers', dollarFixture],
+];
+
 describe('web production-bundle hardening', () => {
-  it('blocks cross-origin Linking signals and preserves URLSearchParams values', () => {
-    const fixture = makeDist();
-    try {
-      const result = runInline(fixture.dist, fixture.out);
-      expect(result.status, result.stderr).toBe(0);
+  for (const [name, entry] of equivalentFixtures) {
+    it(`blocks cross-origin Linking signals and preserves URLSearchParams values: ${name}`, () => {
+      const fixture = makeDist(entry);
+      try {
+        const result = runInline(fixture.dist, fixture.out);
+        expect(result.status, result.stderr).toBe(0);
 
-      const html = readFileSync(fixture.out, 'utf8');
-      const body = scriptBody(html);
-      expect(body).not.toContain('encodeURIComponent(n)');
-      expect(body).not.toContain('decodeURIComponent(t)');
-      expect(body.match(/n\.origin!==window\.location\.origin/g)?.length).toBe(2);
+        const html = readFileSync(fixture.out, 'utf8');
+        const body = scriptBody(html);
+        expect(body).not.toContain('encodeURIComponent(n)');
+        expect(body).not.toContain('decodeURIComponent(t)');
+        expect(body.match(/\.origin!==window\.location\.origin/g)?.length).toBe(2);
 
-      const listeners: Array<(event: { origin: string }) => void> = [];
-      const context: Record<string, unknown> = {
-        URL,
-        window: {
-          location: {
-            href: 'https://dawaee.test/today',
-            origin: 'https://dawaee.test',
+        const listeners: Array<(event: { origin: string }) => void> = [];
+        const context: Record<string, unknown> = {
+          URL,
+          window: {
+            location: {
+              href: 'https://dawaee.test/today',
+              origin: 'https://dawaee.test',
+            },
+            addEventListener: (
+              name: string,
+              listener: (event: { origin: string }) => void,
+            ) => {
+              expect(name).toBe('message');
+              listeners.push(listener);
+            },
           },
-          addEventListener: (
-            name: string,
-            listener: (event: { origin: string }) => void,
-          ) => {
-            expect(name).toBe('message');
-            listeners.push(listener);
-          },
-        },
-      };
-      vm.runInNewContext(body, context);
-      const fixtureApi = context.__fixture as {
-        first: (listener: (event: unknown) => void) => void;
-        second: (listener: (event: unknown) => void) => void;
-        enc: (url: URL, key: string, value: string) => void;
-        dec: (target: Record<string, string>, key: string, value: string) => void;
-      };
+        };
+        vm.runInNewContext(body, context);
+        const fixtureApi = context.__fixture as {
+          first: (listener: (event: unknown) => void) => void;
+          second: (listener: (event: unknown) => void) => void;
+          enc: (url: URL, key: string, value: string) => void;
+          dec: (target: Record<string, string>, key: string, value: string) => void;
+        };
 
-      const firstSeen: unknown[] = [];
-      const secondSeen: unknown[] = [];
-      fixtureApi.first((event) => firstSeen.push(event));
-      fixtureApi.second((event) => secondSeen.push(event));
-      expect(listeners).toHaveLength(2);
+        const firstSeen: unknown[] = [];
+        const secondSeen: unknown[] = [];
+        fixtureApi.first((event) => firstSeen.push(event));
+        fixtureApi.second((event) => secondSeen.push(event));
+        expect(listeners).toHaveLength(2);
 
-      for (const listener of listeners) listener({ origin: 'https://evil.invalid' });
-      expect(firstSeen).toHaveLength(0);
-      expect(secondSeen).toHaveLength(0);
+        for (const origin of ['https://evil.invalid', 'null', '',
+          'https://dawaee.test.evil.invalid', 'http://dawaee.test', 'https://dawaee.test:444']) {
+          for (const listener of listeners) listener({ origin });
+        }
+        expect(firstSeen).toHaveLength(0);
+        expect(secondSeen).toHaveLength(0);
 
-      for (const listener of listeners) listener({ origin: 'https://dawaee.test' });
-      expect(firstSeen).toHaveLength(1);
-      expect(secondSeen).toHaveLength(1);
+        for (const listener of listeners) listener({ origin: 'https://dawaee.test' });
+        expect(firstSeen).toHaveLength(1);
+        expect(secondSeen).toHaveLength(1);
 
-      const url = new URL('https://dawaee.test/');
-      fixtureApi.enc(url, 'q', '100% /');
-      expect(url.searchParams.get('q')).toBe('100% /');
-      expect(url.href).toContain('q=100%25+%2F');
+        const url = new URL('https://dawaee.test/');
+        fixtureApi.enc(url, 'q', '100% /');
+        expect(url.searchParams.get('q')).toBe('100% /');
+        expect(url.href).toContain('q=100%25+%2F');
 
-      const decoded: Record<string, string> = {};
-      fixtureApi.dec(decoded, 'q', '%2F');
-      expect(decoded.q).toBe('%2F');
-    } finally {
-      rmSync(fixture.root, { recursive: true, force: true });
-    }
-  });
+        for (const value of ['%2F', '%', '100% /', 'دوائي + & = #', '%252F']) {
+          const decoded: Record<string, string> = {};
+          fixtureApi.enc(url, 'q', value);
+          expect(url.searchParams.get('q')).toBe(value);
+          fixtureApi.dec(decoded, 'q', value);
+          expect(decoded.q).toBe(value);
+        }
+        // Hash and lazy-chunk contracts must survive all spelling variations.
+        expect(readFileSync(`${fixture.out}.script-sha256`, 'utf8').trim())
+          .toBe(createHash('sha256').update(body, 'utf8').digest('base64'));
+        expect(readFileSync(join(dirname(fixture.out), '_expo/static/js/web/lazy-fixture.js'), 'utf8'))
+          .toBe('globalThis.__lazyFixture=true;');
+      } finally {
+        rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+  }
 
   it('emits a sidecar hash for the exact inline script body', () => {
     const fixture = makeDist();
@@ -150,4 +180,45 @@ describe('web production-bundle hardening', () => {
       rmSync(fixture.root, { recursive: true, force: true });
     }
   });
+});
+
+// Only alpha-renaming/quote choice may vary: missing/duplicate snippets and
+// changed callback/registration identities must still stop the real bundler.
+describe('web hardening retains fail-closed structure checks', () => {
+  const lines = vulnerableFixture.split('\n');
+  for (const index of [0, 1, 2, 3]) {
+    for (const mutation of ['missing', 'duplicate'] as const) {
+      it(`rejects ${mutation} snippet ${index}`, () => {
+        const entry = mutation === 'missing'
+          ? lines.filter((_, i) => i !== index).join('\n')
+          : `${vulnerableFixture}\n${lines[index]}`;
+        const fixture = makeDist(entry);
+        try {
+          const result = runInline(fixture.dist, fixture.out);
+          expect(result.status).not.toBe(0);
+          expect(result.stderr).toContain('web hardening drift');
+          expect(existsSync(fixture.out)).toBe(false);
+          expect(existsSync(`${fixture.out}.script-sha256`)).toBe(false);
+        } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+      });
+    }
+  }
+  const invalidIdentities: Array<[string, string]> = [
+    ['different forwarded event', vulnerableFixture.replace('nativeEvent:n', 'nativeEvent:other')],
+    ['different registered handler', vulnerableFixture.replace("('message',v,!1)", "('message',other,!1)")],
+    ['different saved listener', vulnerableFixture.replace('listener:s,nativeListener:v', 'listener:other,nativeListener:v')],
+    ['different saved handler', vulnerableFixture.replace('listener:s,nativeListener:v', 'listener:s,nativeListener:other')],
+    ['different event type', vulnerableFixture.replace("'message'", "'load'")],
+  ];
+  for (const [name, entry] of invalidIdentities) {
+    it(`rejects ${name}`, () => {
+      const fixture = makeDist(entry);
+      try {
+        const result = runInline(fixture.dist, fixture.out);
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('web hardening drift');
+        expect(existsSync(fixture.out)).toBe(false);
+      } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+    });
+  }
 });
