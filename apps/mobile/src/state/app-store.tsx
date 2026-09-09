@@ -254,7 +254,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const deviceId = await getDeviceId();
+      // Installation identity is useful for push and replay, but it is not an
+      // authentication credential. If AsyncStorage is temporarily unavailable,
+      // do not strand the user before session recovery or the sign-in screen.
+      // getDeviceId clears its single-flight handle after failure, so later
+      // push/sync callers can retry durable identity creation normally.
+      const deviceId = await getDeviceId().catch(() => '');
       const hasSession = await loadStoredSession();
       const bootstrapGeneration = sessionGeneration.current;
 
