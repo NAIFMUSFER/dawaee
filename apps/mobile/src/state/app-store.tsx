@@ -156,6 +156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadMe = useCallback(async () => {
     const generation = sessionGeneration.current;
+    const preferenceSnapshot = preferenceGeneration.current;
     const me = await api.get<{
       user: { id: string; displayName: string; phoneE164: string | null };
       preferences: Preferences;
@@ -169,19 +170,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // history — and it must be set before the first `readQueue`, not after.
     setCacheOwner(me.user.id);
 
-    const { restartRequired } = applyNativeDirection(me.preferences.locale);
+    // Profile/bootstrap refreshes are allowed to finish after a preference
+    // write, but their older preference snapshot is not. Otherwise a slow
+    // /v1/profiles response can restore the pre-save locale/privacy settings
+    // after the newer PATCH has already committed. Keep the profile refresh,
+    // and apply only the preference portion if no newer local intent exists.
+    const preferencesAreCurrent = preferenceSnapshot === preferenceGeneration.current;
+    const serverPreferences = { ...DEFAULT_PREFERENCES, ...me.preferences };
+    const restartRequired = preferencesAreCurrent
+      ? applyNativeDirection(serverPreferences.locale).restartRequired
+      : null;
     setState((s) => ({
       ...s,
       signedIn: true,
       user: me.user,
-      preferences: { ...DEFAULT_PREFERENCES, ...me.preferences },
+      preferences: preferencesAreCurrent ? serverPreferences : s.preferences,
       profiles: profilesRes.profiles,
       activeProfile:
         profilesRes.profiles.find((p) => p.id === s.activeProfile?.id) ??
         profilesRes.profiles.find((p) => p.isSelf) ??
         profilesRes.profiles[0] ??
         null,
-      restartRequiredForRtl: restartRequired,
+      restartRequiredForRtl: preferencesAreCurrent ? restartRequired! : s.restartRequiredForRtl,
     }));
   }, []);
 
