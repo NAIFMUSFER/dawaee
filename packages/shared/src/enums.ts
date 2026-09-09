@@ -121,9 +121,15 @@ export type CaregiverRelationshipStatus = (typeof CAREGIVER_RELATIONSHIP_STATUSE
 export const CAREGIVER_ROLES = ['son', 'daughter', 'spouse', 'parent', 'sibling', 'nurse', 'caregiver', 'doctor', 'other'] as const;
 export type CaregiverRole = (typeof CAREGIVER_ROLES)[number];
 
-/** Preset permission bundles offered in the UI. Patients can always customise. */
+/**
+ * Preset permission bundles offered in the UI. Patients can always customise.
+ * A preset must include the visibility dependencies of every capability it
+ * advertises. In particular, adherence joins schedule thresholds, so an
+ * observer who can see adherence also needs view_schedule or the API correctly
+ * rejects the supposedly granted view with 403.
+ */
 export const CAREGIVER_ROLE_PRESETS: Record<string, readonly CaregiverPermission[]> = {
-  observer: ['view_adherence', 'receive_notifications'],
+  observer: ['view_schedule', 'view_adherence', 'receive_notifications'],
   family: ['view_medications', 'view_schedule', 'view_adherence', 'view_history', 'receive_notifications'],
   nurse: [
     'view_medications',
