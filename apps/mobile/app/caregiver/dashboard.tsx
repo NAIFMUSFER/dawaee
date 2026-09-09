@@ -110,6 +110,13 @@ export default function CaregiverDashboardScreen() {
 
   const doses = today?.today ?? [];
   const now = Date.now();
+  // Promise.all deliberately commits the two caregiver reads together. On a
+  // cold initial request, an HTTP failure therefore leaves both payloads null.
+  // That state is not evidence that the patient has no doses or stopped
+  // sharing adherence, so never translate it into either clinical empty state.
+  // Existing payloads from a previous successful load may remain visible next
+  // to the error banner; only the no-data failure case is suppressed here.
+  const loadFailedWithoutClinicalData = error !== null && today === null && adherence === null;
 
   const lateDoses = useMemo(
     () => doses
@@ -189,7 +196,7 @@ export default function CaregiverDashboardScreen() {
           />
         ) : null}
 
-        {lateDoses.length > 0 ? (
+        {!loadFailedWithoutClinicalData && lateDoses.length > 0 ? (
           <>
             <SectionTitle>{t('caregiver.needsAttention')}</SectionTitle>
             <View style={{ gap: theme.spacing.sm }}>
@@ -222,7 +229,7 @@ export default function CaregiverDashboardScreen() {
         ) : null}
 
         <SectionTitle>{t('today.title')}</SectionTitle>
-        {!can('view_schedule') ? (
+        {loadFailedWithoutClinicalData ? null : !can('view_schedule') ? (
           <Banner tone="info" title={t('caregiver.notShared', { name: patient.displayName })} />
         ) : doses.length === 0 ? (
           <EmptyState title={t('caregiver.noDosesToday')} />
@@ -250,7 +257,7 @@ export default function CaregiverDashboardScreen() {
           </Card>
         )}
 
-        {can('view_schedule') && upcoming.length > 0 ? (
+        {!loadFailedWithoutClinicalData && can('view_schedule') && upcoming.length > 0 ? (
           <>
             <SectionTitle>{t('today.upcoming')}</SectionTitle>
             <Card>
@@ -271,12 +278,12 @@ export default function CaregiverDashboardScreen() {
           </>
         ) : null}
 
-        {can('view_schedule') && lateDoses.length === 0 && doses.length > 0 ? (
+        {!loadFailedWithoutClinicalData && can('view_schedule') && lateDoses.length === 0 && doses.length > 0 ? (
           <Banner tone="success" title={t('caregiver.nothingLate')} />
         ) : null}
 
         <SectionTitle>{t('caregiver.weeklyAdherence')}</SectionTitle>
-        {!can('view_adherence') || !adherence ? (
+        {loadFailedWithoutClinicalData ? null : !can('view_adherence') || !adherence ? (
           <Banner tone="info" title={t('caregiver.notShared', { name: patient.displayName })} />
         ) : (
           <Card>
