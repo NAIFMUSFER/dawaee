@@ -133,14 +133,19 @@ function TodayProfileScreen() {
           if (!isCurrent()) return;
           const merged = applyQueuedToCache(cached, queued);
           const localDate = localDateIn(cached.timezone);
-          const views = merged.doses.map(cachedDoseToView);
+          // Today and prefetch overlap, and this snapshot can outlive its
+          // original local day. Keep occurrence identity unique and select in
+          // chronological order rather than letting yesterday hide today's actions.
+          const views = [...new Map(merged.doses.map((d) => [d.id, cachedDoseToView(d)])).values()]
+            .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
           setData({
             profileId: merged.profileId,
             localDate,
             timezone: merged.timezone,
             serverTime: merged.cachedAt,
             next:
-              views.find((d) => d.status === 'upcoming' || d.status === 'due' || d.status === 'pending_confirmation') ??
+              views.find((d) => d.scheduledLocalDate >= localDate
+                && (d.status === 'upcoming' || d.status === 'due' || d.status === 'pending_confirmation')) ??
               null,
             today: views.filter((d) => d.scheduledLocalDate === localDate),
             prefetch: views.filter((d) => d.scheduledLocalDate > localDate),
