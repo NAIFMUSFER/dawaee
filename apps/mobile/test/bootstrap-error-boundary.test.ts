@@ -153,7 +153,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   }
 }
 
-function renderEntry(state: AppState): unknown {
+function renderEntry(state: AppState, sessionRetained = false): unknown {
   const react = {
     useState: <T,>(initial: T) => [initial, () => undefined] as const,
   };
@@ -163,7 +163,7 @@ function renderEntry(state: AppState): unknown {
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'expo-router': { Redirect: 'Redirect' },
     '@/state/app-store': { useApp: () => state },
-    '@/api/client': { DEMO_MODE: false },
+    '@/api/client': { DEMO_MODE: false, isSignedIn: () => sessionRetained },
     '@/components/ui': { Screen: 'Screen', Txt: 'Txt', Button: 'Button' },
   }) as { default: () => unknown };
   return module.default();
@@ -252,7 +252,7 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     expect(result.sessionRetained).toBe(true);
     expect(result.state.ready).toBe(true);
 
-    const rendered = JSON.stringify(renderEntry(result.state));
+    const rendered = JSON.stringify(renderEntry(result.state, result.sessionRetained));
     expect(rendered).toContain('session-recovery-retry');
     expect(rendered).not.toContain('/(auth)/language');
     // The recovery boundary must remain PHI-free: the account/profile snapshot
