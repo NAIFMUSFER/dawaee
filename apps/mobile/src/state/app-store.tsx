@@ -5,6 +5,7 @@ import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkE
 import { getRestoredSessionUserId } from '../api/restored-session-owner.js';
 import type { ProfileSummary } from '../api/types.js';
 import { flushQueue, purgeLocalCaches, queueSize, setCacheOwner } from '../storage/offline-queue.js';
+import { readOfflineBootstrap, writeOfflineBootstrap } from '../storage/offline-bootstrap.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
@@ -165,6 +166,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // No new account may enter until its entire local privacy sweep has settled.
   const signOutInFlight = useRef<Promise<void> | null>(null);
 
+  /**
+   * Snapshot writes are serialized for the same reason preference PATCHes are:
+   * an older write must never land after a newer App Lock/privacy choice. The
+   * sign-out barriers below also await this tail before purging local storage,
+   * so a late write cannot recreate encrypted account state after cleanup.
+   */
+  const offlineBootstrapWrites = useRef<Promise<void>>(Promise.resolve());
+  const persistOfflineBootstrap = useCallback((
+    user: { id: string; displayName: string; phoneE164: string | null },
+    preferences: Preferences,
+    selfProfile: ProfileSummary | null,
+  ): Promise<void> => {
+    const work = offlineBootstrapWrites.current
+      .catch(() => undefined)
+      .then(async () => {
+        await writeOfflineBootstrap(user.id, { version: 1, user, preferences, selfProfile });
+      })
+      .catch(() => undefined);
+    offlineBootstrapWrites.current = work;
+    return work;
+  }, []);
+
   const loadMe = useCallback(async () => {
     const generation = sessionGeneration.current;
     const request = ++profileLoadGeneration.current;
@@ -199,6 +222,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       && !preferencesPendingAtStart
       && !(preferenceWrites.current.session === generation && preferenceWrites.current.pending > 0);
     const serverPreferences = { ...DEFAULT_PREFERENCES, ...me.preferences };
+    const effectivePreferences = preferencesAreCurrent ? serverPreferences : stateRef.current.preferences;
+    const ownedSelfProfile = profilesRes.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
+
+    // Write the encrypted offline bootstrap before reporting this refresh as
+    // complete. If a logout starts while the write is in flight, its privacy
+    // sweep waits for the same tail and purges it afterwards.
+    await persistOfflineBootstrap(me.user, effectivePreferences, ownedSelfProfile);
+    if (!isCurrent()) return;
+
     const restartRequired = preferencesAreCurrent
       ? applyNativeDirection(serverPreferences.locale).restartRequired
       : null;
@@ -215,13 +247,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         null,
       restartRequiredForRtl: preferencesAreCurrent ? restartRequired! : s.restartRequiredForRtl,
     }));
-  }, []);
+  }, [persistOfflineBootstrap]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const deviceId = await getDeviceId();
       const hasSession = await loadStoredSession();
+      const bootstrapGeneration = sessionGeneration.current;
 
       // `loadMe` normally binds this from /v1/me. On a genuine offline process
       // restart that request cannot complete, yet the product deliberately keeps
@@ -229,7 +262,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // actions remain usable. Recover only the local account namespace from the
       // Keychain/Keystore-backed Dawaee token before the first cache operation.
       // Malformed/unfamiliar tokens resolve to null and storage stays fail-closed.
-      setCacheOwner(hasSession ? await getRestoredSessionUserId() : null);
+      const restoredUserId = hasSession ? await getRestoredSessionUserId() : null;
+      setCacheOwner(restoredUserId);
 
       setUnauthenticatedHandler(async () => {
         // Explicit logout already owns the privacy sweep. A rejection of its
@@ -240,6 +274,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // session the server has just rejected before doing any async cleanup.
         sessionGeneration.current++;
         const previousUserId = stateRef.current.user?.id ?? null;
+        const precedingSnapshotWrites = offlineBootstrapWrites.current;
         setCacheOwner(null);
         setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null, credentialVerifiedAt: null }));
 
@@ -249,6 +284,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // otherwise a shared/lost phone can keep displaying a former
           // account's reminders after the UI says it is signed out.
           await cancelAllLocalNotifications().catch(() => undefined);
+          await precedingSnapshotWrites.catch(() => undefined);
           await purgeLocalCaches(previousUserId).catch(() => undefined);
           if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
         })();
@@ -263,9 +299,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         await loadMe();
       } catch {
-        // A cold start with no network must not sign the user out; the cached
-        // schedule still drives Today and local reminders.
-        if (!cancelled && isSignedIn()) setState((s) => ({ ...s, offline: true, signedIn: true }));
+        // A cold start with no network must not sign the user out. Restore only
+        // an encrypted snapshot bound to this exact session owner. It contains
+        // the owned self profile and preferences, never delegated caregiver
+        // access; credential verification deliberately remains process-local.
+        if (
+          !cancelled
+          && isSignedIn()
+          && bootstrapGeneration === sessionGeneration.current
+        ) {
+          const snapshot = restoredUserId ? await readOfflineBootstrap(restoredUserId) : null;
+          if (
+            !cancelled
+            && isSignedIn()
+            && bootstrapGeneration === sessionGeneration.current
+          ) {
+            if (snapshot) {
+              const profiles = snapshot.selfProfile ? [snapshot.selfProfile] : [];
+              const { restartRequired } = applyNativeDirection(snapshot.preferences.locale);
+              const restored = {
+                signedIn: true,
+                offline: true,
+                user: snapshot.user,
+                preferences: snapshot.preferences,
+                profiles,
+                activeProfile: snapshot.selfProfile,
+                restartRequiredForRtl: restartRequired,
+                credentialVerifiedAt: null,
+              };
+              stateRef.current = { ...stateRef.current, ...restored };
+              setState((s) => ({ ...s, ...restored }));
+            } else {
+              setState((s) => ({ ...s, offline: true, signedIn: true }));
+            }
+          }
+        }
       }
       const pending = await queueSize();
       if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId, pendingSyncCount: pending }));
@@ -313,6 +381,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (signOutInFlight.current) return signOutInFlight.current;
       const previousUserId = stateRef.current.user?.id ?? null;
       const precedingCleanup = authCleanupInFlight.current;
+      const precedingSnapshotWrites = offlineBootstrapWrites.current;
       setCacheOwner(null);
       stateRef.current = {
         ...stateRef.current, signedIn: false, user: null, profiles: [],
@@ -340,6 +409,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await clearSession().catch(() => undefined);
           await cancellation;
           await precedingCleanup.catch(() => undefined);
+          await precedingSnapshotWrites.catch(() => undefined);
           await purgeLocalCaches(previousUserId).catch(() => undefined);
           if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
         }
@@ -369,6 +439,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // preference intent to other handlers now, not only on the next render.
       stateRef.current = { ...stateRef.current, preferences: next };
       setState((s) => ({ ...s, preferences: { ...s.preferences, ...patch } }));
+
+      // App Lock and notification privacy must survive a process death that
+      // happens before the next network bootstrap. Persist the optimistic local
+      // intent immediately, encrypted and owner-only; serialized writes ensure
+      // two fast toggles cannot leave the older value on disk.
+      const snapshotUser = stateRef.current.user;
+      if (snapshotUser && isSignedIn() && !signOutInFlight.current) {
+        const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
+        void persistOfflineBootstrap(snapshotUser, next, ownedSelfProfile);
+      }
 
       /**
        * A change to what notifications may say has to reach the notifications
@@ -438,10 +518,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const savedPatch = Object.fromEntries(Object.keys(patch)
             .filter((key) => Object.prototype.hasOwnProperty.call(res.preferences, key))
             .map((key) => [key, res.preferences[key as keyof Preferences]])) as Partial<Preferences>;
+          const savedPreferences = { ...stateRef.current.preferences, ...savedPatch };
           stateRef.current = {
-            ...stateRef.current, preferences: { ...stateRef.current.preferences, ...savedPatch },
+            ...stateRef.current, preferences: savedPreferences,
           };
           setState((s) => ({ ...s, preferences: { ...s.preferences, ...savedPatch } }));
+          const savedUser = stateRef.current.user;
+          if (savedUser && !signOutInFlight.current) {
+            const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
+            void persistOfflineBootstrap(savedUser, savedPreferences, ownedSelfProfile);
+          }
         } catch (err) {
           // A response/error from an older preference intent or authenticated
           // session belongs to that request, not to whoever is using the app now.
@@ -466,7 +552,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
     syncNow,
     setOffline: (offline) => setState((s) => ({ ...s, offline })),
-  }), [loadMe, syncNow]);
+  }), [loadMe, persistOfflineBootstrap, syncNow]);
 
   const value = useMemo(() => ({ ...state, ...actions }), [state, actions]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
