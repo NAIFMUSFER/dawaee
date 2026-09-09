@@ -207,13 +207,19 @@ beforeAll(async () => {
 
   // A real dose action, so dose_events has rows to be isolated. Without one,
   // "A cannot read B's dose_events" would pass against an empty table and
-  // prove nothing.
-  for (const [user, doseId] of [[alice, aliceDoseId], [bob, bobDoseId]] as const) {
-    const taken = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${doseId}/taken`, headers: authHeaders(user),
-      payload: { clientEventId: `evt-seed-${doseId.slice(0, 8)}`, at: at('09:05').toISOString() },
-    });
-    expect(taken.statusCode, `seed dose event: ${taken.body}`).toBe(200);
+  // prove nothing. Put the API clock at the occurrence time: this suite is
+  // testing RLS isolation, not the separate early-action safety boundary.
+  h.setServerNow(at('09:05'));
+  try {
+    for (const [user, doseId] of [[alice, aliceDoseId], [bob, bobDoseId]] as const) {
+      const taken = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${doseId}/taken`, headers: authHeaders(user),
+        payload: { clientEventId: `evt-seed-${doseId.slice(0, 8)}`, takenAt: at('09:05').toISOString() },
+      });
+      expect(taken.statusCode, `seed dose event: ${taken.body}`).toBe(200);
+    }
+  } finally {
+    h.setServerNow(at('08:00'));
   }
 
   await inviteAndAccept(alice, carol, ['view_medications', 'view_adherence', 'confirm_dose']);
