@@ -299,7 +299,10 @@ export async function skipDoseAction(
     input.now,
     thresholds,
   );
-  skipDose({ status: effectiveStatus });
+  skipDose(
+    { status: effectiveStatus, scheduledAt: dose.scheduled_at.toISOString() },
+    input.now,
+  );
 
   await tx.query(
     `UPDATE dose_occurrences
