@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  canUndo, confirmTaken, DEFAULT_THRESHOLDS, deriveStatus, isDueForReminder, isRecorded, isTerminal,
-  MAX_SNOOZES, skip, snooze, VOICE_CONFIDENCE_FLOOR, viewOf,
+  canUndo, confirmTaken, DEFAULT_THRESHOLDS, deriveStatus, EARLY_CONFIRMATION_WINDOW_MINUTES,
+  isDueForReminder, isRecorded, isTerminal, MAX_SNOOZES, skip, snooze,
+  VOICE_CONFIDENCE_FLOOR, viewOf,
 } from '../src/dose-status.js';
 import type { DoseOccurrence } from '@dawaee/shared';
 
@@ -58,6 +59,26 @@ describe('confirmTaken', () => {
     const r = confirmTaken({ ...base, at, now: at });
     expect(r.status).toBe('taken');
     expect(r.minutesLate).toBe(10);
+  });
+
+  it('allows a small early confirmation at the safety boundary', () => {
+    const scheduledMs = new Date(SCHEDULED).getTime();
+    const at = new Date(scheduledMs - EARLY_CONFIRMATION_WINDOW_MINUTES * 60_000);
+    const r = confirmTaken({ ...base, at, now: at });
+    expect(r.status).toBe('taken');
+    expect(r.minutesLate).toBe(0);
+    expect(r.confirmedAt.toISOString()).toBe(at.toISOString());
+  });
+
+  it('refuses a confirmation even one minute before the early safety window', () => {
+    const scheduledMs = new Date(SCHEDULED).getTime();
+    const at = new Date(scheduledMs - (EARLY_CONFIRMATION_WINDOW_MINUTES + 1) * 60_000);
+    expect(() => confirmTaken({ ...base, at, now: at })).toThrow(/too early/i);
+  });
+
+  it('refuses the production-class failure of recording a future dose many hours early', () => {
+    const at = new Date('2026-09-02T08:00:00Z');
+    expect(() => confirmTaken({ ...base, at, now: at })).toThrow(/too early/i);
   });
 
   it('records taken_late past the grace period', () => {
@@ -159,6 +180,8 @@ describe('reminder eligibility and views', () => {
 describe('defaults', () => {
   it('exposes sane defaults and terminal set', () => {
     expect(DEFAULT_THRESHOLDS.missedAfterMinutes).toBeGreaterThan(DEFAULT_THRESHOLDS.lateAfterMinutes);
+    expect(EARLY_CONFIRMATION_WINDOW_MINUTES).toBeGreaterThan(0);
+    expect(EARLY_CONFIRMATION_WINDOW_MINUTES).toBeLessThanOrEqual(DEFAULT_THRESHOLDS.lateAfterMinutes);
     expect(isTerminal('taken')).toBe(true);
     expect(isTerminal('missed')).toBe(true);
     expect(isTerminal('due')).toBe(false);
