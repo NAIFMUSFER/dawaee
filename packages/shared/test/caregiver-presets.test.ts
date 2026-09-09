@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAREGIVER_PERMISSION_DEPENDENCIES,
   CAREGIVER_ROLE_PRESETS,
-  type CaregiverPermission,
+  completeCaregiverPermissions,
+  toggleCaregiverPermission,
 } from '../src/index.js';
 
 /**
@@ -10,26 +12,16 @@ import {
  * dependency-complete: a button labelled "Observer" cannot promise adherence
  * and then create a relationship that receives 403 from the adherence route.
  *
- * Keep this table aligned with the query dependencies enforced by
- * apps/api/src/services/access-service.ts. A change in either place should be a
- * deliberate product/security decision, not a silent preset regression.
+ * The dependency graph is shared by API and mobile. These tests pin both the
+ * presets and the custom-toggle closure so the UI cannot create a grant the API
+ * knows is internally unusable.
  */
-const DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
-  add_medication: ['view_medications'],
-  edit_medication: ['view_medications'],
-  edit_schedule: ['view_schedule', 'view_medications'],
-  update_stock: ['view_medications'],
-  confirm_dose: ['view_schedule', 'view_medications'],
-  view_reports: ['view_medications', 'view_schedule'],
-  view_adherence: ['view_schedule'],
-};
-
 describe('caregiver permission presets are usable as advertised', () => {
   it('includes every query dependency for every permission in every preset', () => {
     for (const [name, permissions] of Object.entries(CAREGIVER_ROLE_PRESETS)) {
       const granted = new Set(permissions);
       for (const permission of permissions) {
-        for (const dependency of DEPENDENCIES[permission] ?? []) {
+        for (const dependency of CAREGIVER_PERMISSION_DEPENDENCIES[permission] ?? []) {
           expect(
             granted.has(dependency),
             `${name} grants ${permission} but omits required ${dependency}`,
@@ -43,5 +35,42 @@ describe('caregiver permission presets are usable as advertised', () => {
     expect(CAREGIVER_ROLE_PRESETS.observer).toContain('view_adherence');
     expect(CAREGIVER_ROLE_PRESETS.observer).toContain('view_schedule');
     expect(CAREGIVER_ROLE_PRESETS.observer).not.toContain('view_medications');
+  });
+});
+
+describe('custom caregiver grants stay dependency-complete', () => {
+  it('adding adherence also adds schedule visibility, but not medication identity', () => {
+    expect(completeCaregiverPermissions(['view_adherence'])).toEqual([
+      'view_schedule',
+      'view_adherence',
+    ]);
+  });
+
+  it('adding dose confirmation adds both tables its handler must read', () => {
+    expect(toggleCaregiverPermission([], 'confirm_dose')).toEqual([
+      'view_medications',
+      'view_schedule',
+      'confirm_dose',
+    ]);
+  });
+
+  it('removing schedule visibility also removes capabilities that cannot work without it', () => {
+    const before = completeCaregiverPermissions([
+      'view_medications',
+      'view_schedule',
+      'view_adherence',
+      'view_history',
+      'view_reports',
+      'receive_notifications',
+      'update_stock',
+      'confirm_dose',
+    ]);
+    const after = toggleCaregiverPermission(before, 'view_schedule');
+
+    expect(after).toEqual([
+      'view_medications',
+      'receive_notifications',
+      'update_stock',
+    ]);
   });
 });
