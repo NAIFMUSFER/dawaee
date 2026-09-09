@@ -1,45 +1,27 @@
-# Independent verification of the CI PostgreSQL source-scope fix
+# CI PostgreSQL source-scope audit
 
-Branch: `audit/e2e-red-white-black-2026-09-09`. PR #14 stays Draft.
-No application/runtime, auth, SQL/RLS, migration, deployment or production change.
+Branch: `audit/e2e-red-white-black-2026-09-09`. PR #14 remains Draft. No application/runtime, auth, SQL/RLS, migration, deployment or production mutation is part of this finding.
 
-## Proven failure and concurrent remediation
+## Proven CI defect and retained remediation
 
-CI #274 run `34383842297`, head `3af44db439b02350b6306d8f296ff9804d5582b7`, fails both PostgreSQL jobs in the installer before npm/build/RLS/tests. Job `102575008485` records Chrome's `Hash Sum mismatch` at 2026-09-09T17:36:00Z and apt exit 100 at 17:36:05Z, while PGDG indexes had downloaded. The workflow's unscoped apt refresh selected unrelated preinstalled runner sources.
+CI run `34383842297` on head `3af44db439b02350b6306d8f296ff9804d5582b7` proved both PostgreSQL verification jobs could fail before tests because the workflow ran an unscoped `apt-get update`. The hosted runner's unrelated Chrome repository returned `Hash Sum mismatch` while the required PGDG repository had downloaded correctly. This was a CI reliability defect, not an application failure.
 
-The original workflow was locally reconstructed and verified against Git blob `667fc594cbeb43d21b3810d4fc078d35ae625b67` before reproduction. An independent candidate was prepared, but its non-forced branch update was correctly rejected after concurrent commit `34b0e198cab70fbbe988eddd58ea6318a728b585` fixed the same issue. That concurrent workflow and its seven tests are preserved, not overwritten or duplicated. Follow-up `a823ff3977928c604f166437ae439c4a2d59b5b1` corrected three lint-only regex-spacing failures. The retained workflow blob is `ecc94959f8b305a985966bd67afb080a513e74f6`.
+Concurrent commit `34b0e198cab70fbbe988eddd58ea6318a728b585` scoped the PostgreSQL index refresh to PGDG and added seven regression cases. Follow-up `a823ff3977928c604f166437ae439c4a2d59b5b1` corrected lint-only regex syntax. CI #276 then completed successfully for both PostgreSQL 16 and 17, including the matching client install, lint/typecheck, realistic non-BYPASSRLS database ownership, RLS probes, migrations, managed-Postgres smoke, complete unit/integration tests and mobile typecheck. Mobile exports, dependencies and Docker gates also succeeded.
 
-CI #275 run `34384906448` proves actual PostgreSQL-client installation succeeded in both matrix jobs on the concurrent fix. PG17 job `102578612885` fetched only PGDG indexes and installed client 17.11, then failed later at ESLint in the new test. Do not label that run an application/test success: the suites were skipped after lint failed.
+## Independent helper was removed rather than weakening security gates
 
-## New complementary regressions
+Commit `c21193a6333af9bf8238fc1485d19f1b982929db` added an additional APT `--print-uris` helper. Advanced Security's PR CodeQL check increased from 3 High alerts on parent `a823ff3977928c604f166437ae439c4a2d59b5b1` to 5 High alerts on `c21193a...`. Red-team follow-up `2bda371e3a91c67a4a0b78eefb84574a15d24c8e` proved the first helper version could execute shell substitution from parsed workflow text and replaced that parsing with fixed recognized options; its four local cases passed. Nevertheless the separate PR CodeQL check remained at 5 High alerts on `2bda371e...`.
 
-The seven existing tests simulate external installer commands. These two additional permanent cases instead ask real Linux APT to enumerate its source targets with `--print-uris`, using isolated temporary source/list/cache fixtures. No root command, network request or package installation is performed.
+The connector cannot retrieve the five annotations, so no exact CodeQL rule/source is asserted. The two extra alerts correlate exactly with the new executable helper/wrapper, while the APT fix itself already has seven permanent regressions plus a fully successful PG16/PG17 CI run. The additional helper and wrapper are therefore removed instead of suppressing CodeQL, weakening scanning, or carrying unnecessary executable audit machinery. The original red evidence and concurrent remediation remain documented here.
 
-1. Positive control: an unscoped update must select both PGDG and an unrelated `.invalid` source, proving the fixture is discoverable.
-2. Regression: capture the actual checked-in workflow update arguments, replay them through APT with only the PGDG fixture path relocated, and require PGDG to be selected while the unrelated source is excluded.
+## Separate test-run observation
 
-The same two cases executed against exact source blobs:
+On `c21193a...`, PostgreSQL 16 reached the complete test suite after all APT/RLS/migration/smoke gates and exposed two failures in `shared-rate-limit.test.ts`; PostgreSQL 17 passed the same head. One failure is definitely a test defect: the retention case updates every `auth_rate_buckets.window_start` to one timestamp even though the table primary key is `(scope,key_hash,window_start)`, so two legitimate historical windows for one bucket can collide. This must be fixed as a targeted fixture, not by changing rate-limit runtime. The second multi-instance HTTP observation is not yet evidence of a runtime defect because the same test passed PostgreSQL 17 and earlier complete PG16/17 runs; it remains under reproduction before any runtime change.
 
-| Workflow | Positive control | Source-isolation regression |
-| --- | --- | --- |
-| Original `667fc594...` | PASS | FAIL: unrelated source appears in actual APT targets |
-| Concurrent fix `ecc94959...` | PASS | PASS |
+The earlier auth-session callback-order failure is likewise not evidence of two issued sessions: its forced overlap test established TX2 blocked before commit and exactly one rotation occurred, and the same auth suite later passed on both PostgreSQL versions. Auth runtime remains unchanged.
 
-The two-case harness is not a replacement for the existing seven command-double cases, real signed installation, or either full PostgreSQL suite. The earlier independent twelve-case candidate was not applied to this branch and its results must not be attributed to the retained workflow.
+## Open release boundaries
 
-```sh
-node scripts/test-ci-postgres-apt-selection.cjs
-npx vitest run apps/api/test/ci-postgres-apt-selection.test.ts
-# Same regression against the pre-fix workflow copy:
-node scripts/test-ci-postgres-apt-selection.cjs /path/to/old-ci.yml
-```
+The separate PR Advanced Security CodeQL gate still has unresolved High alerts that predate the removed helper and must be located before release. Supabase's read-only security advisor reported `pg_trgm` and `btree_gist` installed in `public`; no production change followed. Fresh Render log inspection is not claimed in this pass because connector workspace selection was unavailable non-interactively.
 
-Local execution used Node 22.16.0 and the installed APT parser; complete dependency install, PostgreSQL tests and Expo exports were not available locally. CI/Security must be checked on the resulting head.
-
-## Other verified evidence and open boundaries
-
-Read CI #273 attempt 1, PG17 job `102570330052`: all 1,464 other tests pass and auth-session's sole failure is line 206's JavaScript callback-order expectation (`tx2-done` before the `tx1-commit` continuation). The preceding blocked-query and exactly-one-rotation assertions completed. This is not evidence of two issued sessions; auth runtime is unchanged and the test-observation issue remains open.
-
-Render list-services refused because no workspace was selected and its connector requires user confirmation before choosing a workspace. No fresh Render log/deploy inspection is claimed in this pass. Supabase security-advisor read at 2026-09-09T17:52:07.814Z returned two `extension_in_public` warnings for `pg_trgm` and `btree_gist`; no migration or production mutation followed. Advisor output is not full RLS certification.
-
-Still open: actual iOS/Android app-lock/background/reboot and notification actions, real push/caregiver-escalation receipts and revocation, live OCR/object-provider operations, remaining multi-device/offline/replay surfaces and current production-log inspection. No release approval follows merely from green automated checks.
+Physical iOS/Android app-lock/background/reboot and notification actions, real push/caregiver escalation receipts and revocation, live OCR/object-provider operations, and remaining multi-device/offline/replay surfaces remain open. Green automated CI alone does not grant release approval.
