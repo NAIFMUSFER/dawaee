@@ -42,11 +42,20 @@ function routePatterns(dir: string, prefix = ''): string[] {
 
 const ROUTES = routePatterns(APP_DIR);
 
-/** Turns `/invite/[token]` into a regex that matches `/invite/anything`. */
-const matcher = (pattern: string) =>
-  new RegExp(`^${pattern.replace(/\[[^\]]+\]/g, '[^/]+').replace(/\//g, '\\/')}$`);
+/** Match Expo Router's single-segment `[param]` convention without compiling
+ * repository-derived route text into a regular expression. Static segments are
+ * compared literally, including characters that are regexp metacharacters. */
+function matchesRoutePattern(pattern: string, path: string): boolean {
+  const expected = pattern.split('/').filter(Boolean);
+  const actual = path.split('/').filter(Boolean);
+  if (expected.length !== actual.length) return false;
+  return expected.every((segment, index) => {
+    const dynamic = segment.startsWith('[') && segment.endsWith(']') && segment.length > 2;
+    return dynamic ? (actual[index]?.length ?? 0) > 0 : segment === actual[index];
+  });
+}
 
-const resolves = (path: string) => ROUTES.some((r) => matcher(r).test(path));
+const resolves = (path: string) => ROUTES.some((route) => matchesRoutePattern(route, path));
 
 /**
  * The paths the API builds from PUBLIC_APP_URL, read out of the source rather
@@ -79,6 +88,13 @@ describe('links the server hands out', () => {
       const withToken = path.endsWith('/') ? `${path}TOKEN` : path;
       expect(resolves(withToken), `${file} builds ${withToken}, which no screen serves`).toBe(true);
     }
+  });
+
+  it('matches dynamic segments but keeps static route text literal', () => {
+    expect(matchesRoutePattern('/invite/[token]', '/invite/a+b')).toBe(true);
+    expect(matchesRoutePattern('/literal.+', '/literal.+')).toBe(true);
+    expect(matchesRoutePattern('/literal.+', '/literalXYZ')).toBe(false);
+    expect(matchesRoutePattern('/invite/[token]', '/invite/')).toBe(false);
   });
 
   it('serves the invitation path and the fixed emergency-card path', () => {
