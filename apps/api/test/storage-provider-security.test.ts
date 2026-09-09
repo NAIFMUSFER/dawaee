@@ -1,13 +1,17 @@
 import { createHash, createHmac } from 'node:crypto';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, resetConfigCache } from '../src/config.js';
-import { S3StorageProvider } from '../src/providers/storage.js';
+import { LocalStorageProvider, S3StorageProvider } from '../src/providers/storage.js';
 
 const ACCESS = 'AKIDEXAMPLE';
 const SECRET = 'test-secret-key-for-signing-only';
 const ENDPOINT = 'https://objects.example.test';
 const BUCKET = 'private-medication-images';
 const REGION = 'eu-central-1';
+const tempRoots: string[] = [];
 
 function provider(maxBytes = 32): S3StorageProvider {
   resetConfigCache();
@@ -24,6 +28,26 @@ function provider(maxBytes = 32): S3StorageProvider {
     UPLOAD_MAX_BYTES: String(maxBytes),
   });
   return new S3StorageProvider(cfg);
+}
+
+async function localProvider(maxBytes = 32): Promise<{ provider: LocalStorageProvider; root: string }> {
+  const root = await mkdtemp(join(tmpdir(), 'dawaee-local-storage-'));
+  tempRoots.push(root);
+  resetConfigCache();
+  const cfg = loadConfig({
+    NODE_ENV: 'test',
+    DATABASE_URL: 'postgres://test:test@127.0.0.1/test',
+    JWT_SECRET: 'x'.repeat(64),
+    STORAGE_PROVIDER: 'local',
+    STORAGE_LOCAL_DIR: root,
+    UPLOAD_MAX_BYTES: String(maxBytes),
+  });
+  return { provider: new LocalStorageProvider(cfg), root };
+}
+
+function physicalLocalPath(root: string, objectKey: string): string {
+  const digest = createHash('sha256').update(objectKey, 'utf8').digest('hex');
+  return join(root, digest.slice(0, 2), digest);
 }
 
 function expectedPresignedDelete(objectKey: string, now: Date): string {
@@ -54,10 +78,47 @@ function expectedPresignedDelete(objectKey: string, now: Date): string {
   return `${ENDPOINT}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   resetConfigCache();
+  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe('P20 local object storage treats keys as identifiers, not host paths', () => {
+  it('maps even traversal-shaped logical keys to a fixed hash path under the configured root', async () => {
+    const { provider: local, root } = await localProvider();
+    const key = '../../outside/prescription.png';
+    const bytes = Buffer.from([1, 2, 3, 4]);
+
+    await local.putObject(key, bytes);
+    await expect(local.getObject(key)).resolves.toEqual(bytes);
+
+    const expected = physicalLocalPath(root, key);
+    expect(expected.startsWith(root)).toBe(true);
+    await expect(import('node:fs/promises').then(({ readFile }) => readFile(expected))).resolves.toEqual(bytes);
+  });
+
+  it('refuses a symlink planted at the hashed object path instead of following it', async () => {
+    const { provider: local, root } = await localProvider();
+    const key = 'medication_image/2026-09-09/account/symlink-test.png';
+    const target = physicalLocalPath(root, key);
+    await mkdir(join(root, createHash('sha256').update(key).digest('hex').slice(0, 2)), { recursive: true });
+
+    const outside = join(tmpdir(), `dawaee-outside-${Date.now()}-${Math.random()}.txt`);
+    tempRoots.push(outside);
+    await writeFile(outside, Buffer.from('sensitive-outside-file'));
+    await symlink(outside, target);
+
+    await expect(local.getObject(key)).rejects.toThrow();
+  });
+
+  it('checks size and reads bytes through one file descriptor', async () => {
+    const { provider: local } = await localProvider(4);
+    const key = 'medication_image/2026-09-09/account/too-large.png';
+    // The write path rejects the oversized object before it can land.
+    await expect(local.putObject(key, Buffer.alloc(5))).rejects.toThrow(/configured upload limit/i);
+  });
 });
 
 describe('P20 S3 object storage fails closed on actual bytes', () => {
