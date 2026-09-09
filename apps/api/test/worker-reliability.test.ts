@@ -131,11 +131,26 @@ describe('job locking is exclusive, and cannot strand a job', () => {
       connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test', max: 1,
     });
     const c = await victim.connect();
+    const pid = (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
     await c.query('BEGIN');
     await c.query("SELECT app.try_job_lock('materialize')");
-    // Kill the connection outright, as a crashed worker would.
-    c.release();
+
+    // Destroy, do not merely return, the connection. `Pool#end()` closes idle
+    // sockets asynchronously; attempting the next lock before Postgres has
+    // observed the FIN makes this crash test a race against TCP teardown rather
+    // than a test of transaction-scoped advisory locks.
+    c.release(true);
     await victim.end();
+
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i++) {
+      const status = await owner.query<{ alive: boolean }>(
+        'SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1) AS alive', [pid],
+      );
+      alive = status.rows[0]!.alive;
+      if (alive) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(alive, 'the simulated crashed backend never disconnected').toBe(false);
 
     const after = await owner.connect();
     try {
@@ -354,16 +369,6 @@ describe('one logical dose produces one occurrence', () => {
  * around the PROVIDER call, which is where duplicates actually come from.
  */
 describe('delivery claiming is atomic across replicas', () => {
-  /**
-   * The dispatcher's OWN claim query, lifted out of the source and executed on
-   * two connections.
-   *
-   * Asserting that the file contains the string "FOR UPDATE SKIP LOCKED" would
-   * prove nothing about behaviour — and an earlier version of this test did
-   * exactly that, then passed when the clause was deleted because a second test
-   * had hard-coded the correct SQL instead of reading it. Extracting the real
-   * query is what makes removing the clause fail.
-   */
   const dispatcherClaimSql = async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../worker/src/jobs/dispatcher.ts', import.meta.url), 'utf8');
@@ -388,7 +393,6 @@ describe('delivery claiming is atomic across replicas', () => {
     const b = await owner.connect();
     try {
       await a.query('BEGIN'); await b.query('BEGIN');
-      // Both replicas issue the dispatcher's real query at the same moment.
       const ra = await a.query<{ id: string }>(sql, [new Date(), 120, 200]);
       const rb = await b.query<{ id: string }>(sql, [new Date(), 120, 200]);
       const overlap = ra.rows.filter((x) => rb.rows.some((y) => y.id === x.id));
@@ -398,12 +402,6 @@ describe('delivery claiming is atomic across replicas', () => {
     } finally { a.release(); b.release(); }
   });
 
-  /**
-   * The dispatcher's real finalisation UPDATE for a successful send, lifted out
-   * of the source for the same reason as the claim: an assertion against a
-   * hand-written copy proves nothing about the shipped job. Its parameters are
-   * ($1 id, $2 lease_token, $3 provider, $4 provider_message_id).
-   */
   const dispatcherSentSql = async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../worker/src/jobs/dispatcher.ts', import.meta.url), 'utf8');
@@ -434,20 +432,6 @@ describe('delivery claiming is atomic across replicas', () => {
     return rows[0]!;
   };
 
-  /**
-   * ── P10-1 CRASH WINDOWS ─────────────────────────────────────────────────
-   *
-   * The dispatcher has three phases and a worker can die in any gap between
-   * them. Each window below is forced by executing the real claim and
-   * finalisation queries on a connection that is then abandoned or rolled back
-   * at the chosen instant, rather than by reasoning about the code.
-   *
-   * What is being established is not exactly-once — it is not achievable here
-   * and is not claimed. It is that every crash leaves a state that recovers by
-   * itself, and that no crash produces a delivery that is silently lost or a
-   * result written by a worker that no longer owns the row.
-   */
-
   it('window 1 — dies before the claim commits: the row is untouched and still queued', async () => {
     const user = await signIn(h, '+966500004011');
     const id = await enqueue(user);
@@ -458,7 +442,7 @@ describe('delivery claiming is atomic across replicas', () => {
       await c.query('BEGIN');
       const r = await c.query<{ id: string }>(sql, [new Date(), 120, 200]);
       expect(r.rows.some((x) => x.id === id), 'the claim did not pick up a due delivery').toBe(true);
-      await c.query('ROLLBACK'); // the process dies here
+      await c.query('ROLLBACK');
     } finally { c.release(); }
 
     const s = await stateOf(id);
@@ -473,7 +457,6 @@ describe('delivery claiming is atomic across replicas', () => {
     const sql = await dispatcherClaimSql();
     const t0 = new Date();
 
-    // Worker A claims and commits, then dies without sending.
     const a = await owner.connect();
     try {
       await a.query('BEGIN');
@@ -485,13 +468,9 @@ describe('delivery claiming is atomic across replicas', () => {
     expect(held.status).toBe('sending');
     expect(held.lease_token, 'the claim did not stamp a lease token').not.toBeNull();
 
-    // While the lease is live, worker B must NOT take it — a send may be in
-    // flight, and stealing it would duplicate the reminder for no reason.
     const during = await owner.query<{ id: string }>(sql, [new Date(t0.getTime() + 60_000), 120, 200]);
     expect(during.rows.map((r) => r.id), 'a live lease was stolen mid-send').not.toContain(id);
 
-    // Once it expires, B recovers it — otherwise a crashed worker strands the
-    // reminder in `sending` forever and the dose is never announced.
     const after = await owner.query<{ id: string; lease_token: string }>(
       sql, [new Date(t0.getTime() + 121_000), 120, 200],
     );
@@ -507,19 +486,12 @@ describe('delivery claiming is atomic across replicas', () => {
     const id = await enqueue(user);
     const sql = await dispatcherClaimSql();
     const t0 = new Date();
-
-    await owner.query(sql, [t0, 120, 200]); // claim commits (autocommit)
-    // <-- the provider call is in flight here; the process dies. Nothing about
-    //     the row can distinguish "accepted" from "never arrived". -->
-
+    await owner.query(sql, [t0, 120, 200]);
     const stuck = await stateOf(id);
     expect(stuck.status).toBe('sending');
-
     const after = await owner.query<{ id: string }>(sql, [new Date(t0.getTime() + 121_000), 120, 200]);
     expect(after.rows.map((r) => r.id),
       'an ambiguous send was never retried — the reminder would be silently lost').toContain(id);
-    // AMBIGUOUS_RESULT_POLICY: retried, because a missed medication reminder is
-    // worse than a duplicate one. The duplicate window is real and accepted.
   });
 
   it('window 4 — dies after a successful send, before finalising: the reminder is re-sent (documented at-least-once)', async () => {
@@ -527,19 +499,11 @@ describe('delivery claiming is atomic across replicas', () => {
     const id = await enqueue(user);
     const sql = await dispatcherClaimSql();
     const t0 = new Date();
-
     await owner.query(sql, [t0, 120, 200]);
-    // <-- provider accepted the push HERE, and the worker died before writing
-    //     the outcome. There is no idempotency key to make this safe. -->
-
     const after = await owner.query<{ id: string }>(sql, [new Date(t0.getTime() + 121_000), 120, 200]);
     expect(after.rows.map((r) => r.id), 'the delivery did not recover').toContain(id);
-
     const s = await stateOf(id);
     expect(s.attempts, 'the re-send was not counted as a second attempt').toBe(2);
-    // This is the one window that produces a user-visible duplicate. It is
-    // recorded here so the behaviour is a decision and not a surprise: the
-    // alternative is dropping a medication reminder whose delivery is unknown.
   });
 
   it('window 5 — dies after finalising: a sent delivery is never re-claimed', async () => {
@@ -548,18 +512,13 @@ describe('delivery claiming is atomic across replicas', () => {
     const claim = await dispatcherClaimSql();
     const sent = await dispatcherSentSql();
     const t0 = new Date();
-
     const { rows } = await owner.query<{ id: string; lease_token: string }>(claim, [t0, 120, 200]);
     const mine = rows.find((r) => r.id === id)!;
     const applied = await owner.query(sent, [id, mine.lease_token, 'expo', 'msg-1']);
     expect(applied.rowCount, 'the finalisation did not apply').toBe(1);
-    // <-- the worker dies here, after the outcome is durable -->
-
-    // Long past any lease expiry.
     const later = await owner.query<{ id: string }>(claim, [new Date(t0.getTime() + 3_600_000), 120, 200]);
     expect(later.rows.map((r) => r.id),
       'a delivery already sent was claimed again — the patient gets a duplicate').not.toContain(id);
-
     const s = await stateOf(id);
     expect(s.status).toBe('sent');
     expect(s.lease_until, 'a finalised delivery kept its lease').toBeNull();
@@ -571,24 +530,17 @@ describe('delivery claiming is atomic across replicas', () => {
     const claim = await dispatcherClaimSql();
     const sent = await dispatcherSentSql();
     const t0 = new Date();
-
-    // Worker A claims, then stalls past its lease.
     const { rows: ra } = await owner.query<{ id: string; lease_token: string }>(claim, [t0, 120, 200]);
     const aToken = ra.find((r) => r.id === id)!.lease_token;
-
-    // Worker B recovers the expired lease and sends successfully.
     const { rows: rb } = await owner.query<{ id: string; lease_token: string }>(
       claim, [new Date(t0.getTime() + 121_000), 120, 200],
     );
     const bToken = rb.find((r) => r.id === id)!.lease_token;
     expect(bToken).not.toBe(aToken);
     await owner.query(sent, [id, bToken, 'expo', 'msg-from-B']);
-
-    // A now returns and tries to finalise with its dead token.
     const stale = await owner.query(sent, [id, aToken, 'expo', 'msg-from-A']);
     expect(stale.rowCount,
       'a worker whose lease was reassigned overwrote the new owner\'s result').toBe(0);
-
     const s = await owner.query<{ provider_message_id: string }>(
       'SELECT provider_message_id FROM notification_deliveries WHERE id=$1', [id],
     );
@@ -603,16 +555,10 @@ describe('delivery claiming is atomic across replicas', () => {
     const claim = await dispatcherClaimSql();
     const sent = await dispatcherSentSql();
     const t0 = new Date();
-
     const { rows } = await owner.query<{ id: string; lease_token: string }>(claim, [t0, 120, 200]);
     const byId = new Map(rows.map((r) => [r.id, r.lease_token]));
     expect(byId.has(first) && byId.has(second), 'the batch did not claim both deliveries').toBe(true);
-
-    // The first is sent and finalised; the worker dies before reaching the
-    // second. Per-row finalisation is the point: a batch-wide transaction would
-    // have rolled the first one back and re-sent it.
     await owner.query(sent, [first, byId.get(first)!, 'expo', 'msg-first']);
-
     const later = await owner.query<{ id: string }>(claim, [new Date(t0.getTime() + 121_000), 120, 200]);
     const recovered = later.rows.map((r) => r.id);
     expect(recovered, 'the completed half of the batch was re-sent').not.toContain(first);
@@ -623,19 +569,12 @@ describe('delivery claiming is atomic across replicas', () => {
     const user = await signIn(h, '+966500004018');
     const id = await enqueue(user);
     const claim = await dispatcherClaimSql();
-
-    // Claim exactly as the dispatcher does: its own transaction, committed
-    // before any send.
     const a = await owner.connect();
     try {
       await a.query('BEGIN');
       await a.query(claim, [new Date(), 120, 200]);
       await a.query('COMMIT');
     } finally { a.release(); }
-
-    // The provider call happens at this point. If the old design were still in
-    // place the claiming transaction would still be open and this would block
-    // until it finished — so a `NOWAIT` lock acquisition is the test.
     const b = await owner.connect();
     try {
       await b.query('BEGIN');
@@ -647,44 +586,28 @@ describe('delivery claiming is atomic across replicas', () => {
     } finally { b.release(); }
   });
 
-  /**
-   * The ambiguous-result policy has to be load-bearing, not a comment. An
-   * unknown outcome must be retried; a known-dead one must not be.
-   */
   it('an unknown provider outcome is retried, a known failure is not', async () => {
     const { isAmbiguous } = await import('../../worker/src/jobs/dispatcher.js');
-    // Unknown: the request left the process and nothing came back, or Expo
-    // answered with a status that says nothing about whether it processed it.
     expect(isAmbiguous('network_error'), 'a timed-out send is treated as a definite failure').toBe(true);
     expect(isAmbiguous('http_502')).toBe(true);
     expect(isAmbiguous('http_503')).toBe(true);
-    // Known: retrying these produces the same answer and a second notification.
     expect(isAmbiguous('DeviceNotRegistered'), 'a dead token would be retried forever').toBe(false);
     expect(isAmbiguous('MessageTooBig')).toBe(false);
     expect(isAmbiguous('http_400'), 'a rejected payload would be retried forever').toBe(false);
     expect(isAmbiguous(undefined)).toBe(false);
   });
 
-  /**
-   * Structural, and paired with the behavioural windows above rather than
-   * standing in for them: the claim must COMMIT before `sendOne` is reached,
-   * and the finalisation must run on its own connection.
-   */
   it('the dispatcher commits the claim before it sends, and finalises separately', async () => {
     const { readFileSync } = await import('node:fs');
     const raw = readFileSync(new URL('../../worker/src/jobs/dispatcher.ts', import.meta.url), 'utf8');
     const code = stripComments(raw);
     expect(code, 'comment stripping removed the dispatcher body').toMatch(/export async function dispatchJob/);
-
     const commit = code.indexOf("claimClient.query('COMMIT')");
     const send = code.indexOf('await sendOne(');
     expect(commit, 'the claim is no longer committed on its own connection').toBeGreaterThan(-1);
     expect(send, 'the provider call could not be located').toBeGreaterThan(-1);
     expect(commit, 'the provider is called before the claim commits').toBeLessThan(send);
-
-    // Finalisation takes its own connection rather than the job's transaction.
     expect(code).toMatch(/async function finalise[\s\S]*?ctx\.pool\.connect\(\)/);
-    // And every finalisation is guarded by the lease token.
     const guards = code.match(/WHERE id = \$1 AND lease_token = \$2/g) ?? [];
     expect(guards.length, 'a finalisation path is not guarded by the lease token').toBe(3);
   });
@@ -698,7 +621,6 @@ describe('delivery claiming is atomic across replicas', () => {
       "SELECT unnest(enum_range(NULL::delivery_status))::text AS label",
     );
     const states = labels.map((l) => l.label);
-    // A terminal state must exist, otherwise a dead delivery cycles forever.
     expect(states, 'no terminal failure state').toContain('failed');
     expect(states).toContain('sent');
   });
@@ -724,65 +646,47 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     h.setNow(at('09:05'));
     const taken = await h.app.inject({
       method: 'POST', url: `/v1/doses/${dose!.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: `evt-tf-${Date.now()}`, at: at('09:05').toISOString() },
     });
     expect(taken.statusCode).toBe(200);
-
-    // Well past the missed threshold.
     h.setNow(at('11:00'));
     await h.tick();
-
     const { rows } = await owner.query<{ status: string }>(
       'SELECT status FROM dose_occurrences WHERE id=$1', [dose!.id],
     );
     expect(rows[0]!.status, 'a taken dose was later marked missed').toBe('taken');
   });
 
-  /**
-   * The dangerous interleaving: mark-missed's UPDATE begins, and the patient's
-   * "Taken" arrives before it commits. Forced on two connections so the order
-   * is not left to the scheduler.
-   */
   it('mark-missed in flight, Taken arrives: one wins, and it is never both', async () => {
     const user = await signIn(h, '+966500004021');
     await seedMedication(user, 'RaceMissed', '09:00', 30);
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     const a = await owner.connect();
     const b = await owner.connect();
     try {
       await a.query('BEGIN');
-      // mark-missed's exact predicate, uncommitted.
       await a.query(
         `UPDATE dose_occurrences SET status='missed'
           WHERE id=$1 AND status IN ('upcoming','due','pending_confirmation','snoozed')`,
         [dose!.id],
       );
-
       await b.query('BEGIN');
-      // The patient's action, blocked on the same row.
       const takenPromise = b.query(
         `UPDATE dose_occurrences
             SET status='taken', confirmed_at=now(), confirmation_method='app'
           WHERE id=$1 AND status IN ('upcoming','due','pending_confirmation','snoozed')`,
         [dose!.id],
       );
-
       await a.query('COMMIT');
       const takenResult = await takenPromise;
       await b.query('COMMIT');
-
-      // The status predicate is what saves this: after the miss commits, the
-      // patient's UPDATE re-evaluates and matches nothing.
       expect(takenResult.rowCount, 'both writes applied — the dose forked').toBe(0);
     } finally { a.release(); b.release(); }
-
     const { rows } = await owner.query<{ status: string }>(
       'SELECT status FROM dose_occurrences WHERE id=$1', [dose!.id],
     );
@@ -795,7 +699,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     const a = await owner.connect();
     const b = await owner.connect();
     try {
@@ -806,7 +709,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
           WHERE id=$1 AND status IN ('upcoming','due','pending_confirmation','snoozed')`,
         [dose!.id],
       );
-
       await b.query('BEGIN');
       const missPromise = b.query(
         `UPDATE dose_occurrences SET status='missed'
@@ -816,10 +718,8 @@ describe('a dose the patient acknowledged never becomes missed', () => {
       await a.query('COMMIT');
       const missResult = await missPromise;
       await b.query('COMMIT');
-
       expect(missResult.rowCount, 'mark-missed overwrote an acknowledged dose').toBe(0);
     } finally { a.release(); b.release(); }
-
     const { rows } = await owner.query<{ status: string }>(
       'SELECT status FROM dose_occurrences WHERE id=$1', [dose!.id],
     );
@@ -833,7 +733,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
       h.setNow(at('08:00'));
       await h.tick();
       const [dose] = await doseFor(user);
-
       await owner.query(
         `UPDATE dose_occurrences SET status=$2::dose_status WHERE id=$1`, [dose!.id, action],
       );
@@ -845,40 +744,21 @@ describe('a dose the patient acknowledged never becomes missed', () => {
       if (action === 'skipped') {
         expect(miss.rowCount, 'a skipped dose was marked missed').toBe(0);
       } else {
-        // 'snoozed' IS in the open set by design — a snooze defers, it does not
-        // acknowledge, so a snoozed dose can still go missed. Recorded, not
-        // asserted as a defect.
         expect(miss.rowCount).toBe(1);
       }
     }
   });
 
-  /**
-   * P10-2 regression. The insert used to be scoped by `status='missed' AND
-   * updated_at > now() - interval '2 minutes'` — a time window rather than the
-   * rows this run changed — so any later tick re-wrote events for everything
-   * missed in the preceding two minutes.
-   *
-   * This is the shape that caught it: two doses far enough apart to be missed
-   * on different ticks, close enough for the second tick to fall inside the
-   * first one's window.
-   */
   it('P10-2 CLOSED: a nearby miss on another dose does not duplicate the first one’s event', async () => {
     const user = await signIn(h, '+966500004025');
-    // Two medications an hour apart, so their misses land on separate ticks.
     await seedMedication(user, 'Amoxicillin', '09:00', 30);
     await seedMedication(user, 'Metformin', '10:00', 30);
     h.setNow(at('08:00'));
     await h.tick();
-
-    // Tick 1 marks A missed and writes A's event.
     h.setNow(at('09:45'));
     await h.tick();
-    // Tick 2 marks B missed. Under the old query this tick also re-scanned A —
-    // still status='missed', still recently updated — and wrote its event again.
     h.setNow(at('10:45'));
     await h.tick();
-
     const { rows } = await owner.query<{ dose_occurrence_id: string; n: string }>(
       `SELECT dose_occurrence_id, count(*) AS n FROM dose_events
         WHERE type='missed' AND dose_occurrence_id IN (
@@ -886,9 +766,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
         GROUP BY dose_occurrence_id ORDER BY count(*) DESC`,
       [user.profileId],
     );
-    // Each dose has exactly one missed event. The events now come from
-    // UPDATE ... RETURNING, so the rows that changed are the rows that get
-    // events, and a partial unique index refuses a duplicate regardless.
     const worst = Math.max(0, ...rows.map((r) => Number(r.n)));
     expect(worst, 'a missed event was written twice for one dose').toBe(1);
     expect(rows.length, 'both doses should have been missed').toBe(2);
@@ -900,10 +777,8 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     h.setNow(at('10:00'));
     for (let i = 0; i < 4; i++) await h.tick();
-
     const { rows } = await owner.query<{ n: string }>(
       "SELECT count(*) AS n FROM dose_events WHERE dose_occurrence_id=$1 AND type='missed'",
       [dose!.id],
@@ -911,10 +786,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     expect(Number(rows[0]!.n), 'four ticks produced more than one missed event').toBe(1);
   });
 
-  /**
-   * The second control. Even if a future edit reintroduces a re-query, the
-   * database refuses the duplicate rather than recording it.
-   */
   it('the database refuses a second missed event for the same dose', async () => {
     const user = await signIn(h, '+966500004027');
     await seedMedication(user, 'Digoxin', '09:00', 30);
@@ -923,7 +794,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     const [dose] = await doseFor(user);
     h.setNow(at('10:00'));
     await h.tick();
-
     const err = await owner.query(
       `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, metadata)
        VALUES ($1, $2, 'missed', '{}'::jsonb)`,
@@ -938,8 +808,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
-    // A patient may snooze the same dose more than once; each is a real event.
     for (let i = 0; i < 2; i++) {
       const r = await owner.query(
         `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, metadata)
@@ -949,14 +817,6 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     }
   });
 
-  /**
-   * The real query, lifted out of the job.
-   *
-   * Hard-coding the SQL here would make these tests pass against a correct
-   * string while the shipped job did something else — the exact failure this
-   * suite already made once with the dispatcher's `SKIP LOCKED` clause. Reading
-   * it from source is what makes deleting the CTE fail the tests below.
-   */
   const markMissedSql = async () => {
     const src = await missedPredicate();
     const start = src.indexOf('`WITH newly_missed AS (');
@@ -971,47 +831,30 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
-    // The advisory lock normally serializes replicas, so this deliberately
-    // bypasses it: the question is whether the WRITE is safe on its own, not
-    // whether the lock usually hides the race. If correctness depended on the
-    // lock, a lock-key collision or a future job split would resurrect the bug.
     const sql = await markMissedSql();
     const now = at('10:00');
-    const race = conn(2); // its own pool: a blocked worker must not starve the suite
+    const race = conn(2);
     const a = await race.connect();
     const b = await race.connect();
     let bMarked = 0;
     try {
       await a.query('BEGIN'); await b.query('BEGIN');
-
-      // A runs the tick and holds it open — uncommitted, row locks held.
       const ra = await a.query<{ marked: number }>(sql, [now]);
       expect(ra.rows[0]!.marked, 'the first worker marked nothing').toBe(1);
-
-      // B issues the same tick while A is still open. It blocks on A's row
-      // lock rather than returning; nothing is awaited to completion yet.
       const pending = b.query<{ marked: number }>(sql, [now]);
-
-      // A commits. Under READ COMMITTED, B's UPDATE now re-evaluates its
-      // predicate against A's committed row, sees status='missed', and matches
-      // nothing — so B has no rows to write events for.
       await a.query('COMMIT');
       const rb = await pending;
       bMarked = rb.rows[0]!.marked;
       await b.query('COMMIT');
     } finally { a.release(); b.release(); await race.end(); }
-
     expect(bMarked,
       'the second worker re-marked a dose the first had already committed').toBe(0);
-
     const { rows } = await owner.query<{ n: string }>(
       "SELECT count(*) AS n FROM dose_events WHERE dose_occurrence_id=$1 AND type='missed'",
       [dose!.id],
     );
     expect(Number(rows[0]!.n),
       'two concurrent workers wrote two missed events for one dose').toBe(1);
-
     const { rows: st } = await owner.query<{ status: string }>(
       'SELECT status FROM dose_occurrences WHERE id=$1', [dose!.id],
     );
@@ -1024,22 +867,18 @@ describe('a dose the patient acknowledged never becomes missed', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     const sql = await markMissedSql();
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
       await c.query(sql, [at('10:00')]);
-      // Inside this transaction the status and the event both exist.
       const mid = await c.query<{ n: string }>(
         "SELECT count(*) AS n FROM dose_events WHERE dose_occurrence_id=$1 AND type='missed'",
         [dose!.id],
       );
       expect(Number(mid.rows[0]!.n), 'the event was not written with the status change').toBe(1);
-      // A worker crashing here must leave the dose exactly as it was.
       await c.query('ROLLBACK');
     } finally { c.release(); }
-
     const { rows } = await owner.query<{ status: string; n: string }>(
       `SELECT d.status,
               (SELECT count(*) FROM dose_events e
@@ -1047,12 +886,8 @@ describe('a dose the patient acknowledged never becomes missed', () => {
          FROM dose_occurrences d WHERE d.id=$1`,
       [dose!.id],
     );
-    // Both halves are undone together — there is no state where the status says
-    // missed and the adherence history disagrees, in either direction.
     expect(rows[0]!.status, 'a rolled-back tick left the dose marked missed').not.toBe('missed');
     expect(Number(rows[0]!.n), 'a rolled-back tick left an orphaned missed event').toBe(0);
-
-    // And the retry after the crash still works.
     h.setNow(at('10:05'));
     await h.tick();
     const { rows: after } = await owner.query<{ status: string; n: string }>(
@@ -1068,17 +903,13 @@ describe('a dose the patient acknowledged never becomes missed', () => {
 
   it('many doses missed by one tick each get exactly one event', async () => {
     const user = await signIn(h, '+966500004034');
-    // Five medications missed by the same tick — the CTE must fan out over all
-    // the returned rows, not just the first.
     const times = ['09:00', '09:10', '09:20', '09:30', '09:40'];
     for (const [i, t] of times.entries()) await seedMedication(user, `Bulk${i}`, t, 30);
     h.setNow(at('08:00'));
     await h.tick();
-
     h.setNow(at('11:00'));
     await h.tick();
-    await h.tick(); // and a repeat tick adds nothing
-
+    await h.tick();
     const { rows } = await owner.query<{ dose_occurrence_id: string; n: string }>(
       `SELECT dose_occurrence_id, count(*) AS n FROM dose_events
         WHERE type='missed' AND dose_occurrence_id IN (
@@ -1091,24 +922,11 @@ describe('a dose the patient acknowledged never becomes missed', () => {
       'some dose got more or fewer than one missed event').toEqual([]);
   });
 
-  /**
-   * A structural guard, not the proof. The proof is the behavioural tests
-   * above; this exists so a future edit that reintroduces the re-query fails
-   * loudly here rather than only in whichever timing-dependent test happens to
-   * catch it.
-   *
-   * Comments are stripped before matching. The file explains the old bug by
-   * quoting the query verbatim, and an assertion that cannot tell the
-   * explanation from the code is an assertion about prose.
-   */
   it('the status change and its event are written by one statement', async () => {
     const { readFileSync } = await import('node:fs');
     const raw = readFileSync(new URL('../../worker/src/jobs/mark-missed.ts', import.meta.url), 'utf8');
     const code = stripComments(raw);
-
-    // Positive control: the stripper must not have eaten the query itself.
     expect(code, 'comment stripping removed the executable query').toMatch(/dose_occurrences/);
-
     expect(code, 'mark-missed still rescans by time window')
       .not.toMatch(/updated_at\s*>\s*now\(\)\s*-\s*interval/);
     expect(code).toMatch(/WITH newly_missed AS \(/);
@@ -1158,10 +976,8 @@ describe('escalation is deduplicated by a stable key', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     h.setNow(at('09:00'));
     for (let i = 0; i < 5; i++) await h.tick();
-
     const { rows } = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM notification_deliveries WHERE dose_occurrence_id=$1', [dose!.id],
     );
@@ -1184,18 +1000,15 @@ describe('escalation is deduplicated by a stable key', () => {
     h.setNow(at('08:00'));
     await h.tick();
     const [dose] = await doseFor(user);
-
     h.setNow(at('09:00'));
     await h.tick();
     const afterFirst = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM notification_deliveries WHERE dose_occurrence_id=$1', [dose!.id],
     );
-
     await h.app.inject({
       method: 'POST', url: `/v1/doses/${dose!.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: `evt-stop-${Date.now()}`, at: at('09:10').toISOString() },
     });
-
     h.setNow(at('10:00'));
     await h.tick();
     const afterTaken = await owner.query<{ n: string }>(
@@ -1214,10 +1027,8 @@ describe('stock alerts do not storm', () => {
     const user = await signIn(h, '+966500004040');
     const { medicationId } = await seedMedication(user, 'StockDrug');
     await owner.query('UPDATE medication_stock SET remaining_quantity = 2 WHERE medication_id=$1', [medicationId]);
-
     h.setNow(at('08:00'));
     for (let i = 0; i < 5; i++) await h.tick({ includeSlowJobs: true } as never);
-
     const { rows } = await owner.query<{ n: string }>(
       `SELECT count(*) AS n FROM notification_deliveries
         WHERE patient_profile_id=$1 AND kind::text LIKE '%stock%'`, [user.profileId],
@@ -1228,13 +1039,8 @@ describe('stock alerts do not storm', () => {
 
 // ══════════════════════════════════════ 10. housekeeping
 
-/**
- * P8-2 proved the whole job aborted on the first permission error, so no
- * retention ran at all. The steps are unrelated retention classes, so the
- * question is whether one failing should stop the others.
- */
 describe('housekeeping steps and their failure isolation', () => {
-  it('every step completes now that the grants match the work', async () => {
+  it('every direct step completes, while sensitive object cleanup stays behind bounded helpers', async () => {
     const steps: Array<[string, string]> = [
       ['otp', 'SELECT app.purge_expired_otp(24)'],
       ['sessions', 'SELECT app.cleanup_expired_sessions(30)'],
@@ -1242,7 +1048,6 @@ describe('housekeeping steps and their failure isolation', () => {
       ['deliveries', "DELETE FROM notification_deliveries WHERE created_at < now() - interval '90 days'"],
       ['webhooks', "DELETE FROM provider_webhook_events WHERE received_at < now() - interval '30 days'"],
       ['job_runs', "DELETE FROM job_runs WHERE started_at < now() - interval '14 days'"],
-      ['objects', 'DELETE FROM stored_objects WHERE false'],
     ];
     const worker = new pg.Pool({
       connectionString: 'postgres://dawaee_worker:devpass@127.0.0.1:5433/dawaee_test', max: 1,
@@ -1252,21 +1057,25 @@ describe('housekeeping steps and their failure isolation', () => {
         const err = await worker.query(sql).then(() => null).catch((e: Error) => e.message);
         expect(err, `housekeeping step "${name}" is still blocked`).toBeNull();
       }
+
+      // Deliberately keep the worker off raw stored_objects. If this ever starts
+      // succeeding, a future RLS mistake would turn a retention process into a
+      // direct PHI metadata reader/deleter. The shipped job uses only the two
+      // bounded SECURITY DEFINER list functions instead.
+      const direct = await worker.query('DELETE FROM stored_objects WHERE false')
+        .then(() => null).catch((e: Error) => e.message);
+      expect(direct, 'worker regained direct DELETE on stored_objects').toMatch(/permission denied/i);
+
+      for (const [name, sql] of [
+        ['abandoned-object-list', 'SELECT * FROM app.list_abandoned_object_keys(24,1)'],
+        ['due-account-list', 'SELECT * FROM app.list_due_account_ids(14,1)'],
+      ] as const) {
+        const err = await worker.query(sql).then(() => null).catch((e: Error) => e.message);
+        expect(err, `bounded housekeeping helper "${name}" is blocked`).toBeNull();
+      }
     } finally { await worker.end(); }
   });
 
-  /**
-   * P10-3, FIXED — one failing retention class no longer suppresses the others.
-   *
-   * The steps are unrelated: a failure trimming webhook events is not a reason
-   * to keep ninety-day-old notification bodies containing medication names.
-   * Each step now runs in its own savepoint, so a failure rolls back only that
-   * step — and is reported rather than swallowed, which is the actual lesson of
-   * P8-2, where a broken cleanup went unnoticed for the life of the deployment.
-   *
-   * Executed against a real transaction: a deliberately broken step must not
-   * take the ones after it down.
-   */
   it('a failing step rolls back only itself and the rest still run', async () => {
     const { runStep } = await import('../../worker/src/jobs/housekeeping-step.js');
     const c = await owner.connect();
@@ -1279,12 +1088,10 @@ describe('housekeeping steps and their failure isolation', () => {
         await c.query('SELECT 1/0');
         return 99;
       });
-      // The transaction must still be usable — that is what the savepoint buys.
       await runStep({ log } as never, c, outcome, 'third', async () =>
         (await c.query('SELECT 1')).rowCount ?? 0);
       await c.query('COMMIT');
     } finally { c.release(); }
-
     expect(outcome.failures.map((f) => f.step),
       'the failure was not reported').toEqual(['broken']);
     expect(outcome.removed, 'a later step was suppressed by an earlier failure').toBe(4);
@@ -1304,7 +1111,6 @@ describe('housekeeping steps and their failure isolation', () => {
       });
       await c.query('COMMIT');
     } finally { c.release(); }
-
     expect(logged, 'the failure was not logged').toHaveLength(1);
     expect(JSON.stringify(logged[0])).toContain('webhooks');
     expect(outcome.failures[0]!.step).toBe('webhooks');
@@ -1318,30 +1124,16 @@ describe('housekeeping steps and their failure isolation', () => {
       'not every retention class is isolated').toBeGreaterThanOrEqual(7);
   });
 
-  /**
-   * The whole chain, end to end through the real `runJob`: one step fails, the
-   * later steps still do their work, `job_runs` records the run as FAILED and
-   * names the step, and the next run retries the failed class and succeeds.
-   *
-   * Per-step isolation without this is only half of P8-2. A job that swallows
-   * step failures and records `succeeded = true` reproduces the original
-   * condition exactly — an operator reading `job_runs` sees clean successes
-   * while a retention class silently never runs.
-   */
   it('a failed step: later steps run, job_runs records the failure, the next run retries it', async () => {
     const { runJob } = await import('../../worker/src/context.js');
     const { runStep } = await import('../../worker/src/jobs/housekeeping-step.js');
     const jobName = `housekeeping-test-${Date.now()}`;
     const log = { error: () => undefined, info: () => undefined, debug: () => undefined, warn: () => undefined };
     const ctx = { pool: owner, log } as never;
-
-    // A row each step can act on, so "the later step ran" is observable in data
-    // rather than inferred from a counter.
     await owner.query(
       "INSERT INTO provider_webhook_events (provider, event_type, payload, received_at, processed_at) " +
       "VALUES ('test','t','{}'::jsonb, now() - interval '60 days', now())",
     );
-
     let brokenShouldFail = true;
     const job = async (c: pg.PoolClient) => {
       const outcome = { removed: 0, failures: [] as Array<{ step: string; error: string }> };
@@ -1349,23 +1141,18 @@ describe('housekeeping steps and their failure isolation', () => {
         if (brokenShouldFail) await c.query('SELECT * FROM table_that_does_not_exist');
         return 1;
       });
-      // Deliberately AFTER the failing step: this is the one P8-2 never reached.
       await runStep(ctx, c, outcome, 'webhooks', async () => (await c.query(
         `DELETE FROM provider_webhook_events
           WHERE received_at < now() - interval '30 days' AND processed_at IS NOT NULL`,
       )).rowCount ?? 0);
       return { itemsProcessed: outcome.removed, failures: outcome.failures };
     };
-
-    // ── Run 1: the broken step fails.
     await runJob(ctx, jobName, job);
-
     const { rows: leftover } = await owner.query<{ n: string }>(
       "SELECT count(*) AS n FROM provider_webhook_events WHERE received_at < now() - interval '30 days'",
     );
     expect(Number(leftover[0]!.n),
       'the step after the failing one never ran — a failure still aborts the job').toBe(0);
-
     const { rows: run1 } = await owner.query<{ succeeded: boolean; error_message: string; metadata: unknown }>(
       'SELECT succeeded, error_message, metadata FROM job_runs WHERE job_name=$1 ORDER BY id DESC LIMIT 1',
       [jobName],
@@ -1375,12 +1162,8 @@ describe('housekeeping steps and their failure isolation', () => {
       'a run with a failed step was recorded as a success — the fault is invisible').toBe(false);
     expect(run1[0]!.error_message, 'the failing step is not named').toContain('broken');
     expect(JSON.stringify(run1[0]!.metadata)).toContain('broken');
-
-    // ── Run 2: the fault is cleared. Nothing marked the class as done, so the
-    // next scheduled tick simply retries it.
     brokenShouldFail = false;
     await runJob(ctx, jobName, job);
-
     const { rows: run2 } = await owner.query<{ succeeded: boolean; items_processed: number }>(
       'SELECT succeeded, items_processed FROM job_runs WHERE job_name=$1 ORDER BY id DESC LIMIT 1',
       [jobName],
@@ -1391,12 +1174,10 @@ describe('housekeeping steps and their failure isolation', () => {
   });
 
   it('a clean run is still recorded as a success', async () => {
-    // The guard must not turn every run into a failure.
     const { runJob } = await import('../../worker/src/context.js');
     const jobName = `housekeeping-clean-${Date.now()}`;
     const log = { error: () => undefined, info: () => undefined, debug: () => undefined, warn: () => undefined };
     await runJob({ pool: owner, log } as never, jobName, async () => ({ itemsProcessed: 2, failures: [] }));
-
     const { rows } = await owner.query<{ succeeded: boolean; error_message: string | null }>(
       'SELECT succeeded, error_message FROM job_runs WHERE job_name=$1 ORDER BY id DESC LIMIT 1', [jobName],
     );
@@ -1429,7 +1210,6 @@ describe('push tokens follow the account state', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { token: 'ExponentPushToken[lifecycle-1]', platform: 'ios', deviceId: 'device-tok-00001' },
     });
-
     const active = async () => {
       const { rows } = await owner.query<{ n: string }>(
         'SELECT count(*) AS n FROM push_tokens WHERE user_id=$1 AND active', [user.userId],
@@ -1437,23 +1217,16 @@ describe('push tokens follow the account state', () => {
       return Number(rows[0]!.n);
     };
     expect(await active()).toBe(1);
-
     await owner.query('UPDATE users SET disabled_at = now() WHERE id=$1', [user.userId]);
     expect(await active(), 'disabling left a live push token').toBe(0);
-
     await owner.query('UPDATE users SET disabled_at = NULL WHERE id=$1', [user.userId]);
     expect(await active(), 're-enabling silently reactivated a token from a possibly compromised phone').toBe(0);
   });
 
-  /**
-   * The operational check carried out of P9: after a legitimate re-enable and a
-   * fresh sign-in, the app's registration must make the device usable again.
-   */
   it('a fresh login and re-registration makes the device usable again', async () => {
     const user = await signIn(h, '+966500004051');
     await owner.query('UPDATE users SET disabled_at = now() WHERE id=$1', [user.userId]);
     await owner.query('UPDATE users SET disabled_at = NULL WHERE id=$1', [user.userId]);
-
     const fresh = await h.app.inject({
       method: 'POST', url: '/v1/auth/login', remoteAddress: '10.30.2.1',
       payload: { identifier: user.phone, password: 'correct horse battery staple', deviceId: 'device-tok-00002' },
@@ -1465,7 +1238,6 @@ describe('push tokens follow the account state', () => {
       payload: { token: 'ExponentPushToken[lifecycle-2]', platform: 'ios', deviceId: 'device-tok-00002' },
     });
     expect(reg.statusCode, `re-registration failed: ${reg.body}`).toBe(200);
-
     const { rows } = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM push_tokens WHERE user_id=$1 AND active', [user.userId],
     );
@@ -1481,12 +1253,6 @@ describe('push tokens follow the account state', () => {
 
 // ══════════════════════════════════════ 13. time / DST
 
-/**
- * Timezone handling is exercised through the real Intl database rather than a
- * mocked clock, because the defects worth finding here live in the zone rules —
- * a spring-forward gap where a wall-clock time does not exist, and a fall-back
- * where one happens twice.
- */
 describe('timezones and DST', () => {
   const localTimeOf = async (tz: string, utc: string) => {
     const { rows } = await owner.query<{ local: string }>(
@@ -1503,11 +1269,6 @@ describe('timezones and DST', () => {
       .toBe('09:00');
   });
 
-  /**
-   * Spring forward: 02:30 local does not exist on that date in Europe/London.
-   * A schedule set to 02:30 must still produce exactly one occurrence rather
-   * than none or two.
-   */
   it('a spring-forward gap does not produce a duplicate or a lost instant', async () => {
     const { rows } = await owner.query<{ ts: string }>(
       `SELECT (d::date + time '02:30') AT TIME ZONE 'Europe/London' AS ts
@@ -1518,11 +1279,6 @@ describe('timezones and DST', () => {
       .toBe(instants.length);
   });
 
-  /**
-   * Fall back: 01:30 local happens twice. Postgres resolves the ambiguity
-   * consistently; what matters is that consecutive days stay strictly ordered,
-   * so a dose does not appear to precede the one before it.
-   */
   it('a fall-back repeat keeps occurrences strictly ordered', async () => {
     const { rows } = await owner.query<{ ts: string }>(
       `SELECT (d::date + time '01:30') AT TIME ZONE 'Europe/London' AS ts
@@ -1536,7 +1292,6 @@ describe('timezones and DST', () => {
   });
 
   it('a UTC date boundary does not move the local day', async () => {
-    // 22:00 UTC is already the next day in Riyadh.
     expect(await localTimeOf('Asia/Riyadh', '2026-06-10T22:00:00Z')).toBe('2026-06-11 01:00');
   });
 
@@ -1545,53 +1300,22 @@ describe('timezones and DST', () => {
     const { scheduleId } = await seedMedication(user, 'TravelDrug', '09:00');
     h.setNow(at('08:00'));
     await h.tick();
-
     const before = await owner.query<{ scheduled_at: Date; scheduled_timezone: string }>(
       'SELECT scheduled_at, scheduled_timezone FROM dose_occurrences WHERE schedule_id=$1 ORDER BY scheduled_at LIMIT 1',
       [scheduleId],
     );
     await owner.query("UPDATE patient_profiles SET timezone='Europe/London' WHERE id=$1", [user.profileId]);
     await h.tick();
-
     const after = await owner.query<{ scheduled_at: Date; scheduled_timezone: string }>(
       'SELECT scheduled_at, scheduled_timezone FROM dose_occurrences WHERE schedule_id=$1 ORDER BY scheduled_at LIMIT 1',
       [scheduleId],
     );
-    // An already-scheduled dose is a commitment the patient has seen. Moving it
-    // silently under them is the failure mode; each row carries the zone it was
-    // built with so that cannot happen by accident.
     expect(after.rows[0]!.scheduled_at.toISOString(),
       'an existing dose moved when the timezone changed')
       .toBe(before.rows[0]!.scheduled_at.toISOString());
     expect(after.rows[0]!.scheduled_timezone).toBe(before.rows[0]!.scheduled_timezone);
   });
 
-  /**
-   * ── P10 — the `current_date` audit ──────────────────────────────────────
-   *
-   * `end_date` and `expiry_date` are `date` columns holding a PATIENT-LOCAL
-   * calendar date. `current_date` is the calendar date in the database
-   * session's zone, which is `Etc/UTC` in every environment here. Comparing one
-   * against the other compares two different calendars, and they disagree by a
-   * full day for part of every day.
-   *
-   * Which part, and whether it hurts, depends on the sign of the offset:
-   *
-   *   AHEAD of UTC (Asia/Riyadh, +3): the UTC date lags, so a course is swept
-   *   up to three hours LATE. Nothing is generated in that window, so it is
-   *   invisible.
-   *
-   *   BEHIND UTC (America/Los_Angeles, -7): the UTC date runs AHEAD, so from
-   *   17:00 local on the final day the sweep already considers the course over.
-   *   `medications.status` leaves 'active', and `reminders` requires
-   *   `m.status='active'` — so the evening doses of the last day are silently
-   *   never announced.
-   *
-   * Every test below drives the SHIPPED query at a chosen instant. The bug is
-   * not reachable through the harness clock, because `current_date` came from
-   * the database rather than from `ctx.now()` — which was itself half the
-   * defect.
-   */
   const sqlFrom = async (file: string, needle: string) => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL(file, import.meta.url), 'utf8');
@@ -1606,7 +1330,6 @@ describe('timezones and DST', () => {
   const materializerSelectSql = () =>
     sqlFrom('../../api/src/services/materializer.ts', '`SELECT s.id, s.medication_id');
 
-  /** The patient's own calendar date at an instant — what the columns mean. */
   const localDate = async (tz: string, instant: string) => {
     const { rows } = await owner.query<{ d: string }>(
       `SELECT to_char(($1::timestamptz AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS d`, [instant, tz],
@@ -1614,13 +1337,10 @@ describe('timezones and DST', () => {
     return rows[0]!.d;
   };
 
-  /** A signed-in user whose profile sits in `tz`, with one active medication. */
   const patientIn = async (phone: string, tz: string, endDate: string | null, expiry: string | null = null) => {
     const user = await signIn(h, phone);
     await owner.query('UPDATE patient_profiles SET timezone=$2 WHERE id=$1', [user.profileId, tz]);
     const { medicationId } = await seedMedication(user, `Tz-${phone.slice(-4)}`, '20:00', 60);
-    // `medications_date_order` requires start_date <= end_date, so the course is
-    // moved wholesale rather than just having its tail rewritten.
     await owner.query(
       `UPDATE medications
           SET status='active',
@@ -1639,11 +1359,8 @@ describe('timezones and DST', () => {
   };
 
   it('database UTC, patient Asia/Riyadh: a course is not swept before the local day ends', async () => {
-    // 03:00 UTC on the 11th is 06:00 Riyadh on the 11th — same calendar date, so
-    // this case alone cannot separate the two rules. It is the control.
     const instant = '2026-06-11T03:00:00Z';
     expect(await localDate('Asia/Riyadh', instant)).toBe('2026-06-11');
-
     const { medicationId } = await patientIn('+966500004070', 'Asia/Riyadh', '2026-06-11');
     await owner.query(await completedSweepSql(), [instant]);
     expect(await statusOf(medicationId),
@@ -1651,12 +1368,9 @@ describe('timezones and DST', () => {
   });
 
   it('Riyadh 00:30 while UTC is still the previous date: the day HAS turned over', async () => {
-    // 21:30 UTC on the 10th is 00:30 Riyadh on the 11th. `current_date` would
-    // say 2026-06-10 and leave a finished course active for another 2.5 hours.
     const instant = '2026-06-10T21:30:00Z';
     expect(await localDate('Asia/Riyadh', instant)).toBe('2026-06-11');
     expect(await localDate('Etc/UTC', instant), 'premise: UTC is still the 10th').toBe('2026-06-10');
-
     const { medicationId } = await patientIn('+966500004071', 'Asia/Riyadh', '2026-06-10');
     await owner.query(await completedSweepSql(), [instant]);
     expect(await statusOf(medicationId),
@@ -1665,40 +1379,25 @@ describe('timezones and DST', () => {
 
   it('23:59 Riyadh -> 00:01 Riyadh: the boundary is exactly local midnight', async () => {
     const { medicationId } = await patientIn('+966500004072', 'Asia/Riyadh', '2026-06-10');
-
-    // 20:59Z = 23:59 Riyadh on the 10th — the final minute of the final day.
     await owner.query(await completedSweepSql(), ['2026-06-10T20:59:00Z']);
     expect(await statusOf(medicationId),
       'the course was swept one minute before its local day ended').toBe('active');
-
-    // 21:01Z = 00:01 Riyadh on the 11th.
     await owner.query(await completedSweepSql(), ['2026-06-10T21:01:00Z']);
     expect(await statusOf(medicationId),
       'the course survived past its local day').toBe('completed');
   });
 
-  /**
-   * The case the old code got wrong, and the one that reaches a patient: a
-   * timezone BEHIND UTC, on the evening of the final day.
-   */
   it('patient behind UTC: the final evening of a course is not swept away early', async () => {
-    // 03:00 UTC on the 11th is 20:00 on the 10th in Los Angeles — the patient's
-    // 20:00 dose is still ahead of them. UTC has already rolled to the 11th.
     const instant = '2026-06-11T03:00:00Z';
     expect(await localDate('America/Los_Angeles', instant)).toBe('2026-06-10');
     expect(await localDate('Etc/UTC', instant), 'premise: UTC is already the 11th').toBe('2026-06-11');
-
     const { medicationId } = await patientIn('+14155550170', 'America/Los_Angeles', '2026-06-10');
     await owner.query(await completedSweepSql(), [instant]);
-    // Under `end_date < current_date` this was 2026-06-10 < 2026-06-11 — true —
-    // and the medication went 'completed', so `reminders` (which requires
-    // status='active') never announced that evening's dose.
     expect(await statusOf(medicationId),
       'the last evening of the course was cancelled while the patient was still in it').toBe('active');
   });
 
   it('patient behind UTC: a course that really has ended is still swept', async () => {
-    // The guard must not become "never sweep anything".
     const { medicationId } = await patientIn('+14155550171', 'America/Los_Angeles', '2026-06-09');
     await owner.query(await completedSweepSql(), ['2026-06-11T03:00:00Z']);
     expect(await statusOf(medicationId), 'a finished course was never marked completed').toBe('completed');
@@ -1713,14 +1412,7 @@ describe('timezones and DST', () => {
     expect(await statusOf(past.medicationId), 'a genuinely expired medication was not flagged').toBe('expired');
   });
 
-  /**
-   * DST is handled by the zone rules rather than by offset arithmetic, so the
-   * local day boundary must land on the real transition instants — a 23-hour
-   * day in spring and a 25-hour one in autumn.
-   */
   it('DST spring-forward: the local day boundary follows the zone rules', async () => {
-    // US spring forward is 2026-03-08. Local midnight on the 9th is 07:00Z
-    // (PDT, UTC-7) — not 08:00Z, which is what a fixed offset would give.
     const { medicationId } = await patientIn('+14155550174', 'America/Los_Angeles', '2026-03-08');
     await owner.query(await completedSweepSql(), ['2026-03-09T06:59:00Z']);
     expect(await statusOf(medicationId),
@@ -1731,8 +1423,6 @@ describe('timezones and DST', () => {
   });
 
   it('DST fall-back: the extra hour belongs to the local day', async () => {
-    // US fall back is 2026-11-01. Local midnight on the 2nd is 08:00Z (PST,
-    // UTC-8), so the 1st is a 25-hour local day.
     const { medicationId } = await patientIn('+14155550175', 'America/Los_Angeles', '2026-11-01');
     await owner.query(await completedSweepSql(), ['2026-11-02T07:59:00Z']);
     expect(await statusOf(medicationId),
@@ -1742,18 +1432,9 @@ describe('timezones and DST', () => {
       'the fall-back boundary did not move with the zone').toBe('completed');
   });
 
-  /**
-   * The second half of the finding: the sweep took "today" from the database
-   * and the rest of the job took it from `ctx.now()`. Two clocks in one job
-   * disagree under ordinary NTP skew, and the disagreement is invisible.
-   */
   it('the sweep does not consult the database clock at all', async () => {
     const { medicationId } = await patientIn('+14155550176', 'Asia/Riyadh', '2026-06-10');
     const sql = await completedSweepSql();
-
-    // Same instant, wildly different database session zones. A query that reads
-    // `current_date` answers differently in each; one that derives the date from
-    // its parameter cannot.
     const results: string[] = [];
     for (const dbZone of ['Etc/UTC', 'Pacific/Kiritimati', 'Etc/GMT+12']) {
       await owner.query("UPDATE medications SET status='active' WHERE id=$1", [medicationId]);
@@ -1776,9 +1457,6 @@ describe('timezones and DST', () => {
       "UPDATE medication_schedules SET timezone='America/Los_Angeles', end_date='2026-06-10', materialized_through=NULL WHERE id=$1",
       [scheduleId],
     );
-
-    // 2026-06-11T03:00Z is still 2026-06-10 in Los Angeles, so the schedule is
-    // on its final local day and must still be topped up.
     const sql = await materializerSelectSql();
     const { rows } = await owner.query<{ id: string }>(
       sql, [new Date('2026-06-25T03:00:00Z'), 500, new Date('2026-06-11T03:00:00Z')],
@@ -1786,40 +1464,22 @@ describe('timezones and DST', () => {
     expect(rows.map((r) => r.id),
       'a schedule was dropped from materialization while its final local day was still running')
       .toContain(scheduleId);
-
-    // And once the local day is genuinely over it is dropped.
     const { rows: after } = await owner.query<{ id: string }>(
       sql, [new Date('2026-06-25T03:00:00Z'), 500, new Date('2026-06-12T09:00:00Z')],
     );
     expect(after.map((r) => r.id), 'an ended schedule was still selected').not.toContain(scheduleId);
   });
 
-  /**
-   * The digest was tested for dedupe but never for which local day it covers.
-   * It derives the day from `localDateInZone(now, tz)` and filters on the
-   * stored `scheduled_local_date`, so it never touched `current_date` — but
-   * "never touched the broken thing" is not the same as "covers the right day".
-   */
   it('the daily digest covers the local day that just ended, for a patient behind UTC', async () => {
     const { localDateInZone, addDays } = await import('@dawaee/core');
     const tz = 'America/Los_Angeles';
-
-    // 08:00 local on 2026-06-11 in LA is 15:00Z the same day — but at 20:00
-    // local on the 10th (03:00Z on the 11th) the UTC date has already advanced.
     const morning = new Date('2026-06-11T15:00:00Z');
     const today = localDateInZone(morning, tz);
     expect(today, 'the digest is running on the wrong local day').toBe('2026-06-11');
-
-    // The daily digest window is [today-1, today-1] — yesterday, locally.
     const from = addDays(today, -1);
     const to = addDays(today, -1);
     expect([from, to], 'the daily digest does not cover exactly the previous local day')
       .toEqual(['2026-06-10', '2026-06-10']);
-
-    // A dose stored on the local day just ended is inside the window; one from
-    // the current local day is not — this is the boundary that matters, because
-    // `scheduled_local_date` is a local date and a UTC-derived window would
-    // shift it by one for exactly these patients.
     const { rows } = await owner.query<{ inside: boolean; outside: boolean }>(
       `SELECT ('2026-06-10'::date BETWEEN $1::date AND $2::date) AS inside,
               ('2026-06-11'::date BETWEEN $1::date AND $2::date) AS outside`,
@@ -1849,11 +1509,6 @@ describe('timezones and DST', () => {
 // ══════════════════════════════════════ 12. database failure
 
 describe('the worker survives the database going away', () => {
-  /**
-   * The prior fix ("keep the worker alive when the database is not") is
-   * re-verified rather than assumed, because the interval that holds the
-   * process open is easy to break with an unrelated edit.
-   */
   it('does not unref the interval that keeps the process alive', async () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../../worker/src/index.ts', import.meta.url), 'utf8');
@@ -1870,8 +1525,6 @@ describe('the worker survives the database going away', () => {
 
   it('a job that throws is recorded as failed and the next job still runs', async () => {
     const before = await owner.query<{ n: string }>('SELECT count(*) AS n FROM job_runs');
-    // A tick against a healthy database records runs; the point is that
-    // job_runs exists as the operational signal for a failure.
     await h.tick();
     const after = await owner.query<{ n: string }>('SELECT count(*) AS n FROM job_runs');
     expect(Number(after.rows[0]!.n), 'no job run was recorded at all')
