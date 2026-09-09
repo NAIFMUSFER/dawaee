@@ -2,6 +2,7 @@ import { api, NetworkError } from '../api/client.js';
 import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js';
 import type { CacheSlot } from './secure-cache.js';
 import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
+import { OFFLINE_BOOTSTRAP_SLOT } from './offline-bootstrap.js';
 
 /**
  * The offline queue.
@@ -25,7 +26,7 @@ import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
  */
 const QUEUE_SLOT: CacheSlot = { plaintextKey: 'dawaee.offlineQueue' };
 const CACHE_SLOT: CacheSlot = { plaintextKey: 'dawaee.todayCache' };
-export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT, LOW_STOCK_SLOT];
+export const ALL_SLOTS: CacheSlot[] = [QUEUE_SLOT, CACHE_SLOT, LOW_STOCK_SLOT, OFFLINE_BOOTSTRAP_SLOT];
 
 /**
  * Who the stored data belongs to.
