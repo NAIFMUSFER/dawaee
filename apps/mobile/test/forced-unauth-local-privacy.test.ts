@@ -15,12 +15,16 @@ import { describe, expect, it } from 'vitest';
  * This test intentionally inspects the registration callback itself. It was
  * added before the product fix so the defect is demonstrated by CI: the old
  * callback only reset UI state and therefore fails every cleanup assertion.
+ * The callback is async now because cleanup is awaited before a later sign-in;
+ * the regression therefore matches the callback structurally rather than
+ * pinning the old synchronous spelling.
  */
 const root = resolve(import.meta.dirname, '../../..');
 const source = readFileSync(resolve(root, 'apps/mobile/src/state/app-store.tsx'), 'utf8');
 
 function unauthenticatedHandlerBody(): string {
-  const start = source.indexOf('setUnauthenticatedHandler(() => {');
+  const marker = /setUnauthenticatedHandler\(async\s*\(\)\s*=>\s*\{/;
+  const start = source.search(marker);
   expect(start, 'unauthenticated handler must be registered').toBeGreaterThanOrEqual(0);
   const rest = source.slice(start);
   const end = rest.indexOf('\n      });');
