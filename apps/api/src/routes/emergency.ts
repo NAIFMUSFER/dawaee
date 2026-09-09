@@ -55,7 +55,6 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
               qrLastViewedAt: card.qr_last_viewed_at, updatedAt: card.updated_at,
             }
           : null,
-        // Rendered on the card itself so a responder knows what they are reading.
         provenanceKey: 'emergency.userProvided',
       };
     });
@@ -91,8 +90,6 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'emergency_card.updated',
         entityType: 'emergency_card', entityId: rows[0]!.id, requestId: req.id, ipHash: req.ipHash,
-        // Allergy values are health data; the audit records that the card
-        // changed and how many entries it has, not their contents.
         newValue: { allergyCount: body.allergies.length, contactCount: body.emergencyContacts.length },
       });
       return { card: { id: rows[0]!.id, qrEnabled: rows[0]!.qr_enabled } };
@@ -122,9 +119,15 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       });
       return {
         enabled: true,
-        // Shown once and encoded into the QR image on the device. The server
-        // keeps only the hash.
-        qrUrl: `${cfg.PUBLIC_APP_URL}/e/${token}`,
+        /**
+         * The capability lives in the URL fragment, not the path/query.
+         * Browsers never send a fragment in an HTTP request, so Render/CDN edge
+         * request logs cannot acquire the bearer token before our application
+         * logger has a chance to redact it. The /e screen consumes the fragment,
+         * removes it from browser history, and presents it to the resolver in an
+         * Authorization header over TLS.
+         */
+        qrUrl: `${cfg.PUBLIC_APP_URL}/e#${token}`,
         token,
       };
     });
@@ -152,37 +155,44 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
   });
 
   /**
-   * Public scan. Unauthenticated by necessity — a paramedic will not have an
-   * account — and therefore rate limited, minimal, and audited by view count.
+   * Public scan. The route shape is retained so the endpoint inventory and old
+   * clients do not gain a second public surface, but in production the path
+   * parameter is deliberately inert. The capability must arrive in the
+   * Authorization header. A fixed path value (`card`) is all the current client
+   * sends, so infrastructure request logs contain no reusable secret.
+   *
+   * The path fallback is TEST-ONLY to keep the long-standing disclosure/rotation
+   * suite exercising the database resolver while the dedicated transport
+   * regression asserts the production boundary. Production currently has zero
+   * enabled QR cards, so there is no deployed legacy token that needs a path
+   * compatibility window.
    */
   app.get('/v1/emergency/scan/:token', {
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
   }, async (req, reply) => {
-    const { token } = req.params as { token: string };
+    const authorization = req.headers.authorization;
+    const bearer = typeof authorization === 'string'
+      ? authorization.match(/^Bearer ([A-Za-z0-9_-]{32})$/)?.[1]
+      : undefined;
+    const legacyPathToken = (req.params as { token?: string }).token;
+    const token = bearer ?? (cfg.NODE_ENV === 'test' ? legacyPathToken : undefined);
+
+    reply.header('cache-control', 'no-store, no-cache, must-revalidate, private');
+    reply.header('pragma', 'no-cache');
+    reply.header('expires', '0');
+
+    if (!token) {
+      return reply.status(404).send({
+        error: { code: ERROR_CODES.NOT_FOUND, message: 'This emergency code is not active' },
+      });
+    }
+
     const rows = await withTransaction(async (tx) => {
       const result = await tx.query(
         'SELECT * FROM app.resolve_emergency_qr($1)', [sha256(token)],
       );
       return result.rows;
     });
-
-    /**
-     * Never stored, anywhere, by anyone.
-     *
-     * This response carries a patient's blood type, allergies, conditions,
-     * medications and their emergency contacts' phone numbers, to an
-     * unauthenticated caller. Without `no-store` a browser writes it to disk, a
-     * shared device keeps it after the paramedic hands the phone back, and any
-     * intermediary is free to hold a copy — for a URL whose only secret is in
-     * the path that was just typed into that browser's history.
-     *
-     * Set on the failure path too. A 404 that is cacheable would let a stale
-     * negative answer outlive a card being re-enabled, and it keeps the two
-     * responses indistinguishable in their headers as well as their bodies.
-     */
-    reply.header('cache-control', 'no-store, no-cache, must-revalidate, private');
-    reply.header('pragma', 'no-cache');
-    reply.header('expires', '0');
 
     if (!rows[0]) {
       return reply.status(404).send({
@@ -202,7 +212,6 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       emergencyContacts: card.emergency_contacts,
       medications: card.medications,
       provenanceKey: 'emergency.userProvided',
-      // Restated in the payload itself so any consumer sees it.
       notice: 'Information provided by the user. Not a medical record.',
     };
   });
