@@ -82,4 +82,48 @@ describe('P20 medication external references stay inside one patient profile', (
       [alice.profileId, rx[0]!.id, alice.userId],
     )).rejects.toMatchObject({ code: '23514', constraint: 'medication_prescription_profile_match' });
   });
+
+  it('PATCH persists an owned prescription reference rather than silently ignoring it', async () => {
+    const { rows } = await owner.query<{ id: string }>(
+      `INSERT INTO prescriptions (patient_profile_id, reference, created_by)
+       VALUES ($1, 'owned-rx-patch', $2) RETURNING id`,
+      [alice.profileId, alice.userId],
+    );
+    const created = await createMedication(alice, {});
+    expect(created.statusCode, created.body).toBe(200);
+    const medicationId = created.json<{ medication: { id: string } }>().medication.id;
+
+    const patched = await h.app.inject({
+      method: 'PATCH', url: `/v1/medications/${medicationId}`, headers: authHeaders(alice),
+      payload: { prescriptionId: rows[0]!.id },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    expect(patched.json<{ medication: { prescriptionId: string | null } }>().medication.prescriptionId).toBe(rows[0]!.id);
+
+    const reread = await h.app.inject({
+      method: 'GET', url: `/v1/medications/${medicationId}`, headers: authHeaders(alice),
+    });
+    expect(reread.statusCode, reread.body).toBe(200);
+    expect(reread.json<{ medication: { prescriptionId: string | null } }>().medication.prescriptionId).toBe(rows[0]!.id);
+  });
+
+  it('PATCH can detach an image when the client explicitly sends imageKey null', async () => {
+    const ownImage = await uploadKey(alice);
+    const created = await createMedication(alice, { imageKey: ownImage });
+    expect(created.statusCode, created.body).toBe(200);
+    const medicationId = created.json<{ medication: { id: string } }>().medication.id;
+
+    const patched = await h.app.inject({
+      method: 'PATCH', url: `/v1/medications/${medicationId}`, headers: authHeaders(alice),
+      payload: { imageKey: null },
+    });
+    expect(patched.statusCode, patched.body).toBe(200);
+    expect(patched.json<{ medication: { imageKey: string | null } }>().medication.imageKey).toBeNull();
+
+    const reread = await h.app.inject({
+      method: 'GET', url: `/v1/medications/${medicationId}`, headers: authHeaders(alice),
+    });
+    expect(reread.statusCode, reread.body).toBe(200);
+    expect(reread.json<{ medication: { imageKey: string | null } }>().medication.imageKey).toBeNull();
+  });
 });
