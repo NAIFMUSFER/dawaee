@@ -21,6 +21,9 @@ const occ = (o: Partial<DoseOccurrence> = {}) =>
     ...o,
   }) as DoseOccurrence;
 
+const minutesBefore = (n: number) =>
+  new Date(new Date(SCHEDULED).getTime() - n * 60_000);
+
 describe('deriveStatus', () => {
   it('is upcoming before the scheduled time', () => {
     expect(deriveStatus(occ(), new Date('2026-09-02T16:59:00Z'), th)).toBe('upcoming');
@@ -62,8 +65,7 @@ describe('confirmTaken', () => {
   });
 
   it('allows a small early confirmation at the safety boundary', () => {
-    const scheduledMs = new Date(SCHEDULED).getTime();
-    const at = new Date(scheduledMs - EARLY_CONFIRMATION_WINDOW_MINUTES * 60_000);
+    const at = minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES);
     const r = confirmTaken({ ...base, at, now: at });
     expect(r.status).toBe('taken');
     expect(r.minutesLate).toBe(0);
@@ -71,8 +73,7 @@ describe('confirmTaken', () => {
   });
 
   it('refuses a confirmation even one minute before the early safety window', () => {
-    const scheduledMs = new Date(SCHEDULED).getTime();
-    const at = new Date(scheduledMs - (EARLY_CONFIRMATION_WINDOW_MINUTES + 1) * 60_000);
+    const at = minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES + 1);
     expect(() => confirmTaken({ ...base, at, now: at })).toThrow(/too early/i);
   });
 
@@ -108,7 +109,7 @@ describe('confirmTaken', () => {
   it('clamps a client clock running ahead of the server', () => {
     const r = confirmTaken({
       ...base,
-      at: new Date('2026-09-02T18:00:00Z'), // client claims an hour later
+      at: new Date('2026-09-02T18:00:00Z'),
       now: new Date('2026-09-02T17:05:00Z'),
     });
     expect(r.minutesLate).toBe(5);
@@ -135,26 +136,45 @@ describe('snooze', () => {
     expect(r.snoozedUntil.toISOString()).toBe('2026-09-02T17:12:00.000Z');
     expect(r.snoozeCount).toBe(1);
   });
+  it('allows snooze at the same small early boundary as confirmation', () => {
+    expect(snooze(occ(), 10, minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES)).snoozeCount).toBe(1);
+  });
+  it('refuses snooze one minute before the safety boundary', () => {
+    expect(() => snooze(occ(), 10, minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES + 1)))
+      .toThrow(/too early/i);
+  });
+  it('refuses a stale client snoozing tomorrow many hours early', () => {
+    expect(() => snooze(occ(), 10, new Date('2026-09-02T08:00:00Z'))).toThrow(/too early/i);
+  });
   it('caps repeated snoozing', () => {
-    expect(() => snooze(occ({ snoozeCount: MAX_SNOOZES }), 10, new Date())).toThrow(/limit/i);
+    expect(() => snooze(occ({ snoozeCount: MAX_SNOOZES }), 10, new Date(SCHEDULED))).toThrow(/limit/i);
   });
   it('refuses to snooze a recorded dose', () => {
-    expect(() => snooze(occ({ status: 'taken', snoozeCount: 0 }), 10, new Date())).toThrow(/already recorded/i);
+    expect(() => snooze(occ({ status: 'taken', snoozeCount: 0 }), 10, new Date(SCHEDULED))).toThrow(/already recorded/i);
   });
 });
 
 describe('skip and undo', () => {
   it('skips an open dose', () => {
-    expect(skip(occ()).status).toBe('skipped');
+    expect(skip(occ(), new Date(SCHEDULED)).status).toBe('skipped');
+  });
+  it('allows skip at the same small early boundary as confirmation', () => {
+    expect(skip(occ(), minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES)).status).toBe('skipped');
+  });
+  it('refuses skip one minute before the safety boundary', () => {
+    expect(() => skip(occ(), minutesBefore(EARLY_CONFIRMATION_WINDOW_MINUTES + 1))).toThrow(/too early/i);
+  });
+  it('refuses a stale client skipping tomorrow many hours early', () => {
+    expect(() => skip(occ(), new Date('2026-09-02T08:00:00Z'))).toThrow(/too early/i);
   });
   it('refuses to skip an already-recorded dose', () => {
-    expect(() => skip(occ({ status: 'taken' }))).toThrow(/already recorded/i);
+    expect(() => skip(occ({ status: 'taken' }), new Date(SCHEDULED))).toThrow(/already recorded/i);
   });
   it('still lets a missed dose be marked skipped retroactively', () => {
-    expect(skip(occ({ status: 'missed' })).status).toBe('skipped');
+    expect(skip(occ({ status: 'missed' }), new Date('2026-09-02T21:00:00Z')).status).toBe('skipped');
   });
   it('refuses to snooze a missed dose', () => {
-    expect(() => snooze(occ({ status: 'missed', snoozeCount: 0 }), 10, new Date())).toThrow(/already missed/i);
+    expect(() => snooze(occ({ status: 'missed', snoozeCount: 0 }), 10, new Date('2026-09-02T21:00:00Z'))).toThrow(/already missed/i);
   });
   it('allows undo inside the window only', () => {
     const confirmedAt = '2026-09-02T17:05:00.000Z';
@@ -185,7 +205,6 @@ describe('defaults', () => {
     expect(isTerminal('taken')).toBe(true);
     expect(isTerminal('missed')).toBe(true);
     expect(isTerminal('due')).toBe(false);
-    // missed stops reminders but is not user-recorded, so it stays editable
     expect(isRecorded('missed')).toBe(false);
     expect(isRecorded('skipped')).toBe(true);
   });
