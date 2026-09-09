@@ -33,6 +33,19 @@ export const DEFAULT_THRESHOLDS: Required<DoseThresholds> = {
 };
 
 /**
+ * A small early-recording window for real life (a patient taking a dose just
+ * before leaving home), but never hours before the scheduled occurrence.
+ *
+ * Production evidence during the P20 audit found four `app` confirmations
+ * whose `confirmed_at` preceded `scheduled_at` by 474–1314 minutes. An older
+ * UI bug had exposed tomorrow's dose as the current action, but the server
+ * accepted the result because it only bounded confirmations on the late side.
+ * A manipulated/offline client could do the same even after the UI was fixed.
+ * The API therefore owns this invariant as well as the interface.
+ */
+export const EARLY_CONFIRMATION_WINDOW_MINUTES = 15;
+
+/**
  * Statuses at which the reminder and escalation engines stop acting. `missed`
  * belongs here — nobody should be paged about it any more.
  */
@@ -120,8 +133,16 @@ export function confirmTaken(input: ConfirmInput): ConfirmResult {
   const scheduled = new Date(occurrence.scheduledAt).getTime();
   // Never trust a client clock that is ahead of the server.
   const effective = Math.min(at.getTime(), now.getTime());
-  const window = thresholds.lateConfirmationWindowMinutes ?? DEFAULT_THRESHOLDS.lateConfirmationWindowMinutes;
 
+  if (effective < scheduled - minutesToMs(EARLY_CONFIRMATION_WINDOW_MINUTES)) {
+    throw new AppError(
+      ERROR_CODES.DOSE_NOT_ACTIONABLE,
+      422,
+      'This dose is too early to record. Wait until it is closer to the scheduled time.',
+    );
+  }
+
+  const window = thresholds.lateConfirmationWindowMinutes ?? DEFAULT_THRESHOLDS.lateConfirmationWindowMinutes;
   if (effective > scheduled + minutesToMs(window)) {
     throw new AppError(
       ERROR_CODES.DOSE_NOT_ACTIONABLE,
