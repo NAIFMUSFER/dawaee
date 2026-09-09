@@ -218,7 +218,9 @@ export async function listAccessibleProfiles(tx: PoolClient, userId: string) {
     return {
       id: r.id,
       displayName: r.display_name,
-      isSelf: r.is_self,
+      // The stored flag is relative to the profile owner, not every viewer.
+      // Clients use this caller-relative identity for bootstrap and reminders.
+      isSelf: r.is_self && isOwner,
       timezone: r.timezone,
       homeTimezone: r.home_timezone,
       travelPolicy: r.travel_policy,
