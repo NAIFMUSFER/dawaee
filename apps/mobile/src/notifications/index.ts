@@ -139,10 +139,26 @@ export async function startNotificationActionListener(
   return () => sub.remove();
 }
 
+// Native scheduling/cancellation are asynchronous. A cancellation must run
+// AFTER any already-started native write, or that write can recreate PHI-bearing
+// reminders on a signed-out phone. New intent invalidates older loops at once;
+// the serial tail makes the final native state belong to the newest operation.
+let scheduleGeneration = 0;
+let scheduleTail: Promise<void> = Promise.resolve();
+
+function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
+  const generation = ++scheduleGeneration;
+  const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
+  scheduleTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 export async function cancelAllLocalNotifications(): Promise<void> {
-  const N = await load();
-  if (!N) return;
-  await N.cancelAllScheduledNotificationsAsync();
+  return withScheduleMutation(async () => {
+    const N = await load();
+    if (!N) return;
+    await N.cancelAllScheduledNotificationsAsync();
+  });
 }
 
 export interface ScheduleResult {
@@ -187,8 +203,17 @@ export async function rescheduleLocalNotifications(
   locale: Locale,
   opts: { voiceEnabled?: boolean; showMedication?: boolean } = {},
 ): Promise<ScheduleResult> {
+  return withScheduleMutation((isCurrent) => scheduleCurrentNotifications(doses, locale, opts, isCurrent));
+}
+
+async function scheduleCurrentNotifications(
+  doses: DoseView[],
+  locale: Locale,
+  opts: { voiceEnabled?: boolean; showMedication?: boolean },
+  isCurrent: () => boolean,
+): Promise<ScheduleResult> {
   const N = await load();
-  if (!N) return { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
+  if (!N || !isCurrent()) return { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
 
   await N.cancelAllScheduledNotificationsAsync();
 
@@ -198,6 +223,7 @@ export async function rescheduleLocalNotifications(
   const now = Date.now();
 
   for (const group of groupSchedulableDoses(doses, now)) {
+    if (!isCurrent()) break;
     const first = group[0]!;
     const grouped = group.length > 1;
     const text = grouped
@@ -245,8 +271,10 @@ export async function rescheduleLocalNotifications(
     }
   }
 
-  if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
-  else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
+  if (isCurrent()) {
+    if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
+    else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
+  }
 
   return { scheduled, failed, exactAlarmsUnavailable };
 }
