@@ -16,7 +16,9 @@
 --     default instead of silently falling outside an old hand-written list.
 
 CREATE OR REPLACE FUNCTION app.audit_allow_only_profile_redaction() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public, app
+AS $$
 DECLARE
   erasing_actor text := current_setting('app.erasing_user_id', true);
   profile_detach boolean;
