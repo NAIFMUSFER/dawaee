@@ -8,6 +8,7 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { AdherenceResponse, DoseView, ProfileSummary, TodayResponse } from '@/api/types';
 import { statusColors } from '@/theme';
@@ -45,23 +46,44 @@ function isoDate(date: Date): string {
 
 export default function CaregiverDashboardScreen() {
   const { profileId } = useLocalSearchParams<{ profileId?: string }>();
-  const { t, formatDate, formatNumber, formatTime } = useI18n();
-  const theme = useTheme();
-  const { profiles, activeProfile, offline, setOffline } = useApp();
+  const { profiles, activeProfile, user } = useApp();
 
   const followed = useMemo(() => profiles.filter((p) => p.role === 'caregiver'), [profiles]);
-
   const patient = useMemo<ProfileSummary | null>(() => {
     if (profileId) return profiles.find((p) => p.id === profileId) ?? null;
     if (activeProfile && activeProfile.role === 'caregiver') return activeProfile;
     return followed[0] ?? null;
   }, [activeProfile, followed, profileId, profiles]);
 
+  // Patient identity and permission changes are privacy boundaries. Remounting
+  // the patient-scoped view removes the previous patient's data on the first
+  // render rather than waiting for a passive effect or the next network reply.
+  return (
+    <CaregiverPatientDashboard
+      key={profileScopeKey(user?.id, patient)}
+      patient={patient}
+      followed={followed}
+    />
+  );
+}
+
+function CaregiverPatientDashboard({
+  patient,
+  followed,
+}: {
+  patient: ProfileSummary | null;
+  followed: ProfileSummary[];
+}) {
+  const { t, formatDate, formatNumber, formatTime } = useI18n();
+  const theme = useTheme();
+  const { offline, setOffline } = useApp();
+
   const [today, setToday] = useState<TodayResponse | null>(null);
   const [adherence, setAdherence] = useState<AdherenceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { begin: beginLoad } = useRequestScope(profileScopeKey(undefined, patient));
 
   const can = useCallback(
     (permission: CaregiverPermission): boolean =>
@@ -77,8 +99,11 @@ export default function CaregiverDashboardScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
     if (!patient) {
       setLoading(false);
+      setRefreshing(false);
       return;
     }
     const canSeeSchedule = patient.permissions === null || patient.permissions.includes('view_schedule');
@@ -93,18 +118,22 @@ export default function CaregiverDashboardScreen() {
           ? api.get<AdherenceResponse>('/v1/adherence', { profileId: patient.id, from: isoDate(from), to: isoDate(to) })
           : Promise.resolve(null),
       ]);
+      if (!isCurrent()) return;
       setToday(todayRes);
       setAdherence(adherenceRes);
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [describe, patient, setOffline]);
+  }, [beginLoad, describe, patient, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
