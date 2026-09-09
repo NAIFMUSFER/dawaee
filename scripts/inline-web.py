@@ -4,8 +4,17 @@
 The entry bundle, the CSS reset and every referenced image are inlined into one
 HTML file, so the first paint is a single response with no second origin and no
 static file server.
+
+Expo's web Linking implementation currently treats every window ``message`` as
+a URL event without authenticating the sender, and the SDK version pinned by
+this repository also double-encodes/decodes query values around URLSearchParams.
+Both behaviors cross a security boundary in a browser.  The production build
+hardens those exact dependency snippets here, at the deterministic bundling
+boundary.  The replacements are intentionally fail-closed: an Expo upgrade that
+changes any expected snippet stops the build instead of silently dropping the
+hardening.
 """
-import base64, glob, os, re, shutil, sys
+import base64, glob, hashlib, os, re, shutil, sys
 
 dist, out_path = sys.argv[1], sys.argv[2]
 CHUNK_DIR = '_expo/static/js/web'
@@ -16,6 +25,48 @@ if len(entries) != 1:
         'The document inlines the entry; more than one has no defined meaning.')
 
 js = open(entries[0], encoding='utf-8').read()
+
+def replace_exact(source, old, new, label, expected=1):
+    count = source.count(old)
+    if count != expected:
+        raise SystemExit(
+            f'web hardening drift: expected {expected} {label} snippet(s), found {count}')
+    return source.replace(old, new)
+
+# expo-linking web listeners use message events only as a signal to re-read the
+# current location.  A cross-origin opener must not be able to synthesize that
+# signal.  Same-origin messages remain supported (including worker-originated
+# messages) so this is the narrowest boundary that removes the cross-origin
+# trigger without changing the SDK's public API.
+js = replace_exact(
+    js,
+    "const v=n=>o({url:window.location.href,nativeEvent:n});return window.addEventListener('message',v,!1)",
+    "const v=n=>{if(n.origin!==window.location.origin)return;o({url:window.location.href,nativeEvent:n})};return window.addEventListener('message',v,!1)",
+    'ExpoLinking.addListener message handler',
+)
+js = replace_exact(
+    js,
+    "const v=n=>s({url:window.location.href,nativeEvent:n});return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)",
+    "const v=n=>{if(n.origin!==window.location.origin)return;s({url:window.location.href,nativeEvent:n})};return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)",
+    'RNLinking.addEventListener message handler',
+)
+
+# URLSearchParams.set() already performs percent-encoding and forEach() already
+# returns decoded values.  Applying encode/decodeURIComponent around them
+# changes literal percent sequences and can throw while parsing otherwise-valid
+# query strings.
+js = replace_exact(
+    js,
+    'o.searchParams.set(t,encodeURIComponent(n))',
+    'o.searchParams.set(t,n)',
+    'Expo Linking query encoding',
+)
+js = replace_exact(
+    js,
+    'o[n]=decodeURIComponent(t)',
+    'o[n]=t',
+    'Expo Linking query decoding',
+)
 
 MIME = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
         'gif': 'image/gif', 'svg': 'image/svg+xml'}
@@ -29,9 +80,15 @@ for ref in sorted(set(re.findall(
     js = js.replace(ref, f'data:{MIME[ext]};base64,{data}')
 
 js = js.replace('</script', '<\\/script')
+script_body = '\n' + js + '\n'
+script_sha256 = base64.b64encode(
+    hashlib.sha256(script_body.encode('utf-8')).digest()).decode('ascii')
 
 html = open(os.path.join(dist, 'index.html'), encoding='utf-8').read()
-css = re.search(r'<style id="expo-reset">(.*?)</style>', html, re.S).group(1)
+css_match = re.search(r'<style id="expo-reset">(.*?)</style>', html, re.S)
+if css_match is None:
+    raise SystemExit('expected Expo reset style in index.html')
+css = css_match.group(1)
 
 ICON = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
@@ -44,6 +101,9 @@ ICON = (
 ICON_URI = 'data:image/svg+xml;base64,' + base64.b64encode(ICON.encode()).decode()
 
 os.makedirs(os.path.dirname(out_path), exist_ok=True)
+# Publish the sidecar first. On a clean checkout (the CI/production case), the
+# server cannot observe the document until its matching CSP metadata exists.
+open(out_path + '.script-sha256', 'w', encoding='ascii').write(script_sha256 + '\n')
 open(out_path, 'w', encoding='utf-8').write(
     '<!doctype html>\n<html lang="ar" dir="rtl">\n<head>\n'
     '<meta charset="utf-8" />\n'
@@ -64,7 +124,7 @@ open(out_path, 'w', encoding='utf-8').write(
     'button,a,[role="button"]{touch-action:manipulation}\n'
     '</style>\n'
     '</head>\n<body>\n<div id="root"></div>\n'
-    f'<script>\n{js}\n</script>\n</body>\n</html>\n')
+    f'<script>{script_body}</script>\n</body>\n</html>\n')
 print(f'{os.path.getsize(out_path)} bytes')
 
 chunk_out = os.path.join(os.path.dirname(out_path), CHUNK_DIR)
