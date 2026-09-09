@@ -122,7 +122,11 @@ describe('erasure schema boundaries', () => {
   it('does not expose erasure helpers to PUBLIC', async () => {
     const { rows } = await h.worker.pool.query<{ name: string; public_exec: boolean; worker_exec: boolean }>(
       `SELECT p.proname AS name,
-              has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+              EXISTS (
+                SELECT 1
+                  FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+                 WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+              ) AS public_exec,
               has_function_privilege('dawaee_worker', p.oid, 'EXECUTE') AS worker_exec
          FROM pg_proc p
          JOIN pg_namespace n ON n.oid = p.pronamespace
