@@ -12,7 +12,13 @@ import type { CacheSlot } from './secure-cache.js';
  * self profile is eligible for restoration. The slot is encrypted and scoped
  * by user id by `secure-cache`, exactly like the dose queue and Today cache.
  */
-export const OFFLINE_BOOTSTRAP_SLOT: CacheSlot = { plaintextKey: 'dawaee.offlineBootstrap' };
+export const OFFLINE_BOOTSTRAP_SLOT: CacheSlot = {
+  plaintextKey: 'dawaee.offlineBootstrap',
+  // This slot did not exist in any plaintext release. Accepting an unscoped
+  // predecessor would let arbitrary AsyncStorage data become authenticated
+  // account/app-lock state during migration.
+  migratePlaintext: false,
+};
 
 export interface OfflineBootstrapSnapshot {
   version: 1;
