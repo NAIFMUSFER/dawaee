@@ -7,9 +7,9 @@ import { describe, it } from 'vitest';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const workflow = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
-const block = workflow.match(/      - name: Install PostgreSQL client matching the server\n[\s\S]*?        run: \|\n((?:          [^\n]*\n|\n)+)/)?.[1];
+const block = workflow.match(/ {6}- name: Install PostgreSQL client matching the server\n[\s\S]*? {8}run: \|\n((?: {10}[^\n]*\n|\n)+)/)?.[1];
 assert.ok(block, 'the PostgreSQL installer must remain an executable workflow step');
-const script = block.replace(/^          /gm, '');
+const script = block.replace(/^ {10}/gm, '');
 
 /** Execute the actual workflow shell, replacing only external commands. The
  * fake repository rejects a broad refresh, just as Chrome's real hash mismatch
@@ -94,7 +94,7 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
   it('retains both PostgreSQL versions, ordinary ownership checks and the entire test command', () => {
     assert.match(workflow, /postgres: \['17', '16'\]/);
     assert.match(workflow, /migration owner is \$attrs, so every RLS test is vacuous/);
-    assert.match(workflow, /- name: Unit and integration tests\n        run: npm test/);
+    assert.match(workflow, /- name: Unit and integration tests\n {8}run: npm test/);
     assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
   });
 });
