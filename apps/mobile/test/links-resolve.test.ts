@@ -46,8 +46,10 @@ const ROUTES = routePatterns(APP_DIR);
  * repository-derived route text into a regular expression. Static segments are
  * compared literally, including characters that are regexp metacharacters. */
 function matchesRoutePattern(pattern: string, path: string): boolean {
-  const expected = pattern.split('/').filter(Boolean);
-  const actual = path.split('/').filter(Boolean);
+  // Preserve empty segments: this is an exact-path assertion, not URL
+  // normalization. Dropping them invents root, relative and extra-slash matches.
+  const expected = pattern.split('/');
+  const actual = path.split('/');
   if (expected.length !== actual.length) return false;
   return expected.every((segment, index) => {
     const dynamic = segment.startsWith('[') && segment.endsWith(']') && segment.length > 2;
@@ -108,4 +110,48 @@ describe('links the server hands out', () => {
   it('still does not pretend to serve a path nobody defined', () => {
     expect(resolves('/definitely-not-a-screen')).toBe(false);
   });
+});
+
+// Test the assertion itself: regexp metacharacters in literal filenames must
+// neither invent a route nor prevent the actual literal route from matching.
+describe('route matcher literal and parameter boundaries', () => {
+  const literals: Array<[string, string]> = [
+    ['/reports/v1.0', '/reports/v1X0'],
+    ['/reports/a+b', '/reports/aaab'],
+    ['/reports/a(b)', '/reports/ab'],
+    ['/reports/a|b', 'b'],
+    ['/reports/price$', '/reports/price'],
+    ['/reports/a^b', '/reports/ab'],
+    ['/reports/a{2}', '/reports/aa'],
+    ['/reports/a?b', '/reports/b'],
+    ['/reports/a\\b', '/reports/ab'],
+    ['/e', '/e\n'],
+  ];
+  for (const [literal, lookalike] of literals) {
+    it(`matches only the literal route ${JSON.stringify(literal)}`, () => {
+      expect(matchesRoutePattern(literal, literal)).toBe(true);
+      expect(matchesRoutePattern(literal, lookalike)).toBe(false);
+    });
+  }
+  const boundaries: Array<[string, string, boolean]> = [
+    ['/', '/', true],
+    ['/', '', false],
+    ['/', '//', false],
+    ['/invite/[token]', '/invite/TOKEN', true],
+    ['/invite/[token]', '/invite/', false],
+    ['/invite/[token]', 'invite/TOKEN', false],
+    ['/invite/[token]', '/invite//TOKEN', false],
+    ['/invite/[token]', '/invite/TOKEN/extra', false],
+    ['/invite/[token]', '/other/TOKEN', false],
+    ['/medication/[id]', '/medication/abc-123', true],
+    ['/reports/v1.0/[id]', '/reports/v1.0/abc', true],
+    ['/reports/v1.0/[id]', '/reports/v1X0/abc', false],
+    ['/e', '/e/SECRET', false],
+    ['/reports/index', '/reports/index/', false],
+  ];
+  for (const [pattern, path, expected] of boundaries) {
+    it(`matches ${pattern} against ${JSON.stringify(path)}: ${expected}`, () => {
+      expect(matchesRoutePattern(pattern, path)).toBe(expected);
+    });
+  }
 });
