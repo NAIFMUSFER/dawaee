@@ -245,17 +245,18 @@ export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
 }
 
 export async function readCachedSchedule(profileId: string): Promise<CachedSchedule | null> {
-  if (!currentUserId) return null;
+  const owner = captureOwner();
+  if (!owner) return null;
   let raw: string | null;
   try {
-    raw = await readSlot(CACHE_SLOT, currentUserId);
+    raw = await readSlot(CACHE_SLOT, owner.userId);
   } catch {
     return null;
   }
-  if (!raw) return null;
+  if (!isCurrentOwner(owner) || !raw) return null;
   try {
     const parsed = JSON.parse(raw) as CachedSchedule;
-    return parsed.profileId === profileId ? parsed : null;
+    return isCurrentOwner(owner) && parsed.profileId === profileId ? parsed : null;
   } catch {
     return null;
   }
