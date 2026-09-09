@@ -140,6 +140,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * it can bind cache ownership or resurrect signed-in state.
    */
   const sessionGeneration = useRef(0);
+  // A session fence alone does not order two reads within the same session.
+  // An older profile list must not restore permissions a newer read removed.
+  const profileLoadGeneration = useRef(0);
+  const syncGeneration = useRef(0);
 
   /**
    * Preference writes are optimistic and may overlap. Only the newest local
@@ -160,6 +164,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadMe = useCallback(async () => {
     const generation = sessionGeneration.current;
+    const request = ++profileLoadGeneration.current;
+    const isCurrent = () => mounted.current && generation === sessionGeneration.current
+      && request === profileLoadGeneration.current && isSignedIn();
+    if (!isCurrent()) return;
     const preferenceSnapshot = preferenceGeneration.current;
     const preferencesPendingAtStart = preferenceWrites.current.session === generation
       && preferenceWrites.current.pending > 0;
@@ -167,8 +175,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       user: { id: string; displayName: string; phoneE164: string | null };
       preferences: Preferences;
     }>('/v1/me');
+    if (!isCurrent()) return;
     const profilesRes = await api.get<{ profiles: ProfileSummary[] }>('/v1/profiles');
-    if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
+    if (!isCurrent()) return;
 
     // Bind local encrypted storage to this account BEFORE any cache read or
     // write can happen. Every slot is keyed and encrypted per user, so this is
@@ -258,10 +267,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [loadMe]);
 
   const syncNow = useCallback(async () => {
+    const generation = sessionGeneration.current;
+    const request = ++syncGeneration.current;
+    const isCurrent = () => mounted.current && generation === sessionGeneration.current
+      && request === syncGeneration.current && isSignedIn();
+    if (!isCurrent()) return;
     const deviceId = await getDeviceId();
+    if (!isCurrent()) return;
     const result = await flushQueue(deviceId);
+    if (!isCurrent()) return;
     const pending = await queueSize();
-    if (!mounted.current) return;
+    if (!isCurrent()) return;
     setState((s) => ({ ...s, offline: result.offline, pendingSyncCount: pending }));
     if (!result.offline) await loadMe().catch(() => undefined);
   }, [loadMe]);

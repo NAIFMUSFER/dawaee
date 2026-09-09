@@ -87,6 +87,7 @@ function makeHarness(file, options = {}) {
   };
   const context = {
     api, stateRef, mounted, sessionGeneration, preferenceGeneration, preferenceWrites,
+    profileLoadGeneration: { current: 0 },
     setState, DEFAULT_PREFERENCES, NetworkError,
     isSignedIn: () => signedIn,
     setCacheOwner: (id) => cacheOwners.push(id),
