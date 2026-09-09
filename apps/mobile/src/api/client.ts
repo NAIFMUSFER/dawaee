@@ -169,14 +169,26 @@ export function isSignedIn(): boolean {
   return Boolean(accessToken);
 }
 
+let deviceIdInFlight: Promise<string> | null = null;
+
 /** Stable per-install device id, used for push registration and offline replay. */
-export async function getDeviceId(): Promise<string> {
-  let id = await AsyncStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-    await AsyncStorage.setItem(DEVICE_KEY, id);
-  }
-  return id;
+export function getDeviceId(): Promise<string> {
+  if (deviceIdInFlight) return deviceIdInFlight;
+  // Share the complete read/create/write, not just the read. Otherwise callers
+  // on a new installation can each return a different ID before one wins disk.
+  // Start in a microtask so a synchronous storage failure is retryable too.
+  const promise = Promise.resolve().then(async () => {
+    let id = await AsyncStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      await AsyncStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  }).finally(() => {
+    if (deviceIdInFlight === promise) deviceIdInFlight = null;
+  });
+  deviceIdInFlight = promise;
+  return promise;
 }
 
 /**
@@ -349,11 +361,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (res.status === 401 && !anonymous) {
     const parsed = await res.clone().json().catch(() => null) as { error?: { code?: string } } | null;
     requireCurrentRequest();
+    let retried = false;
     // A late 401 may refer to the access token another same-session caller
     // already rotated. Reuse the new pair, but never cross a login boundary.
     if (sentAccessToken && accessToken && sentAccessToken !== accessToken) {
       try {
         res = await send();
+        retried = true;
       } catch (err) {
         if (err instanceof ApiError) throw err;
         requireCurrentRequest();
@@ -365,6 +379,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       if (outcome === 'ok') {
         try {
           res = await send();
+          retried = true;
         } catch (err) {
           if (err instanceof ApiError) throw err;
           requireCurrentRequest();
@@ -378,6 +393,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       }
       // An explicitly rejected session has already been cleared.
     } else {
+      await rejectSession(generation);
+    }
+    // The one allowed retry can itself discover revocation. Surface its 401,
+    // but also end the rejected session so local privacy cleanup runs. Never
+    // evict a newer token another same-session request has already rotated to.
+    if (retried && res.status === 401 && sentAccessToken === accessToken) {
       await rejectSession(generation);
     }
   }
