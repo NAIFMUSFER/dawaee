@@ -65,8 +65,8 @@ function TodayProfileScreen() {
   const theme = useTheme();
   const { activeProfile, user, preferences, deviceId, offline, setOffline, pendingSyncCount, syncNow } = useApp();
   const arabic = preferences.locale === 'ar';
-  const canAddMedication = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
-  const canConfirmDose = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('confirm_dose')));
+  const canAddMedication = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canConfirmDose = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('confirm_dose')));
 
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loading, setLoading] = useState(true);
