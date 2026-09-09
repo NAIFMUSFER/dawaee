@@ -154,18 +154,22 @@ export async function cancelFutureDoses(tx: PoolClient, medicationId: string, no
  * Materialization alone cannot do this: the cancelled rows still occupy their
  * (schedule_id, scheduled_at) slots, so `ON CONFLICT DO NOTHING` skips them and
  * a resumed medication would silently never remind anyone again. Only FUTURE,
- * untouched doses are revived — a dose that was already answered keeps its
- * recorded status.
+ * untouched doses from schedules that are still active are revived — a dose
+ * from a deliberately stopped schedule stays cancelled, and a dose that was
+ * already answered keeps its recorded status.
  */
 export async function reviveCancelledDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
   const { rowCount } = await tx.query(
-    `UPDATE dose_occurrences
+    `UPDATE dose_occurrences d
         SET status = 'upcoming', snoozed_until = NULL, notified_at = NULL,
             escalation_stage = 0, escalation_completed_at = NULL
-      WHERE medication_id = $1
-        AND scheduled_at > $2
-        AND status = 'cancelled'
-        AND confirmed_at IS NULL`,
+       FROM medication_schedules s
+      WHERE d.schedule_id = s.id
+        AND s.active
+        AND d.medication_id = $1
+        AND d.scheduled_at > $2
+        AND d.status = 'cancelled'
+        AND d.confirmed_at IS NULL`,
     [medicationId, now],
   );
   return rowCount ?? 0;
