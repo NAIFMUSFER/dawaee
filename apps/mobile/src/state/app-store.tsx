@@ -448,7 +448,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useApp(): AppState & AppActions {
-  const ctx = useAppContext();
+  const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be used inside AppProvider');
   return ctx;
 }
@@ -458,8 +458,4 @@ export function useActiveProfile(): ProfileSummary {
   const { activeProfile } = useApp();
   if (!activeProfile) throw new Error('no active patient profile selected');
   return activeProfile;
-}
-
-function useAppContext(): (AppState & AppActions) | null {
-  return useContext(AppContext);
 }
