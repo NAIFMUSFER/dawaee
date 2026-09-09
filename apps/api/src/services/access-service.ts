@@ -93,7 +93,11 @@ export async function loadProfileAccess(
  * - reports inner-join dose_occurrences, medications AND medication_schedules.
  *   A custom caregiver holding view_reports + view_medications but not
  *   view_schedule therefore passed the API check and received HTTP 200 with an
- *   empty report because the schedule RLS policy removed every joined row.
+ *   empty report because the schedule RLS policy removed every joined row;
+ * - adherence likewise inner-joins medication_schedules to apply each
+ *   schedule's late/missed thresholds. dose_occurrences itself permits
+ *   view_adherence, but the joined schedule does not, so view_adherence alone
+ *   otherwise produces an empty 200 rather than usable analytics.
  */
 const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly CaregiverPermission[]>> = {
   add_medication: ['view_medications'],
@@ -102,6 +106,7 @@ const PERMISSION_DEPENDENCIES: Partial<Record<CaregiverPermission, readonly Care
   update_stock: ['view_medications'],
   confirm_dose: ['view_schedule', 'view_medications'],
   view_reports: ['view_medications', 'view_schedule'],
+  view_adherence: ['view_schedule'],
 };
 
 /**
