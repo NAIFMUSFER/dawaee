@@ -76,16 +76,16 @@ function storedSession(): { accessToken: string; refreshToken: string } | null {
   return raw ? JSON.parse(raw) as { accessToken: string; refreshToken: string } : null;
 }
 
-async function startExpiredRequest(): Promise<Promise<unknown>> {
+async function startExpiredRequest(): Promise<{ pending: Promise<unknown> }> {
   const pending = client.api.get('/v1/doses').catch((e) => e);
   await refreshStarted;
   expect(releaseRefresh, 'refresh request should be held in flight').toBeTypeOf('function');
-  return pending;
+  return { pending };
 }
 
 describe('late refresh response cannot cross a session boundary', () => {
   it('does not resurrect the old session after explicit sign-out', async () => {
-    const pending = await startExpiredRequest();
+    const { pending } = await startExpiredRequest();
     await client.clearSession();
 
     releaseRefresh!(response(200, { accessToken: 'A2', refreshToken: 'RA2' }));
@@ -96,7 +96,7 @@ describe('late refresh response cannot cross a session boundary', () => {
   });
 
   it('does not replace a newly signed-in account with the old account refresh', async () => {
-    const pending = await startExpiredRequest();
+    const { pending } = await startExpiredRequest();
     await client.clearSession();
     await client.storeSession({ accessToken: 'B1', refreshToken: 'RB1' });
 
