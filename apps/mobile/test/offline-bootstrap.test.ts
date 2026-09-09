@@ -57,7 +57,7 @@ const caregiverProfile: ProfileSummary = {
   displayName: 'Dependent B',
   isSelf: false,
   role: 'caregiver',
-  permissions: ['medications:read'],
+  permissions: ['view_medications'],
 };
 
 beforeEach(() => stored.clear());
