@@ -81,8 +81,12 @@ beforeAll(async () => {
   son = await signIn(h, '0533000002');
   daughter = await signIn(h, '0533000003');
 
-  const sonRel = await acceptInvite(patient, son, ['view_adherence', 'receive_notifications'], 1);
-  const daughterRel = await acceptInvite(patient, daughter, ['view_adherence', 'receive_notifications'], 5);
+  // Adherence rows include medication identity/name, so the hardened permission
+  // contract requires view_medications alongside view_adherence. The dedicated
+  // dependency suite proves view_adherence alone is rejected; this scenario is
+  // about escalation visibility after a correctly scoped relationship exists.
+  const sonRel = await acceptInvite(patient, son, ['view_adherence', 'view_medications', 'receive_notifications'], 1);
+  const daughterRel = await acceptInvite(patient, daughter, ['view_adherence', 'view_medications', 'receive_notifications'], 5);
 
   for (const rel of [sonRel, daughterRel]) {
     await h.app.inject({
@@ -227,7 +231,7 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
 });
 
 describe('caregiver visibility of the outcome', () => {
-  it('lets the son see adherence but not the medication list', async () => {
+  it('lets the son see adherence when its medication-data dependency is also granted', async () => {
     const adherence = await h.app.inject({
       method: 'GET', url: `/v1/adherence?profileId=${patient.profileId}&from=${SCENARIO_DATE}&to=${SCENARIO_DATE}`,
       headers: authHeaders(son),
@@ -239,10 +243,8 @@ describe('caregiver visibility of the outcome', () => {
     const meds = await h.app.inject({
       method: 'GET', url: `/v1/medications?profileId=${patient.profileId}`, headers: authHeaders(son),
     });
-    // 403 for a connected caregiver (they already know the profile exists),
-    // 404 for anyone else — either way the medication list stays hidden.
-    expect([403, 404]).toContain(meds.statusCode);
-    expect(meds.body).not.toContain('Panadol');
+    expect(meds.statusCode).toBe(200);
+    expect(meds.body).toContain('Panadol');
   });
 });
 
