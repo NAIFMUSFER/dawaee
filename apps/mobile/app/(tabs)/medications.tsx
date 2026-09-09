@@ -9,7 +9,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
-import { api, NetworkError } from '@/api/client';
+import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView, TodayResponse } from '@/api/types';
 import type { MessageKey } from '@dawaee/shared';
 
@@ -33,6 +33,7 @@ function MedicationsProfileScreen() {
   const [nextDoses, setNextDoses] = useState<Record<string, DoseView>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [serviceUnavailable, setServiceUnavailable] = useState(false);
 
   const { begin: beginLoad } = useRequestScope(filter);
 
@@ -41,6 +42,7 @@ function MedicationsProfileScreen() {
     if (!isCurrent()) return;
     if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
     setLoading(true);
+    setServiceUnavailable(false);
     try {
       const [list, today] = await Promise.all([
         api.get<{ medications: MedicationView[] }>('/v1/medications', {
@@ -58,10 +60,20 @@ function MedicationsProfileScreen() {
       }
       setMedications(list.medications);
       setNextDoses(soonest);
+      setServiceUnavailable(false);
       setOffline(false);
     } catch (err) {
       if (!isCurrent()) return;
-      if (err instanceof NetworkError) setOffline(true);
+      if (err instanceof NetworkError) {
+        setOffline(true);
+      } else if (err instanceof ApiError && err.status === 503) {
+        // Render can answer 503 while a sleeping production instance wakes.
+        // That is a server response, not an empty medication list and not a
+        // transport-offline condition. Keep any previously loaded data and
+        // show an explicit retry state instead of a false clinical empty state.
+        setOffline(false);
+        setServiceUnavailable(true);
+      }
     } finally {
       if (isCurrent()) {
         setLoading(false);
@@ -127,7 +139,16 @@ function MedicationsProfileScreen() {
 
         <Picker label={t('common.filter')} options={filterOptions} value={filter} onChange={(next) => { setLoading(true); setFilter(next); }} />
 
-        {loading ? <Loading label={t('common.loading')} /> : medications.length === 0 ? (
+        {loading ? <Loading label={t('common.loading')} /> : serviceUnavailable ? (
+          <Banner
+            tone="warning"
+            title={arabic ? 'الخدمة غير متاحة مؤقتاً' : 'Service temporarily unavailable'}
+            body={arabic
+              ? 'تعذر تحميل قائمة الأدوية الآن. أعد المحاولة بعد لحظات؛ لن نعرض قائمة فارغة بدلاً من البيانات.'
+              : 'The medication list could not be loaded right now. Retry shortly; an empty list is not being shown in place of unavailable data.'}
+            action={<Button label={t('common.retry')} tone="ghost" fullWidth={false} onPress={() => void load(filter)} />}
+          />
+        ) : medications.length === 0 ? (
           <EmptyState
             title={filter === 'active' ? t('medication.empty') : t('medication.emptyFiltered')}
             body={filter === 'active' ? t('medication.emptyBody') : undefined}
