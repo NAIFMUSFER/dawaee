@@ -11,7 +11,7 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
-  CAREGIVER_NOTIFY_MODES, CAREGIVER_PERMISSIONS,
+  CAREGIVER_NOTIFY_MODES, CAREGIVER_PERMISSIONS, toggleCaregiverPermission,
   type CaregiverNotifyMode, type CaregiverPermission,
 } from '@dawaee/shared';
 
@@ -243,9 +243,10 @@ export default function CaregiverDetailScreen() {
   }
 
   const togglePermission = (permission: CaregiverPermission) => {
-    setPermissions((current) =>
-      current.includes(permission) ? current.filter((p) => p !== permission) : [...current, permission],
-    );
+    // The switches describe a usable grant, not independent database flags.
+    // Adding a capability turns on what it must read; turning a dependency off
+    // also turns off capabilities that would otherwise be rejected by the API.
+    setPermissions((current) => toggleCaregiverPermission(current, permission));
   };
 
   const setRule = (channel: RuleChannel, patch: Partial<RuleState>) => {
