@@ -216,7 +216,7 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     expect(result.state.signedIn).toBe(false);
   });
 
-  it('positive control: explicit session rejection still triggers privacy cleanup, never fallback', async () => {
+  it('explicit cold-start session rejection destroys the restored account cache key', async () => {
     const result = await boot({ at: '/v1/me', status: 401 });
     expect(result.sessionRetained).toBe(false);
     expect(result.tokenClears).toBe(1);
@@ -224,5 +224,10 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     expect(result.cacheOwner).toBeNull();
     expect(result.snapshotReads).toBe(0);
     expect(result.state.signedIn).toBe(false);
+    // The UI has not loaded /v1/me yet, so state.user is still null. Privacy
+    // cleanup must use the owner recovered from the stored session rather than
+    // passing null and leaving that account's encryption key in secure storage.
+    expect(result.purged).toEqual([ACCOUNT]);
+    expect(result.destroyed).toEqual([ACCOUNT]);
   });
 });
