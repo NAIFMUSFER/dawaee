@@ -350,30 +350,35 @@ export async function undoDose(
     [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status })],
   );
 
-  // The latest take movement is the one represented by the currently recorded
-  // dose. Repeated take/undo cycles are legitimate, so there may be older ones.
-  const { rows: txRows } = await tx.query<{ delta: string }>(
-    `SELECT delta
-       FROM stock_transactions
-      WHERE dose_occurrence_id = $1 AND reason = 'dose_taken'
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [dose.id],
-  );
-  if (txRows[0]) {
-    const delta = -Number(txRows[0].delta);
-    const { rows: stockRows } = await tx.query<{ remaining_quantity: string | null }>(
-      'UPDATE medication_stock SET remaining_quantity = remaining_quantity + $2 WHERE medication_id = $1 RETURNING remaining_quantity',
-      [dose.medication_id, delta],
+  // A skip never consumes stock. This status check is load-bearing after an
+  // earlier take was undone: without it, undoing a later skip can find that old
+  // dose_taken row and add the pill back a second time.
+  if (dose.status === 'taken' || dose.status === 'taken_late') {
+    // The latest take movement is the one represented by the currently recorded
+    // dose. Repeated take/undo cycles are legitimate, so there may be older ones.
+    const { rows: txRows } = await tx.query<{ delta: string }>(
+      `SELECT delta
+         FROM stock_transactions
+        WHERE dose_occurrence_id = $1 AND reason = 'dose_taken'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [dose.id],
     );
-    await tx.query(
-      `INSERT INTO stock_transactions
-         (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
-          balance_after, actor_user_id)
-       VALUES ($1,$2,$3,'dose_undone',$4,$5,$6,$7)`,
-      [dose.medication_id, dose.patient_profile_id, delta, dose.id, undoEventRows[0]!.id,
-       stockRows[0]?.remaining_quantity ?? null, input.userId],
-    );
+    if (txRows[0]) {
+      const delta = -Number(txRows[0].delta);
+      const { rows: stockRows } = await tx.query<{ remaining_quantity: string | null }>(
+        'UPDATE medication_stock SET remaining_quantity = remaining_quantity + $2 WHERE medication_id = $1 RETURNING remaining_quantity',
+        [dose.medication_id, delta],
+      );
+      await tx.query(
+        `INSERT INTO stock_transactions
+           (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
+            balance_after, actor_user_id)
+         VALUES ($1,$2,$3,'dose_undone',$4,$5,$6,$7)`,
+        [dose.medication_id, dose.patient_profile_id, delta, dose.id, undoEventRows[0]!.id,
+         stockRows[0]?.remaining_quantity ?? null, input.userId],
+      );
+    }
   }
 
   await tx.query(
