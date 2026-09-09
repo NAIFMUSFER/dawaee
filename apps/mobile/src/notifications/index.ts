@@ -323,9 +323,14 @@ export async function rebuildRemindersFromCache(
   const empty: ScheduleResult = { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
   if (!profileId) return empty;
 
+  // A cache read can be slow (secure storage, device I/O). Capture the native
+  // mutation generation before that await. If logout, a privacy-setting change,
+  // or any newer schedule/cancel request happens while the read is in flight,
+  // this caller is obsolete and must not enter the scheduler afterwards.
+  const expectedGeneration = scheduleGeneration;
   const { readCachedSchedule } = await import('../storage/offline-queue.js');
   const cache = await readCachedSchedule(profileId);
-  if (!cache) return empty;
+  if (!cache || expectedGeneration !== scheduleGeneration) return empty;
 
   return rescheduleLocalNotifications(
     cache.doses.map((d) => ({
