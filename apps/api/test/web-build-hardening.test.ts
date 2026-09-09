@@ -66,8 +66,8 @@ const dollarFixture = vulnerableFixture.replace(/\b[ovnst]\b/g, (name) =>
 const equivalentFixtures: Array<[string, string]> = [
   ['original', vulnerableFixture],
   ['renamed identifiers', renamedFixture],
-  ['double-quoted event name', vulnerableFixture.replaceAll("'message'", '\"message\"')],
-  ['renamed identifiers and double quotes', renamedFixture.replaceAll("'message'", '\"message\"')],
+  ['double-quoted event name', vulnerableFixture.replaceAll("'message'", '"message"')],
+  ['renamed identifiers and double quotes', renamedFixture.replaceAll("'message'", '"message"')],
   ['dollar and underscore identifiers', dollarFixture],
 ];
 
