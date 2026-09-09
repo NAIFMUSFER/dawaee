@@ -11,6 +11,7 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import {
   CAREGIVER_PERMISSIONS, CAREGIVER_ROLES, CAREGIVER_ROLE_PRESETS,
+  toggleCaregiverPermission,
   type CaregiverPermission, type CaregiverRole,
 } from '@dawaee/shared';
 
@@ -103,9 +104,11 @@ export default function InviteCaregiverScreen() {
   const choosePreset = (key: PresetKey) => setPermissions(presetPermissions(key));
 
   const togglePermission = (permission: CaregiverPermission) => {
-    setPermissions((current) =>
-      current.includes(permission) ? current.filter((p) => p !== permission) : [...current, permission],
-    );
+    // A custom grant must remain executable. Turning on adherence adds the
+    // schedule visibility its query needs; turning that dependency off removes
+    // the dependent capability instead of saving a relationship that receives
+    // 403 from the API while the switch still appears enabled.
+    setPermissions((current) => toggleCaregiverPermission(current, permission));
   };
 
   /**
