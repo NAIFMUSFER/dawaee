@@ -146,6 +146,14 @@ export async function startNotificationActionListener(
 let scheduleGeneration = 0;
 let scheduleTail: Promise<void> = Promise.resolve();
 
+/** Capture before asynchronous HTTP/cache work that carries rendered options.
+ * New privacy/rebuild/cancel intent makes that caller's reminder work stale,
+ * without discarding its otherwise valid clinical response. */
+export function captureLocalReminderContext(): () => boolean {
+  const generation = scheduleGeneration;
+  return () => generation === scheduleGeneration;
+}
+
 function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
   const generation = ++scheduleGeneration;
   const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
@@ -323,11 +331,11 @@ export async function rebuildRemindersFromCache(
   const empty: ScheduleResult = { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
   if (!profileId) return empty;
 
-  // A cache read can be slow (secure storage, device I/O). Capture the native
-  // mutation generation before that await. If logout, a privacy-setting change,
-  // or any newer schedule/cancel request happens while the read is in flight,
-  // this caller is obsolete and must not enter the scheduler afterwards.
-  const expectedGeneration = scheduleGeneration;
+  // Reserve intent BEFORE reading storage. Merely observing the generation
+  // lets two cached rebuilds share it: the older read can finish first and
+  // suppress a newer privacy choice. Storage must stay outside scheduleTail so
+  // cancellation never waits on a stalled cache read.
+  const expectedGeneration = ++scheduleGeneration;
   const { readCachedSchedule } = await import('../storage/offline-queue.js');
   const cache = await readCachedSchedule(profileId);
   if (!cache || expectedGeneration !== scheduleGeneration) return empty;

@@ -19,7 +19,7 @@ function dose(id, minutes = 30) {
   return { id, medicationId: `med-${id}`, status: 'upcoming', scheduledAt: new Date(Date.now() + minutes * 60000).toISOString(), scheduledLocalTime: '09:00', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${id}`, foodInstruction: 'none' } };
 }
 function loadModule(file, platform = 'ios') {
-  const state = { active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null };
+  const state = { active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null };
   const native = {
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
@@ -46,6 +46,7 @@ function loadModule(file, platform = 'ios') {
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
     './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
     'expo-notifications': native,
+    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id) },
   };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     fileName: file, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
@@ -127,7 +128,7 @@ function scenarios(file) {
   }, 'android');
   return cases;
 }
-module.exports = { scenarios };
+module.exports = { scenarios, loadModule, deferred, until, dose, flush };
 if (require.main === module) {
   (async () => {
     let failed = 0;

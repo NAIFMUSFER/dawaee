@@ -13,7 +13,7 @@ import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
-import { inspectCapability, rescheduleLocalNotifications } from '@/notifications';
+import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 
 function localDateIn(timeZone: string): string {
@@ -83,6 +83,7 @@ function TodayProfileScreen() {
     const isCurrent = beginLoad();
     if (!isCurrent()) return;
     if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
+    const remindersAreCurrent = captureLocalReminderContext();
     try {
       const res = await api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id });
       if (!isCurrent()) return;
@@ -107,6 +108,9 @@ function TodayProfileScreen() {
       // own profile. A caregiver viewing another profile must not silently turn
       // that patient's schedule into reminders on the caregiver's phone.
       if (activeProfile.isSelf) {
+        // The HTTP/cache work may predate a privacy change or logout cancel.
+        // Keep valid clinical data, but never recreate reminders with old options.
+        if (!remindersAreCurrent()) return;
         const schedule = await rescheduleLocalNotifications(
           [...res.today, ...res.prefetch], preferences.locale,
           {

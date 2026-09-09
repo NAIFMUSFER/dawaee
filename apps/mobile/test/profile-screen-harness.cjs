@@ -21,7 +21,7 @@ class ApiError extends Error {
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 const addDays = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 
-function createHarness(file, hookFile, profile = {}) {
+function createHarness(file, hookFile, profile = {}, overrides = {}) {
   const h = { requests: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
   h.app = {
     user: { id: 'synthetic-account', displayName: 'Caregiver' },
@@ -101,6 +101,7 @@ function createHarness(file, hookFile, profile = {}) {
       newClientEventId: () => `event-${h.requests.length}`,
     },
     '@/notifications': {
+      captureLocalReminderContext: () => () => true,
       inspectCapability: async () => ({ supported: false }),
       rescheduleLocalNotifications: async (doses) => { h.notifications.push(doses); return { exactAlarmsUnavailable: false }; },
     },
@@ -109,6 +110,7 @@ function createHarness(file, hookFile, profile = {}) {
       const result = []; for (let d = from; d <= to; d = addDays(d, 1)) result.push(d); return result;
     } },
   };
+  Object.assign(modules, overrides);
   const evaluate = (sourceFile) => {
     const code = ts.transpileModule(fs.readFileSync(sourceFile, 'utf8'), {
       fileName: sourceFile,
