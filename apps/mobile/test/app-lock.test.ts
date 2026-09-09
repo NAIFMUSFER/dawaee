@@ -275,7 +275,10 @@ describe('no route is exempt, least of all the one that renders PHI', () => {
    * own per-field include flags, which default to false.
    */
   it('still renders each PHI field it was audited for, so the finding stays true', () => {
-    const screen = readFileSync(join(ROOT, 'apps/mobile/app/e/[token].tsx'), 'utf8');
+    // P20 moved the reusable bearer out of the route path into the URL fragment,
+    // so the public screen is now the fixed /e route. The disclosure assertion
+    // follows that screen; it does not restore the old token-bearing path.
+    const screen = readFileSync(join(ROOT, 'apps/mobile/app/e/index.tsx'), 'utf8');
     for (const field of [
       'patientName', 'allergies', 'bloodType', 'conditionsNote', 'medications',
       'emergencyContacts', 'phoneE164',
