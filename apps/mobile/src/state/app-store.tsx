@@ -233,21 +233,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await persistOfflineBootstrap(me.user, effectivePreferences, ownedSelfProfile);
     if (!isCurrent()) return;
 
-    const restartRequired = preferencesAreCurrent
+    // Snapshot persistence is another asynchronous boundary. A privacy/lock or
+    // locale change made while it waits must still win at the UI commit, even
+    // when its PATCH has already finished and the pending counter is zero.
+    const preferencesStillCurrent = preferencesAreCurrent
+      && preferenceSnapshot === preferenceGeneration.current
+      && !(preferenceWrites.current.session === generation && preferenceWrites.current.pending > 0);
+    const restartRequired = preferencesStillCurrent
       ? applyNativeDirection(serverPreferences.locale).restartRequired
       : null;
     setState((s) => ({
       ...s,
       signedIn: true,
       user: me.user,
-      preferences: preferencesAreCurrent ? serverPreferences : s.preferences,
+      preferences: preferencesStillCurrent ? serverPreferences : s.preferences,
       profiles: profilesRes.profiles,
       activeProfile:
         profilesRes.profiles.find((p) => p.id === s.activeProfile?.id) ??
         profilesRes.profiles.find((p) => p.isSelf) ??
         profilesRes.profiles[0] ??
         null,
-      restartRequiredForRtl: preferencesAreCurrent ? restartRequired! : s.restartRequiredForRtl,
+      restartRequiredForRtl: preferencesStillCurrent ? restartRequired! : s.restartRequiredForRtl,
     }));
   }, [persistOfflineBootstrap]);
 

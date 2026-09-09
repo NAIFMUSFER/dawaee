@@ -72,6 +72,7 @@ function makeHarness(file, options = {}) {
   const rebuilds = [];
   const cacheOwners = [];
   const bootstrapWrites = [];
+  const nativeDirections = [];
 
   const request = (method, route, payload) => {
     const gate = deferred();
@@ -93,7 +94,10 @@ function makeHarness(file, options = {}) {
     setState, DEFAULT_PREFERENCES, NetworkError,
     isSignedIn: () => signedIn,
     setCacheOwner: (id) => cacheOwners.push(id),
-    applyNativeDirection: () => ({ restartRequired: false }),
+    applyNativeDirection: (locale) => {
+      nativeDirections.push(locale);
+      return { restartRequired: false };
+    },
     rebuildRemindersFromCache: async (profileId, locale, opts) => {
       rebuilds.push({ profileId, locale, opts });
       return { scheduled: profileId ? 1 : 0, failed: 0, exactAlarmsUnavailable: false };
@@ -105,7 +109,9 @@ function makeHarness(file, options = {}) {
     // into an undeclared ReferenceError. Dedicated offline-bootstrap tests cover
     // encryption, account binding and fail-closed behavior.
     persistOfflineBootstrap: async (user, preferences, selfProfile) => {
-      bootstrapWrites.push({ user, preferences, selfProfile });
+      const snapshot = { user, preferences, selfProfile };
+      bootstrapWrites.push(snapshot);
+      await options.onBootstrapWrite?.(snapshot, bootstrapWrites.length);
     },
     console,
   };
@@ -129,7 +135,7 @@ function makeHarness(file, options = {}) {
   const loadMe = evaluate(extracted.loadMe);
 
   return {
-    updatePreferences, loadMe, requests, rebuilds, cacheOwners, bootstrapWrites,
+    updatePreferences, loadMe, requests, rebuilds, cacheOwners, bootstrapWrites, nativeDirections,
     state: () => state,
     sessionGeneration, preferenceGeneration,
     setSignedIn: (value) => { signedIn = value; },
