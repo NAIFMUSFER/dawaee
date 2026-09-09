@@ -946,33 +946,46 @@ describe('P12-8 every route works for the person entitled to use it', () => {
     const list = await ok('GET /v1/doses', {
       method: 'GET', url: `/v1/doses?profileId=${own.profileId}&from=2026-09-01&to=2026-09-30`,
     });
-    const doses = list.json<{ doses: Array<{ id: string }> }>().doses;
-    expect(doses.length).toBeGreaterThan(2);
+    const doses = list.json<{ doses: Array<{ id: string; scheduledAt: string }> }>().doses;
+    expect(doses.length).toBeGreaterThan(3);
     own.doseId = doses[0]!.id;
 
     await ok('GET /v1/doses/:id', { method: 'GET', url: `/v1/doses/${own.doseId}` });
     const evt = (n: string) => `p12-${n}-${Date.now()}`;
-    await ok('POST taken', {
-      method: 'POST', url: `/v1/doses/${own.doseId}/taken`, payload: { clientEventId: evt('taken') },
-    });
-    await ok('POST undo', { method: 'POST', url: `/v1/doses/${own.doseId}/undo`, payload: { clientEventId: evt('undo') } });
-    await ok('POST snooze', {
-      method: 'POST', url: `/v1/doses/${doses[1]!.id}/snooze`,
-      payload: { minutes: 15, clientEventId: evt('snooze') },
-    });
-    await ok('POST skip', {
-      method: 'POST', url: `/v1/doses/${doses[2]!.id}/skip`, payload: { clientEventId: evt('skip') },
-    });
-    await ok('POST /v1/doses/sync', {
-      method: 'POST', url: '/v1/doses/sync',
-      payload: {
-        deviceId: 'carol-offline',
-        actions: [{
-          type: 'taken', doseOccurrenceId: doses[3]!.id,
-          at: '2026-09-01T08:05:00.000Z', clientEventId: evt('sync'),
-        }],
-      },
-    });
+    const restoreNow = new Date();
+    try {
+      h.setServerNow(new Date(doses[0]!.scheduledAt));
+      await ok('POST taken', {
+        method: 'POST', url: `/v1/doses/${own.doseId}/taken`,
+        payload: { clientEventId: evt('taken'), takenAt: doses[0]!.scheduledAt },
+      });
+      await ok('POST undo', { method: 'POST', url: `/v1/doses/${own.doseId}/undo`, payload: { clientEventId: evt('undo') } });
+
+      h.setServerNow(new Date(doses[1]!.scheduledAt));
+      await ok('POST snooze', {
+        method: 'POST', url: `/v1/doses/${doses[1]!.id}/snooze`,
+        payload: { minutes: 15, clientEventId: evt('snooze') },
+      });
+
+      h.setServerNow(new Date(doses[2]!.scheduledAt));
+      await ok('POST skip', {
+        method: 'POST', url: `/v1/doses/${doses[2]!.id}/skip`, payload: { clientEventId: evt('skip') },
+      });
+
+      h.setServerNow(new Date(doses[3]!.scheduledAt));
+      await ok('POST /v1/doses/sync', {
+        method: 'POST', url: '/v1/doses/sync',
+        payload: {
+          deviceId: 'carol-offline',
+          actions: [{
+            type: 'taken', doseOccurrenceId: doses[3]!.id,
+            at: doses[3]!.scheduledAt, clientEventId: evt('sync'),
+          }],
+        },
+      });
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 
   it('records a note and a measurement', async () => {
