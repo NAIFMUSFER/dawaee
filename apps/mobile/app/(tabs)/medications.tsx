@@ -8,6 +8,7 @@ import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView, TodayResponse } from '@/api/types';
 import type { MessageKey } from '@dawaee/shared';
@@ -16,6 +17,11 @@ type Filter = 'active' | 'paused' | 'all';
 const ACTIONABLE: ReadonlySet<DoseView['status']> = new Set(['upcoming', 'due', 'pending_confirmation', 'snoozed']);
 
 export default function MedicationsScreen() {
+  const { user, activeProfile } = useApp();
+  return <MedicationsProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function MedicationsProfileScreen() {
   const { t, formatTime, formatDate, formatMeasure } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline, preferences } = useApp();
@@ -28,8 +34,12 @@ export default function MedicationsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const { begin: beginLoad } = useRequestScope(filter);
+
   const load = useCallback(async (selected: Filter) => {
-    if (!activeProfile) return;
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
+    if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
     setLoading(true);
     try {
       const [list, today] = await Promise.all([
@@ -39,6 +49,7 @@ export default function MedicationsScreen() {
         }),
         api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id }),
       ]);
+      if (!isCurrent()) return;
       const soonest: Record<string, DoseView> = {};
       for (const dose of [...today.today, ...today.prefetch]) {
         if (!ACTIONABLE.has(dose.status)) continue;
@@ -49,12 +60,15 @@ export default function MedicationsScreen() {
       setNextDoses(soonest);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeProfile, setOffline]);
+  }, [beginLoad, activeProfile, setOffline]);
 
   useEffect(() => { void load(filter); }, [load, filter]);
 

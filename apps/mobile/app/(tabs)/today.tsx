@@ -8,6 +8,7 @@ import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule } from '@/storage/offline-queue';
@@ -55,6 +56,11 @@ function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
 }
 
 export default function TodayScreen() {
+  const { user, activeProfile } = useApp();
+  return <TodayProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function TodayProfileScreen() {
   const { t, formatDate } = useI18n();
   const theme = useTheme();
   const { activeProfile, user, preferences, deviceId, offline, setOffline, pendingSyncCount, syncNow } = useApp();
@@ -71,10 +77,15 @@ export default function TodayScreen() {
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
 
+  const { begin: beginLoad, capture: captureScope } = useRequestScope();
+
   const load = useCallback(async () => {
-    if (!activeProfile) return;
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
+    if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
     try {
       const res = await api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       setData(res);
       setOffline(false);
 
@@ -90,6 +101,8 @@ export default function TodayScreen() {
         })),
       });
 
+      if (!isCurrent()) return;
+
       // Direct local medication reminders belong only to the signed-in patient's
       // own profile. A caregiver viewing another profile must not silently turn
       // that patient's schedule into reminders on the caregiver's phone.
@@ -101,16 +114,19 @@ export default function TodayScreen() {
             showMedication: preferences.showMedicationInNotifications,
           },
         );
-        setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+        if (isCurrent()) setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
       } else {
         setExactAlarmsUnavailable(false);
       }
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
         const cached = await readCachedSchedule(activeProfile.id);
+        if (!isCurrent()) return;
         if (cached && !data) {
           const queued = await readQueue();
+          if (!isCurrent()) return;
           const merged = applyQueuedToCache(cached, queued);
           const localDate = localDateIn(cached.timezone);
           const views = merged.doses.map(cachedDoseToView);
@@ -129,10 +145,12 @@ export default function TodayScreen() {
         }
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeProfile, preferences.locale, preferences.voiceRemindersEnabled, preferences.showMedicationInNotifications, setOffline, data]);
+  }, [beginLoad, activeProfile, preferences.locale, preferences.voiceRemindersEnabled, preferences.showMedicationInNotifications, setOffline, data]);
 
   useEffect(() => {
     setData(null);
@@ -150,27 +168,31 @@ export default function TodayScreen() {
   }, [t]);
 
   const undo = useCallback(async (dose: DoseView) => {
-    if (!canConfirmDose) return;
+    const isCurrent = captureScope();
+    if (!canConfirmDose || !isCurrent()) return;
     setBusyDoseId(dose.id);
     try {
       await api.post(`/v1/doses/${dose.id}/undo`, {});
+      if (!isCurrent()) return;
       setLocalOverrides((o) => {
         const next = { ...o };
         delete next[dose.id];
         return next;
       });
-      await load();
+      if (isCurrent()) await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setNotificationWarning(t('today.undoFailed'));
     } finally {
-      setBusyDoseId(null);
+      if (isCurrent()) setBusyDoseId(null);
     }
-  }, [canConfirmDose, load, setOffline, t]);
+  }, [captureScope, canConfirmDose, load, setOffline, t]);
 
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
-      if (!canConfirmDose) return;
+      const isCurrent = captureScope();
+      if (!canConfirmDose || !isCurrent()) return;
       setBusyDoseId(dose.id);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
@@ -182,7 +204,7 @@ export default function TodayScreen() {
         } else {
           await api.post(`/v1/doses/${dose.id}/skip`, { clientEventId, deviceId });
         }
-        await load();
+        if (isCurrent()) await load();
       } catch (err) {
         if (err instanceof NetworkError) {
           await enqueue(
@@ -190,8 +212,8 @@ export default function TodayScreen() {
               ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
               : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
           );
-          setOffline(true);
-        } else {
+          if (isCurrent()) setOffline(true);
+        } else if (isCurrent()) {
           setLocalOverrides((o) => {
             const next = { ...o };
             delete next[dose.id];
@@ -199,29 +221,30 @@ export default function TodayScreen() {
           });
         }
       } finally {
-        setBusyDoseId(null);
+        if (isCurrent()) setBusyDoseId(null);
       }
     },
-    [canConfirmDose, deviceId, load, setOffline],
+    [captureScope, canConfirmDose, deviceId, load, setOffline],
   );
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
-    if (!canConfirmDose) return;
+    const isCurrent = captureScope();
+    if (!canConfirmDose || !isCurrent()) return;
     setSnoozeFor(null);
     setBusyDoseId(dose.id);
     const clientEventId = newClientEventId();
     try {
       await api.post(`/v1/doses/${dose.id}/snooze`, { minutes, clientEventId, deviceId });
-      await load();
+      if (isCurrent()) await load();
     } catch (err) {
       if (err instanceof NetworkError) {
         await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
-        setOffline(true);
+        if (isCurrent()) setOffline(true);
       }
     } finally {
-      setBusyDoseId(null);
+      if (isCurrent()) setBusyDoseId(null);
     }
-  }, [canConfirmDose, deviceId, load, setOffline]);
+  }, [captureScope, canConfirmDose, deviceId, load, setOffline]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
