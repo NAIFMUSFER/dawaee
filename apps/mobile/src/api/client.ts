@@ -145,23 +145,47 @@ export async function getDeviceId(): Promise<string> {
  * later caller onto a dead result.
  */
 /**
- * Why an enum and not a boolean.
+ * Why this is not a boolean.
  *
- * `request()` used to read "refresh returned false" as "this session is dead"
- * and clear storage. Two of the three ways a refresh fails are not that:
+ * `request()` must distinguish a dead credential from conditions that prove
+ * nothing about credential validity:
  *
  *   `offline`    — the network never reached the server, so the tokens are
- *                  fine. Clearing here signed a user out because their train
- *                  went into a tunnel while a token happened to be expiring,
- *                  which is the exact opposite of what the offline design is
- *                  for; the comment in the catch below already claimed this
- *                  did not happen.
+ *                  fine. Clearing here signs a user out because connectivity
+ *                  disappeared while an access token happened to be expiring.
  *   `superseded` — this client's own parallel request already rotated. The
  *                  newer tokens are on disk; erasing them turns a harmless race
  *                  into a sign-out and undoes the server-side fix for it.
- *   `rejected`   — the server refused the token. This one really is dead.
+ *   `transient`  — the refresh endpoint itself answered, but with a status such
+ *                  as 429 or 5xx. That is rate limiting/outage evidence, not
+ *                  evidence that the refresh token is invalid, so the session
+ *                  stays intact and the original API error is surfaced.
+ *   `rejected`   — an explicit 401 from the refresh endpoint. This one really
+ *                  means the session credential is dead and may be cleared.
  */
-type RefreshResult = 'ok' | 'rejected' | 'offline' | 'superseded';
+type RefreshResult =
+  | 'ok'
+  | 'rejected'
+  | 'offline'
+  | 'superseded'
+  | { kind: 'transient'; error: ApiError };
+
+function apiErrorFromResponse(
+  res: Response,
+  payload: unknown,
+): ApiError {
+  const e = (payload as {
+    error?: { code?: string; message?: string; details?: Array<{ path: string; message: string }> };
+    meta?: Record<string, unknown>;
+  } | null)?.error;
+  return new ApiError(
+    e?.code ?? 'internal_error',
+    res.status,
+    e?.message ?? `Request failed with ${res.status}`,
+    (payload as { meta?: Record<string, unknown> } | null)?.meta,
+    e?.details,
+  );
+}
 
 async function refreshAccessToken(): Promise<RefreshResult> {
   if (!refreshToken) return 'rejected';
@@ -180,17 +204,6 @@ async function refreshAccessToken(): Promise<RefreshResult> {
         body: JSON.stringify({ refreshToken: presented }),
       });
       if (!res.ok) {
-        /**
-         * 409 REFRESH_SUPERSEDED: two of THIS client's own requests raced and
-         * this one lost. The other already stored a valid session.
-         *
-         * Clearing here would be the worst possible reaction — it would erase
-         * the newer tokens the winning request just wrote, turning a harmless
-         * race into a sign-out. Single-flight below means this should be
-         * unreachable in normal operation; it is handled anyway because "should
-         * be unreachable" is not a security property, and because a process
-         * restart mid-refresh can produce exactly this shape.
-         */
         /**
          * 409 REFRESH_SUPERSEDED — another execution context already rotated
          * this token.
@@ -230,9 +243,17 @@ async function refreshAccessToken(): Promise<RefreshResult> {
           return 'rejected';
         }
 
-        await clearSession();
-        onUnauthenticated?.();
-        return 'rejected';
+        // Only an explicit authentication rejection proves that the refresh
+        // credential is no longer usable. A limiter, gateway, provider or
+        // server outage must not destroy a credential the server never judged.
+        if (res.status === 401) {
+          await clearSession();
+          onUnauthenticated?.();
+          return 'rejected';
+        }
+
+        const payload = await res.clone().json().catch(() => null);
+        return { kind: 'transient', error: apiErrorFromResponse(res, payload) };
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
       try {
@@ -334,6 +355,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         // The refresh never reached the server. Surface it as what it is so the
         // UI falls back to cached data, and leave the session alone.
         throw new NetworkError('refresh unreachable');
+      } else if (typeof outcome === 'object' && outcome.kind === 'transient') {
+        // The server did not reject the credential. Preserve it and propagate
+        // the real limiter/provider/server error instead of disguising it as a
+        // sign-out or the original access-token expiry.
+        throw outcome.error;
       }
       // 'superseded': this client's own parallel request already rotated, and
       // `refreshAccessToken` has cleared nothing. Fall through to the error
@@ -349,14 +375,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const e = (payload as { error?: { code: string; message: string; details?: Array<{ path: string; message: string }> } }).error;
-    throw new ApiError(
-      e?.code ?? 'internal_error',
-      res.status,
-      e?.message ?? `Request failed with ${res.status}`,
-      (payload as { meta?: Record<string, unknown> }).meta,
-      e?.details,
-    );
+    throw apiErrorFromResponse(res, payload);
   }
   return payload as T;
 }
