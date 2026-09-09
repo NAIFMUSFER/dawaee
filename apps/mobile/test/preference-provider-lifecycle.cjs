@@ -64,6 +64,11 @@ function makeProvider(file, notificationsFile, options = {}) {
     }, NetworkError, isSignedIn: () => signedIn, getDeviceId: async () => 'SYNTHETIC-DEVICE',
     clearSession: async () => { signedIn = false; }, storeSession: async () => { signedIn = true; },
     loadStoredSession: async () => signedIn, setUnauthenticatedHandler: () => {} },
+    // The provider now restores the local cache namespace before an offline
+    // bootstrap. This harness is not exercising secure-storage/JWT parsing —
+    // restored-session-owner.test.ts does that directly — so return the seeded
+    // authenticated account and keep these lifecycle scenarios focused.
+    '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => seed.user?.id ?? null },
     '../storage/offline-queue.js': { setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
       queueSize: async () => 0, flushQueue: async () => ({ offline: false }) },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
