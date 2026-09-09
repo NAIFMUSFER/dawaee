@@ -153,6 +153,22 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   }
 }
 
+function renderEntry(state: AppState): unknown {
+  const react = {
+    useState: <T,>(initial: T) => [initial, () => undefined] as const,
+  };
+  const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
+  const module = loadModule(fileURLToPath(new URL('../app/index.tsx', import.meta.url)), {
+    react,
+    'react/jsx-runtime': { jsx, jsxs: jsx },
+    'expo-router': { Redirect: 'Redirect' },
+    '@/state/app-store': { useApp: () => state },
+    '@/api/client': { DEMO_MODE: false },
+    '@/components/ui': { Screen: 'Screen', Txt: 'Txt', Button: 'Button' },
+  }) as { default: () => unknown };
+  return module.default();
+}
+
 describe('cold-start errors cannot silently become cached authorization', () => {
   const denials: Failure[] = [
     { at: '/v1/me', status: 403 },
@@ -229,5 +245,19 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     // passing null and leaving that account's encryption key in secure storage.
     expect(result.purged).toEqual([ACCOUNT]);
     expect(result.destroyed).toEqual([ACCOUNT]);
+  });
+
+  it('a startup service failure with retained credentials shows a retry boundary, not first-run onboarding', async () => {
+    const result = await boot({ at: '/v1/me', status: 503 });
+    expect(result.sessionRetained).toBe(true);
+    expect(result.state.ready).toBe(true);
+
+    const rendered = JSON.stringify(renderEntry(result.state));
+    expect(rendered).toContain('session-recovery-retry');
+    expect(rendered).not.toContain('/(auth)/language');
+    // The recovery boundary must remain PHI-free: the account/profile snapshot
+    // is intentionally absent for HTTP/protocol failures.
+    expect(result.state.user).toBeNull();
+    expect(result.state.profiles).toEqual([]);
   });
 });
