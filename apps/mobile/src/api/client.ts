@@ -77,16 +77,45 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
-let refreshInFlight: Promise<RefreshResult> | null = null;
+let refreshInFlight: { generation: number; promise: Promise<RefreshResult> } | null = null;
+// Changes only at explicit session boundaries, not on same-session rotation.
+let sessionGeneration = 0;
+let sessionStorageTail: Promise<void> = Promise.resolve();
+
+/** A stale request must not be mistaken for an offline action to replay. */
+export class SessionChangedError extends ApiError {
+  constructor() {
+    super('session_changed', 409, 'The session changed while the request was running.');
+    this.name = 'SessionChangedError';
+  }
+}
+
+function requireSession(generation: number): void {
+  if (generation !== sessionGeneration) throw new SessionChangedError();
+}
+
+function advanceSession(): number {
+  refreshInFlight = null;
+  return ++sessionGeneration;
+}
+
+/** Order keychain reads/writes/deletes; never hold this lock over HTTP. */
+function withSessionStorage<T>(operation: () => Promise<T>): Promise<T> {
+  const result = sessionStorageTail.then(operation);
+  sessionStorageTail = result.then(() => undefined, () => undefined);
+  return result;
+}
 let onUnauthenticated: (() => void) | null = null;
 
 export async function loadStoredSession(): Promise<boolean> {
+  const generation = advanceSession();
   if (DEMO_MODE) {
     accessToken = 'demo';
     refreshToken = 'demo';
     return true;
   }
-  const stored = await readSession();
+  const stored = await withSessionStorage(readSession);
+  if (generation !== sessionGeneration) return false;
   accessToken = stored?.accessToken ?? null;
   refreshToken = stored?.refreshToken ?? null;
   return stored !== null;
@@ -101,15 +130,35 @@ export async function loadStoredSession(): Promise<boolean> {
  * throw still propagates, so a caller that wants to report it can.
  */
 export async function storeSession(tokens: { accessToken: string; refreshToken: string }): Promise<void> {
-  accessToken = tokens.accessToken;
-  refreshToken = tokens.refreshToken;
-  await writeSession(tokens);
+  const generation = advanceSession();
+  const snapshot = { ...tokens };
+  accessToken = snapshot.accessToken;
+  refreshToken = snapshot.refreshToken;
+  await withSessionStorage(async () => {
+    requireSession(generation);
+    await writeSession(snapshot);
+  });
+  requireSession(generation);
 }
 
 export async function clearSession(): Promise<void> {
+  advanceSession();
   accessToken = null;
   refreshToken = null;
-  await clearStoredSession();
+  // Run after any already-started write, so it cannot resurrect credentials.
+  await withSessionStorage(clearStoredSession);
+}
+
+async function rejectSession(generation: number): Promise<void> {
+  requireSession(generation);
+  const clearing = clearSession();
+  const clearedGeneration = sessionGeneration;
+  try {
+    await clearing;
+  } finally {
+    // A later login must not receive an earlier session's sign-out callback.
+    if (sessionGeneration === clearedGeneration) onUnauthenticated?.();
+  }
 }
 
 export function setUnauthenticatedHandler(fn: () => void): void {
@@ -131,44 +180,15 @@ export async function getDeviceId(): Promise<string> {
 }
 
 /**
- * Refresh, single-flight.
+ * Single-flight within one session generation. Explicit sign-in/out detaches
+ * old work; its late result must neither replace credentials nor clear a new
+ * account's flight. Rotation itself keeps the generation, so concurrent calls
+ * for the same account continue to share one refresh.
  *
- * Every concurrent caller shares one in-flight promise, so twenty requests that
- * all discover an expired access token at the same moment produce exactly ONE
- * refresh over the network. That is not only a bandwidth nicety: two
- * client-originated refreshes carrying the same token race on the server, and
- * until recently the loser was treated as a stolen-token replay and revoked the
- * whole device. The server no longer does that within its grace window, but the
- * client's job is to not create the race in the first place.
- *
- * The promise is cleared in `finally`, so a failed refresh does not wedge every
- * later caller onto a dead result.
+ * An unavailable server is not an authentication rejection. HTTP errors remain
+ * ApiError (with their real status), while transport failures are NetworkError.
  */
-/**
- * Why this is not a boolean.
- *
- * `request()` must distinguish a dead credential from conditions that prove
- * nothing about credential validity:
- *
- *   `offline`    — the network never reached the server, so the tokens are
- *                  fine. Clearing here signs a user out because connectivity
- *                  disappeared while an access token happened to be expiring.
- *   `superseded` — this client's own parallel request already rotated. The
- *                  newer tokens are on disk; erasing them turns a harmless race
- *                  into a sign-out and undoes the server-side fix for it.
- *   `transient`  — the refresh endpoint itself answered, but with a status such
- *                  as 429 or 5xx. That is rate limiting/outage evidence, not
- *                  evidence that the refresh token is invalid, so the session
- *                  stays intact and the original API error is surfaced.
- *   `rejected`   — an explicit 401 from the refresh endpoint. This one really
- *                  means the session credential is dead and may be cleared.
- */
-type RefreshResult =
-  | 'ok'
-  | 'rejected'
-  | 'offline'
-  | 'superseded'
-  | { kind: 'transient'; error: ApiError };
+type RefreshResult = 'ok' | 'rejected' | 'offline' | { kind: 'transient'; error: ApiError };
 
 function apiErrorFromResponse(
   res: Response,
@@ -187,97 +207,76 @@ function apiErrorFromResponse(
   );
 }
 
-async function refreshAccessToken(): Promise<RefreshResult> {
+async function refreshAccessToken(generation: number): Promise<RefreshResult> {
+  requireSession(generation);
   if (!refreshToken) return 'rejected';
-  if (refreshInFlight) return refreshInFlight;
-
-  // The exact token this attempt presents, captured before the await so the
-  // recovery below can tell "storage still holds what I sent" from "another
-  // context has already moved on".
+  if (refreshInFlight?.generation === generation) return refreshInFlight.promise;
   const presented = refreshToken;
 
-  refreshInFlight = (async () => {
+  // Start in a microtask so even a synchronously throwing fetch cannot leave
+  // a settled promise installed after its own cleanup already ran.
+  const promise = Promise.resolve().then(async (): Promise<RefreshResult> => {
     try {
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
       });
+      requireSession(generation);
       if (!res.ok) {
-        /**
-         * 409 REFRESH_SUPERSEDED — another execution context already rotated
-         * this token.
-         *
-         * The in-memory single-flight above covers concurrent callers inside
-         * ONE runtime, and that is the only concurrency this app actually has:
-         * there is no TaskManager task, no headless handler and no background
-         * fetch, so notification actions run in the app's own runtime. What it
-         * does NOT cover is a SEQUENTIAL restart — Android reclaiming the
-         * process, or a cold launch from a notification action — where a
-         * previous process rotated and this one starts holding the old token.
-         *
-         * Recovery, in order:
-         *   1. never re-present the token that was just refused, and
-         *   2. re-read what is actually persisted now.
-         *
-         * If storage has moved on, another context won and wrote the newer
-         * pair: adopt it and carry on. If storage still holds the token that
-         * was just refused, there is no winner to recover from — the rotation
-         * happened but its result was lost — so end the session cleanly.
-         *
-         * Retrying the refused token is the one thing that must not happen. It
-         * would work for a moment and then, once the server's 30-second race
-         * window closed, be classified as theft and revoke the whole device —
-         * turning a lost write into a forced sign-out with a security event
-         * attached to it.
-         */
         if (res.status === 409) {
-          const stored = await readSession().catch(() => null);
+          // Another runtime may have rotated before a sequential restart.
+          // Never re-present the refused token if its replacement was lost.
+          const stored = await withSessionStorage(readSession).catch(() => null);
+          requireSession(generation);
           if (stored && stored.refreshToken !== presented) {
             accessToken = stored.accessToken;
             refreshToken = stored.refreshToken;
             return 'ok';
           }
-          await clearSession();
-          onUnauthenticated?.();
+          await rejectSession(generation);
           return 'rejected';
         }
-
-        // Only an explicit authentication rejection proves that the refresh
-        // credential is no longer usable. A limiter, gateway, provider or
-        // server outage must not destroy a credential the server never judged.
         if (res.status === 401) {
-          await clearSession();
-          onUnauthenticated?.();
+          await rejectSession(generation);
           return 'rejected';
         }
-
         const payload = await res.clone().json().catch(() => null);
+        requireSession(generation);
         return { kind: 'transient', error: apiErrorFromResponse(res, payload) };
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
+      requireSession(generation);
+      // This is a rotation, not a new account. Preserve the shared generation.
+      accessToken = body.accessToken;
+      refreshToken = body.refreshToken;
       try {
-        await storeSession(body);
+        await withSessionStorage(async () => {
+          requireSession(generation);
+          await writeSession(body);
+        });
       } catch {
-        // The rotation succeeded on the server, so the OLD refresh token is
-        // now dead — but persisting the new pair failed, which means whatever
-        // is on disk still names the dead one. Leaving it there would produce
-        // a launch that presents an invalidated token, gets a 401, and signs
-        // the user out with no explanation days later. Clearing makes the next
-        // launch a clean sign-in instead. This run continues on the in-memory
-        // pair, which storeSession set before it threw.
-        await clearStoredSession().catch(() => undefined);
+        requireSession(generation);
+        // A failed keychain write must not leave the now-dead presented token
+        // behind. This run keeps the new memory pair. Check again inside the
+        // storage lock so cleanup can never delete a later login's tokens.
+        await withSessionStorage(async () => {
+          requireSession(generation);
+          await clearStoredSession();
+        }).catch(() => undefined);
       }
+      requireSession(generation);
       return 'ok';
-    } catch {
-      // Offline: keep the tokens, the user is not signed out.
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      requireSession(generation);
       return 'offline';
     } finally {
-      refreshInFlight = null;
+      if (refreshInFlight?.promise === promise) refreshInFlight = null;
     }
-  })();
-
-  return refreshInFlight;
+  });
+  refreshInFlight = { generation, promise };
+  return promise;
 }
 
 export interface RequestOptions {
@@ -292,6 +291,9 @@ export interface RequestOptions {
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, anonymous = false, timeoutMs = 15_000 } = options;
+  const generation = sessionGeneration;
+  const requireCurrentRequest = () => { if (!anonymous) requireSession(generation); };
+  let sentAccessToken: string | null = null;
 
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
@@ -314,6 +316,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   const send = async (): Promise<Response> => {
+    requireCurrentRequest();
+    sentAccessToken = accessToken;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     options.signal?.addEventListener('abort', () => controller.abort());
@@ -322,7 +326,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         method,
         headers: {
           'content-type': 'application/json',
-          ...(anonymous || !accessToken ? {} : { authorization: `Bearer ${accessToken}` }),
+          ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal,
@@ -336,44 +340,53 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   try {
     res = await send();
   } catch (err) {
+    if (err instanceof ApiError) throw err;
+    requireCurrentRequest();
     throw new NetworkError(err instanceof Error ? err.message : undefined);
   }
+  requireCurrentRequest();
 
   if (res.status === 401 && !anonymous) {
     const parsed = await res.clone().json().catch(() => null) as { error?: { code?: string } } | null;
-    // Only an expired token is worth a silent refresh; a revoked session must
-    // sign the user out rather than loop.
-    if (parsed?.error?.code === 'token_expired') {
-      const outcome = await refreshAccessToken();
+    requireCurrentRequest();
+    // A late 401 may refer to the access token another same-session caller
+    // already rotated. Reuse the new pair, but never cross a login boundary.
+    if (sentAccessToken && accessToken && sentAccessToken !== accessToken) {
+      try {
+        res = await send();
+      } catch (err) {
+        if (err instanceof ApiError) throw err;
+        requireCurrentRequest();
+        throw new NetworkError(err instanceof Error ? err.message : undefined);
+      }
+      requireCurrentRequest();
+    } else if (parsed?.error?.code === 'token_expired') {
+      const outcome = await refreshAccessToken(generation);
       if (outcome === 'ok') {
         try {
           res = await send();
         } catch (err) {
+          if (err instanceof ApiError) throw err;
+          requireCurrentRequest();
           throw new NetworkError(err instanceof Error ? err.message : undefined);
         }
+        requireCurrentRequest();
       } else if (outcome === 'offline') {
-        // The refresh never reached the server. Surface it as what it is so the
-        // UI falls back to cached data, and leave the session alone.
         throw new NetworkError('refresh unreachable');
       } else if (typeof outcome === 'object' && outcome.kind === 'transient') {
-        // The server did not reject the credential. Preserve it and propagate
-        // the real limiter/provider/server error instead of disguising it as a
-        // sign-out or the original access-token expiry.
         throw outcome.error;
       }
-      // 'superseded': this client's own parallel request already rotated, and
-      // `refreshAccessToken` has cleared nothing. Fall through to the error
-      // below; the caller retries against the session the winner stored.
-      // 'rejected': the session is genuinely dead and has already been cleared.
+      // An explicitly rejected session has already been cleared.
     } else {
-      await clearSession();
-      onUnauthenticated?.();
+      await rejectSession(generation);
     }
   }
 
   if (res.status === 204) return undefined as T;
 
   const payload = await res.json().catch(() => ({}));
+  // Decoding a response is also asynchronous: do not return old-account PHI.
+  if (res.ok) requireCurrentRequest();
   if (!res.ok) {
     throw apiErrorFromResponse(res, payload);
   }
