@@ -84,7 +84,22 @@ function makeHarness(file, options = {}) {
     },
     console,
   };
-  const evaluate = (text) => vm.runInNewContext(`(${text})`, context, { filename: file });
+  const evaluate = (text) => {
+    const compiled = ts.transpileModule(
+      `globalThis.__candidate = (${text});`,
+      {
+        compilerOptions: {
+          target: ts.ScriptTarget.ES2022,
+          module: ts.ModuleKind.None,
+          jsx: ts.JsxEmit.ReactJSX,
+        },
+      },
+    ).outputText;
+    vm.runInNewContext(compiled, context, { filename: file });
+    const candidate = context.__candidate;
+    delete context.__candidate;
+    return candidate;
+  };
   const updatePreferences = evaluate(extracted.updatePreferences);
   const loadMe = evaluate(extracted.loadMe);
 
