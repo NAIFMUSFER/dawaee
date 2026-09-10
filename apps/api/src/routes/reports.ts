@@ -7,6 +7,10 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { REPORT_READ, requireProfileAccess } from '../services/access-service.js';
 import { now as serverNow } from '../lib/clock.js';
 
+type ReportRange =
+  | { kind: 'explicit'; from: string; to: string }
+  | { kind: 'weekly'; endDate?: string };
+
 /**
  * Reports.
  *
@@ -23,13 +27,18 @@ export function registerReportRoutes(app: FastifyInstance): void {
   async function buildReport(
     userId: string,
     profileId: string,
-    from: string,
-    to: string,
+    range: ReportRange,
     audience: 'family' | 'clinician',
   ) {
     return withUserReadOnly(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, profileId, REPORT_READ);
       const now = serverNow();
+      const { from, to } = range.kind === 'weekly'
+        ? (() => {
+            const to = range.endDate ?? localDateInZone(now, access.profileTimezone);
+            return { from: addDays(to, -6), to };
+          })()
+        : range;
 
       const { rows } = await tx.query(
         `SELECT d.id, d.medication_id, d.status, d.scheduled_at, d.scheduled_local_date,
@@ -159,11 +168,11 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const { endDate } = req.query as { endDate?: string };
     const profileId = requireUuid((req.query as { profileId?: string }).profileId, 'profileId');
     const { userId } = currentUser(req);
-    // The 7-day window is fixed, so only the anchor needs checking — but it does
-    // need checking: `addDays` on a non-date yields a NaN-shaped string that
-    // Postgres rejects, which surfaced as a 500 instead of a 400.
-    const to = endDate === undefined || endDate === '' ? localDateInZone(serverNow(), 'Asia/Riyadh') : requireDate(endDate, 'endDate');
-    return buildReport(userId, profileId, addDays(to, -6), to, 'family');
+    // An explicit anchor is validated at the edge. When it is omitted, the
+    // profile's own local date is resolved inside buildReport after access has
+    // loaded the authoritative profile timezone.
+    const parsedEndDate = endDate === undefined || endDate === '' ? undefined : requireDate(endDate, 'endDate');
+    return buildReport(userId, profileId, { kind: 'weekly', endDate: parsedEndDate }, 'family');
   });
 
   /**
@@ -181,7 +190,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, range.from, range.to, 'family');
+    return buildReport(userId, profileId, { kind: 'explicit', from: range.from, to: range.to }, 'family');
   });
 
   /**
@@ -193,7 +202,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, range.from, range.to, 'clinician');
+    return buildReport(userId, profileId, { kind: 'explicit', from: range.from, to: range.to }, 'clinician');
   });
 
   /** Full data export for the privacy screen (PDPL data-access right). */
