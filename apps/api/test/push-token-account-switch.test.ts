@@ -72,4 +72,67 @@ describe('push token ownership follows the account currently using one installat
     expect(after.rows.filter((row) => row.active)).toEqual([{ user_id: b.userId, active: true }]);
     expect(after.rows.some((row) => row.user_id === a.userId && row.active)).toBe(false);
   });
+
+  it('does not let knowledge of a token alone transfer another installation', async () => {
+    const a = await signIn(h, '+966500006103');
+    const b = await signIn(h, '+966500006104');
+    const token = 'ExponentPushToken[audit-account-switch-token-0002]';
+
+    const first = await h.app.inject({
+      method: 'POST',
+      url: '/v1/devices/push-token',
+      headers: authHeaders(a),
+      payload: {
+        token,
+        platform: 'ios',
+        deviceId: 'audit-installation-owner-0002',
+        appVersion: '1.0.0',
+      },
+    });
+    expect(first.statusCode, first.body).toBe(200);
+
+    // Same provider token but a different installation id is not an account
+    // switch. It must not gain the trigger's cross-user transfer privilege.
+    const attemptedSteal = await h.app.inject({
+      method: 'POST',
+      url: '/v1/devices/push-token',
+      headers: authHeaders(b),
+      payload: {
+        token,
+        platform: 'ios',
+        deviceId: 'audit-different-installation-0002',
+        appVersion: '1.0.0',
+      },
+    });
+    expect(attemptedSteal.statusCode).not.toBe(200);
+
+    const rows = await owner.query<{ user_id: string; device_id: string; active: boolean }>(
+      'SELECT user_id, device_id, active FROM push_tokens WHERE token=$1 ORDER BY created_at',
+      [token],
+    );
+    expect(rows.rows.filter((row) => row.active)).toEqual([{
+      user_id: a.userId,
+      device_id: 'audit-installation-owner-0002',
+      active: true,
+    }]);
+  });
+
+  it('keeps the cross-user transfer helper unreachable as a runtime function', async () => {
+    const { rows } = await owner.query<{
+      app_can_execute: boolean;
+      worker_can_execute: boolean;
+      public_can_execute: boolean;
+    }>(`
+      SELECT
+        has_function_privilege('dawaee_app', 'app.transfer_push_token_on_account_switch()', 'EXECUTE') AS app_can_execute,
+        has_function_privilege('dawaee_worker', 'app.transfer_push_token_on_account_switch()', 'EXECUTE') AS worker_can_execute,
+        has_function_privilege('public', 'app.transfer_push_token_on_account_switch()', 'EXECUTE') AS public_can_execute
+    `);
+
+    expect(rows[0]).toEqual({
+      app_can_execute: false,
+      worker_can_execute: false,
+      public_can_execute: false,
+    });
+  });
 });
