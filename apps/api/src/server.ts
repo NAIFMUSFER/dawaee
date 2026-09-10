@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { ERROR_CODES } from '@dawaee/shared';
 import { loadConfig } from './config.js';
 import { createLogger } from './lib/logger.js';
+import { bindTrustedCloudflareClientIp } from './lib/client-ip.js';
 import { registerErrorHandler } from './middleware/error-handler.js';
 import { attachRequestContext } from './middleware/context.js';
 import { promoteObjectKeyHeader, promoteProfileIdHeader } from './middleware/profile-routing.js';
@@ -38,22 +39,24 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
 
   const options: FastifyServerOptions = {
     loggerInstance: createLogger(),
-    // Render's request log sees the original public URL. Fixed-path requests
-    // carry stable resource identifiers in headers and are rewritten only here,
-    // inside the application process, before Fastify matches the established
-    // handlers. Old clients can keep using the legacy URL routes during rollout.
-    rewriteUrl: (req) => rewritePrivateResourceUrl(req.url ?? '/', req.headers),
+    // Render's upstream request log sees the original public URL. Fixed-path
+    // requests carry stable resource identifiers in headers and are rewritten
+    // only inside the process. The same early hook also removes caller control
+    // over X-Forwarded-For on Render: Cloudflare's edge-authenticated client IP
+    // becomes the only forwarded entry before Fastify derives req.ip.
+    rewriteUrl: (req) => {
+      bindTrustedCloudflareClientIp(req.headers, cfg.TRUST_CF_CONNECTING_IP);
+      return rewritePrivateResourceUrl(req.url ?? '/', req.headers);
+    },
     // A hop count, never `true` — see TRUST_PROXY_HOPS in config.ts. With `true`
     // Fastify takes the LEFTMOST X-Forwarded-For entry, which is written by the
     // client, so every IP-keyed rate limit becomes advisory: measured, 14 of 14
     // registrations from one address were allowed simply by varying the header.
     //
-    // Expressed as a predicate rather than the number, because Fastify's types
-    // do not admit a number even though proxy-addr does. proxy-addr walks the
-    // chain from the RIGHT and asks this for each address; trusting the first
-    // `TRUST_PROXY_HOPS` of them is exactly what the numeric form means, and the
-    // resulting client address is the one the nearest untrusted hop reported —
-    // infrastructure, not request content.
+    // On Render, TRUST_CF_CONNECTING_IP first collapses the forwarded chain to
+    // exactly one edge-authenticated address, and the production guard requires
+    // this hop count to remain 1. Other deployments retain the explicit
+    // hop-count behaviour and must measure their own proxy topology.
     trustProxy: (_address: string, hop: number) => hop < cfg.TRUST_PROXY_HOPS,
     genReqId: () => randomUUID(),
     bodyLimit: 2 * 1024 * 1024,
@@ -100,8 +103,8 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
      * garbage tokens would stop being rate limited at all. Limiting everything
      * that arrives is worth more than keying the subset that authenticates.
      *
-     * What makes the address trustworthy is TRUST_PROXY_HOPS; with Fastify's
-     * `trustProxy: true` this key was whatever the client typed.
+     * What makes the address trustworthy is the deployment-specific client-IP
+     * binding above plus TRUST_PROXY_HOPS; a raw trustProxy:true is forbidden.
      */
     keyGenerator: (req) => req.auth?.userId ?? req.ip,
     // `statusCode` is not decoration. The object this returns is thrown, and
