@@ -11,6 +11,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
+import { clearMedicationDrafts, getMedicationPrefillDraft } from '@/storage/medication-draft';
 import type { MedicationView } from '@/api/types';
 import { DOSE_UNITS, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
 
@@ -35,22 +36,17 @@ type Prefill = {
   identitySource?: 'user' | 'ocr_confirmed_by_user' | 'barcode_confirmed_by_user';
 };
 
-function parsePrefill(raw: string | undefined): Prefill {
-  if (!raw) return {};
-  try {
-    const value = JSON.parse(raw) as Prefill;
-    return value && typeof value === 'object' ? value : {};
-  } catch {
-    return {};
-  }
-}
-
 export default function QuickCreateMedicationScreen() {
-  const params = useLocalSearchParams<{ prefill?: string }>();
-  const prefill = useMemo(() => parsePrefill(params.prefill), [params.prefill]);
+  const params = useLocalSearchParams<{ source?: string }>();
+  const { activeProfile, preferences } = useApp();
+  const prefill = useMemo<Prefill>(
+    () => params.source === 'capture' && activeProfile
+      ? (getMedicationPrefillDraft(activeProfile.id) ?? {})
+      : {},
+    [params.source, activeProfile?.id],
+  );
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
-  const { activeProfile, preferences } = useApp();
   const arabic = preferences.locale === 'ar';
   const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
 
@@ -155,6 +151,7 @@ export default function QuickCreateMedicationScreen() {
         }),
         ...(acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      clearMedicationDrafts();
       router.replace(`/medication/${created.medication.id}`);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
@@ -279,7 +276,14 @@ export default function QuickCreateMedicationScreen() {
             <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
           </>
         ) : null}
-        <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+        <Button
+          label={t('common.cancel')}
+          tone="ghost"
+          onPress={() => {
+            clearMedicationDrafts();
+            router.back();
+          }}
+        />
       </Screen>
     </SafeAreaView>
   );
