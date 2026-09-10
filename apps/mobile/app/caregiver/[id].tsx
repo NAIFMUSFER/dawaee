@@ -147,7 +147,8 @@ export default function CaregiverDetailScreen() {
     setSavingPermissions(true);
     setError(null);
     try {
-      await api.patch(`/v1/caregivers/${caregiver.id}/permissions`, {
+      await api.patch('/v1/caregivers/permissions', {
+        relationshipId: caregiver.id,
         permissions,
         escalationPriority: priority,
       });
@@ -177,7 +178,8 @@ export default function CaregiverDetailScreen() {
     setSavingChannel(channel);
     setError(null);
     try {
-      await api.put(`/v1/caregivers/${caregiver.id}/notification-rules`, {
+      await api.put('/v1/caregivers/notification-rules', {
+        relationshipId: caregiver.id,
         channel,
         mode: rule.mode,
         consecutiveMissedThreshold: rule.consecutiveMissedThreshold,
@@ -206,7 +208,7 @@ export default function CaregiverDetailScreen() {
         onPress: () => {
           void (async () => {
             try {
-              await api.delete(`/v1/caregivers/${caregiver.id}`);
+              await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
               router.replace('/(tabs)/family');
             } catch (err) {
               if (err instanceof NetworkError) setOffline(true);
