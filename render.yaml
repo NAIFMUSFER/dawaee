@@ -34,11 +34,19 @@ services:
     # Free web-service plan, which Render spins down after 15 minutes idle.
     plan: starter
     region: frankfurt        # closest Render region to Saudi Arabia
-    healthCheckPath: /health
+    # Readiness is the traffic gate. `/health` proves only that the process is
+    # alive; it deliberately does not check the database schema, worker build,
+    # or external providers. P20 proved API/worker release drift in production,
+    # and the 2026-09-10 audit proved production could report READY with OCR
+    # mocked and storage unconfigured. Render must therefore withhold a new
+    # instance until the same `/health/ready` contract the release audit uses is
+    # green. The old live API remains available while a replacement is starting.
+    healthCheckPath: /health/ready
     autoDeployTrigger: commit
     # Migrations do NOT run here: Render only allows preDeployCommand on paid
-    # instances. They run on the worker instead (see below), and this service
-    # fails its health check until the schema it needs exists.
+    # instances. They run on the worker instead (see below). API startup itself
+    # also refuses to bind a port until the required schema is present, and the
+    # readiness health check additionally refuses worker/provider drift.
     envVars:
       - key: APP
         value: api
