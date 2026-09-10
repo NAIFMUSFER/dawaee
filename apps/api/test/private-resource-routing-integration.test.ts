@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, PANADOL, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 import { MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER } from '../src/middleware/private-resource-routing.js';
 import { PROFILE_ID_HEADER } from '../src/middleware/profile-routing.js';
+import { resetClockSource, setClockSource } from '../src/lib/clock.js';
 
 let h: Harness;
 let alice: TestUser;
@@ -35,6 +36,10 @@ async function addSchedule(user: TestUser, medicationId: string): Promise<string
 }
 
 beforeAll(async () => {
+  // Keep the 08:00 Riyadh occurrence inside the materializer's six-hour
+  // backfill window and before the later schedule-deactivation assertion. The
+  // scenario is about private routing/authorization, not wall-clock timing.
+  setClockSource(() => new Date('2026-09-10T05:30:00.000Z'));
   resetDatabase();
   h = await startHarness();
   alice = await signIn(h, '+966500091101');
@@ -45,7 +50,9 @@ beforeAll(async () => {
   bobScheduleId = await addSchedule(bob, bobMedicationId);
 }, 120_000);
 
-afterAll(async () => { await h.close(); });
+afterAll(async () => {
+  try { await h.close(); } finally { resetClockSource(); }
+});
 
 describe('fixed public resource routing reaches the established authorization handlers', () => {
   it('reads the owner medication through a public path containing no medication id', async () => {
