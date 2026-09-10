@@ -54,6 +54,17 @@ describe('HTTP content-type matches the actual request body', () => {
     expect(init.headers).not.toHaveProperty('content-type');
   });
 
+  it('does not advertise JSON for a bodyless POST such as logout', async () => {
+    await client.api.post('/v1/auth/logout');
+
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    const init = h.fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+    expect(init.headers).toMatchObject({ authorization: 'Bearer test-access' });
+    expect(init.headers).not.toHaveProperty('content-type');
+  });
+
   it('still sends JSON content-type when a JSON body is present', async () => {
     await client.api.patch('/v1/caregivers/test-relationship/permissions', { permissions: [] });
 
