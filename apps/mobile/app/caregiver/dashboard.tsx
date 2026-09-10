@@ -90,6 +90,14 @@ function CaregiverPatientDashboard({
       patient === null ? false : patient.permissions === null || patient.permissions.includes(permission),
     [patient],
   );
+  const canSeeSchedule = can('view_schedule');
+  const canSeeMedications = can('view_medications');
+  // /v1/today joins both schedules and medication rows, and the API correctly
+  // requires both visibility grants. A schedule-only Observer must not issue a
+  // request that is guaranteed to fail and take its permitted adherence read
+  // down with the shared Promise.all.
+  const canSeeToday = canSeeSchedule && canSeeMedications;
+  const canSeeAdherence = can('view_adherence');
 
   const describe = useCallback((err: unknown): string => {
     if (!(err instanceof ApiError)) return t('error.internal_error');
@@ -106,14 +114,6 @@ function CaregiverPatientDashboard({
       setRefreshing(false);
       return;
     }
-    const canSeeSchedule = patient.permissions === null || patient.permissions.includes('view_schedule');
-    const canSeeMedications = patient.permissions === null || patient.permissions.includes('view_medications');
-    // /v1/today joins both schedules and medication rows, and the API correctly
-    // requires both visibility grants. A schedule-only Observer must not issue a
-    // request that is guaranteed to fail and take its permitted adherence read
-    // down with the shared Promise.all.
-    const canSeeToday = canSeeSchedule && canSeeMedications;
-    const canSeeAdherence = patient.permissions === null || patient.permissions.includes('view_adherence');
     const to = new Date();
     const from = new Date(to.getTime() - (ADHERENCE_DAYS - 1) * 86_400_000);
 
@@ -139,7 +139,7 @@ function CaregiverPatientDashboard({
         setRefreshing(false);
       }
     }
-  }, [beginLoad, describe, patient, setOffline]);
+  }, [beginLoad, canSeeAdherence, canSeeToday, describe, patient, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
