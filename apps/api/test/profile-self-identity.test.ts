@@ -46,7 +46,8 @@ beforeAll(async () => {
   });
   expect(invite.statusCode, invite.body).toBe(200);
   const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
-  const token = new URL(invitationLink).hash.slice(1);
+  const fragment = new URL(invitationLink).hash.slice(1);
+  const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
   expect(token, 'invite response did not contain a fragment token').toBeTruthy();
   const accepted = await h.app.inject({
     method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(caregiver), payload: { token },
