@@ -23,11 +23,31 @@ vi.mock('../src/storage/low-stock-snooze.js', () => ({
 const ALICE = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const BOB = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
 const ALICE_PROFILE = 'cccccccc-3333-4333-8333-cccccccccccc';
+const DEPENDENT_PROFILE = 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
   return { promise, resolve };
+}
+
+function schedule(profileId: string, medicationName: string) {
+  return {
+    profileId,
+    cachedAt: '2026-09-09T04:00:00.000Z',
+    timezone: 'Asia/Riyadh',
+    doses: [{
+      id: `${profileId}-dose`,
+      scheduledAt: '2026-09-09T05:00:00.000Z',
+      scheduledLocalTime: '08:00',
+      scheduledLocalDate: '2026-09-09',
+      medicationName,
+      doseQuantity: 1,
+      doseUnit: 'tablet',
+      foodInstruction: 'no_preference',
+      status: 'upcoming',
+    }],
+  };
 }
 
 let storage: typeof import('../src/storage/offline-queue.js');
@@ -53,23 +73,26 @@ describe('cached schedule is bound to the account that started the read', () => 
     await started.promise;
     storage.setCacheOwner(BOB);
 
-    resume.resolve(JSON.stringify({
-      profileId: ALICE_PROFILE,
-      cachedAt: '2026-09-09T04:00:00.000Z',
-      timezone: 'Asia/Riyadh',
-      doses: [{
-        id: 'dddddddd-4444-4444-8444-dddddddddddd',
-        scheduledAt: '2026-09-09T05:00:00.000Z',
-        scheduledLocalTime: '08:00',
-        scheduledLocalDate: '2026-09-09',
-        medicationName: 'SYNTHETIC-ALICE-ONLY',
-        doseQuantity: 1,
-        doseUnit: 'tablet',
-        foodInstruction: 'no_preference',
-        status: 'upcoming',
-      }],
-    }));
+    resume.resolve(JSON.stringify(schedule(ALICE_PROFILE, 'SYNTHETIC-ALICE-ONLY')));
 
     await expect(pending).resolves.toBeNull();
+  });
+
+  it('keeps each accessible profile schedule instead of replacing the previous profile cache', async () => {
+    let encryptedSlot: string | null = null;
+    io.read.mockImplementation(async () => encryptedSlot);
+    io.write.mockImplementation(async (_slot, _userId, value: string) => {
+      encryptedSlot = value;
+      return { ok: true };
+    });
+
+    const self = schedule(ALICE_PROFILE, 'SELF-MEDICATION');
+    const dependent = schedule(DEPENDENT_PROFILE, 'DEPENDENT-MEDICATION');
+
+    await storage.cacheSchedule(self);
+    await storage.cacheSchedule(dependent);
+
+    await expect(storage.readCachedSchedule(ALICE_PROFILE)).resolves.toEqual(self);
+    await expect(storage.readCachedSchedule(DEPENDENT_PROFILE)).resolves.toEqual(dependent);
   });
 });
