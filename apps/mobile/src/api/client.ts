@@ -55,6 +55,7 @@ const DEVICE_KEY = 'dawaee.deviceId';
 const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
 const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
 const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
+const OBJECT_KEY_HEADER = 'x-dawaee-object-key';
 const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
 
 interface PrivatePathRouting {
@@ -367,6 +368,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const privatePath = privatizeResourcePath(path);
   const profileIdValue = query?.profileId;
   const medicationIdValue = query?.medicationId;
+  const objectKeyValue = query?.objectKey;
   const routedProfileId = privatePath.profileId ?? (
     profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
       ? String(profileIdValue)
@@ -378,14 +380,25 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       : null
   );
   const routedScheduleId = privatePath.scheduleId;
+  // Only the signed-read route has an objectKey query contract. Keep arbitrary
+  // query fields named objectKey untouched elsewhere, but move this private
+  // storage identifier to request metadata before the platform sees the URL.
+  const routedObjectKey = !DEMO_MODE
+    && privatePath.path === '/v1/uploads/url'
+    && objectKeyValue !== undefined
+    && objectKeyValue !== null
+    && objectKeyValue !== ''
+    ? String(objectKeyValue)
+    : null;
 
   const url = new URL(`${BASE_URL}${privatePath.path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
     // Production Render access logs persist path/query before Dawaee's logger
-    // can redact them. Keep stable patient and medication identifiers out of
-    // network URLs. Demo mode never makes a network request, so preserve its
-    // established in-memory query contract.
+    // can redact them. Keep stable patient, medication, and upload identifiers
+    // out of network URLs. Demo mode never makes a network request, so preserve
+    // its established in-memory query contract.
     if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
+    if (routedObjectKey && k === 'objectKey') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -422,6 +435,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
           ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
           ...(routedScheduleId ? { [SCHEDULE_ID_HEADER]: routedScheduleId } : {}),
+          ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
