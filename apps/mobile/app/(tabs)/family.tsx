@@ -358,7 +358,7 @@ function CaregiverCard({
       <Row gap={theme.spacing.sm} style={{ marginTop: theme.spacing.xs }}>
         <View style={{ flex: 1 }}>
           <Button
-            label={t('family.manage')}
+            label={t('family.manageCaregiver')}
             tone="secondary"
             onPress={() => router.push(`/caregiver/${caregiver.id}`)}
           />
@@ -388,7 +388,7 @@ function CaregiverSelfView({
   const theme = useTheme();
 
   if (!you) {
-    return <EmptyState title={t('family.noActiveRelationship')} body={t('family.noActiveRelationshipBody')} />;
+    return <EmptyState title={t('family.yourAccess')} body={t('caregiver.notShared', { name: patientName })} />;
   }
 
   const visiblePermissions = you.permissions.filter((p) => !isChange(p));
@@ -419,12 +419,14 @@ function CaregiverSelfView({
         {you.permissions.length === 0 ? <Txt variant="bodySmall" color={theme.colors.ink500}>{t('family.seesNothing')}</Txt> : null}
       </Card>
 
-      <Button
-        label={busy ? t('common.loading') : t('family.leaveCircle')}
-        tone="danger"
-        disabled={busy}
-        onPress={onLeave ?? undefined}
-      />
+      {onLeave ? (
+        <Button
+          label={busy ? t('common.loading') : t('family.leaveCircle')}
+          tone="danger"
+          disabled={busy}
+          onPress={onLeave}
+        />
+      ) : null}
     </>
   );
 }
