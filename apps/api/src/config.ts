@@ -150,6 +150,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.OTP_DEBUG_ECHO) throw new Error('OTP_DEBUG_ECHO must be false in production');
     if (cfg.IP_HASH_SALT === 'dawaee-dev-salt') throw new Error('IP_HASH_SALT must be set in production');
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
+    if (cfg.PUSH_PROVIDER !== 'expo') {
+      throw new Error('PUSH_PROVIDER must be "expo" in production');
+    }
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
     }
