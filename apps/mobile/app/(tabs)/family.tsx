@@ -58,7 +58,7 @@ function FamilyProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const { begin: beginLoad } = useRequestScope();
+  const { begin: beginLoad, capture: captureAction } = useRequestScope();
 
   // The server's error codes are the primary source; its message is the
   // fallback for a code this build does not yet have a translation for.
@@ -134,14 +134,19 @@ function FamilyProfileScreen() {
           text: selfRemoval ? t('family.leaveCircle') : t('family.revokeAccess'),
           style: 'destructive',
           onPress: () => {
+            const isCurrent = captureAction();
             void (async () => {
               setBusyId(caregiver.id);
               setError(null);
               try {
+                // The revoke itself must complete even if the user switches profile.
+                // Only UI/global side effects belong to this mounted profile scope.
                 await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
+                if (!isCurrent()) return;
                 setOffline(false);
                 await load();
               } catch (err) {
+                if (!isCurrent()) return;
                 const actionTitle = selfRemoval ? t('family.leaveCircle') : t('family.revokeAccess');
                 if (err instanceof NetworkError) {
                   setOffline(true);
@@ -150,14 +155,14 @@ function FamilyProfileScreen() {
                   setError({ title: actionTitle, body: describe(err), retryLoad: false });
                 }
               } finally {
-                setBusyId(null);
+                if (isCurrent()) setBusyId(null);
               }
             })();
           },
         },
       ],
     );
-  }, [activeProfile?.displayName, bidi, describe, load, setOffline, t]);
+  }, [activeProfile?.displayName, bidi, captureAction, describe, load, setOffline, t]);
 
   if (loading) {
     return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
