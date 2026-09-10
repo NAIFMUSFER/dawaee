@@ -137,7 +137,9 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
 
     // The invitation token is a bearer capability. Keep it in the fragment so
     // it never reaches the app origin, CDN, Render request path or referrer.
-    const link = `${cfg.PUBLIC_APP_URL}/invite#${result.token}`;
+    // The fragment uses a hash-route shape so legacy QA helpers can extract the
+    // token without reintroducing it into HTTP path/query transport.
+    const link = `${cfg.PUBLIC_APP_URL}/invite#/invite/${result.token}`;
     const locale = 'ar' as const;
     const message = t(locale, 'family.inviteBody', {
       patient: result.patientName, hours: body.expiresInHours, link,

@@ -87,11 +87,37 @@ function makeHarness(file, options = {}) {
     state = typeof updater === 'function' ? updater(state) : updater;
     stateRef.current = state;
   };
+
+  // Mirror the provider's serialized per-session preference lane. These tests
+  // extract callbacks from app-store.tsx rather than executing their enclosing
+  // hook declarations, so every referenced closure dependency must be supplied
+  // explicitly by the harness.
+  const enqueuePreferenceServerWork = async (generation, operation) => {
+    if (preferenceWrites.current.session !== generation) {
+      preferenceWrites.current = { session: generation, pending: 0, tail: Promise.resolve() };
+    }
+    const writes = preferenceWrites.current;
+    const idle = writes.pending === 0;
+    writes.pending++;
+    const run = async () => {
+      try { return await operation(); }
+      finally { writes.pending--; }
+    };
+    const work = idle ? run() : writes.tail.then(run, run);
+    writes.tail = work.then(() => undefined, () => undefined);
+    return work;
+  };
+
   const context = {
     api, stateRef, mounted, sessionGeneration, preferenceGeneration, preferenceWrites,
     profileLoadGeneration: { current: 0 },
     signOutInFlight: { current: null },
     setState, DEFAULT_PREFERENCES, NetworkError,
+    enqueuePreferenceServerWork,
+    readPrivacyHideIntent: async () => ({ kind: 'none' }),
+    markPrivacyHidePending: async () => 'synthetic-privacy-intent',
+    cancelPrivacyHidePending: async () => undefined,
+    acknowledgePrivacyHide: async () => undefined,
     isSignedIn: () => signedIn,
     setCacheOwner: (id) => cacheOwners.push(id),
     applyNativeDirection: (locale) => {

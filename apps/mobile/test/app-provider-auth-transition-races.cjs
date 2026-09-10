@@ -112,6 +112,16 @@ function makeProvider(file) {
       purgeLocalCaches: id => { h.purgeCalls.push(id); return h.purge(id); },
       flushQueue: async () => ({ offline: false }),
       queueSize: async () => 0,
+      readOfflineBootstrap: async () => null,
+      writeOfflineBootstrap: async () => true,
+    },
+    '../storage/notification-privacy-intent.js': {
+      acknowledgePrivacyHide: async () => undefined,
+      cancelPrivacyHidePending: async () => undefined,
+      markPrivacyHidePending: async () => 'synthetic-privacy-intent',
+      privacyHidePendingCount: async () => 0,
+      purgePrivacyHideIntents: async () => undefined,
+      readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
     '../storage/cache-key.js': {
       destroyCacheKey: id => { h.keyCalls.push(id); return h.destroyKey(id); },

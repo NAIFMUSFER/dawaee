@@ -126,6 +126,14 @@ async function boot(failure?: Failure, hasStoredSession = true) {
       },
       writeOfflineBootstrap: async () => { snapshotWrites++; return true; },
     },
+    '../storage/notification-privacy-intent.js': {
+      acknowledgePrivacyHide: async () => undefined,
+      cancelPrivacyHidePending: async () => undefined,
+      markPrivacyHidePending: async () => 'synthetic-privacy-intent',
+      privacyHidePendingCount: async () => 0,
+      purgePrivacyHideIntents: async () => undefined,
+      readPrivacyHideIntent: async () => ({ kind: 'none' }),
+    },
     '../i18n/index.js': { applyNativeDirection: () => ({ restartRequired: false }) },
     '../notifications/index.js': {
       cancelAllLocalNotifications: async () => { cancellations++; },

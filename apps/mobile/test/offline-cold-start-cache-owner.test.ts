@@ -114,6 +114,7 @@ async function boot(file: string, hasStoredSession: boolean) {
     setState,
     cancelAllLocalNotifications: async () => undefined,
     purgeLocalCaches: async () => undefined,
+    purgePrivacyHideIntents: async () => undefined,
     destroyCacheKey: async () => undefined,
     loadMe: async () => {
       loadMeCalls++;
@@ -121,6 +122,9 @@ async function boot(file: string, hasStoredSession: boolean) {
     },
     isSignedIn: () => hasStoredSession,
     queueSize: async () => 0,
+    privacyHidePendingCount: async () => 0,
+    enqueuePreferenceServerWork: async (_generation: number, operation: () => Promise<unknown>) => operation(),
+    replayPendingPrivacyHide: async () => ({ offline: false, pending: false, blocked: false }),
     applyNativeDirection: () => ({ restartRequired: false }),
     console,
   } as Record<string, unknown>;

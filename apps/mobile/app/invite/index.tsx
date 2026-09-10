@@ -26,6 +26,11 @@ async function consumeInviteCapability(): Promise<string | null> {
 
   let token = fragment;
   try { token = decodeURIComponent(fragment); } catch { return null; }
+  // New invitations use a hash-route (`#/invite/<token>`) so API integration
+  // helpers and deep-link routers can identify the intent while the bearer
+  // remains entirely after `#`. Keep accepting the earlier raw `#<token>`
+  // fragment too, because already-issued links must continue to work.
+  if (token.startsWith('/invite/')) token = token.slice('/invite/'.length);
   // randomToken(32) is currently 43 base64url characters. Keep a narrow
   // forward-compatible bound without accepting delimiters or arbitrary text.
   return /^[A-Za-z0-9_-]{32,128}$/.test(token) ? token : null;
