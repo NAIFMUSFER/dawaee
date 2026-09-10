@@ -107,13 +107,19 @@ function CaregiverPatientDashboard({
       return;
     }
     const canSeeSchedule = patient.permissions === null || patient.permissions.includes('view_schedule');
+    const canSeeMedications = patient.permissions === null || patient.permissions.includes('view_medications');
+    // /v1/today joins both schedules and medication rows, and the API correctly
+    // requires both visibility grants. A schedule-only Observer must not issue a
+    // request that is guaranteed to fail and take its permitted adherence read
+    // down with the shared Promise.all.
+    const canSeeToday = canSeeSchedule && canSeeMedications;
     const canSeeAdherence = patient.permissions === null || patient.permissions.includes('view_adherence');
     const to = new Date();
     const from = new Date(to.getTime() - (ADHERENCE_DAYS - 1) * 86_400_000);
 
     try {
       const [todayRes, adherenceRes] = await Promise.all([
-        canSeeSchedule ? api.get<TodayResponse>('/v1/today', { profileId: patient.id }) : Promise.resolve(null),
+        canSeeToday ? api.get<TodayResponse>('/v1/today', { profileId: patient.id }) : Promise.resolve(null),
         canSeeAdherence
           ? api.get<AdherenceResponse>('/v1/adherence', { profileId: patient.id, from: isoDate(from), to: isoDate(to) })
           : Promise.resolve(null),
@@ -258,7 +264,7 @@ function CaregiverPatientDashboard({
         ) : null}
 
         <SectionTitle>{t('today.title')}</SectionTitle>
-        {loadFailedWithoutClinicalData ? null : !can('view_schedule') ? (
+        {loadFailedWithoutClinicalData ? null : !canSeeToday ? (
           <Banner tone="info" title={t('caregiver.notShared', { name: patient.displayName })} />
         ) : doses.length === 0 ? (
           <EmptyState title={t('caregiver.noDosesToday')} />
@@ -286,7 +292,7 @@ function CaregiverPatientDashboard({
           </Card>
         )}
 
-        {!loadFailedWithoutClinicalData && can('view_schedule') && upcoming.length > 0 ? (
+        {!loadFailedWithoutClinicalData && canSeeToday && upcoming.length > 0 ? (
           <>
             <SectionTitle>{t('today.upcoming')}</SectionTitle>
             <Card>
@@ -307,7 +313,7 @@ function CaregiverPatientDashboard({
           </>
         ) : null}
 
-        {!loadFailedWithoutClinicalData && can('view_schedule') && lateDoses.length === 0 && doses.length > 0 ? (
+        {!loadFailedWithoutClinicalData && canSeeToday && lateDoses.length === 0 && doses.length > 0 ? (
           <Banner tone="success" title={t('caregiver.nothingLate')} />
         ) : null}
 
