@@ -1,3 +1,4 @@
+import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { bindTrustedCloudflareClientIp } from '../src/lib/client-ip.js';
 
@@ -49,5 +50,54 @@ describe('Render trusted client-IP binding', () => {
 
     bindTrustedCloudflareClientIp(headers, true);
     expect(headers['x-forwarded-for']).toBeUndefined();
+  });
+});
+
+describe('Fastify client-IP derivation after Render binding', () => {
+  function makeApp() {
+    const app = Fastify({
+      trustProxy: (_address: string, hop: number) => hop < 1,
+      rewriteUrl: (req) => {
+        bindTrustedCloudflareClientIp(req.headers, true);
+        return req.url ?? '/';
+      },
+    });
+    app.get('/ip', async (req) => ({ ip: req.ip }));
+    return app;
+  }
+
+  it('makes req.ip equal the Cloudflare edge-authenticated client address, not a forged X-Forwarded-For entry', async () => {
+    const app = makeApp();
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/ip',
+        remoteAddress: '10.55.0.1',
+        headers: {
+          'cf-connecting-ip': '203.0.113.25',
+          'x-forwarded-for': '1.2.3.4, 5.6.7.8, 9.9.9.9',
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ip: '203.0.113.25' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('falls back to the socket address when trusted edge metadata is absent, never to the forged forwarded address', async () => {
+    const app = makeApp();
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/ip',
+        remoteAddress: '10.55.0.1',
+        headers: { 'x-forwarded-for': '198.51.100.88' },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ip: '10.55.0.1' });
+    } finally {
+      await app.close();
+    }
   });
 });
