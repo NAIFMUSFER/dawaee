@@ -262,7 +262,9 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
         escalationPriority: 2,
       },
     });
-    const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
+    const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
+    const token = new URL(invitationLink).hash.slice(1);
+    expect(token, 'invite response did not contain a fragment token').toBeTruthy();
     expect((await send({
       method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
