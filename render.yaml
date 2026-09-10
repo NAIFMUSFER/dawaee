@@ -29,7 +29,10 @@ services:
     name: dawaee-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free               # free web services sleep after 15 min idle
+    # Medication reminders and dose actions must not depend on an idle cold
+    # start. Production evidence showed repeated 503s while the API was on the
+    # Free web-service plan, which Render spins down after 15 minutes idle.
+    plan: starter
     region: frankfurt        # closest Render region to Saudi Arabia
     healthCheckPath: /health
     autoDeployTrigger: commit
