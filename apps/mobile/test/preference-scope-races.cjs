@@ -187,7 +187,7 @@ function scenarios(file) {
         const self = selfProfile(); const other = otherProfile();
         const h = makeHarness(file, { profiles: [other, self], activeProfile: other });
         const p = h.updatePreferences({ showMedicationInNotifications: true });
-        const req = h.pending('PATCH')[0];
+        const req = await waitForRequest(h, 'PATCH', '/v1/me/preferences');
         h.resolve(req, { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
         await p;
         if (h.rebuilds.length !== 1 || h.rebuilds[0].profileId !== 'SELF') {
@@ -212,7 +212,7 @@ function scenarios(file) {
         const self = selfProfile();
         const h = makeHarness(file, { profiles: [self], activeProfile: self });
         const p = h.updatePreferences({ showMedicationInNotifications: true });
-        h.resolve(h.pending('PATCH')[0], { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
+        h.resolve(await waitForRequest(h, 'PATCH', '/v1/me/preferences'), { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
         await p;
         if (h.rebuilds[0]?.profileId !== 'SELF') throw new Error('self rebuild was lost');
       },
@@ -223,7 +223,7 @@ function scenarios(file) {
         const other = otherProfile();
         const h = makeHarness(file, { profiles: [other], activeProfile: other });
         const p = h.updatePreferences({ showMedicationInNotifications: true });
-        h.resolve(h.pending('PATCH')[0], { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
+        h.resolve(await waitForRequest(h, 'PATCH', '/v1/me/preferences'), { preferences: { ...DEFAULT_PREFERENCES, showMedicationInNotifications: true } });
         await p;
         if (h.rebuilds[0]?.profileId !== null) throw new Error(`foreign cache reached rebuild: ${h.rebuilds[0]?.profileId}`);
       },
