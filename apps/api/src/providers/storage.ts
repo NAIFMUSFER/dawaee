@@ -31,12 +31,11 @@ export function sniffImageType(buf: Buffer): string | null {
   return null;
 }
 
-/** Keys are opaque and unguessable; the original filename never survives. */
-export function buildObjectKey(purpose: string, profileId: string | null, contentType: string): string {
+/** Keys are opaque and unguessable; profile linkage lives only in the database row. */
+export function buildObjectKey(purpose: string, _profileId: string | null, contentType: string): string {
   const ext = contentType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'bin';
-  const scope = profileId ? profileId.slice(0, 8) : 'account';
   const today = new Date().toISOString().slice(0, 10);
-  return `${purpose}/${today}/${scope}/${randomUUID()}.${ext}`;
+  return `${purpose}/${today}/${randomUUID()}.${ext}`;
 }
 
 /** Local disk. Development and tests only — refused in production by config. */
