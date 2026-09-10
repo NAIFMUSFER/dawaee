@@ -5,7 +5,7 @@ import {
   requestDeletionSchema, setConsentSchema, updateMeSchema,
   updatePreferencesSchema, updateProfileSchema,
 } from '@dawaee/shared';
-import { detectTimezoneChange } from '@dawaee/core';
+import { detectTimezoneChange, isValidTimeZone } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 
 /**
@@ -397,7 +397,11 @@ export function registerProfileRoutes(app: FastifyInstance): void {
    */
   app.post('/v1/profiles/:profileId/timezone-check', async (req) => {
     const { profileId } = req.params as { profileId: string };
-    const { deviceTimezone } = req.body as { deviceTimezone: string };
+    const body = req.body as { deviceTimezone?: unknown } | null;
+    const deviceTimezone = body?.deviceTimezone;
+    if (typeof deviceTimezone !== 'string' || !isValidTimeZone(deviceTimezone)) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid device timezone');
+    }
     const { userId } = currentUser(req);
 
     return withUser(userId, async (tx) => {
