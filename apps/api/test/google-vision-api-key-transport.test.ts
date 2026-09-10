@@ -37,7 +37,7 @@ describe('Google Vision credential transport', () => {
       );
     }));
 
-    const result = await provider().readMedicationLabel(Buffer.from([1, 2, 3]), 'image/png');
+    const result = await provider().readMedicationLabel(Buffer.from([1, 2, 3]));
 
     const url = new URL(requestedUrl);
     expect(`${url.origin}${url.pathname}`).toBe('https://vision.googleapis.com/v1/images:annotate');
