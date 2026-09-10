@@ -54,12 +54,14 @@ export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
 const DEVICE_KEY = 'dawaee.deviceId';
 const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
 const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
+const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
 const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
 
 interface PrivatePathRouting {
   path: string;
   profileId: string | null;
   medicationId: string | null;
+  scheduleId: string | null;
 }
 
 /**
@@ -69,11 +71,21 @@ interface PrivatePathRouting {
  * keeps the old path because it never makes a network request.
  */
 export function privatizeResourcePath(path: string): PrivatePathRouting {
-  if (DEMO_MODE) return { path, profileId: null, medicationId: null };
+  if (DEMO_MODE) return { path, profileId: null, medicationId: null, scheduleId: null };
 
   const queryAt = path.indexOf('?');
   const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
   const suffix = queryAt === -1 ? '' : path.slice(queryAt);
+
+  const schedule = new RegExp(`^/v1/schedules/(${UUID_PATH})$`, 'i').exec(pathname);
+  if (schedule) {
+    return {
+      path: `/v1/schedule${suffix}`,
+      profileId: null,
+      medicationId: null,
+      scheduleId: schedule[1]!,
+    };
+  }
 
   const medication = new RegExp(`^/v1/medications/(${UUID_PATH})(/(?:stock|refill|schedules))?$`, 'i').exec(pathname);
   if (medication) {
@@ -81,6 +93,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       path: `/v1/medication${medication[2] ?? ''}${suffix}`,
       profileId: null,
       medicationId: medication[1]!,
+      scheduleId: null,
     };
   }
 
@@ -90,10 +103,11 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       path: `/v1/profile${profile[2] ?? ''}${suffix}`,
       profileId: profile[1]!,
       medicationId: null,
+      scheduleId: null,
     };
   }
 
-  return { path, profileId: null, medicationId: null };
+  return { path, profileId: null, medicationId: null, scheduleId: null };
 }
 
 export class ApiError extends Error {
@@ -352,20 +366,26 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   const privatePath = privatizeResourcePath(path);
   const profileIdValue = query?.profileId;
+  const medicationIdValue = query?.medicationId;
   const routedProfileId = privatePath.profileId ?? (
     profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
       ? String(profileIdValue)
       : null
   );
-  const routedMedicationId = privatePath.medicationId;
+  const routedMedicationId = privatePath.medicationId ?? (
+    medicationIdValue !== undefined && medicationIdValue !== null && medicationIdValue !== ''
+      ? String(medicationIdValue)
+      : null
+  );
+  const routedScheduleId = privatePath.scheduleId;
 
   const url = new URL(`${BASE_URL}${privatePath.path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
     // Production Render access logs persist path/query before Dawaee's logger
-    // can redact them. Keep stable patient identifiers out of network URLs.
-    // Demo mode never makes a network request, so preserve its established
-    // in-memory query contract.
-    if (!DEMO_MODE && k === 'profileId') continue;
+    // can redact them. Keep stable patient and medication identifiers out of
+    // network URLs. Demo mode never makes a network request, so preserve its
+    // established in-memory query contract.
+    if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -401,6 +421,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
           ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
+          ...(routedScheduleId ? { [SCHEDULE_ID_HEADER]: routedScheduleId } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

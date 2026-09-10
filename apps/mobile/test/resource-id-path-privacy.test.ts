@@ -15,6 +15,7 @@ let client: Client;
 
 const MEDICATION_ID = '11111111-2222-4333-8444-555555555555';
 const PROFILE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const SCHEDULE_ID = '99999999-8888-4777-8666-555555555555';
 
 beforeEach(async () => {
   vi.resetModules();
@@ -69,6 +70,38 @@ describe('stable resource ids stay out of platform-visible request paths', () =>
     expect(init.headers).toMatchObject({
       authorization: 'Bearer test-access',
       'x-dawaee-profile-id': PROFILE_ID,
+    });
+  });
+
+  it('routes schedule updates through a fixed path', async () => {
+    await client.api.patch(`/v1/schedules/${SCHEDULE_ID}`, { active: false });
+    const [rawUrl, init] = h.fetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(new URL(rawUrl).pathname).toBe('/v1/schedule');
+    expect(rawUrl).not.toContain(SCHEDULE_ID);
+    expect(init.headers).toMatchObject({
+      authorization: 'Bearer test-access',
+      'x-dawaee-schedule-id': SCHEDULE_ID,
+    });
+  });
+
+  it('keeps medication filters out of query logs while retaining harmless range filters', async () => {
+    await client.api.get('/v1/doses', {
+      profileId: PROFILE_ID,
+      medicationId: MEDICATION_ID,
+      from: '2026-09-01',
+      to: '2026-09-10',
+    });
+    const [rawUrl, init] = h.fetch.mock.calls.at(-1) as [string, RequestInit];
+    const url = new URL(rawUrl);
+    expect(rawUrl).not.toContain(PROFILE_ID);
+    expect(rawUrl).not.toContain(MEDICATION_ID);
+    expect(url.searchParams.get('profileId')).toBeNull();
+    expect(url.searchParams.get('medicationId')).toBeNull();
+    expect(url.searchParams.get('from')).toBe('2026-09-01');
+    expect(url.searchParams.get('to')).toBe('2026-09-10');
+    expect(init.headers).toMatchObject({
+      'x-dawaee-profile-id': PROFILE_ID,
+      'x-dawaee-medication-id': MEDICATION_ID,
     });
   });
 

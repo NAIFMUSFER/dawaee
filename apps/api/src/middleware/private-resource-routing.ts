@@ -1,4 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http';
+import type { FastifyRequest } from 'fastify';
+import { AppError, ERROR_CODES } from '@dawaee/shared';
 import { PROFILE_ID_HEADER } from './profile-routing.js';
 
 /**
@@ -9,6 +11,7 @@ import { PROFILE_ID_HEADER } from './profile-routing.js';
  * available during the mobile rollout.
  */
 export const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
+export const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -26,8 +29,51 @@ function splitUrl(rawUrl: string): { path: string; suffix: string } {
     : { path: rawUrl.slice(0, q), suffix: rawUrl.slice(q) };
 }
 
+/**
+ * Medication filters are identifiers too. A list request such as dose history
+ * used to move the profile id into a header while leaving `medicationId` in the
+ * query string, which still exposed exactly which medicine was being viewed in
+ * Render's upstream request log. Promote the same private header back into the
+ * established query contract after the request has crossed that logging layer.
+ */
+export function promoteMedicationIdHeader(req: {
+  headers: FastifyRequest['headers'];
+  query: FastifyRequest['query'];
+}): void {
+  const rawHeader = req.headers[MEDICATION_ID_HEADER];
+  if (rawHeader === undefined) return;
+  if (Array.isArray(rawHeader)) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid medication routing metadata');
+  }
+
+  const headerMedicationId = rawHeader.trim();
+  if (!UUID.test(headerMedicationId)) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid medication routing metadata');
+  }
+  if (!req.query || typeof req.query !== 'object' || Array.isArray(req.query)) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid request query');
+  }
+
+  const query = req.query as Record<string, unknown>;
+  const legacyMedicationId = query.medicationId;
+  if (
+    legacyMedicationId !== undefined
+    && legacyMedicationId !== null
+    && legacyMedicationId !== ''
+    && String(legacyMedicationId) !== headerMedicationId
+  ) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Conflicting medication routing metadata');
+  }
+  query.medicationId = headerMedicationId;
+}
+
 export function rewritePrivateResourceUrl(rawUrl: string, headers: IncomingHttpHeaders): string {
   const { path, suffix } = splitUrl(rawUrl);
+
+  const scheduleId = routingId(headers, SCHEDULE_ID_HEADER);
+  if (scheduleId && path === '/v1/schedule') {
+    return `/v1/schedules/${scheduleId}${suffix}`;
+  }
 
   const medicationId = routingId(headers, MEDICATION_ID_HEADER);
   if (medicationId) {
