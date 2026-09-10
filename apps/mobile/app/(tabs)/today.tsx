@@ -211,7 +211,7 @@ function TodayProfileScreen() {
     if (!canConfirmDose || !isCurrent()) return;
     setBusyDoseId(dose.id);
     try {
-      await api.post(`/v1/doses/${dose.id}/undo`, {});
+      await api.post('/v1/dose/action', { doseId: dose.id, action: 'undo' });
       if (!isCurrent()) return;
       setLocalOverrides((o) => {
         const next = { ...o };
@@ -239,9 +239,9 @@ function TodayProfileScreen() {
 
       try {
         if (action === 'taken') {
-          await api.post(`/v1/doses/${dose.id}/taken`, { clientEventId, method: 'app', deviceId, takenAt: at });
+          await api.post('/v1/dose/action', { doseId: dose.id, action: 'taken', clientEventId, method: 'app', deviceId, takenAt: at });
         } else {
-          await api.post(`/v1/doses/${dose.id}/skip`, { clientEventId, deviceId });
+          await api.post('/v1/dose/action', { doseId: dose.id, action: 'skip', clientEventId, deviceId });
         }
         if (isCurrent()) await load();
       } catch (err) {
@@ -273,7 +273,7 @@ function TodayProfileScreen() {
     setBusyDoseId(dose.id);
     const clientEventId = newClientEventId();
     try {
-      await api.post(`/v1/doses/${dose.id}/snooze`, { minutes, clientEventId, deviceId });
+      await api.post('/v1/dose/action', { doseId: dose.id, action: 'snooze', minutes, clientEventId, deviceId });
       if (isCurrent()) await load();
     } catch (err) {
       if (err instanceof NetworkError) {

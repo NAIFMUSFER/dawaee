@@ -156,6 +156,8 @@ const EXPOSURE: Record<string, Exposure> = {
 
   'GET /v1/doses': 'authenticated',
   'POST /v1/doses/sync': 'authenticated',
+  // Fixed path: dose id and action live in authenticated JSON, not Render's request path.
+  'POST /v1/dose/action': 'authenticated',
   'GET /v1/doses/:doseId': 'authenticated',
   'POST /v1/doses/:doseId/taken': 'authenticated',
   'POST /v1/doses/:doseId/snooze': 'authenticated',

@@ -16,6 +16,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
 import { registerDoseRoutes } from './routes/doses.js';
+import { registerDosePrivateRoutes } from './routes/dose-private.js';
 import { registerStockRoutes } from './routes/stock.js';
 import { registerCaregiverRoutes } from './routes/caregivers.js';
 import { registerCaregiverPrivateRoutes } from './routes/caregiver-private.js';
@@ -129,6 +130,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerProfileRoutes(scope);
     registerMedicationRoutes(scope);
     registerDoseRoutes(scope);
+    registerDosePrivateRoutes(scope);
     registerStockRoutes(scope);
     registerCaregiverRoutes(scope);
     registerCaregiverPrivateRoutes(scope);
