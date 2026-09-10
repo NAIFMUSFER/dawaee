@@ -204,6 +204,13 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/caregivers/:relationshipId/permissions': 'authenticated',
   'PUT /v1/caregivers/:relationshipId/notification-rules': 'authenticated',
 
+  // Privacy-preserving caregiver mutations keep the stable relationship id in
+  // the JSON body so Render request-path logs cannot retain it. They remain
+  // authenticated and preserve the same owner/RLS checks as the legacy routes.
+  'PATCH /v1/caregivers/permissions': 'authenticated',
+  'PUT /v1/caregivers/notification-rules': 'authenticated',
+  'POST /v1/caregivers/revoke': 'authenticated',
+
   'GET /v1/escalation-policy': 'authenticated',
   'PUT /v1/escalation-policy': 'authenticated',
 
