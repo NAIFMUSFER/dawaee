@@ -74,7 +74,7 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
         `UPDATE notification_deliveries
             SET status = 'sent', sent_at = now(), provider = $3, provider_message_id = $4,
                 error_code = NULL, lease_until = NULL
-          WHERE id = $1 AND lease_token = $2`,
+          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
         [result.provider, result.providerMessageId ?? null]);
       if (applied) sent += 1;
     } else if (
@@ -86,14 +86,14 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
         `UPDATE notification_deliveries
             SET status = 'queued', next_attempt_at = now() + make_interval(secs => $3),
                 error_code = $4, error_detail = $5, provider = $6, lease_until = NULL
-          WHERE id = $1 AND lease_token = $2`,
+          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
         [delaySeconds, result.errorCode ?? null, result.errorDetail ? sanitizeOperationalError(result.errorDetail) : null, result.provider]);
     } else {
       await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'failed', error_code = $3, error_detail = $4, provider = $5,
                 lease_until = NULL
-          WHERE id = $1 AND lease_token = $2`,
+          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
         [result.errorCode ?? null, result.errorDetail ? sanitizeOperationalError(result.errorDetail) : null, result.provider]);
       ctx.log.warn(
         { deliveryId: row.id, channel: row.channel, errorCode: result.errorCode },
@@ -112,7 +112,10 @@ async function finalise(
   try {
     const { rowCount } = await c.query(sql, [row.id, row.lease_token, ...params]);
     if (rowCount === 0) {
-      ctx.log.warn({ deliveryId: row.id }, 'lease was reassigned before this worker finished; result discarded');
+      ctx.log.warn(
+        { deliveryId: row.id },
+        'delivery lease is no longer active; provider result discarded',
+      );
       return false;
     }
     return true;
