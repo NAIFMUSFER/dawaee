@@ -8,7 +8,6 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
@@ -89,16 +88,6 @@ function timeOrNull(value: string): string | null {
 
 export default function CaregiverDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { user, activeProfile } = useApp();
-  return (
-    <CaregiverDetailProfileScreen
-      key={JSON.stringify([profileScopeKey(user?.id, activeProfile), id])}
-      relationshipId={id}
-    />
-  );
-}
-
-function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: string }) {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
@@ -114,7 +103,6 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
   const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
-  const { begin: beginLoad } = useRequestScope();
   /** Set when the server answered 428: the rule waiting for a consent grant. */
 
   const describe = useCallback((err: unknown): string => {
@@ -125,15 +113,12 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
   }, [t]);
 
   const load = useCallback(async () => {
-    const isCurrent = beginLoad();
-    if (!isCurrent()) return;
     if (!activeProfile) {
       setLoading(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
-      if (!isCurrent()) return;
       const found = res.caregivers.find((c) => c.id === id) ?? null;
       setViewerRole(res.viewerRole);
       setCaregiver(found);
@@ -145,13 +130,12 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
       setError(null);
       setOffline(false);
     } catch (err) {
-      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      if (isCurrent()) setLoading(false);
+      setLoading(false);
     }
-  }, [activeProfile, beginLoad, describe, id, setOffline]);
+  }, [activeProfile, describe, id, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -379,4 +363,133 @@ function PermissionRow({
 }: { label: string; on: boolean; disabled: boolean; onToggle: () => void }) {
   const theme = useTheme();
   return (
-    <Row style={{ justifyContent: 'space-between', minHeight: theme.touch }} gap
+    <Row style={{ justifyContent: 'space-between', minHeight: theme.touch }} gap={theme.spacing.md}>
+      <View style={{ flex: 1 }}>
+        <Txt variant="body" color={disabled ? theme.colors.ink500 : theme.colors.ink900}>{label}</Txt>
+      </View>
+      <Switch
+        value={on}
+        onValueChange={onToggle}
+        disabled={disabled}
+        accessibilityRole="switch"
+        accessibilityLabel={label}
+        trackColor={{ false: theme.colors.ink200, true: theme.colors.primary200 }}
+        thumbColor={on ? theme.colors.primary700 : theme.colors.surface}
+      />
+    </Row>
+  );
+}
+
+function ChannelRuleCard({
+  channel, rule, editable, saving, onChange, onSave,
+}: {
+  channel: RuleChannel;
+  rule: RuleState;
+  editable: boolean;
+  saving: boolean;
+  onChange: (patch: Partial<RuleState>) => void;
+  onSave: () => void;
+}) {
+  const { t, formatNumber } = useI18n();
+  const theme = useTheme();
+
+  const showsThreshold = rule.mode === 'consecutive_missed';
+  const showsSummaryTime = rule.mode === 'daily_summary' || rule.mode === 'weekly_summary';
+
+  return (
+    <Card>
+      <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
+        <View style={{ flex: 1 }}>
+          <Txt variant="bodyLarge" weight="bold">{t(`channel.${channel}`)}</Txt>
+        </View>
+        <Switch
+          value={rule.enabled}
+          onValueChange={(enabled) => onChange({ enabled })}
+          disabled={!editable}
+          accessibilityRole="switch"
+          accessibilityLabel={t('notify.channelEnabled')}
+          trackColor={{ false: theme.colors.ink200, true: theme.colors.primary200 }}
+          thumbColor={rule.enabled ? theme.colors.primary700 : theme.colors.surface}
+        />
+      </Row>
+
+      <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('notify.mode')}</Txt>
+      <View style={{ gap: theme.spacing.xs }}>
+        {CAREGIVER_NOTIFY_MODES.map((mode) => (
+          <Button
+            key={mode}
+            label={`${rule.mode === mode ? '✓ ' : ''}${t(`notify.${mode}`)}`}
+            tone={rule.mode === mode ? 'primary' : 'secondary'}
+            disabled={!editable}
+            onPress={() => onChange({ mode })}
+          />
+        ))}
+      </View>
+
+      {showsThreshold ? (
+        <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
+          <View style={{ flex: 1 }}>
+            <Txt variant="bodySmall">{t('notify.threshold')}</Txt>
+          </View>
+          <Row gap={theme.spacing.sm}>
+            <Button
+              label="−"
+              tone="secondary"
+              fullWidth={false}
+              disabled={!editable || rule.consecutiveMissedThreshold <= 1}
+              accessibilityHint={t('notify.threshold')}
+              onPress={() => onChange({ consecutiveMissedThreshold: Math.max(1, rule.consecutiveMissedThreshold - 1) })}
+            />
+            <Txt variant="h3" weight="bold">{formatNumber(rule.consecutiveMissedThreshold)}</Txt>
+            <Button
+              label="+"
+              tone="secondary"
+              fullWidth={false}
+              disabled={!editable || rule.consecutiveMissedThreshold >= 10}
+              accessibilityHint={t('notify.threshold')}
+              onPress={() => onChange({ consecutiveMissedThreshold: Math.min(10, rule.consecutiveMissedThreshold + 1) })}
+            />
+          </Row>
+        </Row>
+      ) : null}
+
+      {showsSummaryTime ? (
+        <Field
+          label={t('notify.summaryTime')}
+          value={rule.summaryTime}
+          onChangeText={(v) => onChange({ summaryTime: v })}
+          keyboardType="number-pad"
+          hint={t('notify.timeHint')}
+          maxLength={5}
+        />
+      ) : null}
+
+      <Divider />
+      <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('notify.quietHours')}</Txt>
+      <Row gap={theme.spacing.md} align="flex-start">
+        <View style={{ flex: 1 }}>
+          <Field
+            label={t('notify.quietFrom')}
+            value={rule.quietHoursStart}
+            onChangeText={(v) => onChange({ quietHoursStart: v })}
+            keyboardType="number-pad"
+            maxLength={5}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Field
+            label={t('notify.quietTo')}
+            value={rule.quietHoursEnd}
+            onChangeText={(v) => onChange({ quietHoursEnd: v })}
+            keyboardType="number-pad"
+            maxLength={5}
+          />
+        </View>
+      </Row>
+      <Txt variant="caption" color={theme.colors.ink500}>{t('notify.timeHint')}</Txt>
+      <Txt variant="caption" color={theme.colors.ink500}>{t('escalation.quietHoursNote')}</Txt>
+
+      {editable ? <Button label={t('common.save')} tone="secondary" loading={saving} onPress={onSave} /> : null}
+    </Card>
+  );
+}
