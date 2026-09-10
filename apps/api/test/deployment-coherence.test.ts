@@ -77,4 +77,12 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     expect(worker.indexOf('process.env.DAWAEE_WORKER_PASSWORD'))
       .toBeLessThan(worker.indexOf('config.DATABASE_ROLE_PASSWORD'));
   });
+
+  it('production API compute cannot be configured to spin down between medication requests', () => {
+    const blueprint = readFileSync(resolve(ROOT, 'render.yaml'), 'utf8');
+    const apiSection = blueprint.split('name: dawaee-api')[1]?.split('name: dawaee-worker')[0] ?? '';
+    expect(apiSection, 'dawaee-api is missing from render.yaml').not.toBe('');
+    expect(apiSection, 'the medication API must not use sleeping free compute').not.toMatch(/\bplan:\s*free\b/);
+    expect(apiSection, 'the production API should use the same always-on Starter class as the worker').toMatch(/\bplan:\s*starter\b/);
+  });
 });
