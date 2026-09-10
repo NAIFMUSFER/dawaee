@@ -104,6 +104,12 @@ export interface StorageProvider {
     byteSize: number;
   }): Promise<UploadTicket>;
   createReadUrl(objectKey: string, ttlSeconds: number): Promise<string>;
-  getObject(objectKey: string): Promise<Buffer>;
+  /**
+   * Read a private object while enforcing the upload lease recorded by the API.
+   * When expectedBytes is supplied, the provider must refuse an object whose
+   * actual byte length differs. This prevents a direct S3/R2 PUT from declaring
+   * a small image to the API and later presenting different bytes to OCR.
+   */
+  getObject(objectKey: string, expectedBytes?: number): Promise<Buffer>;
   deleteObject(objectKey: string): Promise<void>;
 }
