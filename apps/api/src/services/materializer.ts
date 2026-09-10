@@ -24,6 +24,29 @@ export interface MaterializeResult {
   horizonEnd: Date;
 }
 
+/**
+ * Serializes every transaction that can change a medication's actionable dose
+ * lifecycle. The key is deterministic per medication. A theoretical hash
+ * collision can only serialize two unrelated medications; it cannot let two
+ * operations for the same medication run concurrently, so the safety property
+ * is preserved.
+ *
+ * We intentionally use a transaction advisory lock instead of SELECT ... FOR
+ * SHARE on medications. The latter participates in PostgreSQL's UPDATE
+ * privilege / row-security semantics and caused a proven least-privilege
+ * regression: a caregiver with the exact grants required to add a medication,
+ * view it, and edit/view its schedule could create the medication and schedule
+ * but materialization then saw no lockable medication row and returned zero
+ * doses unless edit_medication was also granted. That permission is unrelated
+ * to schedule creation and must not be smuggled in as a hidden dependency.
+ */
+export async function lockMedicationLifecycle(tx: PoolClient, medicationId: string): Promise<void> {
+  await tx.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+    [medicationId],
+  );
+}
+
 export function scheduleFromRow(row: {
   id: string; medication_id: string; patient_profile_id: string; rule: ScheduleRule; rule_kind: string;
   dose_quantity: string | number; dose_unit: string; timezone: string; start_date: string;
@@ -74,19 +97,18 @@ export async function materializeSchedule(
 
   /**
    * Medication status is authoritative for whether a schedule may create an
-   * actionable occurrence. Take a row-level SHARE lock before expanding the
-   * schedule so a concurrent pause/completion/archive cannot race this check:
+   * actionable occurrence. The lifecycle advisory lock is also taken by every
+   * medication status/archive path and by rematerialization before it touches
+   * existing dose rows. Therefore the status read and occurrence inserts are
+   * one serialized lifecycle operation:
    *
-   * - if the status change wins the lock, this SELECT waits and then observes
-   *   the inactive status, creating nothing;
-   * - if materialization wins the lock, the status change waits until this
-   *   transaction commits, then cancelFutureDoses() cancels what was created.
-   *
-   * A plain status SELECT would leave a TOCTOU window where a paused medication
-   * could acquire a fresh upcoming dose after the cancellation statement.
+   * - if pause/completion/archive wins, this waits and then sees inactive;
+   * - if materialization wins, the status transition waits, then cancels the
+   *   newly created future doses before it commits.
    */
+  await lockMedicationLifecycle(tx, schedule.medicationId);
   const { rows: medicationRows } = await tx.query<{ status: string }>(
-    'SELECT status::text AS status FROM medications WHERE id = $1 FOR SHARE',
+    'SELECT status::text AS status FROM medications WHERE id = $1',
     [schedule.medicationId],
   );
   if (medicationRows[0]?.status !== 'active') {
@@ -146,6 +168,10 @@ export async function rematerializeSchedule(
   schedule: MedicationSchedule,
   now: Date,
 ): Promise<{ removed: number; created: number }> {
+  // Lock before deleting dose rows. Taking this after the DELETE would allow a
+  // deadlock with a concurrent status transition that owns the lifecycle lock
+  // and is waiting to cancel the same dose rows.
+  await lockMedicationLifecycle(tx, schedule.medicationId);
   const { rowCount: removed } = await tx.query(
     `DELETE FROM dose_occurrences
       WHERE schedule_id = $1
