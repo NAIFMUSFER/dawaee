@@ -104,6 +104,12 @@ export interface StorageProvider {
     byteSize: number;
   }): Promise<UploadTicket>;
   createReadUrl(objectKey: string, ttlSeconds: number): Promise<string>;
-  getObject(objectKey: string): Promise<Buffer>;
+  /**
+   * `expectedBytes` is the size recorded when the server issued the upload
+   * lease. Providers compare it to the object actually stored before those
+   * bytes may enter OCR. It is optional for non-OCR maintenance callers that
+   * have no upload-lease row available.
+   */
+  getObject(objectKey: string, expectedBytes?: number): Promise<Buffer>;
   deleteObject(objectKey: string): Promise<void>;
 }
