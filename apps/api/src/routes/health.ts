@@ -10,7 +10,7 @@ import type { Providers } from '../providers/index.js';
  *
  * `/health` answers "is the process up" for the platform's health check.
  * `/health/ready` proves the database/schema are usable and, in production,
- * that the safety-critical worker is alive on the same release as the API.
+ * that the safety-critical worker and required external integrations are ready.
  */
 
 /**
@@ -33,6 +33,49 @@ export function buildIdentity(): { commit: string; version: string; builtAt: str
     version: process.env.APP_VERSION?.trim() || 'unknown',
     builtAt: process.env.BUILD_TIME?.trim() || 'unknown',
     schema,
+  };
+}
+
+export type IntegrationReadiness = {
+  integrations: { push: string; ocr: string; storage: string };
+  mockedIntegrations: string[];
+  check: { ok: boolean; detail?: string };
+};
+
+/**
+ * Provider names are part of the release contract, not just diagnostics.
+ *
+ * Production evidence on 2026-09-10 returned HTTP 200 READY while reporting
+ * `ocr=mock` and `storage=unconfigured`. That makes a partially configured
+ * medication-capture stack indistinguishable from a release that can actually
+ * upload and analyse a medicine image. Development/test may intentionally use
+ * mocks; production must fail readiness until every required integration is a
+ * real configured provider.
+ */
+export function assessIntegrationReadiness(providers: Providers, isProduction: boolean): IntegrationReadiness {
+  const integrations = {
+    push: providers.push.name,
+    ocr: providers.ocr.name,
+    storage: providers.storage.name,
+  };
+  const mockedIntegrations = Object.entries(integrations)
+    .filter(([, name]) => name === 'mock' || name === 'local' || name === 'unconfigured')
+    .map(([key]) => key);
+
+  if (!isProduction) {
+    return {
+      integrations,
+      mockedIntegrations,
+      check: { ok: true, detail: mockedIntegrations.length ? `development providers: ${mockedIntegrations.join(', ')}` : 'configured' },
+    };
+  }
+
+  return {
+    integrations,
+    mockedIntegrations,
+    check: mockedIntegrations.length === 0
+      ? { ok: true, detail: 'configured' }
+      : { ok: false, detail: `unavailable or non-production providers: ${mockedIntegrations.join(', ')}` },
   };
 }
 
@@ -112,22 +155,16 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
       }
     }
 
-    const integrations = {
-      push: providers.push.name,
-      ocr: providers.ocr.name,
-      storage: providers.storage.name,
-    };
-    const mocked = Object.entries(integrations)
-      .filter(([, name]) => name === 'mock' || name === 'local' || name === 'unconfigured')
-      .map(([k]) => k);
+    const integrationReadiness = assessIntegrationReadiness(providers, cfg.NODE_ENV === 'production');
+    if (cfg.NODE_ENV === 'production') checks.integrations = integrationReadiness.check;
 
     const healthy = Object.values(checks).every((c) => c.ok);
     return reply.status(healthy ? 200 : 503).send({
       status: healthy ? 'ready' : 'degraded',
       env: cfg.NODE_ENV,
       checks,
-      integrations,
-      mockedIntegrations: mocked,
+      integrations: integrationReadiness.integrations,
+      mockedIntegrations: integrationReadiness.mockedIntegrations,
       time: new Date().toISOString(),
     });
   });
