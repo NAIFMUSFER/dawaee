@@ -52,6 +52,7 @@ export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
  * happens to the plaintext copies left on devices that upgrade.
  */
 const DEVICE_KEY = 'dawaee.deviceId';
+const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
 
 export class ApiError extends Error {
   constructor(
@@ -307,8 +308,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const requireCurrentRequest = () => { if (!anonymous) requireSession(generation); };
   let sentAccessToken: string | null = null;
 
+  const profileIdValue = query?.profileId;
+  const routedProfileId =
+    profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
+      ? String(profileIdValue)
+      : null;
+
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
+    // Production Render access logs persist path/query before Dawaee's logger
+    // can redact them. Keep stable patient identifiers out of network URLs.
+    // Demo mode never makes a network request, so preserve its established
+    // in-memory query contract.
+    if (!DEMO_MODE && k === 'profileId') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -342,6 +354,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           // to send Content-Type: application/json with no body and production
           // repeatedly returned 400 before the route handler could run.
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
