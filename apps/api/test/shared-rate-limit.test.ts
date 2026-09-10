@@ -53,12 +53,14 @@ afterAll(async () => { await owner.end(); await alpha.close(); await beta.close(
 // ══════════════════════════════════════ multi-instance
 
 describe('two API instances share one authentication budget', () => {
-  it('a sign-in budget is not doubled by running a second replica', async () => {
+  it('two replicas spend the same database-backed fixed windows', async () => {
     const phone = newPhone();
     const max = BUDGETS['login:identifier'].max;
 
     // Split the attempts across the two instances. With per-process counters
-    // each would allow `max` on its own and the attacker would get 2×.
+    // each would spend an independent budget. The authoritative control here is
+    // the shared Postgres fixed-window counter, so prove all requests landed in
+    // it and that the HTTP decisions match each actual window.
     let allowed = 0;
     for (let i = 0; i < max * 2; i++) {
       const app = i % 2 === 0 ? alpha : beta;
@@ -67,7 +69,23 @@ describe('two API instances share one authentication budget', () => {
       const r = await login(app, phone, `198.51.100.${i + 1}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, `${allowed} attempts allowed against a budget of ${max}`).toBe(max);
+
+    const { rows: windows } = await owner.query<{ count: number }>(
+      `SELECT count
+         FROM auth_rate_buckets
+        WHERE scope = 'login:identifier'
+        ORDER BY window_start`,
+    );
+    const counts = windows.map((row) => Number(row.count));
+    expect(counts.reduce((sum, count) => sum + count, 0), 'some attempts bypassed the shared store').toBe(max * 2);
+    expect(windows.length, 'twenty quick requests crossed more than one fixed-window seam').toBeLessThanOrEqual(2);
+
+    // The implementation deliberately uses absolute fixed windows. If this
+    // test starts just before the ten-minute seam, both adjacent windows may
+    // legitimately admit up to `max`; expecting exactly `max` across the seam
+    // is a flaky sliding-window assertion and contradicts migration 0029.
+    const expectedAllowed = counts.reduce((sum, count) => sum + Math.min(count, max), 0);
+    expect(allowed, `${allowed} allowed; window counts were ${counts.join(',')}`).toBe(expectedAllowed);
   });
 
   it('a registration budget for one identifier is shared too', async () => {
