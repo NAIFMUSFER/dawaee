@@ -206,9 +206,10 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
         );
       }
       const { rows } = await tx.query<{
-        object_key: string; content_type: string; patient_profile_id: string | null; purpose: string;
+        object_key: string; content_type: string; byte_size: number;
+        patient_profile_id: string | null; purpose: string;
       }>(
-        `SELECT object_key, content_type, patient_profile_id, purpose
+        `SELECT object_key, content_type, byte_size, patient_profile_id, purpose
            FROM stored_objects WHERE object_key = $1`,
         [body.imageKey],
       );
@@ -229,7 +230,11 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
 
     let buffer: Buffer;
     try {
-      buffer = await providers.storage.getObject(objectMeta.object_key);
+      // The database row is the upload lease the API approved. Direct S3/R2
+      // upload means those bytes never passed through Fastify, so a max-size
+      // check alone is not enough: require the object OCR reads to match the
+      // exact byte count that was approved when the ticket was issued.
+      buffer = await providers.storage.getObject(objectMeta.object_key, objectMeta.byte_size);
     } catch {
       throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'The image could not be read for analysis');
     }
