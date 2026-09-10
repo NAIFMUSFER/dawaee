@@ -164,7 +164,7 @@ export default function FamilyScreen() {
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xxxl }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
       >
         <Txt variant="h1" weight="bold" accessibilityRole="header">{t('family.title')}</Txt>
 
