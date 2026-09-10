@@ -44,6 +44,7 @@ let currentUserId: string | null = null;
 let ownerGeneration = 0;
 type QueueOwner = { userId: string; generation: number };
 const queueMutations = new Map<string, Promise<void>>();
+const scheduleCacheMutations = new Map<string, Promise<void>>();
 
 export function setCacheOwner(userId: string | null): void {
   if (userId !== currentUserId) ownerGeneration++;
@@ -232,6 +233,70 @@ export interface CachedSchedule {
   }>;
 }
 
+type CachedScheduleEnvelope = {
+  version: 2;
+  schedules: CachedSchedule[];
+};
+
+function decodeCachedSchedules(raw: string | null): CachedSchedule[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as CachedSchedule | CachedScheduleEnvelope;
+    if (
+      typeof parsed === 'object'
+      && parsed !== null
+      && 'version' in parsed
+      && parsed.version === 2
+      && 'schedules' in parsed
+      && Array.isArray(parsed.schedules)
+    ) {
+      return parsed.schedules;
+    }
+    // Backward compatibility: releases before the multi-profile fix stored one
+    // CachedSchedule directly in the encrypted slot. Keep that profile usable
+    // offline and promote it to the v2 envelope on the next successful write.
+    if (
+      typeof parsed === 'object'
+      && parsed !== null
+      && 'profileId' in parsed
+      && typeof parsed.profileId === 'string'
+      && 'doses' in parsed
+      && Array.isArray(parsed.doses)
+    ) {
+      return [parsed as CachedSchedule];
+    }
+  } catch {
+    // A schedule cache is a disposable server snapshot. Corruption costs a
+    // refresh, not a dose action, so fail closed and rebuild when online.
+  }
+  return [];
+}
+
+/**
+ * Serialize schedule-cache read/modify/write operations per signed-in account.
+ *
+ * Multiple profile loads can overlap (for example a fast profile switch). A
+ * versioned envelope alone would still lose one profile if both writers read
+ * the same old value and committed independently. This lock covers local I/O
+ * only; no network request is held behind it. Stale account generations are
+ * discarded before they can write medication data after a logout/account swap.
+ */
+function mutateScheduleCache(owner: QueueOwner, operation: () => Promise<void>): Promise<void> {
+  const previous = scheduleCacheMutations.get(owner.userId) ?? Promise.resolve();
+  const result = previous.then(async () => {
+    if (!isCurrentOwner(owner)) return;
+    await operation();
+  });
+  // The schedule is a cache, not the dose-action journal. Persistence failure
+  // is survivable and keeps the historical best-effort behavior of cacheSchedule.
+  const settled = result.then(() => undefined, () => undefined);
+  scheduleCacheMutations.set(owner.userId, settled);
+  void settled.then(() => {
+    if (scheduleCacheMutations.get(owner.userId) === settled) scheduleCacheMutations.delete(owner.userId);
+  });
+  return settled;
+}
+
 /**
  * The prefetch window the server returns is stored so the phone can render
  * Today and schedule its LOCAL notifications with no network at all — which is
@@ -239,11 +304,23 @@ export interface CachedSchedule {
  * data plan.
  */
 export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
-  if (!currentUserId) return;
-  // Unlike the queue, a failure here is survivable and silent by design: the
-  // cache is a copy of what the server already holds, so losing it costs a
-  // network round trip, not a dose.
-  await writeSlot(CACHE_SLOT, currentUserId, JSON.stringify(cache));
+  const owner = captureOwner();
+  if (!owner) return;
+  await mutateScheduleCache(owner, async () => {
+    let raw: string | null = null;
+    try {
+      raw = await readSlot(CACHE_SLOT, owner.userId);
+    } catch {
+      // Cache corruption/key loss is recoverable: replace it with the fresh
+      // server response rather than making a successful Today request fail.
+    }
+    if (!isCurrentOwner(owner)) return;
+
+    const schedules = decodeCachedSchedules(raw).filter((entry) => entry.profileId !== cache.profileId);
+    schedules.push(cache);
+    const envelope: CachedScheduleEnvelope = { version: 2, schedules };
+    await writeSlot(CACHE_SLOT, owner.userId, JSON.stringify(envelope));
+  });
 }
 
 export async function readCachedSchedule(profileId: string): Promise<CachedSchedule | null> {
@@ -256,12 +333,8 @@ export async function readCachedSchedule(profileId: string): Promise<CachedSched
     return null;
   }
   if (!isCurrentOwner(owner) || !raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as CachedSchedule;
-    return isCurrentOwner(owner) && parsed.profileId === profileId ? parsed : null;
-  } catch {
-    return null;
-  }
+  const cached = decodeCachedSchedules(raw).find((entry) => entry.profileId === profileId) ?? null;
+  return isCurrentOwner(owner) ? cached : null;
 }
 
 /**
