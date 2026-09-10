@@ -72,6 +72,30 @@ export async function materializeSchedule(
     return { scheduleId: schedule.id, created: 0, horizonEnd };
   }
 
+  /**
+   * Medication status is authoritative for whether a schedule may create an
+   * actionable occurrence. Take a row-level SHARE lock before expanding the
+   * schedule so a concurrent pause/completion/archive cannot race this check:
+   *
+   * - if the status change wins the lock, this SELECT waits and then observes
+   *   the inactive status, creating nothing;
+   * - if materialization wins the lock, the status change waits until this
+   *   transaction commits, then cancelFutureDoses() cancels what was created.
+   *
+   * A plain status SELECT would leave a TOCTOU window where a paused medication
+   * could acquire a fresh upcoming dose after the cancellation statement.
+   */
+  const { rows: medicationRows } = await tx.query<{ status: string }>(
+    'SELECT status::text AS status FROM medications WHERE id = $1 FOR SHARE',
+    [schedule.medicationId],
+  );
+  if (medicationRows[0]?.status !== 'active') {
+    await tx.query('UPDATE medication_schedules SET materialized_through = $2 WHERE id = $1', [
+      schedule.id, horizonEnd,
+    ]);
+    return { scheduleId: schedule.id, created: 0, horizonEnd };
+  }
+
   // Start from a little before now so a dose whose window is still open but
   // which was never materialized (e.g. worker downtime) still gets created.
   const from = new Date(now.getTime() - 6 * 3_600_000);
