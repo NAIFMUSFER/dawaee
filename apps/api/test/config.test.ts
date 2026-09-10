@@ -43,8 +43,31 @@ describe('boolean environment variables', () => {
   });
 
   it('boots in production when the debug flag is the string "false"', () => {
-    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'false' })).not.toThrow();
-    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'true' })).toThrow(/OTP_DEBUG_ECHO/);
+    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'false', PUSH_PROVIDER: 'expo' })).not.toThrow();
+    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'true', PUSH_PROVIDER: 'expo' })).toThrow(/OTP_DEBUG_ECHO/);
+  });
+});
+
+/**
+ * A production medication-reminder service cannot silently fall back to the
+ * recording push provider. Render deliberately keeps PUSH_PROVIDER out of the
+ * committed blueprint so a sync cannot overwrite the live provider; that also
+ * means a fresh or misconfigured environment can leave it unset. In that case
+ * the schema default is `mock`, the process currently boots, and readiness can
+ * still be green even though no remote reminder can reach a handset.
+ */
+describe('production push provider', () => {
+  it('refuses the recording mock in production', () => {
+    expect(() => load({ NODE_ENV: 'production', PUSH_PROVIDER: 'mock' }))
+      .toThrow(/PUSH_PROVIDER/i);
+  });
+
+  it('refuses an unset provider instead of defaulting production to mock', () => {
+    expect(() => load({ NODE_ENV: 'production' })).toThrow(/PUSH_PROVIDER/i);
+  });
+
+  it('keeps the mock available outside production', () => {
+    expect(load({ NODE_ENV: 'test', PUSH_PROVIDER: 'mock' }).PUSH_PROVIDER).toBe('mock');
   });
 });
 
