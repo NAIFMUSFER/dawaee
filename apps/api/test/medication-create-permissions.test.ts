@@ -65,7 +65,8 @@ beforeAll(async () => {
   expect(invite.statusCode, invite.body).toBe(200);
   const body = invite.json<{ relationshipId: string; invitationLink: string }>();
   relationshipId = body.relationshipId;
-  const token = new URL(body.invitationLink).hash.slice(1);
+  const fragment = new URL(body.invitationLink).hash.slice(1);
+  const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
   expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
   const accepted = await h.app.inject({
