@@ -61,6 +61,12 @@ export function currentUser(req: FastifyRequest): { userId: string; sessionId: s
  * an operator finds out, and it needs no diagnostic endpoint left running in
  * production to do it. Once per process — this is a configuration fact, not a
  * per-request event, and a line per request would be its own denial of service.
+ *
+ * Render's configured health probe is the deliberate exception. It originates
+ * inside Render's private network, so its address is expected to be private and
+ * says nothing about how an external client's X-Forwarded-For chain resolves.
+ * Let the first non-health request perform the topology check instead; otherwise
+ * every cold start emits a false security warning before any client is observed.
  */
 let warnedAboutProxyDepth = false;
 
@@ -75,7 +81,8 @@ function looksLikeInfrastructure(ip: string | undefined): boolean {
 }
 
 export function attachRequestContext(req: FastifyRequest): void {
-  if (!warnedAboutProxyDepth && looksLikeInfrastructure(req.ip)) {
+  const isPlatformHealthProbe = req.url === '/health';
+  if (!isPlatformHealthProbe && !warnedAboutProxyDepth && looksLikeInfrastructure(req.ip)) {
     warnedAboutProxyDepth = true;
     req.log.warn(
       { trustProxyHops: loadConfig().TRUST_PROXY_HOPS, forwardedEntries: req.ips?.length ?? 0 },
