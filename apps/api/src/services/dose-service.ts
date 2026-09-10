@@ -52,19 +52,29 @@ export async function loadDoseForUpdate(tx: PoolClient, doseId: string): Promise
  * identifies that one intent, so the second attempt returns the first result
  * instead of double-decrementing the medication box.
  *
- * Scoped to the dose being acted on, not searched globally. It used to match
- * on `client_event_id` alone across every patient in the database — so an id
- * that collided with a DIFFERENT dose returned that dose's status, reported
- * `idempotentReplay: true`, and left the dose actually named in the request
- * unconfirmed. The API answered 200 and the adherence record was quietly
- * wrong, which for a medication app is the worst shape a bug can take. The
- * unique index is scoped per patient in migration 0019 for the same reason.
+ * The mutable occurrence keeps the latest client event for compatibility and
+ * fast-path replay. The append-only event trail keeps every applied identity so
+ * an old action remains a replay even after undo clears/replaces occurrence
+ * state. Both lookups are scoped to the requested dose; the uniqueness boundary
+ * remains per patient as established by migration 0019.
  */
 async function findByClientEvent(
   tx: PoolClient, doseId: string, clientEventId: string,
 ): Promise<{ id: string; status: DoseStatus } | null> {
   const { rows } = await tx.query<{ id: string; status: DoseStatus }>(
-    'SELECT id, status FROM dose_occurrences WHERE id = $1 AND client_event_id = $2',
+    `SELECT d.id, d.status
+       FROM dose_occurrences d
+      WHERE d.id = $1
+        AND (
+          d.client_event_id = $2
+          OR EXISTS (
+            SELECT 1
+              FROM dose_events e
+             WHERE e.dose_occurrence_id = d.id
+               AND e.patient_profile_id = d.patient_profile_id
+               AND e.client_event_id = $2
+          )
+        )`,
     [doseId, clientEventId],
   );
   return rows[0] ?? null;
@@ -149,13 +159,15 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
   );
 
   const { rows: eventRows } = await tx.query<{ id: string }>(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, at, actor_user_id, method, device_id, metadata)
-     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7)
+    `INSERT INTO dose_events
+       (dose_occurrence_id, patient_profile_id, type, at, actor_user_id, method, device_id, metadata, client_event_id)
+     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7,$8)
      RETURNING id`,
     [
       dose.id, dose.patient_profile_id, result.confirmedAt, input.userId, input.method,
       input.deviceId ?? null,
       JSON.stringify({ minutesLate: result.minutesLate, actorRole: input.actorRole, ...(input.voiceConfidence ? { voiceConfidence: input.voiceConfidence } : {}) }),
+      input.clientEventId,
     ],
   );
 
@@ -266,10 +278,11 @@ export async function snoozeDose(
     [dose.id, result.snoozedUntil, result.snoozeCount, input.clientEventId],
   );
   await tx.query(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata)
-     VALUES ($1,$2,'snoozed',$3,$4,$5)`,
+    `INSERT INTO dose_events
+       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id)
+     VALUES ($1,$2,'snoozed',$3,$4,$5,$6)`,
     [dose.id, dose.patient_profile_id, input.userId, input.deviceId ?? null,
-     JSON.stringify({ minutes: input.minutes, snoozeCount: result.snoozeCount })],
+     JSON.stringify({ minutes: input.minutes, snoozeCount: result.snoozeCount }), input.clientEventId],
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.snoozed',
@@ -313,9 +326,11 @@ export async function skipDoseAction(
     [dose.id, input.now, input.userId, input.clientEventId],
   );
   await tx.query(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata)
-     VALUES ($1,$2,'skipped',$3,$4,$5)`,
-    [dose.id, dose.patient_profile_id, input.userId, input.deviceId ?? null, JSON.stringify({ reason: input.reason ?? null })],
+    `INSERT INTO dose_events
+       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id)
+     VALUES ($1,$2,'skipped',$3,$4,$5,$6)`,
+    [dose.id, dose.patient_profile_id, input.userId, input.deviceId ?? null,
+     JSON.stringify({ reason: input.reason ?? null }), input.clientEventId],
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.skipped',
