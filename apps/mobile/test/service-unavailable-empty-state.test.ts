@@ -37,12 +37,15 @@ describe('503 never becomes a clinical empty state', () => {
     expect(src).toMatch(/serviceUnavailable\s*\?\s*\([\s\S]*?<Banner[\s\S]*?\)\s*:\s*medications\.length\s*===\s*0\s*\?/);
   });
 
-  it('Caregiver dashboard does not turn an initial API failure into no-doses or not-shared claims', () => {
+  it('Caregiver dashboard does not turn an initial transport or API failure into no-doses or not-shared claims', () => {
     const src = source('apps/mobile/app/caregiver/dashboard.tsx');
-    expect(src).toContain('loadFailedWithoutClinicalData = error !== null && today === null && adherence === null');
-    expect(src).toMatch(/loadFailedWithoutClinicalData\s*\?\s*null\s*:\s*!can\('view_schedule'\)/);
+    expect(src).toContain(
+      'const loadFailedWithoutClinicalData = (offline || error !== null) && today === null && adherence === null;',
+    );
+    expect(src).toMatch(/if \(err instanceof NetworkError\) setOffline\(true\);/);
+    expect(src).toMatch(/loadFailedWithoutClinicalData\s*\?\s*null\s*:\s*!canSeeToday/);
     expect(src).toMatch(/loadFailedWithoutClinicalData\s*\?\s*null\s*:\s*!can\('view_adherence'\)\s*\|\|\s*!adherence/);
-    expect(src.indexOf('loadFailedWithoutClinicalData ? null : !can(\'view_schedule\')'))
+    expect(src.indexOf('loadFailedWithoutClinicalData ? null : !canSeeToday'))
       .toBeLessThan(src.indexOf("t('caregiver.noDosesToday')"));
     expect(src.indexOf('loadFailedWithoutClinicalData ? null : !can(\'view_adherence\')'))
       .toBeLessThan(src.lastIndexOf("t('caregiver.notShared'"));
