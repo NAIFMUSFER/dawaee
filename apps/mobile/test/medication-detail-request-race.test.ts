@@ -59,22 +59,16 @@ function answer(batch: Array<{ route: string; completed?: boolean; resolve: (val
 describe('medication detail request boundary', () => {
   it('the newest same-medication refresh wins when responses complete out of order', async () => {
     const screen = fileURLToPath(new URL('../app/medication/[id].tsx', import.meta.url));
-    const scalar = new Proxy({}, { get: () => 4 });
     const h = createHarness(screen, undefined, undefined, {
       'expo-router': {
         router: { push: () => undefined, replace: () => undefined, back: () => undefined },
         useLocalSearchParams: () => ({ id: 'audit-medication' }),
       },
-      '@/hooks/useTheme': {
-        useTheme: () => ({
-          colors: new Proxy({}, { get: () => '#000' }),
-          spacing: scalar,
-          radius: scalar,
-          elderlyMode: false,
+      '@/components/MedicationDetailView': {
+        MedicationDetailView: (props: Record<string, any>) => ({
+          type: 'MedicationDetailView',
+          props: { ...props, children: props.medication?.name ?? '' },
         }),
-      },
-      '@/theme': {
-        statusColors: new Proxy({}, { get: () => ({ fg: '#000', bg: '#fff' }) }),
       },
     });
 
@@ -83,13 +77,13 @@ describe('medication detail request boundary', () => {
       await h.flush();
       expect(h.text()).toContain('SYNTHETIC-INITIAL-ONLY');
 
-      const refresh = h.find('RefreshControl');
-      expect(refresh).not.toBeNull();
-      refresh!.onRefresh();
+      const view = h.find('MedicationDetailView');
+      expect(view).not.toBeNull();
+      view!.onRefresh();
       const older = h.batch();
       expect(older.length).toBeGreaterThan(0);
 
-      refresh!.onRefresh();
+      view!.onRefresh();
       const newer = h.batch().filter((request) => !older.includes(request));
       expect(newer.length).toBeGreaterThan(0);
 
