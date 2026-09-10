@@ -187,11 +187,11 @@ describe('what the bytes are, not what the caller says they are', () => {
 describe('the object key is the server\'s, not the caller\'s', () => {
   it('a filename never reaches the key', () => {
     const key = buildObjectKey('medication_image', '11111111-2222-3333-4444-555555555555', 'image/png');
-    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f]{8}\/[0-9a-f-]{36}\.png$/);
+    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.png$/);
   });
 
   it('a traversal attempt in the request cannot shape the key', () => {
-    for (const purpose of ['../../etc/passwd', '..\\..\\windows', 'a b']) {
+    for (const purpose of ['../../etc/passwd', '..\\..\\windows', 'a\u0000b']) {
       const key = buildObjectKey(purpose, null, 'image/png');
       // The purpose is echoed, so the guarantee that matters is the storage
       // layer refusing anything that escapes its root — asserted below.
@@ -207,16 +207,16 @@ describe('the object key is the server\'s, not the caller\'s', () => {
   });
 
   /**
-   * The key embeds eight characters of the patient profile UUID. Not a secret,
-   * and not PHI — but it is a correlation handle: anyone who can see object
-   * keys (a bucket listing, a provider's access log) can group every image
-   * belonging to one patient without reading any of them. Recorded rather than
-   * removed, because the prefix is what makes an object's owner recoverable
-   * during an incident.
+   * Object ownership is already stored explicitly in `stored_objects`, so the
+   * externally visible key does not need to repeat any stable patient-profile
+   * identifier. This prevents bucket listings and provider access logs from
+   * becoming a cross-object patient correlation handle.
    */
-  it('the key carries a profile prefix and nothing else identifying', () => {
-    const key = buildObjectKey('medication_image', '11111111-2222-3333-4444-555555555555', 'image/png');
-    expect(key).toContain('11111111');
+  it('the key carries no stable profile correlation handle', () => {
+    const profileId = '11111111-2222-3333-4444-555555555555';
+    const key = buildObjectKey('medication_image', profileId, 'image/png');
+    expect(key).not.toContain(profileId);
+    expect(key).not.toContain(profileId.slice(0, 8));
     expect(key).not.toMatch(/\+9665|@|[Aa]spirin/);
   });
 });
