@@ -91,10 +91,16 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
   for (const dose of rows) {
     const policy = await loadPolicy(client, dose.patient_profile_id, dose.medication_id);
     const caregivers = await loadCaregivers(client, dose.patient_profile_id);
-    const missedStreak = await loadMissedStreak(client, dose.patient_profile_id, now, {
-      lateAfterMinutes: dose.late_after_minutes,
-      missedAfterMinutes: dose.missed_after_minutes,
-    });
+    const missedStreak = await loadMissedStreak(
+      client,
+      dose.patient_profile_id,
+      dose.scheduled_at,
+      now,
+      {
+        lateAfterMinutes: dose.late_after_minutes,
+        missedAfterMinutes: dose.missed_after_minutes,
+      },
+    );
 
     evaluated.push({
       dose,
@@ -274,15 +280,21 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
 async function loadMissedStreak(
   client: PoolClient,
   profileId: string,
+  currentScheduledAt: Date,
   now: Date,
   thresholds: { lateAfterMinutes: number; missedAfterMinutes: number },
 ): Promise<number> {
   const { rows } = await client.query(
-    `SELECT status::text AS status, scheduled_at, snoozed_until, notified_at
-       FROM dose_occurrences
-      WHERE patient_profile_id = $1 AND scheduled_at < $2 AND status <> 'cancelled'
-      ORDER BY scheduled_at DESC LIMIT 40`,
-    [profileId, now],
+    `SELECT d.status::text AS status, d.scheduled_at, d.snoozed_until, d.notified_at,
+            s.late_after_minutes, s.missed_after_minutes
+       FROM dose_occurrences d
+       JOIN medication_schedules s ON s.id = d.schedule_id
+      WHERE d.patient_profile_id = $1
+        AND d.scheduled_at < $2
+        AND d.status <> 'cancelled'
+      ORDER BY d.scheduled_at DESC
+      LIMIT 40`,
+    [profileId, currentScheduledAt],
   );
   return consecutiveMissed(
     rows.map((r) => ({
@@ -290,6 +302,10 @@ async function loadMissedStreak(
       scheduledAt: r.scheduled_at.toISOString(),
       snoozedUntil: r.snoozed_until?.toISOString() ?? null,
       notifiedAt: r.notified_at?.toISOString() ?? null,
+      thresholds: {
+        lateAfterMinutes: r.late_after_minutes,
+        missedAfterMinutes: r.missed_after_minutes,
+      },
     })),
     now,
     thresholds,
