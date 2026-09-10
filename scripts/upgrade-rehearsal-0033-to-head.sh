@@ -149,11 +149,11 @@ VALUES ('$M1', '$P1', 10, 'tablet', '$U2');
 INSERT INTO dose_occurrences
   (id, schedule_id, medication_id, patient_profile_id, scheduled_at, scheduled_local_date,
    scheduled_local_time, scheduled_timezone, dose_quantity, dose_unit, status,
-   snoozed_until, confirmed_at, confirmed_by_user_id, confirmation_method)
+   snoozed_until, confirmed_at, confirmed_by_user_id, confirmation_method, client_event_id)
 VALUES
   ('$D1', '$S1', '$M1', '$P1', '2026-09-10T05:00:00Z', '2026-09-10', '08:00',
    'Asia/Riyadh', 1, 'tablet', 'taken', '2026-09-10T06:00:00Z',
-   '2026-09-10T05:01:00Z', '$U2', 'app');
+   '2026-09-10T05:01:00Z', '$U2', 'app', 'upgrade-current-take');
 
 INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, method)
 VALUES ('$D1', '$P1', 'taken', '$U2', 'app');
@@ -196,14 +196,14 @@ step "running the real migration runner from 0033 to head"
 export DATABASE_URL="$MIGRATOR_URL/$DB"
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-first.txt
 UPGRADE_APPLIED="$(grep -Eo 'applied [0-9]+ migration\(s\)' /tmp/dawaee-upgrade-first.txt | tail -1 || true)"
-[ "$UPGRADE_APPLIED" = "applied 11 migration(s)" ] \
-  || fail "expected exactly 11 migrations (0034..0044), got: ${UPGRADE_APPLIED:-none}"
+[ "$UPGRADE_APPLIED" = "applied 12 migration(s)" ] \
+  || fail "expected exactly 12 migrations (0034..0045), got: ${UPGRADE_APPLIED:-none}"
 
 LATEST="$(psql -d "$DB" -tAc 'SELECT max(filename) FROM schema_migrations')"
 COUNT="$(psql -d "$DB" -tAc 'SELECT count(*) FROM schema_migrations')"
-[ "$COUNT" = "44" ] || fail "upgraded ledger has $COUNT rows, expected 44"
-[ "$LATEST" = "0044_logout_refresh_descendant_revocation.sql" ] \
-  || fail "upgraded ledger ended at $LATEST, not 0044"
+[ "$COUNT" = "45" ] || fail "upgraded ledger has $COUNT rows, expected 45"
+[ "$LATEST" = "0045_dose_client_event_history.sql" ] \
+  || fail "upgraded ledger ended at $LATEST, not 0045"
 
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-second.txt
 grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
@@ -211,7 +211,7 @@ grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
 
 snapshot_counts "$DB" > /tmp/dawaee-upgrade-after.txt
 if ! diff -u /tmp/dawaee-upgrade-before.txt /tmp/dawaee-upgrade-after.txt; then
-  fail "0033 -> 0044 changed row counts outside schema_migrations"
+  fail "0033 -> 0045 changed row counts outside schema_migrations"
 fi
 
 step "verifying intended data transformations and schema integrity"
@@ -224,6 +224,10 @@ DOSE_STATE="$(psql -d "$DB" -tAc "SELECT status::text || '|' || COALESCE(snoozed
 [ "$DOSE_STATE" = "taken|NULL" ] || fail "0036/0042 left terminal dose state inconsistent: $DOSE_STATE"
 [ "$(psql -d "$DB" -tAc "SELECT (confirmed_at IS NOT NULL)::text FROM dose_occurrences WHERE id='$D1'")" = "true" ] \
   || fail "dose confirmation metadata was lost"
+[ "$(psql -d "$DB" -tAc "SELECT count(*) FROM dose_events WHERE dose_occurrence_id='$D1' AND type='taken' AND client_event_id='upgrade-current-take'")" = "1" ] \
+  || fail "0045 did not preserve the recoverable client event id in dose event history"
+[ "$(psql -d "$DB" -tAc "SELECT indisvalid::text FROM pg_index WHERE indexrelid='public.dose_events_client_event_profile_idx'::regclass")" = "true" ] \
+  || fail "0045 dose event client-id index is not valid"
 
 [ "$(psql -d "$DB" -tAc "SELECT (dose_event_id IS NULL)::text FROM stock_transactions WHERE dose_occurrence_id='$D1'")" = "true" ] \
   || fail "0037 rewrote historical stock ledger identity unexpectedly"
@@ -331,9 +335,10 @@ cat <<EOF
 PRODUCTION-SHAPED UPGRADE REHEARSAL PASSED
   baseline          : 0033_caregiver_revoke_notification_policy.sql
   upgraded through : $LATEST
-  pending migrations: 11 (0034..0044), then no-op
+  pending migrations: 12 (0034..0045), then no-op
   row-count drift   : none before explicit post-upgrade actions
   intended cleanup : legacy WhatsApp disabled; terminal snooze metadata cleared
+  dose replay       : current client-event identity preserved into append-only history
   stock integrity   : new event identity index valid; historical ledger retained
   privilege model   : worker raw stored-object access revoked; bounded erasure works
   cross-profile     : mismatched prescription rejected structurally
