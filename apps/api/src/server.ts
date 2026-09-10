@@ -8,6 +8,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './lib/logger.js';
 import { registerErrorHandler } from './middleware/error-handler.js';
 import { attachRequestContext } from './middleware/context.js';
+import { promoteProfileIdHeader } from './middleware/profile-routing.js';
 import { buildProviders, type Providers } from './providers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
@@ -108,6 +109,15 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
 
   app.addHook('onRequest', async (req) => {
     attachRequestContext(req);
+  });
+
+  // Render records the request path before application logging can redact it.
+  // New clients therefore carry stable patient profile identifiers in a
+  // dedicated header. Promote that metadata back into the established route
+  // query contract before handlers run, so authorization and RLS code remain
+  // unchanged. Legacy query-only clients continue to work during rollout.
+  app.addHook('preValidation', async (req) => {
+    promoteProfileIdHeader(req);
   });
 
   registerErrorHandler(app);
