@@ -3,7 +3,7 @@ import path from 'node:path';
 
 // The harness executes the checked-in TSX screen with controlled request promises.
 const { createHarness } = require('./profile-screen-harness.cjs') as {
-  createHarness: (file: string, hookFile: string) => any;
+  createHarness: (file: string, hookFile: string, profile?: object, overrides?: object) => any;
 };
 
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/(tabs)/family.tsx');
@@ -30,6 +30,35 @@ function answerCareCircle(batch: any[], label: string) {
       }],
     });
   }
+}
+
+function createAlertOverride() {
+  const alerts: any[][] = [];
+  const reactNative = new Proxy({
+    Alert: { alert: (...args: any[]) => { alerts.push(args); } },
+  } as Record<string, unknown>, {
+    get(target, key) {
+      if (key === '__esModule') return true;
+      if (key in target) return target[key as string];
+      return String(key);
+    },
+  });
+  return { alerts, overrides: { 'react-native': reactNative } };
+}
+
+function startOwnerRevoke(h: any, alerts: any[][]) {
+  const owner = h.find('OwnerView');
+  expect(owner).toBeTruthy();
+  expect(owner.active).toHaveLength(1);
+  owner.onRevoke(owner.active[0]);
+  expect(alerts).toHaveLength(1);
+  const buttons = alerts[0][2];
+  const destructive = buttons.find((button: any) => button.style === 'destructive');
+  expect(destructive).toBeTruthy();
+  destructive.onPress();
+  const revoke = h.batch().filter((request: any) => request.route === '/v1/caregivers/revoke');
+  expect(revoke).toHaveLength(1);
+  return revoke;
 }
 
 describe('family screen profile/request isolation', () => {
@@ -107,6 +136,53 @@ describe('family screen profile/request isolation', () => {
       await h.flush();
       expect(h.text()).not.toContain('SYNTHETIC-OLDER-ONLY');
       expect(h.text()).toContain('SYNTHETIC-NEWER-ONLY');
+    } finally {
+      h.unmount();
+    }
+  });
+
+  it('late revoke failure from A cannot mark profile B offline', async () => {
+    const { alerts, overrides } = createAlertOverride();
+    const h = createHarness(screen, hook, {}, overrides);
+    try {
+      answerCareCircle(h.batch(), 'A');
+      await h.flush();
+      const revoke = startOwnerRevoke(h, alerts);
+
+      h.switchProfile('B');
+      const bLoads = h.batch().filter((request: any) => request.route === '/v1/care-circle');
+      answerCareCircle(bLoads, 'B');
+      await h.flush();
+      expect(h.app.offline).toBe(false);
+
+      h.fail(revoke);
+      await h.flush();
+      expect(h.app.offline).toBe(false);
+      expect(h.text()).toContain('SYNTHETIC-B-ONLY');
+    } finally {
+      h.unmount();
+    }
+  });
+
+  it('late revoke success from A cannot clear profile B offline state', async () => {
+    const { alerts, overrides } = createAlertOverride();
+    const h = createHarness(screen, hook, {}, overrides);
+    try {
+      answerCareCircle(h.batch(), 'A');
+      await h.flush();
+      const revoke = startOwnerRevoke(h, alerts);
+
+      h.switchProfile('B');
+      h.app.setOffline(true);
+      h.render();
+      expect(h.app.offline).toBe(true);
+
+      for (const request of revoke) {
+        request.completed = true;
+        request.resolve({});
+      }
+      await h.flush();
+      expect(h.app.offline).toBe(true);
     } finally {
       h.unmount();
     }
