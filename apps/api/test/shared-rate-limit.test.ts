@@ -203,6 +203,7 @@ describe('what counts as one client', () => {
 
   it('rotating the host part of a /64 does not buy extra attempts', async () => {
     const max = BUDGETS['login:ip'].max;
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='login:ip'");
     let allowed = 0;
     for (let i = 0; i < max + 6; i++) {
       // A DIFFERENT identifier each time, so the identifier budget cannot be
@@ -211,7 +212,25 @@ describe('what counts as one client', () => {
       const r = await login(alpha, newPhone(), `2001:db8:aaaa:bbbb::${(i + 1).toString(16)}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, 'an attacker walked a /64 past the address budget').toBeLessThanOrEqual(max);
+
+    const { rows: windows } = await owner.query<{ key_hash: string; count: number }>(
+      `SELECT key_hash, count
+         FROM auth_rate_buckets
+        WHERE scope = 'login:ip'
+        ORDER BY window_start`,
+    );
+    const counts = windows.map((row) => Number(row.count));
+    expect(new Set(windows.map((row) => row.key_hash)).size,
+      'rotating the host part created a second address key').toBe(1);
+    expect(counts.reduce((sum, count) => sum + count, 0),
+      'some rotated-address attempts bypassed the shared store').toBe(max + 6);
+    expect(windows.length, 'the requests crossed more than one fixed-window seam').toBeLessThanOrEqual(2);
+
+    // Fixed windows can legitimately admit another budget after the absolute
+    // ten-minute seam. Assert the limit independently for every observed window
+    // instead of treating the two windows as one sliding window.
+    const expectedAllowed = counts.reduce((sum, count) => sum + Math.min(count, max), 0);
+    expect(allowed, `${allowed} allowed; window counts were ${counts.join(',')}`).toBe(expectedAllowed);
   });
 });
 
