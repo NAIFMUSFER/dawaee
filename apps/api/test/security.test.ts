@@ -309,7 +309,9 @@ describe('upload security', () => {
     const key = res.json().objectKey as string;
     expect(key).not.toContain('..');
     expect(key).not.toContain('passwd');
-    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f]{8}\/[0-9a-f-]{36}\.jpg$/);
+    expect(key).not.toContain(alice.profileId);
+    expect(key).not.toContain(alice.profileId.slice(0, 8));
+    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.jpg$/);
   });
 
   it('rejects a file whose bytes are not a real image', async () => {
