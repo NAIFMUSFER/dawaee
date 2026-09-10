@@ -52,7 +52,7 @@ function startOwnerRevoke(h: any, alerts: any[][]) {
   expect(owner.active).toHaveLength(1);
   owner.onRevoke(owner.active[0]);
   expect(alerts).toHaveLength(1);
-  const buttons = alerts[0][2];
+  const buttons = alerts[0]![2] as any[];
   const destructive = buttons.find((button: any) => button.style === 'destructive');
   expect(destructive).toBeTruthy();
   destructive.onPress();
