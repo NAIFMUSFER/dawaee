@@ -33,12 +33,15 @@ function answer(batch: Array<{ route: string; completed?: boolean; resolve: (val
           barcode: null,
           status: 'active',
           imageKey: null,
-          foodInstruction: 'none',
+          foodInstruction: 'no_preference',
           instructions: null,
+          doctorInstructions: null,
           startDate: '2026-09-01',
           endDate: null,
-          source: 'manual',
-          sourceVerified: true,
+          expiryDate: null,
+          brandName: null,
+          genericName: null,
+          identitySource: 'manual',
           notes: null,
         },
         schedules: [],
@@ -56,10 +59,19 @@ function answer(batch: Array<{ route: string; completed?: boolean; resolve: (val
 describe('medication detail request boundary', () => {
   it('the newest same-medication refresh wins when responses complete out of order', async () => {
     const screen = fileURLToPath(new URL('../app/medication/[id].tsx', import.meta.url));
+    const scalar = new Proxy({}, { get: () => 4 });
     const h = createHarness(screen, undefined, undefined, {
       'expo-router': {
         router: { push: () => undefined, replace: () => undefined, back: () => undefined },
         useLocalSearchParams: () => ({ id: 'audit-medication' }),
+      },
+      '@/hooks/useTheme': {
+        useTheme: () => ({
+          colors: new Proxy({}, { get: () => '#000' }),
+          spacing: scalar,
+          radius: scalar,
+          elderlyMode: false,
+        }),
       },
       '@/theme': {
         statusColors: new Proxy({}, { get: () => ({ fg: '#000', bg: '#fff' }) }),
