@@ -95,7 +95,10 @@ function scenarios(screenFile, hookFile) {
     const request = h.batch();
     assert.equal(request.length, 1);
     assert.equal(request[0].method, 'POST');
-    assert.equal(request[0].route, '/v1/doses/TODAY/taken');
+    assert.equal(request[0].route, '/v1/dose/action');
+    assert.equal(request[0].payload.doseId, 'TODAY');
+    assert.equal(request[0].payload.action, 'taken');
+    assert.ok(request[0].payload.clientEventId);
     h.fail(request); await h.flush();
     assert.equal(h.queued.length, 1);
     assert.equal(h.queued[0].doseOccurrenceId, 'TODAY');
