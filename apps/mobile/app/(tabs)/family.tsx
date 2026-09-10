@@ -6,6 +6,7 @@ import { Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, Section
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import type { CaregiverPermission } from '@dawaee/shared';
@@ -43,6 +44,11 @@ function isChange(permission: CaregiverPermission): boolean {
 }
 
 export default function FamilyScreen() {
+  const { user, activeProfile } = useApp();
+  return <FamilyProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function FamilyProfileScreen() {
   const { t, bidi } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
@@ -52,6 +58,7 @@ export default function FamilyScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const { begin: beginLoad } = useRequestScope();
 
   // The server's error codes are the primary source; its message is the
   // fallback for a code this build does not yet have a translation for.
@@ -63,26 +70,33 @@ export default function FamilyScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
     if (!activeProfile) {
       setLoading(false);
+      setRefreshing(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       setData(res);
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else {
         setError({ title: t('family.loadError'), body: describe(err), retryLoad: true });
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeProfile, describe, setOffline, t]);
+  }, [activeProfile, beginLoad, describe, setOffline, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -347,7 +361,7 @@ function CaregiverCard({
             </View>
           ) : null}
           {changed.length > 0 ? (
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: theme.spacing.xs }}>
               <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canChange')}</Txt>
               <Txt variant="bodySmall" color={theme.colors.ink500}>{summary(changed)}</Txt>
             </View>
