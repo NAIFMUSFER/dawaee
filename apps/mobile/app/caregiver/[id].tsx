@@ -109,7 +109,7 @@ function CaregiverDetailProfileScreen() {
   const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
-  const { begin: beginLoad } = useRequestScope();
+  const { begin: beginLoad, capture: captureMutation } = useRequestScope();
   /** Set when the server answered 428: the rule waiting for a consent grant. */
 
   const describe = useCallback((err: unknown): string => {
@@ -218,10 +218,14 @@ function CaregiverDetailProfileScreen() {
         style: 'destructive',
         onPress: () => {
           void (async () => {
+            const isCurrent = captureMutation();
+            if (!isCurrent()) return;
             try {
               await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
+              if (!isCurrent()) return;
               router.replace('/(tabs)/family');
             } catch (err) {
+              if (!isCurrent()) return;
               if (err instanceof NetworkError) setOffline(true);
               else setError(describe(err));
             }
@@ -229,7 +233,7 @@ function CaregiverDetailProfileScreen() {
         },
       },
     ]);
-  }, [caregiver, describe, name, setOffline, t]);
+  }, [captureMutation, caregiver, describe, name, setOffline, t]);
 
   const dirtyPermissions = useMemo(() => {
     if (!caregiver) return false;
