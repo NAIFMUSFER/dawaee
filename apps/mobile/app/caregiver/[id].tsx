@@ -8,6 +8,7 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
@@ -103,6 +104,7 @@ export default function CaregiverDetailScreen() {
   const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
+  const { begin: beginLoad } = useRequestScope();
   /** Set when the server answered 428: the rule waiting for a consent grant. */
 
   const describe = useCallback((err: unknown): string => {
@@ -113,12 +115,15 @@ export default function CaregiverDetailScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
     if (!activeProfile) {
       setLoading(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       const found = res.caregivers.find((c) => c.id === id) ?? null;
       setViewerRole(res.viewerRole);
       setCaregiver(found);
@@ -130,12 +135,13 @@ export default function CaregiverDetailScreen() {
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, describe, id, setOffline]);
+  }, [activeProfile, beginLoad, describe, id, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
