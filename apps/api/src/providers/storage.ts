@@ -110,7 +110,7 @@ export class LocalStorageProvider implements StorageProvider {
     }
   }
 
-  async getObject(objectKey: string): Promise<Buffer> {
+  async getObject(objectKey: string, expectedBytes?: number): Promise<Buffer> {
     const target = this.path(objectKey);
     // One descriptor for both the size check and the bytes removes the old
     // stat/read TOCTOU window. O_NOFOLLOW also refuses a planted symlink at the
@@ -119,6 +119,9 @@ export class LocalStorageProvider implements StorageProvider {
     try {
       const info = await handle.stat();
       if (info.size > this.maxBytes) throw new Error('object exceeds configured upload limit');
+      if (expectedBytes !== undefined && info.size !== expectedBytes) {
+        throw new Error('object size does not match declared upload size');
+      }
       return await handle.readFile();
     } finally {
       await handle.close();
@@ -233,28 +236,35 @@ export class S3StorageProvider implements StorageProvider {
   }
 
   /**
-   * Never buffer an unbounded remote object.
+   * Never buffer an unbounded or lease-mismatched remote object.
    *
    * The upload ticket is a direct S3/R2 PUT. The API validates the size the
    * caller DECLARES before issuing it, but the bucket receives the actual bytes
-   * without passing through Fastify. Before this guard, a caller could declare
-   * a small image, PUT a very large body, then ask OCR to fetch it. arrayBuffer()
-   * allocated the entire object before any byte check existed, making one
-   * authenticated request enough to put memory pressure on the API process.
-   *
-   * Content-Length rejects the common case before reading. The streaming count
-   * is the authoritative guard for chunked/missing/lying metadata.
+   * without passing through Fastify. Content-Length rejects a known oversize or
+   * mismatch before reading. The streaming count is authoritative when metadata
+   * is missing or inaccurate, and it also stops reading as soon as either the
+   * configured cap or the recorded lease would be exceeded.
    */
-  async getObject(objectKey: string): Promise<Buffer> {
+  async getObject(objectKey: string, expectedBytes?: number): Promise<Buffer> {
     const res = await fetch(this.presign('GET', objectKey, 120), { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`object fetch failed with ${res.status}`);
 
-    const length = Number(res.headers.get('content-length'));
+    const lengthHeader = res.headers.get('content-length');
+    const length = lengthHeader === null ? Number.NaN : Number(lengthHeader);
     if (Number.isFinite(length) && length > this.maxBytes) {
       await res.body?.cancel().catch(() => undefined);
       throw new Error('object exceeds configured upload limit');
     }
-    if (!res.body) return Buffer.alloc(0);
+    if (expectedBytes !== undefined && Number.isFinite(length) && length !== expectedBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('object size does not match declared upload size');
+    }
+    if (!res.body) {
+      if (expectedBytes !== undefined && expectedBytes !== 0) {
+        throw new Error('object size does not match declared upload size');
+      }
+      return Buffer.alloc(0);
+    }
 
     const reader = res.body.getReader();
     const chunks: Buffer[] = [];
@@ -268,10 +278,17 @@ export class S3StorageProvider implements StorageProvider {
           await reader.cancel().catch(() => undefined);
           throw new Error('object exceeds configured upload limit');
         }
+        if (expectedBytes !== undefined && total > expectedBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error('object size does not match declared upload size');
+        }
         chunks.push(Buffer.from(value));
       }
     } finally {
       reader.releaseLock();
+    }
+    if (expectedBytes !== undefined && total !== expectedBytes) {
+      throw new Error('object size does not match declared upload size');
     }
     return Buffer.concat(chunks, total);
   }
@@ -305,7 +322,7 @@ export class UnconfiguredStorageProvider implements StorageProvider {
     this.refuse();
   }
 
-  getObject(): Promise<Buffer> {
+  getObject(_objectKey?: string, _expectedBytes?: number): Promise<Buffer> {
     this.refuse();
   }
 
