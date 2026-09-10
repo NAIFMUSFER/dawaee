@@ -9,6 +9,7 @@ import { createLogger } from './lib/logger.js';
 import { registerErrorHandler } from './middleware/error-handler.js';
 import { attachRequestContext } from './middleware/context.js';
 import { promoteProfileIdHeader } from './middleware/profile-routing.js';
+import { rewritePrivateResourceUrl } from './middleware/private-resource-routing.js';
 import { buildProviders, type Providers } from './providers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
@@ -37,6 +38,11 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
 
   const options: FastifyServerOptions = {
     loggerInstance: createLogger(),
+    // Render's request log sees the original public URL. Fixed-path requests
+    // carry stable resource identifiers in headers and are rewritten only here,
+    // inside the application process, before Fastify matches the established
+    // handlers. Old clients can keep using the legacy URL routes during rollout.
+    rewriteUrl: (req) => rewritePrivateResourceUrl(req.url ?? '/', req.headers),
     // A hop count, never `true` — see TRUST_PROXY_HOPS in config.ts. With `true`
     // Fastify takes the LEFTMOST X-Forwarded-For entry, which is written by the
     // client, so every IP-keyed rate limit becomes advisory: measured, 14 of 14
