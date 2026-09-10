@@ -5,13 +5,14 @@ import { describe, expect, it } from 'vitest';
 /**
  * Every link the server hands out must land on a screen that exists.
  *
- * Two link families have caused real failures and remain pinned here:
+ * Two capability link families are pinned here:
  *
- *  - `/invite/<token>`, built by the caregiver invitation route, must land on
- *    the invitation screen so the care circle can actually be formed.
+ *  - `/invite#<token>`, built by the caregiver invitation route, must land on
+ *    the fixed `/invite` screen. The bearer lives in the URL fragment so it is
+ *    not sent in the HTTP request path/query or ordinary access logs. The old
+ *    `/invite/<token>` route remains only for already-issued links.
  *  - `/e#<token>`, encoded into the emergency QR, must land on the fixed `/e`
- *    screen. The bearer capability deliberately lives in the URL fragment so
- *    it is not sent in the HTTP request path/query or ordinary access logs.
+ *    screen. Its bearer uses the same fragment-only transport boundary.
  *
  * Neither is visible from the server side alone: a route can build a
  * correct-looking URL while expo-router has no matching screen. This test
@@ -63,7 +64,7 @@ const resolves = (path: string) => ROUTES.some((route) => matchesRoutePattern(ro
  * The paths the API builds from PUBLIC_APP_URL, read out of the source rather
  * than restated here — a URL changed in the route must break this test.
  * Fragments are intentionally excluded because routing depends on pathname;
- * the emergency-capability transport suite separately pins fragment handling.
+ * the capability-transport suites separately pin fragment handling.
  */
 function publicPathsBuiltByTheApi(): Array<{ file: string; path: string }> {
   const found: Array<{ file: string; path: string }> = [];
@@ -86,9 +87,7 @@ describe('links the server hands out', () => {
 
   it('every one of them resolves to a screen', () => {
     for (const { file, path } of publicPathsBuiltByTheApi()) {
-      // `${PUBLIC_APP_URL}/invite/` + token — the trailing segment is the value.
-      const withToken = path.endsWith('/') ? `${path}TOKEN` : path;
-      expect(resolves(withToken), `${file} builds ${withToken}, which no screen serves`).toBe(true);
+      expect(resolves(path), `${file} builds ${path}, which no screen serves`).toBe(true);
     }
   });
 
@@ -99,11 +98,13 @@ describe('links the server hands out', () => {
     expect(matchesRoutePattern('/invite/[token]', '/invite/')).toBe(false);
   });
 
-  it('serves the invitation path and the fixed emergency-card path', () => {
-    expect(resolves('/invite/abc123')).toBe(true);
+  it('serves fixed fragment-entry paths and legacy caregiver links', () => {
+    expect(resolves('/invite')).toBe(true);
     expect(resolves('/e')).toBe(true);
-    // The old path-token transport must stay absent: the capability belongs in
-    // the fragment, not in a route segment that can reach HTTP logs.
+    // Keep the old caregiver route only so already-issued invitation links do
+    // not break. New links are pinned to fragment transport elsewhere.
+    expect(resolves('/invite/abc123')).toBe(true);
+    // The old emergency path-token transport must stay absent.
     expect(resolves('/e/abc123')).toBe(false);
   });
 
