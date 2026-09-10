@@ -1,38 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Banner, Button, Card, Divider, Field, Row, Screen, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { useApp } from '@/state/app-store';
+import {
+  clearMedicationDrafts,
+  getMedicationConfirmDraft,
+  setMedicationPrefillDraft,
+} from '@/storage/medication-draft';
 import {
   MEDICATION_FORMS, STRENGTH_UNITS,
   type MedicationForm, type MessageKey, type StrengthUnit,
 } from '@dawaee/shared';
-import type { ConfirmPayload } from './capture';
 
 const CONFIDENCE_FLOOR = 0.75;
-
-function parsePayload(raw: string | undefined): ConfirmPayload | null {
-  if (!raw) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    const candidate = parsed as Partial<ConfirmPayload>;
-    if (typeof candidate.imageKey !== 'string' || typeof candidate.detected !== 'object' || !candidate.detected) return null;
-    return {
-      imageKey: candidate.imageKey,
-      kind: candidate.kind === 'prescription' ? 'prescription' : 'medication_label',
-      detected: candidate.detected,
-      rawText: typeof candidate.rawText === 'string' ? candidate.rawText : '',
-      remainingLines: typeof candidate.remainingLines === 'number' ? candidate.remainingLines : 0,
-    };
-  } catch {
-    return null;
-  }
-}
 
 function asEnum<T extends string>(allowed: readonly T[], value: string | undefined): T | null {
   if (!value) return null;
@@ -41,8 +27,13 @@ function asEnum<T extends string>(allowed: readonly T[], value: string | undefin
 }
 
 export default function ConfirmMedicationScreen() {
-  const params = useLocalSearchParams<{ data?: string }>();
-  const payload = useMemo(() => parsePayload(params.data), [params.data]);
+  const { activeProfile } = useApp();
+  // The draft is deliberately process-local and profile-bound. A reload or
+  // profile switch fails closed instead of reconstructing health data from a URL.
+  const payload = useMemo(
+    () => activeProfile ? getMedicationConfirmDraft(activeProfile.id) : null,
+    [activeProfile?.id],
+  );
   const { t, formatNumber, locale } = useI18n();
 
   const detected = payload?.detected ?? {};
@@ -72,13 +63,15 @@ export default function ConfirmMedicationScreen() {
   const moreLabel = locale === 'ar' ? 'تفاصيل إضافية' : 'Additional details';
 
   const continueToSchedule = () => {
+    if (!payload || !activeProfile || activeProfile.id !== payload.patientProfileId) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setNameError(t('medication.nameRequired'));
       return;
     }
     const strength = strengthValue.trim() === '' ? null : Number(strengthValue.replace(',', '.'));
-    const prefill = {
+    setMedicationPrefillDraft({
+      patientProfileId: payload.patientProfileId,
       name: trimmed,
       form,
       strengthValue: strength !== null && Number.isFinite(strength) ? strength : null,
@@ -89,10 +82,17 @@ export default function ConfirmMedicationScreen() {
       barcode: barcode.trim() || null,
       instructions: instructions.trim() || null,
       expiryDate: expiryDate && isValidLocalDate(expiryDate) ? expiryDate : null,
-      imageKey: payload?.imageKey ?? null,
-      identitySource: 'ocr_confirmed_by_user' as const,
-    };
-    router.replace(`/medication/quick-create?prefill=${encodeURIComponent(JSON.stringify(prefill))}`);
+      imageKey: payload.imageKey,
+      identitySource: 'ocr_confirmed_by_user',
+    });
+    // Only a non-sensitive flow marker crosses the router boundary.
+    router.replace('/medication/quick-create?source=capture');
+  };
+
+  const exitDraft = (destination: 'manual' | 'back') => {
+    clearMedicationDrafts();
+    if (destination === 'manual') router.replace('/medication/quick-create');
+    else router.back();
   };
 
   if (!payload) {
@@ -101,8 +101,8 @@ export default function ConfirmMedicationScreen() {
         <Screen>
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t('medication.confirmIdentity')}</Txt>
           <Banner tone="warning" title={t('medication.nothingDetected')} />
-          <Button label={t('medication.manualEntry')} size="large" onPress={() => router.replace('/medication/quick-create')} />
-          <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('medication.manualEntry')} size="large" onPress={() => exitDraft('manual')} />
+          <Button label={t('common.back')} tone="ghost" onPress={() => exitDraft('back')} />
         </Screen>
       </SafeAreaView>
     );
@@ -152,7 +152,7 @@ export default function ConfirmMedicationScreen() {
         ) : null}
 
         <Button label={t('common.next')} size="large" onPress={continueToSchedule} />
-        <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+        <Button label={t('common.cancel')} tone="ghost" onPress={() => exitDraft('back')} />
       </Screen>
     </SafeAreaView>
   );
@@ -167,7 +167,7 @@ function Provenance({ source }: { source: { value: string; confidence: number } 
   return (
     <View style={{ gap: theme.spacing.xxs }}>
       <Row wrap gap={theme.spacing.xs}>
-        <Badge label={t('medication.detectedByAi')} fg={low ? theme.colors.warning700 : theme.colors.info700} bg={low ? theme.colors.warning100 : theme.colors.info100} />
+        <Badge label={t('medication.detectedByAi')} fg={low ? theme.colors.warning700 : theme.colors.info700} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
         <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
       </Row>
       {low ? <Txt variant="caption" color={theme.colors.warning700}>{t('medication.lowConfidence')}</Txt> : null}
