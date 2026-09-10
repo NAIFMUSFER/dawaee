@@ -117,11 +117,12 @@ check "the build identity is present and is the commit CI built" bash -c '
 '
 
 check "TLS verification cannot be disabled by configuration in production" bash -c '
-  # `DATABASE_SSL=no-verify` accepts any certificate from anyone. Supply a
-  # production-valid storage mode so this assertion reaches the TLS guard
-  # instead of failing earlier on an unrelated production requirement.
+  # `DATABASE_SSL=no-verify` accepts any certificate from anyone. Supply other
+  # production-valid provider/storage requirements so this assertion reaches
+  # the TLS guard instead of failing earlier on an unrelated invariant.
   out=$(docker run --rm -e NODE_ENV=production -e DATABASE_SSL=no-verify \
         -e DATABASE_URL=postgres://u:p@example.invalid:5432/d \
+        -e PUSH_PROVIDER=expo \
         -e STORAGE_PROVIDER=s3 \
         -e JWT_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
         -e IP_HASH_SALT=ci-salt-2026 '"$IMAGE"' 2>&1 || true)
