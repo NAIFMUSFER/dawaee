@@ -36,7 +36,9 @@ async function acceptCaregiver(patient: TestUser, caregiver: TestUser, token: st
     },
   });
   expect(invite.statusCode, invite.body).toBe(200);
-  const invitationToken = invite.json().invitationLink.split('/invite/')[1]!;
+  const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
+  const invitationToken = new URL(invitationLink).hash.slice(1);
+  expect(invitationToken, 'invite response did not contain a fragment token').toBeTruthy();
   const accepted = await h.app.inject({
     method: 'POST',
     url: '/v1/caregivers/accept',
