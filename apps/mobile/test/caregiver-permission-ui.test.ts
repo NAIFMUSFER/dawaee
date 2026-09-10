@@ -24,3 +24,24 @@ describe('caregiver permission editors cannot create unusable grants', () => {
     });
   }
 });
+
+describe('caregiver dashboard honors the compound dose-read contract', () => {
+  const dashboard = source('apps/mobile/app/caregiver/dashboard.tsx');
+
+  it('requires both schedule and medication visibility before calling /v1/today', () => {
+    expect(dashboard).toContain("const canSeeToday = canSeeSchedule && canSeeMedications;");
+    expect(dashboard).toMatch(
+      /canSeeToday\s*\?\s*api\.get<TodayResponse>\('\/v1\/today', \{ profileId: patient\.id \}\)/,
+    );
+    expect(dashboard).not.toMatch(
+      /canSeeSchedule\s*\?\s*api\.get<TodayResponse>\('\/v1\/today'/,
+    );
+  });
+
+  it('keeps the permitted adherence request independent of medication identity', () => {
+    expect(dashboard).toMatch(
+      /canSeeAdherence\s*\?\s*api\.get<AdherenceResponse>\('\/v1\/adherence'/,
+    );
+    expect(dashboard).not.toMatch(/canSeeMedications\s*&&\s*canSeeAdherence/);
+  });
+});
