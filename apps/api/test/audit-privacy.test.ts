@@ -339,8 +339,8 @@ describe('P13-13 capability values never survive into a request log line', () =>
     expect(redactUrl(CASES[3]![1])).toBe('/v1/uploads/url?[redacted]');
   });
 
-  it('positive control: an ordinary route is logged in full', () => {
+  it('pseudonymizes an ordinary health-linked identifier while keeping the route and filters legible', () => {
     const url = `/v1/doses?profileId=${patient.profileId}&from=2026-09-01&to=2026-09-30`;
-    expect(redactUrl(url)).toBe(url);
+    expect(redactUrl(url)).toBe('/v1/doses?profileId=[id]&from=2026-09-01&to=2026-09-30');
   });
 });
