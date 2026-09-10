@@ -146,12 +146,12 @@ function CaregiverPatientDashboard({
   const doses = today?.today ?? [];
   const now = Date.now();
   // Promise.all deliberately commits the two caregiver reads together. On a
-  // cold initial request, an HTTP failure therefore leaves both payloads null.
+  // cold initial request, a transport or HTTP failure leaves both payloads null.
   // That state is not evidence that the patient has no doses or stopped
   // sharing adherence, so never translate it into either clinical empty state.
   // Existing payloads from a previous successful load may remain visible next
-  // to the error banner; only the no-data failure case is suppressed here.
-  const loadFailedWithoutClinicalData = error !== null && today === null && adherence === null;
+  // to the connectivity/error banner; only the no-data failure case is suppressed.
+  const loadFailedWithoutClinicalData = (offline || error !== null) && today === null && adherence === null;
 
   const lateDoses = useMemo(
     () => doses

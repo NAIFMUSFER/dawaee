@@ -26,4 +26,14 @@ describe('caregiver dashboard patient isolation', () => {
     expect(src).toMatch(/catch \(err\) \{\s*if \(!isCurrent\(\)\) return;/);
     expect(src).toMatch(/finally \{\s*if \(isCurrent\(\)\) \{\s*setLoading\(false\);\s*setRefreshing\(false\);/);
   });
+
+  it('does not translate an initial network outage into false clinical empty states', () => {
+    const src = source('apps/mobile/app/caregiver/dashboard.tsx');
+    expect(src).toContain(
+      'const loadFailedWithoutClinicalData = (offline || error !== null) && today === null && adherence === null;',
+    );
+    expect(src).toMatch(/if \(err instanceof NetworkError\) setOffline\(true\);/);
+    expect(src).toMatch(/loadFailedWithoutClinicalData \? null : !canSeeToday[\s\S]*?caregiver\.noDosesToday/);
+    expect(src).toMatch(/loadFailedWithoutClinicalData \? null : !can\('view_adherence'\)[\s\S]*?caregiver\.notShared/);
+  });
 });
