@@ -187,6 +187,11 @@ export async function rematerializeSchedule(
 
 /** Cancels future doses when a medication is paused, completed or archived. */
 export async function cancelFutureDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
+  // A status transition calls this before its transaction can commit. Taking
+  // the same lifecycle lock as materialization means either materialization
+  // finishes first and these rows are cancelled, or the transition commits
+  // first and the materializer observes the inactive status.
+  await lockMedicationLifecycle(tx, medicationId);
   const { rowCount } = await tx.query(
     `UPDATE dose_occurrences
         SET status = 'cancelled', snoozed_until = NULL
@@ -209,6 +214,9 @@ export async function cancelFutureDoses(tx: PoolClient, medicationId: string, no
  * already answered keeps its recorded status.
  */
 export async function reviveCancelledDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
+  // Activation and top-up are one lifecycle operation. The later call to
+  // materializeSchedule is re-entrant on the same transaction advisory lock.
+  await lockMedicationLifecycle(tx, medicationId);
   const { rowCount } = await tx.query(
     `UPDATE dose_occurrences d
         SET status = 'upcoming', snoozed_until = NULL, notified_at = NULL,
