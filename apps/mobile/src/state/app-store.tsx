@@ -8,6 +8,10 @@ import {
   flushQueue, purgeLocalCaches, queueSize, readOfflineBootstrap,
   setCacheOwner, writeOfflineBootstrap,
 } from '../storage/offline-queue.js';
+import {
+  acknowledgePrivacyHide, cancelPrivacyHidePending, markPrivacyHidePending,
+  privacyHidePendingCount, purgePrivacyHideIntents, readPrivacyHideIntent,
+} from '../storage/notification-privacy-intent.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
@@ -103,6 +107,12 @@ export interface AppActions {
 
 const AppContext = createContext<(AppState & AppActions) | null>(null);
 
+type PrivacyReplayResult = {
+  offline: boolean;
+  pending: boolean;
+  blocked: boolean;
+};
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AppState>({
     ready: false,
@@ -159,6 +169,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   });
 
   /**
+   * Put every server-side preference write — ordinary saves and replay of a
+   * privacy-narrowing offline intent — on one per-session lane. Without this,
+   * a reconnect replay could race a fresh opt-in and commit after it.
+   */
+  const enqueuePreferenceServerWork = useCallback(async <T,>(
+    generation: number,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    if (preferenceWrites.current.session !== generation) {
+      preferenceWrites.current = { session: generation, pending: 0, tail: Promise.resolve() };
+    }
+    const writes = preferenceWrites.current;
+    const idle = writes.pending === 0;
+    writes.pending++;
+    const run = async (): Promise<T> => {
+      try {
+        return await operation();
+      } finally {
+        writes.pending--;
+      }
+    };
+    const work = idle ? run() : writes.tail.then(run, run);
+    writes.tail = work.then(() => undefined, () => undefined);
+    return work;
+  }, []);
+
+  /**
+   * Replay only the privacy-narrowing choice. The token is an acknowledgement
+   * nonce stored encrypted per account; clearing is compare-and-clear so an old
+   * response cannot erase a newer false -> true -> false intent.
+   */
+  const replayPendingPrivacyHide = useCallback(async (
+    userId: string,
+    generation: number,
+    isCurrent: () => boolean,
+  ): Promise<PrivacyReplayResult> => {
+    const intent = await readPrivacyHideIntent(userId);
+    if (!isCurrent()) return { offline: false, pending: intent.kind !== 'none', blocked: false };
+    if (intent.kind === 'none') return { offline: false, pending: false, blocked: false };
+    if (intent.kind === 'unreadable') {
+      // We cannot prove the server already received the narrowing write, so do
+      // not overwrite the local private setting with a potentially looser row.
+      return { offline: false, pending: true, blocked: true };
+    }
+    try {
+      await api.patch<{ preferences: Preferences }>('/v1/me/preferences', {
+        showMedicationInNotifications: false,
+      });
+      if (!isCurrent()) return { offline: false, pending: true, blocked: false };
+      await acknowledgePrivacyHide(userId, intent.token).catch(() => undefined);
+      if (!isCurrent()) return { offline: false, pending: true, blocked: false };
+      const pending = (await privacyHidePendingCount(userId)) > 0;
+      return { offline: false, pending, blocked: pending };
+    } catch (err) {
+      if (!isCurrent()) return { offline: false, pending: true, blocked: false };
+      if (err instanceof NetworkError) return { offline: true, pending: true, blocked: false };
+      // HTTP/provider failures are not "offline", but the privacy marker stays
+      // pending and loadMe will fail private until a later replay succeeds.
+      return { offline: false, pending: true, blocked: true };
+    }
+  }, []);
+
+  /**
    * Sign-out/privacy cleanup is asynchronous. A very fast re-login must not
    * create a newer session or cache namespace while an older sign-out can still
    * clear credentials, erase cache data, or publish signed-out UI state.
@@ -213,6 +286,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // history — and it must be set before the first `readQueue`, not after.
     setCacheOwner(me.user.id);
 
+    // A privacy-narrowing write that is still pending locally outranks a looser
+    // server row. This matters after process restart and also when a transient
+    // server failure lets /v1/me succeed while the replay PATCH did not.
+    const privacyIntent = await readPrivacyHideIntent(me.user.id);
+    if (!isCurrent()) return;
+
     // Profile/bootstrap refreshes are allowed to finish after a preference
     // write, but their older preference snapshot is not. Otherwise a slow
     // /v1/profiles response can restore the pre-save locale/privacy settings
@@ -223,7 +302,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const preferencesAreCurrent = preferenceSnapshot === preferenceGeneration.current
       && !preferencesPendingAtStart
       && !(preferenceWrites.current.session === generation && preferenceWrites.current.pending > 0);
-    const serverPreferences = { ...DEFAULT_PREFERENCES, ...me.preferences };
+    const serverPreferences = {
+      ...DEFAULT_PREFERENCES,
+      ...me.preferences,
+      ...(privacyIntent.kind === 'none' ? {} : { showMedicationInNotifications: false }),
+    };
     const effectivePreferences = preferencesAreCurrent ? serverPreferences : stateRef.current.preferences;
     const ownedSelfProfile = profilesRes.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
 
@@ -302,6 +385,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await cancelAllLocalNotifications().catch(() => undefined);
           await precedingSnapshotWrites.catch(() => undefined);
           await purgeLocalCaches(previousUserId).catch(() => undefined);
+          await purgePrivacyHideIntents().catch(() => undefined);
           if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
         })();
         authCleanupInFlight.current = cleanup;
@@ -312,6 +396,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId }));
         return;
       }
+
+      // Before accepting a server preference row after process restart, repay
+      // any encrypted hide intent from the previous offline run. The operation
+      // occupies the same serialized lane as live preference changes.
+      if (restoredUserId) {
+        const isCurrentBootstrap = () => !cancelled
+          && mounted.current
+          && bootstrapGeneration === sessionGeneration.current
+          && isSignedIn()
+          && !signOutInFlight.current;
+        await enqueuePreferenceServerWork(
+          bootstrapGeneration,
+          () => replayPendingPrivacyHide(restoredUserId, bootstrapGeneration, isCurrentBootstrap),
+        ).catch(() => undefined);
+      }
+
       try {
         await loadMe();
       } catch (err) {
@@ -353,11 +453,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
         }
       }
-      const pending = await queueSize();
-      if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId, pendingSyncCount: pending }));
+      const dosePending = await queueSize();
+      const privacyPending = await privacyHidePendingCount(restoredUserId);
+      if (!cancelled) setState((s) => ({
+        ...s,
+        ready: true,
+        deviceId,
+        pendingSyncCount: dosePending + privacyPending,
+      }));
     })();
     return () => { cancelled = true; };
-  }, [loadMe]);
+  }, [enqueuePreferenceServerWork, loadMe, replayPendingPrivacyHide]);
 
   const syncNow = useCallback(async () => {
     const generation = sessionGeneration.current;
@@ -369,11 +475,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!isCurrent()) return;
     const result = await flushQueue(deviceId);
     if (!isCurrent()) return;
-    const pending = await queueSize();
+
+    const userId = stateRef.current.user?.id ?? null;
+    let privacyReplay: PrivacyReplayResult = { offline: false, pending: false, blocked: false };
+    if (userId) {
+      privacyReplay = await enqueuePreferenceServerWork(
+        generation,
+        () => replayPendingPrivacyHide(userId, generation, isCurrent),
+      ).catch(() => ({ offline: false, pending: true, blocked: true }));
+    }
     if (!isCurrent()) return;
-    setState((s) => ({ ...s, offline: result.offline, pendingSyncCount: pending }));
-    if (!result.offline) await loadMe().catch(() => undefined);
-  }, [loadMe]);
+
+    const dosePending = await queueSize();
+    if (!isCurrent()) return;
+    const privacyPending = await privacyHidePendingCount(userId);
+    if (!isCurrent()) return;
+    const offline = result.offline || privacyReplay.offline;
+    setState((s) => ({ ...s, offline, pendingSyncCount: dosePending + privacyPending }));
+    if (!offline) await loadMe().catch(() => undefined);
+  }, [enqueuePreferenceServerWork, loadMe, replayPendingPrivacyHide]);
 
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
@@ -429,6 +549,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await precedingCleanup.catch(() => undefined);
           await precedingSnapshotWrites.catch(() => undefined);
           await purgeLocalCaches(previousUserId).catch(() => undefined);
+          await purgePrivacyHideIntents().catch(() => undefined);
           if (previousUserId) await destroyCacheKey(previousUserId).catch(() => undefined);
         }
       })();
@@ -509,26 +630,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // an offline banner on a perfectly healthy connection. The choice is
       // kept locally and travels with the sign-up request instead.
       if (!isSignedIn() || signOutInFlight.current) return;
+      const preferenceUserId = stateRef.current.user?.id ?? null;
+      if (!preferenceUserId) return;
 
-      // Serialize persistence as well as ignoring old responses: otherwise an
-      // earlier PATCH can commit last and restore the old choice on next login.
-      // A new session has its own tail so a stalled old request cannot block it.
-      if (preferenceWrites.current.session !== generation) {
-        preferenceWrites.current = { session: generation, pending: 0, tail: Promise.resolve() };
+      // The general bootstrap remembers presentation state, but only this
+      // privacy-narrowing field gets a durable server-write marker. Persist it
+      // before the HTTP request so a crash or NetworkError cannot turn a local
+      // "hide" into a later server push that still names the medication.
+      let privacyIntentToken: string | null = null;
+      if (patch.showMedicationInNotifications === false) {
+        privacyIntentToken = await markPrivacyHidePending(preferenceUserId).catch(() => null);
+      } else if (patch.showMedicationInNotifications === true) {
+        await cancelPrivacyHidePending(preferenceUserId).catch(() => undefined);
       }
-      const writes = preferenceWrites.current;
-      const idle = writes.pending === 0;
-      writes.pending++;
+      if (
+        !mounted.current
+        || generation !== sessionGeneration.current
+        || !isSignedIn()
+        || signOutInFlight.current
+      ) return;
+
       const save = async () => {
         try {
           if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn() || signOutInFlight.current) return;
           const res = await api.patch<{ preferences: Preferences }>('/v1/me/preferences', patch);
-          if (
-            !mounted.current
-            || generation !== sessionGeneration.current
-            || preferenceIntent !== preferenceGeneration.current
-            || !isSignedIn()
-          ) return;
+          if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
+
+          if (patch.showMedicationInNotifications === false && privacyIntentToken) {
+            await acknowledgePrivacyHide(preferenceUserId, privacyIntentToken).catch(() => undefined);
+            if (!mounted.current || generation !== sessionGeneration.current || !isSignedIn()) return;
+          }
+
+          if (preferenceIntent !== preferenceGeneration.current) return;
 
           // The response is a row snapshot, not a new intent for unrelated
           // fields. Accept only submitted fields that the response actually
@@ -558,19 +691,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           // Only a request that never reached the server means offline. A
           // rejection from the server is a different failure and must not put
-          // the whole app into its cached-data mode.
+          // the whole app into its cached-data mode. The encrypted privacy
+          // marker, when present, deliberately remains pending on every failure.
           if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
-        } finally {
-          writes.pending--;
         }
       };
-      const work = idle ? save() : writes.tail.then(save, save);
-      writes.tail = work;
-      await work;
+      await enqueuePreferenceServerWork(generation, save);
     },
     syncNow,
     setOffline: (offline) => setState((s) => ({ ...s, offline })),
-  }), [loadMe, persistOfflineBootstrap, syncNow]);
+  }), [enqueuePreferenceServerWork, loadMe, persistOfflineBootstrap, syncNow]);
 
   const value = useMemo(() => ({ ...state, ...actions }), [state, actions]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

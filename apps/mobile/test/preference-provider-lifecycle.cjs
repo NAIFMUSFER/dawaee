@@ -46,6 +46,7 @@ function makeProvider(file, notificationsFile, options = {}) {
     },
   };
   let signedIn = seed.signedIn; const requests = []; const directions = []; const owners = [];
+  const privacyIntents = new Map(); let privacyIntentSequence = 0;
   const request = (method, route, payload) => {
     const gate = deferred();
     const entry = { method, route, payload, done: false, ...gate }; requests.push(entry);
@@ -71,6 +72,22 @@ function makeProvider(file, notificationsFile, options = {}) {
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => seed.user?.id ?? null },
     '../storage/offline-queue.js': { setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
       queueSize: async () => 0, flushQueue: async () => ({ offline: false }) },
+    '../storage/notification-privacy-intent.js': {
+      markPrivacyHidePending: async (userId) => {
+        const token = `PRIVACY-${++privacyIntentSequence}`;
+        privacyIntents.set(userId, token);
+        return token;
+      },
+      cancelPrivacyHidePending: async (userId) => { privacyIntents.delete(userId); },
+      acknowledgePrivacyHide: async (userId, token) => {
+        if (privacyIntents.get(userId) === token) privacyIntents.delete(userId);
+      },
+      readPrivacyHideIntent: async (userId) => privacyIntents.has(userId)
+        ? { kind: 'pending', token: privacyIntents.get(userId) }
+        : { kind: 'none' },
+      privacyHidePendingCount: async (userId) => userId && privacyIntents.has(userId) ? 1 : 0,
+      purgePrivacyHideIntents: async () => { privacyIntents.clear(); },
+    },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
     '../i18n/index.js': { applyNativeDirection: (locale) => { directions.push(locale); return { restartRequired: locale === 'ar' }; } },
     '../notifications/index.js': native.api,
