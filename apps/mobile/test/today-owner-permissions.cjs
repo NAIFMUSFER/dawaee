@@ -53,7 +53,9 @@ function scenarios(file, hook) {
     taken(); await h.flush();
     const posts = h.batch().filter(r => r.method === 'POST');
     assert.equal(posts.length, 1);
-    assert.equal(posts[0].route, '/v1/doses/dose-DEPENDENT/taken');
+    assert.equal(posts[0].route, '/v1/dose/action');
+    assert.equal(posts[0].payload.doseId, 'dose-DEPENDENT');
+    assert.equal(posts[0].payload.action, 'taken');
     assert.equal(posts[0].payload.deviceId, 'synthetic-device');
     assert.ok(posts[0].payload.clientEventId);
     h.answer(posts, owner.id); await h.flush();
