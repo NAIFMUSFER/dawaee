@@ -92,4 +92,26 @@ describe('caregiver detail profile/request isolation', () => {
       h.unmount();
     }
   });
+
+  it('does not render patient A caregiver data on the first patient B frame', async () => {
+    const h = createHarness(screen, hook, {}, overrides());
+    try {
+      const a = h.batch();
+      expect(a).toHaveLength(1);
+      answerCareCircle(a, 'A');
+      await h.flush();
+      expect(h.text()).toContain('SYNTHETIC-A-ONLY');
+
+      h.switchProfile('B');
+      const b = h.batch().filter((request: any) => !a.includes(request));
+      expect(b).toHaveLength(1);
+
+      // The selection has already changed. Old-patient data must disappear in
+      // that render, before B's asynchronous response has any chance to arrive.
+      expect(h.app.activeProfile.id).toBe('B');
+      expect(h.text()).not.toContain('SYNTHETIC-A-ONLY');
+    } finally {
+      h.unmount();
+    }
+  });
 });
