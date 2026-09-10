@@ -33,7 +33,6 @@ async function createMedication(name: string, missedAfterMinutes: number) {
         lateAfterMinutes: 15,
         missedAfterMinutes,
       },
-      stock: { trackingEnabled: false, unit: 'tablet' },
     },
   });
   expect(res.statusCode, `${name}: ${res.body}`).toBe(200);
