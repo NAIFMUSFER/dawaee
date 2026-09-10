@@ -206,7 +206,7 @@ COUNT="$(psql -d "$DB" -tAc 'SELECT count(*) FROM schema_migrations')"
   || fail "upgraded ledger ended at $LATEST, not 0043"
 
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-second.txt
- grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
+grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
   || fail "second migration run was not a no-op"
 
 snapshot_counts "$DB" > /tmp/dawaee-upgrade-after.txt
@@ -314,7 +314,16 @@ grep -q 'existing medication schedule/stock unit mismatch' /tmp/dawaee-upgrade-u
   || fail "unsafe upgrade failed for an unexpected reason"
 [ "$(psql -d "$BAD_DB" -tAc "SELECT count(*) FROM schema_migrations WHERE filename >= '0034'")" = "0" ] \
   || fail "unsafe upgrade partially advanced the migration ledger"
-[ "$(psql -d "$BAD_DB" -tAc "SELECT (to_regclass('public.medication_schedule_stock_unit_guard') IS NULL)::text")" = "true" ] \
+PARTIAL_TRIGGER_COUNT="$(psql -d "$BAD_DB" -tAc "
+  SELECT count(*)
+  FROM pg_trigger t
+  JOIN pg_class c ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public'
+    AND c.relname = 'medication_schedules'
+    AND t.tgname = 'medication_schedule_stock_unit_guard'
+    AND NOT t.tgisinternal")"
+[ "$PARTIAL_TRIGGER_COUNT" = "0" ] \
   || fail "0034 left a partial trigger behind after refusal"
 
 cat <<EOF
