@@ -114,7 +114,7 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
   const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
-  const { begin: beginLoad, capture: captureAction } = useRequestScope();
+  const { begin: beginLoad } = useRequestScope();
   /** Set when the server answered 428: the rule waiting for a consent grant. */
 
   const describe = useCallback((err: unknown): string => {
@@ -160,7 +160,6 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
 
   const savePermissions = useCallback(async () => {
     if (!caregiver) return;
-    const isCurrent = captureAction();
     setSavingPermissions(true);
     setError(null);
     try {
@@ -169,17 +168,15 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
         permissions,
         escalationPriority: priority,
       });
-      if (!isCurrent()) return;
       setNotice(t('caregiver.permissionsSaved'));
       await load();
     } catch (err) {
-      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      if (isCurrent()) setSavingPermissions(false);
+      setSavingPermissions(false);
     }
-  }, [caregiver, captureAction, describe, load, permissions, priority, setOffline, t]);
+  }, [caregiver, describe, load, permissions, priority, setOffline, t]);
 
   const saveRule = useCallback(async (channel: RuleChannel, rule: RuleState): Promise<void> => {
     if (!caregiver) return;
@@ -194,7 +191,6 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
       }
     }
 
-    const isCurrent = captureAction();
     setSavingChannel(channel);
     setError(null);
     try {
@@ -208,17 +204,15 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
         quietHoursEnd: timeOrNull(rule.quietHoursEnd),
         enabled: rule.enabled,
       });
-      if (!isCurrent()) return;
       setNotice(t('notify.saved'));
       await load();
     } catch (err) {
-      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      if (isCurrent()) setSavingChannel(null);
+      setSavingChannel(null);
     }
-  }, [caregiver, captureAction, describe, load, setOffline, t]);
+  }, [caregiver, describe, load, setOffline, t]);
 
   const revoke = useCallback(() => {
     if (!caregiver) return;
@@ -228,14 +222,11 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
         text: t('family.revokeAccess'),
         style: 'destructive',
         onPress: () => {
-          const isCurrent = captureAction();
           void (async () => {
             try {
               await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
-              if (!isCurrent()) return;
               router.replace('/(tabs)/family');
             } catch (err) {
-              if (!isCurrent()) return;
               if (err instanceof NetworkError) setOffline(true);
               else setError(describe(err));
             }
@@ -243,7 +234,7 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
         },
       },
     ]);
-  }, [caregiver, captureAction, describe, name, setOffline, t]);
+  }, [caregiver, describe, name, setOffline, t]);
 
   const dirtyPermissions = useMemo(() => {
     if (!caregiver) return false;
@@ -330,4 +321,62 @@ function CaregiverDetailProfileScreen({ relationshipId: id }: { relationshipId: 
             <Button
               label="−"
               tone="secondary"
-             
+              fullWidth={false}
+              disabled={!isOwner || priority <= MIN_PRIORITY}
+              accessibilityHint={t('escalation.moveEarlier', { number: formatNumber(priority) })}
+              onPress={() => setPriority((p) => Math.max(MIN_PRIORITY, p - 1))}
+            />
+            <Txt variant="h3" weight="bold">
+              {t('family.alertOrderValue', { priority: formatNumber(priority) })}
+            </Txt>
+            <Button
+              label="+"
+              tone="secondary"
+              fullWidth={false}
+              disabled={!isOwner || priority >= MAX_PRIORITY}
+              accessibilityHint={t('escalation.moveLater', { number: formatNumber(priority) })}
+              onPress={() => setPriority((p) => Math.min(MAX_PRIORITY, p + 1))}
+            />
+          </Row>
+          {priority === MIN_PRIORITY ? (
+            <Badge label={t('family.primaryCaregiver')} fg={theme.colors.primary700} bg={theme.colors.primary100} />
+          ) : null}
+        </Card>
+
+        {isOwner ? (
+          <Button
+            label={t('common.save')}
+            loading={savingPermissions}
+            disabled={!dirtyPermissions}
+            onPress={() => void savePermissions()}
+            testID="save-permissions"
+          />
+        ) : null}
+
+        <SectionTitle>{t('notify.title')}</SectionTitle>
+        {RULE_CHANNELS.map((channel) => (
+          <ChannelRuleCard
+            key={channel}
+            channel={channel}
+            rule={rules[channel]}
+            editable={isOwner}
+            saving={savingChannel === channel}
+            onChange={(patch) => setRule(channel, patch)}
+            onSave={() => void saveRule(channel, rules[channel])}
+          />
+        ))}
+
+        {isOwner ? (
+          <Button label={t('family.revokeAccess')} tone="danger" onPress={revoke} />
+        ) : null}
+      </Screen>
+    </SafeAreaView>
+  );
+}
+
+function PermissionRow({
+  label, on, disabled, onToggle,
+}: { label: string; on: boolean; disabled: boolean; onToggle: () => void }) {
+  const theme = useTheme();
+  return (
+    <Row style={{ justifyContent: 'space-between', minHeight: theme.touch }} gap
