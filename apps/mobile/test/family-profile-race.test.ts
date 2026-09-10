@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
 // The harness executes the checked-in TSX screen with controlled request promises.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { createHarness } = require('./profile-screen-harness.cjs') as {
   createHarness: (file: string, hookFile: string) => any;
 };
