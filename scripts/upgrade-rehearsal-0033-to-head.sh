@@ -196,14 +196,14 @@ step "running the real migration runner from 0033 to head"
 export DATABASE_URL="$MIGRATOR_URL/$DB"
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-first.txt
 UPGRADE_APPLIED="$(grep -Eo 'applied [0-9]+ migration\(s\)' /tmp/dawaee-upgrade-first.txt | tail -1 || true)"
-[ "$UPGRADE_APPLIED" = "applied 10 migration(s)" ] \
-  || fail "expected exactly 10 migrations (0034..0043), got: ${UPGRADE_APPLIED:-none}"
+[ "$UPGRADE_APPLIED" = "applied 11 migration(s)" ] \
+  || fail "expected exactly 11 migrations (0034..0044), got: ${UPGRADE_APPLIED:-none}"
 
 LATEST="$(psql -d "$DB" -tAc 'SELECT max(filename) FROM schema_migrations')"
 COUNT="$(psql -d "$DB" -tAc 'SELECT count(*) FROM schema_migrations')"
-[ "$COUNT" = "43" ] || fail "upgraded ledger has $COUNT rows, expected 43"
-[ "$LATEST" = "0043_caregiver_notification_permission_revocation.sql" ] \
-  || fail "upgraded ledger ended at $LATEST, not 0043"
+[ "$COUNT" = "44" ] || fail "upgraded ledger has $COUNT rows, expected 44"
+[ "$LATEST" = "0044_logout_refresh_descendant_revocation.sql" ] \
+  || fail "upgraded ledger ended at $LATEST, not 0044"
 
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-second.txt
 grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
@@ -211,7 +211,7 @@ grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
 
 snapshot_counts "$DB" > /tmp/dawaee-upgrade-after.txt
 if ! diff -u /tmp/dawaee-upgrade-before.txt /tmp/dawaee-upgrade-after.txt; then
-  fail "0033 -> 0043 changed row counts outside schema_migrations"
+  fail "0033 -> 0044 changed row counts outside schema_migrations"
 fi
 
 step "verifying intended data transformations and schema integrity"
@@ -331,7 +331,7 @@ cat <<EOF
 PRODUCTION-SHAPED UPGRADE REHEARSAL PASSED
   baseline          : 0033_caregiver_revoke_notification_policy.sql
   upgraded through : $LATEST
-  pending migrations: 10 (0034..0043), then no-op
+  pending migrations: 11 (0034..0044), then no-op
   row-count drift   : none before explicit post-upgrade actions
   intended cleanup : legacy WhatsApp disabled; terminal snooze metadata cleared
   stock integrity   : new event identity index valid; historical ledger retained
