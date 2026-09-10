@@ -7,6 +7,7 @@ const base = {
   DATABASE_SSL: 'true',
   JWT_SECRET: 'x'.repeat(64),
   IP_HASH_SALT: 'audit-production-ocr-salt',
+  PUSH_PROVIDER: 'expo',
 } as NodeJS.ProcessEnv;
 
 function config(extra: NodeJS.ProcessEnv) {
