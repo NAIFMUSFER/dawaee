@@ -95,4 +95,34 @@ describe('cached schedule is bound to the account that started the read', () => 
     await expect(storage.readCachedSchedule(ALICE_PROFILE)).resolves.toEqual(self);
     await expect(storage.readCachedSchedule(DEPENDENT_PROFILE)).resolves.toEqual(dependent);
   });
+
+  it('serializes overlapping profile-cache writes so neither profile is lost', async () => {
+    let encryptedSlot: string | null = null;
+    const firstWriteStarted = deferred<void>();
+    const releaseFirstWrite = deferred<void>();
+    let writes = 0;
+
+    io.read.mockImplementation(async () => encryptedSlot);
+    io.write.mockImplementation(async (_slot, _userId, value: string) => {
+      writes++;
+      if (writes === 1) {
+        firstWriteStarted.resolve();
+        await releaseFirstWrite.promise;
+      }
+      encryptedSlot = value;
+      return { ok: true };
+    });
+
+    const self = schedule(ALICE_PROFILE, 'SELF-MEDICATION');
+    const dependent = schedule(DEPENDENT_PROFILE, 'DEPENDENT-MEDICATION');
+
+    const first = storage.cacheSchedule(self);
+    await firstWriteStarted.promise;
+    const second = storage.cacheSchedule(dependent);
+    releaseFirstWrite.resolve();
+    await Promise.all([first, second]);
+
+    await expect(storage.readCachedSchedule(ALICE_PROFILE)).resolves.toEqual(self);
+    await expect(storage.readCachedSchedule(DEPENDENT_PROFILE)).resolves.toEqual(dependent);
+  });
 });
