@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('../app/caregiver/[id].tsx', import.meta.url), 'utf8');
+const source = readFileSync(resolve(import.meta.dirname, '../app/caregiver/[id].tsx'), 'utf8');
 
 describe('caregiver relationship identifiers stay out of public request URLs', () => {
   it('uses fixed mutation paths and carries relationshipId in request bodies', () => {
