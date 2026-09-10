@@ -53,6 +53,48 @@ export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
  */
 const DEVICE_KEY = 'dawaee.deviceId';
 const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
+const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
+const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
+
+interface PrivatePathRouting {
+  path: string;
+  profileId: string | null;
+  medicationId: string | null;
+}
+
+/**
+ * Convert health-linked ids embedded in the app's established route strings
+ * into fixed public paths before the network sees them. The server rewrites
+ * the fixed path back to the legacy handler internally. Demo mode deliberately
+ * keeps the old path because it never makes a network request.
+ */
+export function privatizeResourcePath(path: string): PrivatePathRouting {
+  if (DEMO_MODE) return { path, profileId: null, medicationId: null };
+
+  const queryAt = path.indexOf('?');
+  const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
+  const suffix = queryAt === -1 ? '' : path.slice(queryAt);
+
+  const medication = new RegExp(`^/v1/medications/(${UUID_PATH})(/(?:stock|refill|schedules))?$`, 'i').exec(pathname);
+  if (medication) {
+    return {
+      path: `/v1/medication${medication[2] ?? ''}${suffix}`,
+      profileId: null,
+      medicationId: medication[1]!,
+    };
+  }
+
+  const profile = new RegExp(`^/v1/profiles/(${UUID_PATH})(/(?:timezone-check|timezone-decision))?$`, 'i').exec(pathname);
+  if (profile) {
+    return {
+      path: `/v1/profile${profile[2] ?? ''}${suffix}`,
+      profileId: profile[1]!,
+      medicationId: null,
+    };
+  }
+
+  return { path, profileId: null, medicationId: null };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -308,13 +350,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const requireCurrentRequest = () => { if (!anonymous) requireSession(generation); };
   let sentAccessToken: string | null = null;
 
+  const privatePath = privatizeResourcePath(path);
   const profileIdValue = query?.profileId;
-  const routedProfileId =
+  const routedProfileId = privatePath.profileId ?? (
     profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
       ? String(profileIdValue)
-      : null;
+      : null
+  );
+  const routedMedicationId = privatePath.medicationId;
 
-  const url = new URL(`${BASE_URL}${path}`);
+  const url = new URL(`${BASE_URL}${privatePath.path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
     // Production Render access logs persist path/query before Dawaee's logger
     // can redact them. Keep stable patient identifiers out of network URLs.
@@ -355,6 +400,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           // repeatedly returned 400 before the route handler could run.
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
+          ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
