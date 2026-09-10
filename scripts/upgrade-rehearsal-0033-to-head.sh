@@ -196,14 +196,14 @@ step "running the real migration runner from 0033 to head"
 export DATABASE_URL="$MIGRATOR_URL/$DB"
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-first.txt
 UPGRADE_APPLIED="$(grep -Eo 'applied [0-9]+ migration\(s\)' /tmp/dawaee-upgrade-first.txt | tail -1 || true)"
-[ "$UPGRADE_APPLIED" = "applied 12 migration(s)" ] \
-  || fail "expected exactly 12 migrations (0034..0045), got: ${UPGRADE_APPLIED:-none}"
+[ "$UPGRADE_APPLIED" = "applied 13 migration(s)" ] \
+  || fail "expected exactly 13 migrations (0034..0046), got: ${UPGRADE_APPLIED:-none}"
 
 LATEST="$(psql -d "$DB" -tAc 'SELECT max(filename) FROM schema_migrations')"
 COUNT="$(psql -d "$DB" -tAc 'SELECT count(*) FROM schema_migrations')"
-[ "$COUNT" = "45" ] || fail "upgraded ledger has $COUNT rows, expected 45"
-[ "$LATEST" = "0045_dose_client_event_history.sql" ] \
-  || fail "upgraded ledger ended at $LATEST, not 0045"
+[ "$COUNT" = "46" ] || fail "upgraded ledger has $COUNT rows, expected 46"
+[ "$LATEST" = "0046_push_token_account_switch.sql" ] \
+  || fail "upgraded ledger ended at $LATEST, not 0046"
 
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-second.txt
 grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
@@ -211,7 +211,7 @@ grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
 
 snapshot_counts "$DB" > /tmp/dawaee-upgrade-after.txt
 if ! diff -u /tmp/dawaee-upgrade-before.txt /tmp/dawaee-upgrade-after.txt; then
-  fail "0033 -> 0045 changed row counts outside schema_migrations"
+  fail "0033 -> 0046 changed row counts outside schema_migrations"
 fi
 
 step "verifying intended data transformations and schema integrity"
@@ -335,7 +335,7 @@ cat <<EOF
 PRODUCTION-SHAPED UPGRADE REHEARSAL PASSED
   baseline          : 0033_caregiver_revoke_notification_policy.sql
   upgraded through : $LATEST
-  pending migrations: 12 (0034..0045), then no-op
+  pending migrations: 13 (0034..0046), then no-op
   row-count drift   : none before explicit post-upgrade actions
   intended cleanup : legacy WhatsApp disabled; terminal snooze metadata cleared
   dose replay       : current client-event identity preserved into append-only history
