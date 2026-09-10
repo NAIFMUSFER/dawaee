@@ -21,7 +21,7 @@ describe('production-shaped migration upgrade', () => {
 
     expect(output).toContain('PRODUCTION-SHAPED UPGRADE REHEARSAL PASSED');
     expect(output).toContain('baseline          : 0033_caregiver_revoke_notification_policy.sql');
-    expect(output).toContain('pending migrations: 11 (0034..0044), then no-op');
+    expect(output).toContain('pending migrations: 12 (0034..0045), then no-op');
     expect(output).toContain('unsafe control    : 0034 refused mismatched units atomically at schema 0033');
   }, 120_000);
 });
