@@ -337,7 +337,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       return await fetch(url.toString(), {
         method,
         headers: {
-          'content-type': 'application/json',
+          // Fastify rejects a bodyless request advertised as JSON. This matters
+          // for DELETE routes such as caregiver revoke: the mobile client used
+          // to send Content-Type: application/json with no body and production
+          // repeatedly returned 400 before the route handler could run.
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
