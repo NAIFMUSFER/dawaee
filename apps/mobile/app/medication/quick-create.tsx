@@ -10,6 +10,7 @@ import { TimeField, isValidTime } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { clearMedicationDrafts, getMedicationPrefillDraft } from '@/storage/medication-draft';
 import type { MedicationView } from '@/api/types';
@@ -37,6 +38,11 @@ type Prefill = {
 };
 
 export default function QuickCreateMedicationScreen() {
+  const { user, activeProfile } = useApp();
+  return <QuickCreateMedicationProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function QuickCreateMedicationProfileScreen() {
   const params = useLocalSearchParams<{ source?: string }>();
   const { activeProfile, preferences } = useApp();
   const prefill = useMemo<Prefill>(
@@ -49,6 +55,7 @@ export default function QuickCreateMedicationScreen() {
   const theme = useTheme();
   const arabic = preferences.locale === 'ar';
   const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const { capture: captureSave } = useRequestScope();
 
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
@@ -109,6 +116,7 @@ export default function QuickCreateMedicationScreen() {
       return;
     }
 
+    const isCurrent = captureSave();
     setSaving(true);
     setError(null);
     setNameError(null);
@@ -151,16 +159,18 @@ export default function QuickCreateMedicationScreen() {
         }),
         ...(acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      if (!isCurrent()) return;
       clearMedicationDrafts();
       router.replace(`/medication/${created.medication.id}`);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
         setDuplicate(true);
       } else {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
