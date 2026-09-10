@@ -166,7 +166,8 @@ describe('caregiver permission scope', () => {
         role: 'son', permissions: ['view_adherence', 'view_schedule', 'receive_notifications'], escalationPriority: 1,
       },
     })).json().invitationLink;
-    const token = new URL(link).hash.slice(1);
+    const fragment = new URL(link).hash.slice(1);
+    const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
     expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
     const accept = await h.app.inject({
@@ -254,7 +255,8 @@ describe('caregiver permission scope', () => {
       },
     });
     const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
-    const token = new URL(invitationLink).hash.slice(1);
+    const fragment = new URL(invitationLink).hash.slice(1);
+    const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
     expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
     const { execFileSync } = await import('node:child_process');
