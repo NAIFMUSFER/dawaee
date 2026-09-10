@@ -7,6 +7,11 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
+import {
+  clearMedicationDrafts,
+  setMedicationConfirmDraft,
+  type MedicationConfirmDraft,
+} from '@/storage/medication-draft';
 import type { MessageKey } from '@dawaee/shared';
 
 type CaptureMode = 'photo' | 'upload' | 'barcode' | 'prescription';
@@ -80,14 +85,6 @@ interface UploadTicketResponse {
   upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string>; expiresAt: string };
 }
 
-export interface ConfirmPayload {
-  imageKey: string;
-  kind: 'medication_label' | 'prescription';
-  detected: Record<string, { value: string; confidence: number }>;
-  rawText: string;
-  remainingLines: number;
-}
-
 function field(source: OcrField | undefined): { value: string; confidence: number } | null {
   if (!source) return null;
   const value = typeof source.value === 'number' ? String(source.value) : source.value.trim();
@@ -95,9 +92,9 @@ function field(source: OcrField | undefined): { value: string; confidence: numbe
   return { value, confidence: source.confidence };
 }
 
-function fromLabel(response: MedicationLabelResponse): ConfirmPayload['detected'] {
+function fromLabel(response: MedicationLabelResponse): MedicationConfirmDraft['detected'] {
   const keys = ['name', 'brandName', 'genericName', 'form', 'strengthValue', 'strengthUnit', 'manufacturer', 'barcode', 'expiryDate', 'instructions'] as const;
-  const detected: ConfirmPayload['detected'] = {};
+  const detected: MedicationConfirmDraft['detected'] = {};
   for (const key of keys) {
     const parsed = field(response.detected[key]);
     if (parsed) detected[key] = parsed;
@@ -105,10 +102,10 @@ function fromLabel(response: MedicationLabelResponse): ConfirmPayload['detected'
   return detected;
 }
 
-function fromPrescription(response: PrescriptionResponse): ConfirmPayload['detected'] {
+function fromPrescription(response: PrescriptionResponse): MedicationConfirmDraft['detected'] {
   const first = response.lines[0];
   if (!first) return {};
-  const detected: ConfirmPayload['detected'] = {};
+  const detected: MedicationConfirmDraft['detected'] = {};
   const name = field(first.medicationName);
   if (name) detected.name = name;
   const parts = [field(first.dosage), field(first.frequency), field(first.duration)]
@@ -185,10 +182,25 @@ export default function CaptureScreen() {
         patientProfileId: activeProfile.id,
         kind: mode === 'prescription' ? 'prescription' : 'medication_label',
       });
-      const payload: ConfirmPayload = response.kind === 'prescription'
-        ? { imageKey: key, kind: 'prescription', detected: fromPrescription(response), rawText: response.rawText, remainingLines: Math.max(0, response.lines.length - 1) }
-        : { imageKey: key, kind: 'medication_label', detected: fromLabel(response), rawText: response.rawText, remainingLines: 0 };
-      router.replace(`/medication/confirm?data=${encodeURIComponent(JSON.stringify(payload))}`);
+      const payload: MedicationConfirmDraft = response.kind === 'prescription'
+        ? {
+            patientProfileId: activeProfile.id,
+            imageKey: key,
+            kind: 'prescription',
+            detected: fromPrescription(response),
+            remainingLines: Math.max(0, response.lines.length - 1),
+          }
+        : {
+            patientProfileId: activeProfile.id,
+            imageKey: key,
+            kind: 'medication_label',
+            detected: fromLabel(response),
+            remainingLines: 0,
+          };
+      // Health data stays process-local. Query strings are platform-visible on
+      // web and can be copied into browser history, referrers and request logs.
+      setMedicationConfirmDraft(payload);
+      router.replace('/medication/confirm');
     } catch (err) {
       if (err instanceof ApiError && err.code === 'consent_required') {
         setStage('consent');
@@ -273,11 +285,21 @@ export default function CaptureScreen() {
     }
   }, [analyze, failWith, imageKey, t]);
 
+  const goManual = useCallback(() => {
+    clearMedicationDrafts();
+    router.replace('/medication/quick-create');
+  }, []);
+
+  const cancelCapture = useCallback(() => {
+    clearMedicationDrafts();
+    router.back();
+  }, []);
+
   const instructionKey: MessageKey = mode === 'barcode' ? 'capture.instructionBarcode' : mode === 'prescription' ? 'capture.instructionPrescription' : 'capture.instructionLabel';
   const titleKey: MessageKey = mode === 'barcode' ? 'medication.scanBarcode' : mode === 'prescription' ? 'medication.scanPrescription' : mode === 'upload' ? 'medication.uploadImage' : 'medication.takePhoto';
 
   const manualEntry = (
-    <Button label={t('medication.manualEntry')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
+    <Button label={t('medication.manualEntry')} tone="secondary" onPress={goManual} />
   );
 
   if (stage === 'working') {
@@ -291,8 +313,8 @@ export default function CaptureScreen() {
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t('consent.ocrTitle')}</Txt>
           <Card><Txt variant="body">{t('consent.ocrBody')}</Txt></Card>
           <Button label={t('consent.grant')} size="large" onPress={() => void grantConsent()} />
-          <Button label={t('consent.decline')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
-          <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('consent.decline')} tone="secondary" onPress={goManual} />
+          <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
         </Screen>
       </SafeAreaView>
     );
@@ -305,7 +327,7 @@ export default function CaptureScreen() {
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
           <Banner tone="info" title={t('capture.unavailableTitle')} body={t('capture.unavailableBody')} />
           {manualEntry}
-          <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('common.back')} tone="ghost" onPress={cancelCapture} />
         </Screen>
       </SafeAreaView>
     );
@@ -321,7 +343,7 @@ export default function CaptureScreen() {
             <Txt variant="body" color={theme.colors.ink500}>{t('capture.permissionBody')}</Txt>
             <Button label={t('capture.allowCamera')} size="large" onPress={() => void requestPermission()} />
             {manualEntry}
-            <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+            <Button label={t('common.back')} tone="ghost" onPress={cancelCapture} />
           </Screen>
         </SafeAreaView>
       );
@@ -335,7 +357,7 @@ export default function CaptureScreen() {
           <View style={{ flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden', backgroundColor: theme.colors.ink900 }}>{React.createElement(camera.CameraView, cameraProps)}</View>
           {error ? <Banner tone="danger" title={error} /> : null}
           <Button label={t('capture.shutter')} size="large" onPress={() => void takePhoto()} testID="capture-shutter" />
-          <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
         </View>
       </SafeAreaView>
     );
@@ -356,7 +378,7 @@ export default function CaptureScreen() {
           </>
         )}
         {manualEntry}
-        <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+        <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
       </Screen>
     </SafeAreaView>
   );
