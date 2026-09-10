@@ -1,18 +1,24 @@
 -- =============================================================================
--- Dawaee — 0043: make receive_notifications revocation authoritative over
--- already-enqueued caregiver deliveries.
+-- Dawaee — 0043: pending release hardening after production schema 0033.
 --
+-- A) Caregiver notification revocation
 -- Red-team evidence (apps/api/test/caregiver-delivery-revocation-race.test.ts):
 -- a delivery queued while the relationship had receive_notifications remained
 -- queued after the patient removed that permission, so the worker could still
--- claim and send it.
+-- claim and send it. Whenever the patient removes that permission, linked
+-- queued/sending deliveries are suppressed and their leases invalidated.
 --
--- The invariant belongs at the data boundary, not only in one HTTP route:
--- whenever an owner-authorised relationship update removes
--- receive_notifications, every linked queued/sending delivery is atomically
--- suppressed in the same transaction. 0033's deliberately narrow owner UPDATE
--- policy permits only the resulting skipped state, so this trigger does not
--- widen notification-delivery write access.
+-- B) API operational-table least privilege
+-- Red-team + production evidence (app-operational-privilege-boundary.test.ts):
+-- dawaee_app inherited SELECT/INSERT/UPDATE/DELETE from migration 0008 on the
+-- three public operational tables that intentionally have no RLS:
+-- schema_migrations, job_runs and provider_webhook_events. Current HTTP routes
+-- read those tables only. Keep SELECT and remove mutation authority so an API
+-- compromise cannot forge migration/worker state or delete webhook evidence.
+--
+-- Production remains on schema 0033, so this migration has not been deployed;
+-- both evidence-backed release hardenings can be rehearsed together without
+-- changing an already-recorded production checksum.
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION app.suppress_caregiver_deliveries_on_notification_permission_removal()
@@ -44,3 +50,15 @@ AFTER UPDATE OF permissions ON caregiver_relationships
 FOR EACH ROW
 WHEN (OLD.permissions IS DISTINCT FROM NEW.permissions)
 EXECUTE FUNCTION app.suppress_caregiver_deliveries_on_notification_permission_removal();
+
+REVOKE INSERT, UPDATE, DELETE ON TABLE
+  schema_migrations,
+  job_runs,
+  provider_webhook_events
+FROM dawaee_app;
+
+GRANT SELECT ON TABLE
+  schema_migrations,
+  job_runs,
+  provider_webhook_events
+TO dawaee_app;
