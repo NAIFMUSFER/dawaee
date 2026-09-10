@@ -3,12 +3,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDatabase } from './harness.js';
 
 /**
- * Red-team boundary for public tables that intentionally have no RLS.
+ * Boundary for public tables that intentionally have no RLS.
  *
- * The API needs read access to these operational tables for readiness/admin.
- * It must not inherit the patient-table DML blanket from migration 0008:
- * without RLS there is no second database boundary between a compromised API
- * query path and the migration ledger / worker history / webhook outbox.
+ * Clinical/user tables rely on FORCE RLS. Public tables without RLS must be an
+ * explicit operational allowlist, and the HTTP runtime role must be read-only
+ * on that state unless a later route proves a narrower write requirement.
  */
 
 let owner: pg.Pool;
@@ -50,7 +49,24 @@ async function grants() {
   return Object.fromEntries(rows.map((row) => [row.table_name, row.privs.split(',')]));
 }
 
+async function nonRlsPublicTables() {
+  const { rows } = await owner.query<{ table_name: string }>(
+    `SELECT c.relname AS table_name
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public'
+        AND c.relkind='r'
+        AND NOT c.relrowsecurity
+      ORDER BY c.relname`,
+  );
+  return rows.map((row) => row.table_name);
+}
+
 describe('the HTTP runtime role is read-only on non-RLS operational state', () => {
+  it('has no unexpected public base table outside the reviewed non-RLS allowlist', async () => {
+    expect(await nonRlsPublicTables()).toEqual(Object.keys(APP_OPERATIONAL_MANIFEST).sort());
+  });
+
   it('holds exactly SELECT on the migration ledger, job history and webhook inbox', async () => {
     const actual = await grants();
     for (const [table, expected] of Object.entries(APP_OPERATIONAL_MANIFEST)) {
