@@ -8,7 +8,7 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { useRequestScope } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
@@ -88,6 +88,11 @@ function timeOrNull(value: string): string | null {
 }
 
 export default function CaregiverDetailScreen() {
+  const { user, activeProfile } = useApp();
+  return <CaregiverDetailProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function CaregiverDetailProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
