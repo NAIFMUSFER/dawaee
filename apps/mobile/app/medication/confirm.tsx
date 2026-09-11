@@ -7,6 +7,7 @@ import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import {
   clearMedicationDrafts,
@@ -27,6 +28,11 @@ function asEnum<T extends string>(allowed: readonly T[], value: string | undefin
 }
 
 export default function ConfirmMedicationScreen() {
+  const { user, activeProfile } = useApp();
+  return <ConfirmMedicationProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function ConfirmMedicationProfileScreen() {
   const { activeProfile } = useApp();
   // The draft is deliberately process-local and profile-bound. A reload or
   // profile switch fails closed instead of reconstructing health data from a URL.
