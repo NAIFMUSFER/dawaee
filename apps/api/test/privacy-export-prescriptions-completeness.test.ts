@@ -13,16 +13,16 @@ let h: Harness;
 let patient: TestUser;
 let prescriptionId: string;
 
-const psql = (sql: string) => execFileSync('psql', ['-d', 'dawaee_test', '-tAc', sql], {
+const psqlScalar = (sql: string) => execFileSync('psql', ['-d', 'dawaee_test', '-tAc', sql], {
   env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
-}).toString().trim();
+}).toString().trim().split(/\r?\n/, 1)[0] ?? '';
 
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
   patient = await signIn(h, '+966500097772');
 
-  prescriptionId = psql(`
+  prescriptionId = psqlScalar(`
     INSERT INTO prescriptions
       (patient_profile_id, reference, prescriber_name, facility, issued_date,
        expiry_date, image_key, ocr_raw, ocr_status, created_by)
