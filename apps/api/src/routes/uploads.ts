@@ -414,11 +414,12 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
       throw AppError.badRequest(ERROR_CODES.UPLOAD_REJECTED, 'Stored file is not the approved image type');
     }
 
-    // Storage reads can cross a revocation instant. Consent is a live
-    // disclosure boundary, not a capability captured at request start, so read
-    // it again after the potentially slow object fetch and immediately before
-    // handing the image bytes to the external OCR provider.
+    // Storage reads can cross a revocation instant. Authorization and consent
+    // are live disclosure boundaries, not capabilities captured at request
+    // start, so read them again after the potentially slow object fetch and
+    // immediately before handing the image bytes to the external OCR provider.
     await withUserReadOnly(userId, async (tx) => {
+      await requireProfileAccess(tx, userId, body.patientProfileId, 'add_medication');
       const { rows: consent } = await tx.query<{ granted: boolean }>(
         `SELECT granted FROM consents
           WHERE user_id = $1 AND type = 'ocr_image_processing'
