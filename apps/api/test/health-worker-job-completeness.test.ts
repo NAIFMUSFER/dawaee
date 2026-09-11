@@ -9,10 +9,10 @@ vi.mock('../src/lib/db.js', () => ({
 }));
 
 vi.mock('../src/lib/schema-contract.js', () => ({
-  requiredSchemaRevision: () => '0048_admin_operational_read_model.sql',
+  requiredSchemaRevision: () => '0049_caregiver_digest_permission_revocation.sql',
   checkSchemaContract: vi.fn(async () => ({
     ok: true,
-    revision: '0048_admin_operational_read_model.sql',
+    revision: '0049_caregiver_digest_permission_revocation.sql',
     missing: [],
     mismatched: [],
   })),
@@ -58,6 +58,7 @@ describe('production readiness covers every per-tick safety-critical worker prer
       { job_name: 'dispatch', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'mark-missed', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'stock-alerts', started_at: new Date(), succeeded: true, build_commit: COMMIT },
+      { job_name: 'digests', started_at: new Date(), succeeded: true, build_commit: COMMIT },
     ];
   });
 
@@ -108,5 +109,16 @@ describe('production readiness covers every per-tick safety-critical worker prer
     const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
     expect(body.checks.worker?.ok).toBe(false);
     expect(body.checks.worker?.detail).toMatch(/stock-alerts/i);
+  });
+
+  it('returns 503 when caregiver digests fail while the rest of the tick stays healthy', async () => {
+    workerRows = workerRows.map((row) => row.job_name === 'digests' ? { ...row, succeeded: false } : row);
+
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+
+    expect(response.statusCode, response.body).toBe(503);
+    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
+    expect(body.checks.worker?.ok).toBe(false);
+    expect(body.checks.worker?.detail).toMatch(/digests/i);
   });
 });
