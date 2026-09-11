@@ -56,7 +56,7 @@ LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, public, app
 AS $$
   SELECT d.id, d.kind::text, d.channel::text, d.provider, d.error_code,
-         d.attempts, d.created_at, d.scheduled_for
+         d.attempts::int, d.created_at, d.scheduled_for
     FROM public.notification_deliveries d
    WHERE d.status = 'failed'
      AND (p_channel IS NULL OR d.channel = p_channel)
