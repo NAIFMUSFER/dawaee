@@ -109,7 +109,7 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
 
     let buffer: Buffer;
     try {
-      buffer = await providers.storage.getObject(objectKey);
+      buffer = await providers.storage.getObject(objectKey, object.byte_size);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
       if (message.includes('exceeds configured upload limit') || message.includes('size does not match declared upload size')) {
