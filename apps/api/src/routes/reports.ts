@@ -231,6 +231,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ['refills', 'SELECT * FROM refill_events WHERE patient_profile_id = $1'],
         ['caregivers', `SELECT id, invited_name, role, status, permissions, escalation_priority, accepted_at
                           FROM caregiver_relationships WHERE patient_profile_id = $1`],
+        ['escalationPolicies', 'SELECT * FROM escalation_policies WHERE patient_profile_id = $1'],
         ['notes', 'SELECT * FROM symptom_notes WHERE patient_profile_id = $1'],
         ['measurements', 'SELECT * FROM health_measurements WHERE patient_profile_id = $1'],
         ['emergencyCard', `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
