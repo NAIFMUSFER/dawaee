@@ -20,21 +20,34 @@ afterAll(async () => {
 });
 
 describe('logout retires the remote notification endpoint for that session device', () => {
-  it('deactivates an active push token even when the client cannot issue a separate deregistration request', async () => {
+  it('deactivates only the logging-out installation even when client-side deregistration is unavailable', async () => {
+    const phone = '+966500096851';
     const deviceId = 'device-server-logout-push-0001';
-    const user = await signIn(h, '+966500096851', deviceId);
+    const otherDeviceId = 'device-server-logout-push-0002';
+    const user = await signIn(h, phone, deviceId);
+    const otherSession = await signIn(h, phone, otherDeviceId);
+    expect(otherSession.userId).toBe(user.userId);
 
     await owner.query(
       `INSERT INTO push_tokens (user_id, token, platform, device_id, active, last_seen_at)
-       VALUES ($1,$2,'android',$3,true,now())`,
-      [user.userId, 'ExponentPushToken[server-logout-regression]', deviceId],
+       VALUES
+         ($1,$2,'android',$3,true,now()),
+         ($1,$4,'android',$5,true,now())`,
+      [
+        user.userId,
+        'ExponentPushToken[server-logout-regression-current]', deviceId,
+        'ExponentPushToken[server-logout-regression-other]', otherDeviceId,
+      ],
     );
 
-    const before = await owner.query<{ active: boolean }>(
-      'SELECT active FROM push_tokens WHERE user_id = $1 AND device_id = $2',
-      [user.userId, deviceId],
+    const before = await owner.query<{ device_id: string; active: boolean }>(
+      'SELECT device_id, active FROM push_tokens WHERE user_id = $1 ORDER BY device_id',
+      [user.userId],
     );
-    expect(before.rows[0]?.active).toBe(true);
+    expect(before.rows).toEqual([
+      { device_id: deviceId, active: true },
+      { device_id: otherDeviceId, active: true },
+    ]);
 
     const logout = await h.app.inject({
       method: 'POST',
@@ -43,13 +56,16 @@ describe('logout retires the remote notification endpoint for that session devic
     });
     expect(logout.statusCode, logout.body).toBe(200);
 
-    const after = await owner.query<{ active: boolean }>(
-      'SELECT active FROM push_tokens WHERE user_id = $1 AND device_id = $2',
-      [user.userId, deviceId],
+    const after = await owner.query<{ device_id: string; active: boolean }>(
+      'SELECT device_id, active FROM push_tokens WHERE user_id = $1 ORDER BY device_id',
+      [user.userId],
     );
     expect(
-      after.rows[0]?.active,
-      'logout revoked the session but left its device eligible for worker push delivery',
-    ).toBe(false);
+      after.rows,
+      'logout must retire this session device without silencing the same user on another live device',
+    ).toEqual([
+      { device_id: deviceId, active: false },
+      { device_id: otherDeviceId, active: true },
+    ]);
   });
 });
