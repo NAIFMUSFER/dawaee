@@ -13,14 +13,23 @@ import { PROFILE_ID_HEADER } from './profile-routing.js';
 export const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
 export const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
 export const DOSE_ID_HEADER = 'x-dawaee-dose-id';
+export const DEVICE_ID_HEADER = 'x-dawaee-device-id';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DEVICE_ID = /^[A-Za-z0-9._~-]{1,128}$/;
 
 function routingId(headers: IncomingHttpHeaders, name: string): string | null {
   const raw = headers[name];
   if (typeof raw !== 'string') return null;
   const value = raw.trim();
   return UUID.test(value) ? value : null;
+}
+
+function deviceRoutingId(headers: IncomingHttpHeaders): string | null {
+  const raw = headers[DEVICE_ID_HEADER];
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  return DEVICE_ID.test(value) ? value : null;
 }
 
 function splitUrl(rawUrl: string): { path: string; suffix: string } {
@@ -70,6 +79,11 @@ export function promoteMedicationIdHeader(req: {
 
 export function rewritePrivateResourceUrl(rawUrl: string, headers: IncomingHttpHeaders): string {
   const { path, suffix } = splitUrl(rawUrl);
+
+  const deviceId = deviceRoutingId(headers);
+  if (deviceId && path === '/v1/devices/push-token') {
+    return `/v1/devices/push-token/${encodeURIComponent(deviceId)}${suffix}`;
+  }
 
   const doseId = routingId(headers, DOSE_ID_HEADER);
   if (doseId && path === '/v1/dose') {
