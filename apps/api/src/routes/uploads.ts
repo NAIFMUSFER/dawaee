@@ -214,10 +214,29 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
    * The uploader keeps access to what they uploaded. Medication-image creation
    * now explicitly depends on `view_medications`, so a caregiver who can create
    * the image can also review the medication identity it represents.
+   *
+   * The object key is also private routing metadata. New clients send it in a
+   * header so the upstream platform request path does not retain it; legacy
+   * query transport remains temporarily accepted during rollout. Conflicting
+   * values fail closed rather than letting one layer authorize a different key.
    */
   app.get('/v1/uploads/url', async (req) => {
-    const { objectKey } = req.query as { objectKey?: string };
-    if (!objectKey) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'objectKey is required');
+    const { objectKey: legacyObjectKey } = req.query as { objectKey?: string };
+    const rawHeader = req.headers['x-dawaee-object-key'];
+    if (Array.isArray(rawHeader)) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid object routing metadata');
+    }
+    const headerObjectKey = typeof rawHeader === 'string' ? rawHeader.trim() : '';
+    if (headerObjectKey.length > 512) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid object routing metadata');
+    }
+    if (legacyObjectKey && headerObjectKey && legacyObjectKey !== headerObjectKey) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Conflicting object routing metadata');
+    }
+    const objectKey = headerObjectKey || legacyObjectKey;
+    if (!objectKey || objectKey.length > 512) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'objectKey is required');
+    }
     const { userId } = currentUser(req);
 
     return withUserReadOnly(userId, async (tx) => {
