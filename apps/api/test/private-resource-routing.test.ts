@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DOSE_ID_HEADER, MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER, promoteMedicationIdHeader, rewritePrivateResourceUrl,
+  DEVICE_ID_HEADER, DOSE_ID_HEADER, MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER,
+  promoteMedicationIdHeader, rewritePrivateResourceUrl,
 } from '../src/middleware/private-resource-routing.js';
 import { PROFILE_ID_HEADER } from '../src/middleware/profile-routing.js';
 
@@ -8,6 +9,7 @@ const MEDICATION_ID = '11111111-2222-4333-8444-555555555555';
 const PROFILE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const SCHEDULE_ID = '99999999-8888-4777-8666-555555555555';
 const DOSE_ID = '77777777-6666-4555-8444-333333333333';
+const DEVICE_ID = 'dev-synthetic-installation-123';
 
 describe('fixed public resource paths', () => {
   it.each([
@@ -32,6 +34,13 @@ describe('fixed public resource paths', () => {
     expect(rewritePrivateResourceUrl(publicPath, { [SCHEDULE_ID_HEADER]: SCHEDULE_ID }))
       .toBe(`/v1/schedules/${SCHEDULE_ID}`);
     expect(publicPath).not.toContain(SCHEDULE_ID);
+  });
+
+  it('rewrites push-token removal internally without exposing the installation id', () => {
+    const publicPath = '/v1/devices/push-token';
+    expect(rewritePrivateResourceUrl(publicPath, { [DEVICE_ID_HEADER]: DEVICE_ID }))
+      .toBe(`/v1/devices/push-token/${encodeURIComponent(DEVICE_ID)}`);
+    expect(publicPath).not.toContain(DEVICE_ID);
   });
 
   it.each([
@@ -72,6 +81,8 @@ describe('fixed public resource paths', () => {
       .toBe('/v1/schedule');
     expect(rewritePrivateResourceUrl('/v1/profile', { [PROFILE_ID_HEADER]: 'not-a-uuid' }))
       .toBe('/v1/profile');
+    expect(rewritePrivateResourceUrl('/v1/devices/push-token', { [DEVICE_ID_HEADER]: '../admin' }))
+      .toBe('/v1/devices/push-token');
   });
 
   it('does not rewrite unrelated routes or fixed paths without metadata', () => {
@@ -79,5 +90,6 @@ describe('fixed public resource paths', () => {
     expect(rewritePrivateResourceUrl('/v1/medication/stock', {})).toBe('/v1/medication/stock');
     expect(rewritePrivateResourceUrl('/v1/dose', {})).toBe('/v1/dose');
     expect(rewritePrivateResourceUrl('/v1/schedule', {})).toBe('/v1/schedule');
+    expect(rewritePrivateResourceUrl('/v1/devices/push-token', {})).toBe('/v1/devices/push-token');
   });
 });
