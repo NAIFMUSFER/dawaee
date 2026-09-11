@@ -79,8 +79,13 @@ function resolveTicket(request: any) {
   });
 }
 
+function resolveFinalize(request: any) {
+  request.completed = true;
+  request.resolve({ ok: true, objectKey: 'profiles/A/synthetic-label.jpg' });
+}
+
 describe('medication capture profile isolation', () => {
-  it('a profile switch invalidates an in-flight A upload ticket before object upload or OCR', async () => {
+  it('a profile switch invalidates an in-flight A upload ticket before object upload, finalization or OCR', async () => {
     const { h, uploadPuts, drafts, replacements } = makeHarness();
     try {
       chooseFile(h);
@@ -100,6 +105,57 @@ describe('medication capture profile isolation', () => {
       await h.flush();
 
       expect(uploadPuts).toHaveLength(0);
+      expect(pending(h, '/v1/uploads/finalize')).toHaveLength(0);
+      expect(pending(h, '/v1/ocr/analyze')).toHaveLength(0);
+      expect(drafts).toHaveLength(0);
+      expect(replacements).toHaveLength(0);
+    } finally {
+      h.unmount();
+    }
+  });
+
+  it('does not start OCR until the uploaded object has been finalized', async () => {
+    const { h, uploadPuts } = makeHarness();
+    try {
+      chooseFile(h);
+      await h.flush();
+
+      const tickets = pending(h, '/v1/uploads/request');
+      expect(tickets).toHaveLength(1);
+      resolveTicket(tickets[0]);
+      await h.flush();
+
+      expect(uploadPuts).toHaveLength(1);
+      const finalizations = pending(h, '/v1/uploads/finalize');
+      expect(finalizations).toHaveLength(1);
+      expect(finalizations[0].payload).toEqual({ objectKey: 'profiles/A/synthetic-label.jpg' });
+      expect(pending(h, '/v1/ocr/analyze')).toHaveLength(0);
+
+      resolveFinalize(finalizations[0]);
+      await h.flush();
+      expect(pending(h, '/v1/ocr/analyze')).toHaveLength(1);
+    } finally {
+      h.unmount();
+    }
+  });
+
+  it('a profile switch while finalization is in flight prevents A OCR and draft writes', async () => {
+    const { h, uploadPuts, drafts, replacements } = makeHarness();
+    try {
+      chooseFile(h);
+      await h.flush();
+
+      const tickets = pending(h, '/v1/uploads/request');
+      resolveTicket(tickets[0]);
+      await h.flush();
+      expect(uploadPuts).toHaveLength(1);
+
+      const finalizations = pending(h, '/v1/uploads/finalize');
+      expect(finalizations).toHaveLength(1);
+      h.switchProfile('B', false);
+      resolveFinalize(finalizations[0]);
+      await h.flush();
+
       expect(pending(h, '/v1/ocr/analyze')).toHaveLength(0);
       expect(drafts).toHaveLength(0);
       expect(replacements).toHaveLength(0);
@@ -120,6 +176,11 @@ describe('medication capture profile isolation', () => {
       await h.flush();
 
       expect(uploadPuts).toHaveLength(1);
+      const finalizations = pending(h, '/v1/uploads/finalize');
+      expect(finalizations).toHaveLength(1);
+      resolveFinalize(finalizations[0]);
+      await h.flush();
+
       const ocr = pending(h, '/v1/ocr/analyze');
       expect(ocr).toHaveLength(1);
       expect(ocr[0].payload.patientProfileId).toBe('A');
