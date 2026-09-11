@@ -77,7 +77,7 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
       await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'skipped', lease_until = NULL, lease_token = NULL
-          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
+          WHERE id = $1 AND status = 'sending' AND lease_token = $2`,
         []);
       continue;
     }
