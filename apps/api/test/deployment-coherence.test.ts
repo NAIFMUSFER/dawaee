@@ -65,7 +65,13 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     const health = readFileSync(resolve(ROOT, 'apps/api/src/routes/health.ts'), 'utf8');
     expect(worker).toContain('buildCommit = runtimeCommit()');
     expect(worker).toContain('JSON.stringify({ buildCommit })');
-    expect(health).toContain("const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch']");
+
+    const declaration = health.match(/const REQUIRED_WORKER_JOBS = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
+    const requiredJobs = [...declaration.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    expect(requiredJobs).toEqual([
+      'materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests',
+    ]);
+
     expect(health).toContain("metadata->>'buildCommit'");
     expect(health).toContain('checks.worker = failures.length === 0');
   });
