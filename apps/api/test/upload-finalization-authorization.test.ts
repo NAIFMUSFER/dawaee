@@ -125,7 +125,7 @@ describe('upload finalization authorization and staged-object boundary', () => {
     expect(replay.json()).toEqual(first.json());
     expect(await leaseState(key)).toEqual(completed);
     expect(h.worker.providers.storage.getObject).toHaveBeenCalledTimes(1);
-    expect(h.worker.providers.storage.getObject).toHaveBeenCalledWith(key);
+    expect(h.worker.providers.storage.getObject).toHaveBeenCalledWith(key, IMAGE.length);
     expect(h.worker.providers.storage.deleteObject).not.toHaveBeenCalled();
   });
 
