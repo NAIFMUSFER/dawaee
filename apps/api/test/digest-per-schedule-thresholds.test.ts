@@ -65,7 +65,7 @@ beforeAll(async () => {
     `INSERT INTO caregiver_relationships
        (patient_profile_id, caregiver_user_id, role, status, permissions,
         escalation_priority, invited_by_user_id, accepted_at)
-     VALUES ($1,$2,'caregiver','active',ARRAY['receive_notifications']::text[],1,$3,now())
+     VALUES ($1,$2,'caregiver','active',ARRAY['view_schedule','view_adherence','receive_notifications']::text[],1,$3,now())
      RETURNING id`,
     [patient.profileId, caregiver.userId, patient.userId],
   );
