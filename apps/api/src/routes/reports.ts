@@ -235,7 +235,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ['emergencyCard', `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
                                   include_medications, include_allergies, include_contacts, qr_enabled
                              FROM emergency_cards WHERE patient_profile_id = $1`],
-        ['auditLog', 'SELECT * FROM audit_logs WHERE patient_profile_id = $1 ORDER BY at DESC LIMIT 5000'],
+        ['auditLog', 'SELECT * FROM audit_logs WHERE patient_profile_id = $1 ORDER BY at DESC'],
       ];
       for (const [name, sql] of queries) {
         const { rows } = await tx.query(sql, [profileId]);
