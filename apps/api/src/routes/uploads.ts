@@ -178,7 +178,24 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
       );
       return (rowCount ?? 0) === 1;
     });
-    if (!finalized) throw AppError.notFound('Object not found');
+    if (!finalized) {
+      // A concurrent retry can reach the provider at the same time as this
+      // request. Exactly one compare-and-set UPDATE wins; the loser must not
+      // report a false 404 when the same uploader's twin request has already
+      // completed the very same lease. Re-read only the owner-scoped terminal
+      // state. Missing, rejected, cross-account, and still-pending rows remain
+      // failures, and no database lock is held across the provider read.
+      const alreadyFinalized = await withUserReadOnly(userId, async (tx) => {
+        const { rows } = await tx.query<{ uploaded_at: Date | null; scan_status: string }>(
+          `SELECT uploaded_at, scan_status
+             FROM stored_objects
+            WHERE object_key = $1 AND owner_user_id = $2`,
+          [objectKey, userId],
+        );
+        return Boolean(rows[0]?.uploaded_at && rows[0]?.scan_status === 'clean');
+      });
+      if (!alreadyFinalized) throw AppError.notFound('Object not found');
+    }
     return { ok: true, objectKey };
   });
 
