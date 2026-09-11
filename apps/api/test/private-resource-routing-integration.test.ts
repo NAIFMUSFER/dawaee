@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, PANADOL, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
-import { MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER } from '../src/middleware/private-resource-routing.js';
+import {
+  DEVICE_ID_HEADER, MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER,
+} from '../src/middleware/private-resource-routing.js';
 import { PROFILE_ID_HEADER } from '../src/middleware/profile-routing.js';
 import { resetClockSource, setClockSource } from '../src/lib/clock.js';
+import { withUser } from '../src/lib/db.js';
 
 let h: Harness;
 let alice: TestUser;
@@ -142,5 +145,31 @@ describe('fixed public resource routing reaches the established authorization ha
     });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(res.body).not.toContain(bob.phone);
+  });
+
+  it('removes an owner push token through a fixed path containing no stable device id', async () => {
+    const deviceId = 'dev-private-routing-alice';
+    const registration = await h.app.inject({
+      method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(alice),
+      payload: { token: 'ExponentPushToken[private-routing-alice]', platform: 'ios', deviceId },
+    });
+    expect(registration.statusCode, registration.body).toBe(200);
+
+    const publicPath = '/v1/devices/push-token';
+    expect(publicPath).not.toContain(deviceId);
+    const removal = await h.app.inject({
+      method: 'DELETE', url: publicPath,
+      headers: { ...authHeaders(alice), [DEVICE_ID_HEADER]: deviceId },
+    });
+    expect(removal.statusCode, removal.body).toBe(200);
+
+    const active = await withUser(alice.userId, async (tx) => {
+      const { rows } = await tx.query<{ active: boolean }>(
+        'SELECT active FROM push_tokens WHERE user_id = $1 AND device_id = $2',
+        [alice.userId, deviceId],
+      );
+      return rows[0]?.active;
+    });
+    expect(active).toBe(false);
   });
 });
