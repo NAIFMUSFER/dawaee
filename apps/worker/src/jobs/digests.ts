@@ -27,7 +27,7 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
         AND cr.status = 'active'
         AND r.mode IN ('daily_summary','weekly_summary')
         AND r.summary_time IS NOT NULL
-        -- `receive_notifications` permits a delivery channel; it does not grant
+        -- receive_notifications permits a delivery channel; it does not grant
         -- the adherence/schedule data that this summary calculates. Match the
         -- /v1/adherence dependency contract before the worker reads or queues it.
         AND 'receive_notifications' = ANY (cr.permissions)
