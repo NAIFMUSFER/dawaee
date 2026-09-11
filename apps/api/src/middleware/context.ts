@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AppError } from '@dawaee/shared';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { assertSessionLive, } from '../auth/session-service.js';
-import { hashIp, withTransaction } from '../lib/db.js';
+import { hashIp, withTransaction, withUserReadOnly } from '../lib/db.js';
 import { loadConfig } from '../config.js';
 
 declare module 'fastify' {
@@ -33,7 +33,21 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
 }
 
 export async function requireAdmin(req: FastifyRequest): Promise<void> {
+  // The signed claim is a necessary fast-fail, never the live source of truth.
+  // Admin removal is an operator-side security action and must take effect on
+  // the next privileged request rather than waiting for an access token to
+  // expire. Read the caller's own users row through the ordinary FORCE-RLS
+  // policy so this check gains no global database visibility.
   if (!req.auth?.isAdmin) throw AppError.forbidden('Administrator access required');
+
+  const stillAdmin = await withUserReadOnly(req.auth.userId, async (tx) => {
+    const { rows } = await tx.query<{ is_admin: boolean }>(
+      'SELECT is_admin FROM users WHERE id = $1',
+      [req.auth!.userId],
+    );
+    return rows[0]?.is_admin === true;
+  });
+  if (!stillAdmin) throw AppError.forbidden('Administrator access required');
 }
 
 export function currentUser(req: FastifyRequest): { userId: string; sessionId: string; isAdmin: boolean } {
