@@ -28,7 +28,7 @@ function report(label: string) {
     },
     summary,
     daily: [{ date: '2026-09-07', scheduled: 1, taken: 1, missed: 0, adherencePercent: 100 }],
-    medications: [{ name: `MED-${label}`, strength: null, form: 'tablet', summary }],
+    medications: [{ name: `SYNTHETIC-${label}-ONLY`, strength: null, form: 'tablet', summary }],
     stockOutlook: [],
   };
 }
