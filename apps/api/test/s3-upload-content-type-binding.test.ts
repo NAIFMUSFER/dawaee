@@ -18,24 +18,26 @@ function provider(): S3StorageProvider {
   }));
 }
 
-describe('production S3 upload tickets bind the declared image type', () => {
-  it('cryptographically signs Content-Type instead of leaving it caller-mutable', async () => {
+describe('production S3 upload tickets bind the immutable image contract', () => {
+  it('cryptographically signs Content-Type and the create-only precondition', async () => {
     const ticket = await provider().createUploadTicket({
       objectKey: 'medication_image/2026-09-09/account/example.png',
       contentType: 'image/png',
       byteSize: 128,
     });
 
-    expect(ticket.headers).toEqual({ 'content-type': 'image/png' });
+    expect(ticket.headers).toEqual({
+      'content-type': 'image/png',
+      'if-none-match': '*',
+    });
 
-    // SigV4 only authenticates headers named by X-Amz-SignedHeaders. If
-    // Content-Type is absent here, a client holding this PUT URL can replace the
-    // advertised image type with text/html (or another value) without changing
-    // the signature. The direct S3/R2 upload path then stores that attacker-
-    // chosen response Content-Type and /v1/uploads/url later issues a signed GET
-    // URL for it. This test is deliberately provider-only: it proves the
-    // cryptographic ticket contract without making a paid/live object-store call.
+    // SigV4 only authenticates headers named by X-Amz-SignedHeaders. Content-
+    // Type prevents type substitution; If-None-Match: * makes PutObject fail if
+    // this randomized key already exists. That is the production S3/R2
+    // counterpart to the local O_EXCL regression: a still-live presigned URL
+    // cannot replace bytes after /v1/uploads/finalize has verified them.
     const signedHeaders = new URL(ticket.uploadUrl).searchParams.get('X-Amz-SignedHeaders');
     expect(signedHeaders?.split(';')).toContain('content-type');
+    expect(signedHeaders?.split(';')).toContain('if-none-match');
   });
 });
