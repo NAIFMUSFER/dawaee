@@ -79,6 +79,8 @@ export function assessIntegrationReadiness(providers: Providers, isProduction: b
   };
 }
 
+const REQUIRED_WORKER_JOBS = ['materialize', 'reminders'] as const;
+
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
 
@@ -122,34 +124,52 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
      * readiness endpoint still returned READY because it never asked whether a
      * worker was alive, successful, or running the same release.
      *
-     * `reminders` is used as the heartbeat because it runs every worker tick and
-     * is the safety-critical path. New workers stamp every job_run with their
-     * build commit. A pre-fix worker therefore fails closed as "identity
-     * unavailable" instead of being mistaken for the current release.
+     * Both `materialize` and `reminders` are required release heartbeats. They
+     * run independently on every worker tick, and `runJob` deliberately catches
+     * one job's failure so the later jobs can continue. Production evidence on
+     * 2026-09-11 showed exactly that split: rolling-horizon materialization was
+     * failing every minute with SQLSTATE 42501 while later reminder work could
+     * still run. Looking at reminders alone therefore reports a clinically
+     * incomplete worker as ready.
+     *
+     * New workers stamp every job_run with their build commit. A pre-fix worker
+     * still fails closed as "identity unavailable" instead of being mistaken
+     * for the current release.
      */
     if (checks.database.ok && cfg.NODE_ENV === 'production') {
       try {
         const { rows } = await getPool().query<{
+          job_name: string;
           started_at: Date;
           succeeded: boolean;
           build_commit: string | null;
         }>(
-          `SELECT started_at, succeeded, metadata->>'buildCommit' AS build_commit
+          `SELECT DISTINCT ON (job_name)
+                  job_name, started_at, succeeded, metadata->>'buildCommit' AS build_commit
              FROM job_runs
-            WHERE job_name = 'reminders'
-            ORDER BY started_at DESC
-            LIMIT 1`,
+            WHERE job_name = ANY($1::text[])
+            ORDER BY job_name, started_at DESC`,
+          [REQUIRED_WORKER_JOBS],
         );
-        const row = rows[0];
-        const worker = assessWorkerHeartbeat({
-          apiCommit: runtimeCommit(),
-          heartbeat: row ? {
-            startedAt: row.started_at,
-            succeeded: row.succeeded,
-            buildCommit: row.build_commit,
-          } : null,
-        });
-        checks.worker = worker;
+
+        const failures: string[] = [];
+        const apiCommit = runtimeCommit();
+        for (const jobName of REQUIRED_WORKER_JOBS) {
+          const row = rows.find((candidate) => candidate.job_name === jobName);
+          const result = assessWorkerHeartbeat({
+            apiCommit,
+            heartbeat: row ? {
+              startedAt: row.started_at,
+              succeeded: row.succeeded,
+              buildCommit: row.build_commit,
+            } : null,
+          });
+          if (!result.ok) failures.push(`${jobName}: ${result.detail ?? 'unhealthy'}`);
+        }
+
+        checks.worker = failures.length === 0
+          ? { ok: true, detail: 'materialize and reminders healthy' }
+          : { ok: false, detail: failures.join('; ') };
       } catch (err) {
         checks.worker = { ok: false, detail: err instanceof Error ? err.message : 'unverifiable' };
       }
