@@ -155,6 +155,8 @@ function CaregiverDetailProfileScreen() {
 
   const savePermissions = useCallback(async () => {
     if (!caregiver) return;
+    const isCurrent = captureMutation();
+    if (!isCurrent()) return;
     setSavingPermissions(true);
     setError(null);
     try {
@@ -163,15 +165,17 @@ function CaregiverDetailProfileScreen() {
         permissions,
         escalationPriority: priority,
       });
+      if (!isCurrent()) return;
       setNotice(t('caregiver.permissionsSaved'));
       await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setSavingPermissions(false);
+      if (isCurrent()) setSavingPermissions(false);
     }
-  }, [caregiver, describe, load, permissions, priority, setOffline, t]);
+  }, [captureMutation, caregiver, describe, load, permissions, priority, setOffline, t]);
 
   const saveRule = useCallback(async (channel: RuleChannel, rule: RuleState): Promise<void> => {
     if (!caregiver) return;
@@ -186,6 +190,8 @@ function CaregiverDetailProfileScreen() {
       }
     }
 
+    const isCurrent = captureMutation();
+    if (!isCurrent()) return;
     setSavingChannel(channel);
     setError(null);
     try {
@@ -199,15 +205,17 @@ function CaregiverDetailProfileScreen() {
         quietHoursEnd: timeOrNull(rule.quietHoursEnd),
         enabled: rule.enabled,
       });
+      if (!isCurrent()) return;
       setNotice(t('notify.saved'));
       await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setSavingChannel(null);
+      if (isCurrent()) setSavingChannel(null);
     }
-  }, [caregiver, describe, load, setOffline, t]);
+  }, [captureMutation, caregiver, describe, load, setOffline, t]);
 
   const revoke = useCallback(() => {
     if (!caregiver) return;
