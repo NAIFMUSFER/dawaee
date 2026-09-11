@@ -124,11 +124,12 @@ describe('caregiver notification text cannot outrank caregiver medication permis
     expect(stored.rows[0]!.body).not.toContain(MEDICATION);
     expect(JSON.stringify(stored.rows[0]!.payload)).not.toContain(MEDICATION);
 
-    // Dispatcher runs before reminder enqueue in a tick, so a second tick
-    // exercises the actual push-provider path for the queued caregiver alert.
+    // A worker tick runs reminders before dispatch, so the delivery may already
+    // have been sent on this tick. Run one more tick as replay coverage, then
+    // inspect the recording provider's real PushMessage field (`token`).
     h.setNow(at('20:01'));
     await h.tick();
-    const pushes = h.push.sent.filter((item) => item.to === 'ExponentPushToken[caregiver-permission-boundary]');
+    const pushes = h.push.sent.filter((item) => item.token === 'ExponentPushToken[caregiver-permission-boundary]');
     expect(pushes.length, 'the caregiver escalation was actually dispatched').toBeGreaterThan(0);
     for (const item of pushes) {
       expect(item.body).not.toContain(MEDICATION);
