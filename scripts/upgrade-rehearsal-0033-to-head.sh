@@ -26,6 +26,16 @@ trap cleanup EXIT
 fail() { echo "UPGRADE REHEARSAL FAIL: $*" >&2; exit 1; }
 step() { echo "--- $*"; }
 
+HEAD_COUNT=0
+HEAD_LATEST=""
+for f in "$ROOT"/db/migrations/*.sql; do
+  HEAD_COUNT=$((HEAD_COUNT + 1))
+  HEAD_LATEST="$(basename "$f")"
+done
+PENDING_COUNT=$((HEAD_COUNT - 33))
+HEAD_NUM="${HEAD_LATEST%%_*}"
+[ "$PENDING_COUNT" -gt 0 ] || fail "current head has no migrations after baseline 0033"
+
 U1='11111111-1111-4111-8111-111111111111'
 U2='22222222-2222-4222-8222-222222222222'
 P1='33333333-3333-4333-8333-333333333331'
@@ -196,14 +206,14 @@ step "running the real migration runner from 0033 to head"
 export DATABASE_URL="$MIGRATOR_URL/$DB"
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-first.txt
 UPGRADE_APPLIED="$(grep -Eo 'applied [0-9]+ migration\(s\)' /tmp/dawaee-upgrade-first.txt | tail -1 || true)"
-[ "$UPGRADE_APPLIED" = "applied 13 migration(s)" ] \
-  || fail "expected exactly 13 migrations (0034..0046), got: ${UPGRADE_APPLIED:-none}"
+[ "$UPGRADE_APPLIED" = "applied $PENDING_COUNT migration(s)" ] \
+  || fail "expected exactly $PENDING_COUNT migrations (0034..$HEAD_NUM), got: ${UPGRADE_APPLIED:-none}"
 
 LATEST="$(psql -d "$DB" -tAc 'SELECT max(filename) FROM schema_migrations')"
 COUNT="$(psql -d "$DB" -tAc 'SELECT count(*) FROM schema_migrations')"
-[ "$COUNT" = "46" ] || fail "upgraded ledger has $COUNT rows, expected 46"
-[ "$LATEST" = "0046_push_token_account_switch.sql" ] \
-  || fail "upgraded ledger ended at $LATEST, not 0046"
+[ "$COUNT" = "$HEAD_COUNT" ] || fail "upgraded ledger has $COUNT rows, expected $HEAD_COUNT"
+[ "$LATEST" = "$HEAD_LATEST" ] \
+  || fail "upgraded ledger ended at $LATEST, not $HEAD_LATEST"
 
 bash "$ROOT/scripts/migrate.sh" | tee /tmp/dawaee-upgrade-second.txt
 grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
@@ -211,7 +221,7 @@ grep -q 'no pending migrations' /tmp/dawaee-upgrade-second.txt \
 
 snapshot_counts "$DB" > /tmp/dawaee-upgrade-after.txt
 if ! diff -u /tmp/dawaee-upgrade-before.txt /tmp/dawaee-upgrade-after.txt; then
-  fail "0033 -> 0046 changed row counts outside schema_migrations"
+  fail "0033 -> $HEAD_NUM changed row counts outside schema_migrations"
 fi
 
 step "verifying intended data transformations and schema integrity"
@@ -335,7 +345,7 @@ cat <<EOF
 PRODUCTION-SHAPED UPGRADE REHEARSAL PASSED
   baseline          : 0033_caregiver_revoke_notification_policy.sql
   upgraded through : $LATEST
-  pending migrations: 13 (0034..0046), then no-op
+  pending migrations: $PENDING_COUNT (0034..$HEAD_NUM), then no-op
   row-count drift   : none before explicit post-upgrade actions
   intended cleanup : legacy WhatsApp disabled; terminal snooze metadata cleared
   dose replay       : current client-event identity preserved into append-only history
