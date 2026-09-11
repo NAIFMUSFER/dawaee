@@ -26,6 +26,7 @@ function harness() {
   const deleteGate = deferred();
   const patchGate = deferred();
   const replacements: string[] = [];
+  let medicationLoads = 0;
   const h = createHarness(screen, hook, {}, {
     'expo-router': {
       useLocalSearchParams: () => ({ id: medicationId }),
@@ -42,9 +43,9 @@ function harness() {
       NetworkError,
       ApiError,
       api: {
-        get: async (route: string, query?: { profileId?: string }) => {
+        get: async (route: string) => {
           if (route === `/v1/medications/${medicationId}`) {
-            return { medication: medication(query?.profileId ?? h?.app?.activeProfile?.id ?? 'A'), schedules: [] };
+            return { medication: medication(medicationLoads++ === 0 ? 'A' : 'B'), schedules: [] };
           }
           if (route === `/v1/medications/${medicationId}/stock`) return null;
           if (route === '/v1/doses') return { doses: [] };
@@ -71,6 +72,7 @@ describe('medication detail mutation profile isolation', () => {
       h.switchProfile('B');
       await h.flush();
       expect(h.app.activeProfile.id).toBe('B');
+      expect(h.text()).toContain('SYNTHETIC-B-ONLY');
 
       deleteGate.resolve({});
       await h.flush();
@@ -93,6 +95,7 @@ describe('medication detail mutation profile isolation', () => {
       h.switchProfile('B');
       await h.flush();
       expect(h.app.activeProfile.id).toBe('B');
+      expect(h.text()).toContain('SYNTHETIC-B-ONLY');
 
       patchGate.resolve({});
       await h.flush();
