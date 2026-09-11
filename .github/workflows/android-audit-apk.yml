@@ -1,0 +1,75 @@
+name: Android Audit APK
+
+on:
+  push:
+    branches: [build/android-apk-audit-2026-09-11]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-audit-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DEMO: '0'
+      EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Install repository dependencies
+        run: npm ci
+
+      - name: Install mobile dependencies
+        working-directory: apps/mobile
+        run: npm ci --legacy-peer-deps
+
+      - name: Mobile typecheck
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+
+      - name: Generate Android native project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Build standalone release APK
+        working-directory: apps/mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Prepare APK artifact
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          apk="$(find apps/mobile/android/app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          cp "$apk" "artifacts/dawaee-audit-${GITHUB_SHA:0:8}.apk"
+          sha256sum artifacts/*.apk | tee artifacts/SHA256SUMS.txt
+          ls -lh artifacts
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dawaee-android-audit-apk
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
