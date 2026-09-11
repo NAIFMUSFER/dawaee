@@ -55,6 +55,7 @@ const DEVICE_KEY = 'dawaee.deviceId';
 const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
 const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
 const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
+const DOSE_ID_HEADER = 'x-dawaee-dose-id';
 const OBJECT_KEY_HEADER = 'x-dawaee-object-key';
 const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
 
@@ -63,6 +64,7 @@ interface PrivatePathRouting {
   profileId: string | null;
   medicationId: string | null;
   scheduleId: string | null;
+  doseId: string | null;
 }
 
 /**
@@ -72,11 +74,22 @@ interface PrivatePathRouting {
  * keeps the old path because it never makes a network request.
  */
 export function privatizeResourcePath(path: string): PrivatePathRouting {
-  if (DEMO_MODE) return { path, profileId: null, medicationId: null, scheduleId: null };
+  if (DEMO_MODE) return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null };
 
   const queryAt = path.indexOf('?');
   const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
   const suffix = queryAt === -1 ? '' : path.slice(queryAt);
+
+  const dose = new RegExp(`^/v1/doses/(${UUID_PATH})$`, 'i').exec(pathname);
+  if (dose) {
+    return {
+      path: `/v1/dose${suffix}`,
+      profileId: null,
+      medicationId: null,
+      scheduleId: null,
+      doseId: dose[1]!,
+    };
+  }
 
   const schedule = new RegExp(`^/v1/schedules/(${UUID_PATH})$`, 'i').exec(pathname);
   if (schedule) {
@@ -85,6 +98,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       profileId: null,
       medicationId: null,
       scheduleId: schedule[1]!,
+      doseId: null,
     };
   }
 
@@ -95,6 +109,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       profileId: null,
       medicationId: medication[1]!,
       scheduleId: null,
+      doseId: null,
     };
   }
 
@@ -105,10 +120,11 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       profileId: profile[1]!,
       medicationId: null,
       scheduleId: null,
+      doseId: null,
     };
   }
 
-  return { path, profileId: null, medicationId: null, scheduleId: null };
+  return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null };
 }
 
 export class ApiError extends Error {
@@ -380,6 +396,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       : null
   );
   const routedScheduleId = privatePath.scheduleId;
+  const routedDoseId = privatePath.doseId;
   // Only the signed-read route has an objectKey query contract. Keep arbitrary
   // query fields named objectKey untouched elsewhere, but move this private
   // storage identifier to request metadata before the platform sees the URL.
@@ -435,6 +452,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
           ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
           ...(routedScheduleId ? { [SCHEDULE_ID_HEADER]: routedScheduleId } : {}),
+          ...(routedDoseId ? { [DOSE_ID_HEADER]: routedDoseId } : {}),
           ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
