@@ -32,6 +32,7 @@ beforeAll(async () => {
       strengthUnit: 'mg',
       foodInstruction: 'no_preference',
       startDate: '2026-04-05',
+      expiryDate: '2026-04-10',
       schedule: {
         rule: { kind: 'fixed_times', times: ['20:00'] },
         doseQuantity: 1,
@@ -55,30 +56,33 @@ afterAll(async () => {
   if (h) await h.close();
 });
 
-describe('stock alerts obey the same lock-screen medication privacy control as dose reminders', () => {
+describe('stock and expiry alerts obey the same lock-screen medication privacy control as dose reminders', () => {
   it('does not store or send a medication name while the patient remains opted out', async () => {
     // Dispatcher runs before stock-alerts in a tick. First tick enqueues; second
     // tick sends, keeping this an actual worker/outbox path instead of a string
     // helper assertion.
     await h.tick();
 
-    const stored = await h.worker.pool.query<{ body: string; payload: unknown; status: string }>(
-      `SELECT body, payload, status::text AS status
+    const stored = await h.worker.pool.query<{ kind: string; body: string; payload: unknown; status: string }>(
+      `SELECT kind::text AS kind, body, payload, status::text AS status
          FROM notification_deliveries
-        WHERE patient_profile_id = $1 AND kind = 'low_stock'
-        ORDER BY created_at DESC LIMIT 1`,
+        WHERE patient_profile_id = $1 AND kind IN ('low_stock','expiry_warning')
+        ORDER BY kind`,
       [patient.profileId],
     );
-    expect(stored.rows).toHaveLength(1);
-    expect(stored.rows[0]!.body).not.toContain(MEDICATION);
-    expect(JSON.stringify(stored.rows[0]!.payload)).not.toContain(MEDICATION);
+    expect(stored.rows.map((row) => row.kind).sort()).toEqual(['expiry_warning', 'low_stock']);
+    for (const row of stored.rows) {
+      expect(row.body).not.toContain(MEDICATION);
+      expect(JSON.stringify(row.payload)).not.toContain(MEDICATION);
+    }
 
     h.setNow(new Date('2026-04-05T05:01:00.000Z'));
     await h.tick();
 
-    const stockPushes = h.push.sent.filter((push) => push.data.kind === 'low_stock');
-    expect(stockPushes.length, 'the low-stock alert was actually dispatched').toBeGreaterThan(0);
-    for (const push of stockPushes) {
+    const privatePushes = h.push.sent.filter((push) =>
+      push.data.kind === 'low_stock' || push.data.kind === 'expiry_warning');
+    expect(privatePushes.length, 'the stock and expiry alerts were actually dispatched').toBeGreaterThanOrEqual(2);
+    for (const push of privatePushes) {
       expect(push.body).not.toContain(MEDICATION);
       expect(JSON.stringify(push)).not.toContain(MEDICATION);
     }
