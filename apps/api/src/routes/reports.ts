@@ -232,6 +232,13 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ['caregivers', `SELECT id, invited_name, role, status, permissions, escalation_priority, accepted_at
                           FROM caregiver_relationships WHERE patient_profile_id = $1`],
         ['escalationPolicies', 'SELECT * FROM escalation_policies WHERE patient_profile_id = $1'],
+        ['notificationDeliveries', `SELECT id, patient_profile_id, recipient_user_id, recipient_phone_e164,
+                                           relationship_id, kind, channel, dose_occurrence_id, medication_id,
+                                           escalation_stage, status, provider, error_code, attempts, max_attempts,
+                                           locale, title, body, payload, scheduled_for, sent_at, delivered_at,
+                                           created_at, updated_at
+                                      FROM notification_deliveries WHERE patient_profile_id = $1
+                                     ORDER BY created_at DESC`],
         ['notes', 'SELECT * FROM symptom_notes WHERE patient_profile_id = $1'],
         ['measurements', 'SELECT * FROM health_measurements WHERE patient_profile_id = $1'],
         ['emergencyCard', `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
