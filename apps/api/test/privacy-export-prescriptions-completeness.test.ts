@@ -30,7 +30,7 @@ beforeAll(async () => {
       ('${patient.profileId}', 'SYNTHETIC-RX-EXPORT', 'SYNTHETIC-PRESCRIBER',
        'SYNTHETIC-FACILITY', '2026-09-01', '2026-12-01',
        'synthetic/prescription/export-probe', '{"probe":"SYNTHETIC-OCR"}'::jsonb,
-       'confirmed', '${patient.userId}')
+       'completed', '${patient.userId}')
     RETURNING id
   `);
 });
