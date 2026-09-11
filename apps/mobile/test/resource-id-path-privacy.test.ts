@@ -17,6 +17,7 @@ const MEDICATION_ID = '11111111-2222-4333-8444-555555555555';
 const PROFILE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const SCHEDULE_ID = '99999999-8888-4777-8666-555555555555';
 const DOSE_ID = '77777777-6666-4555-8444-333333333333';
+const DEVICE_ID = 'dev-synthetic-installation-123';
 
 beforeEach(async () => {
   vi.resetModules();
@@ -93,6 +94,17 @@ describe('stable resource ids stay out of platform-visible request paths', () =>
     expect(init.headers).toMatchObject({
       authorization: 'Bearer test-access',
       'x-dawaee-dose-id': DOSE_ID,
+    });
+  });
+
+  it('routes push-token removal through a fixed path', async () => {
+    await client.api.delete(`/v1/devices/push-token/${encodeURIComponent(DEVICE_ID)}`);
+    const [rawUrl, init] = h.fetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(new URL(rawUrl).pathname).toBe('/v1/devices/push-token');
+    expect(rawUrl).not.toContain(DEVICE_ID);
+    expect(init.headers).toMatchObject({
+      authorization: 'Bearer test-access',
+      'x-dawaee-device-id': DEVICE_ID,
     });
   });
 
