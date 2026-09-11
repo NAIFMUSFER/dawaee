@@ -193,9 +193,15 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
 
     const objectMeta = await withUserReadOnly(userId, async (tx) => {
       await requireProfileAccess(tx, userId, body.patientProfileId, 'add_medication');
+      // An explicit decision for this profile, including withdrawal, overrides
+      // the account-wide default. Another profile's consent is not applicable.
       const { rows: consent } = await tx.query<{ granted: boolean }>(
-        `SELECT granted FROM consents WHERE user_id = $1 AND type = 'ocr_image_processing'`,
-        [userId],
+        `SELECT granted FROM consents
+          WHERE user_id = $1 AND type = 'ocr_image_processing'
+            AND (patient_profile_id = $2 OR patient_profile_id IS NULL)
+          ORDER BY patient_profile_id NULLS LAST
+          LIMIT 1`,
+        [userId, body.patientProfileId],
       );
       // Sending a photo of a prescription to a third-party vision API is a
       // disclosure; it requires a recorded, revocable consent.
