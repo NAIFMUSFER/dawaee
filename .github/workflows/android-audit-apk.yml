@@ -30,11 +30,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
-      - uses: actions/setup-java@v4
+      # Do not enable setup-java's Gradle cache here: Expo generates the
+      # Gradle files later during prebuild, so there is nothing to key yet.
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Install repository dependencies
         run: npm ci
@@ -68,7 +69,7 @@ jobs:
           ls -lh artifacts
 
       - name: Upload installable APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dawaee-android-audit-apk
           path: artifacts/
