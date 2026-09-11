@@ -57,7 +57,7 @@ const CONSENT_ROWS: ConsentRow[] = [
 ];
 
 interface MeResponse {
-  consents: Array<{ type: string; granted: boolean }>;
+  consents: Array<{ type: string; granted: boolean; patientProfileId?: string | null }>;
 }
 
 interface FileSystemModule {
@@ -91,10 +91,15 @@ export default function PrivacyScreen() {
   const theme = useTheme();
   const { user, activeProfile, signOut } = useApp();
   const apiErrorText = useApiErrorText();
-  const exportScopeKey = profileScopeKey(user?.id, activeProfile);
-  const { begin: beginExport } = useRequestScope(exportScopeKey);
+  const profileKey = profileScopeKey(user?.id, activeProfile);
+  const { begin: beginConsentLoad } = useRequestScope(profileKey);
+  const { begin: beginExport } = useRequestScope(profileKey);
 
-  const [consents, setConsents] = useState<Record<string, boolean> | null>(null);
+  const [consentState, setConsentState] = useState<{
+    scopeKey: string;
+    values: Record<string, boolean>;
+  } | null>(null);
+  const consents = consentState?.scopeKey === profileKey ? consentState.values : null;
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,22 +115,37 @@ export default function PrivacyScreen() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const isCurrent = beginConsentLoad();
+    const patientProfileId = activeProfile?.id ?? null;
     setLoading(true);
     setError(null);
     try {
       const me = await api.get<MeResponse>('/v1/me');
+      if (!isCurrent()) return;
+
+      // Account-level rows are a backwards-compatible default. A decision for
+      // the selected profile overrides that default, while sibling profile rows
+      // are ignored entirely regardless of database return order.
       const map: Record<string, boolean> = {};
-      for (const consent of me.consents) map[consent.type] = consent.granted;
-      setConsents(map);
+      for (const consent of me.consents) {
+        if (consent.patientProfileId == null) map[consent.type] = consent.granted;
+      }
+      if (patientProfileId) {
+        for (const consent of me.consents) {
+          if (consent.patientProfileId === patientProfileId) map[consent.type] = consent.granted;
+        }
+      }
+      setConsentState({ scopeKey: profileKey, values: map });
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else if (err instanceof ApiError) setError(apiErrorText(err));
       else setError(t('error.internal_error'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [t]);
+  }, [activeProfile?.id, apiErrorText, beginConsentLoad, profileKey, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -135,18 +155,28 @@ export default function PrivacyScreen() {
     setExporting(false);
     setExportNotice(null);
     setExportError(null);
-  }, [exportScopeKey]);
+  }, [profileKey]);
 
   const setConsent = async (type: ConsentType, granted: boolean) => {
+    if (!activeProfile) return;
+    const consentScopeKey = profileKey;
+    const patientProfileId = activeProfile.id;
     setPendingConsent(type);
     setError(null);
-    // Optimistic: withdrawing a consent should look instant, and the reload
-    // below puts the server's answer back if it disagreed.
-    setConsents((current) => ({ ...(current ?? {}), [type]: granted }));
+    // Optimistic: withdrawing a consent should look instant. Keep the state
+    // attached to the profile that initiated the write so a late failure from
+    // profile A can never overwrite profile B after a switch.
+    setConsentState((current) => current?.scopeKey === consentScopeKey
+      ? { scopeKey: consentScopeKey, values: { ...current.values, [type]: granted } }
+      : current);
     try {
-      await api.put('/v1/me/consents', { type, granted, version: CONSENT_VERSION });
+      await api.put('/v1/me/consents', {
+        type, granted, version: CONSENT_VERSION, patientProfileId,
+      });
     } catch (err) {
-      setConsents((current) => ({ ...(current ?? {}), [type]: !granted }));
+      setConsentState((current) => current?.scopeKey === consentScopeKey
+        ? { scopeKey: consentScopeKey, values: { ...current.values, [type]: !granted } }
+        : current);
       if (err instanceof NetworkError) setOffline(true);
       else setError(t('privacy.consentFailed'));
     } finally {
