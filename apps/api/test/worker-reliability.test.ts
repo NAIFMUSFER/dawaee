@@ -514,7 +514,7 @@ describe('delivery claiming is atomic across replicas', () => {
     const t0 = new Date();
     const { rows } = await owner.query<{ id: string; lease_token: string }>(claim, [t0, 120, 200]);
     const mine = rows.find((r) => r.id === id)!;
-    const applied = await owner.query(sent, [id, mine.lease_token, 'expo', 'msg-1']);
+    const applied = await owner.query(sent, [id, mine.lease_token, t0, 'expo', 'msg-1']);
     expect(applied.rowCount, 'the finalisation did not apply').toBe(1);
     const later = await owner.query<{ id: string }>(claim, [new Date(t0.getTime() + 3_600_000), 120, 200]);
     expect(later.rows.map((r) => r.id),
@@ -537,8 +537,8 @@ describe('delivery claiming is atomic across replicas', () => {
     );
     const bToken = rb.find((r) => r.id === id)!.lease_token;
     expect(bToken).not.toBe(aToken);
-    await owner.query(sent, [id, bToken, 'expo', 'msg-from-B']);
-    const stale = await owner.query(sent, [id, aToken, 'expo', 'msg-from-A']);
+    await owner.query(sent, [id, bToken, new Date(t0.getTime() + 121_000), 'expo', 'msg-from-B']);
+    const stale = await owner.query(sent, [id, aToken, new Date(t0.getTime() + 121_000), 'expo', 'msg-from-A']);
     expect(stale.rowCount,
       'a worker whose lease was reassigned overwrote the new owner\'s result').toBe(0);
     const s = await owner.query<{ provider_message_id: string }>(
@@ -558,7 +558,7 @@ describe('delivery claiming is atomic across replicas', () => {
     const { rows } = await owner.query<{ id: string; lease_token: string }>(claim, [t0, 120, 200]);
     const byId = new Map(rows.map((r) => [r.id, r.lease_token]));
     expect(byId.has(first) && byId.has(second), 'the batch did not claim both deliveries').toBe(true);
-    await owner.query(sent, [first, byId.get(first)!, 'expo', 'msg-first']);
+    await owner.query(sent, [first, byId.get(first)!, t0, 'expo', 'msg-first']);
     const later = await owner.query<{ id: string }>(claim, [new Date(t0.getTime() + 121_000), 120, 200]);
     const recovered = later.rows.map((r) => r.id);
     expect(recovered, 'the completed half of the batch was re-sent').not.toContain(first);
