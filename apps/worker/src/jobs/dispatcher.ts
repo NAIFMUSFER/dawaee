@@ -272,8 +272,13 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
     return { ok: false, provider: ctx.providers.push.name, errorCode: 'no_recipient', retryable: false };
   }
 
+  // Remote push is an authenticated-device capability. `push_tokens.active`
+  // alone is insufficient because a session can become invalid purely when its
+  // expiry instant passes, which does not execute a revocation trigger. Keep the
+  // worker out of auth_sessions and ask the narrow SECURITY DEFINER function for
+  // only the provider routing tokens backed by a currently live session.
   const { rows: tokens } = await client.query<{ token: string }>(
-    'SELECT token FROM push_tokens WHERE user_id = $1 AND active ORDER BY last_seen_at DESC LIMIT 5',
+    'SELECT token FROM app.list_live_push_tokens($1, 5)',
     [row.recipient_user_id],
   );
   if (tokens.length === 0) {
