@@ -36,6 +36,12 @@ class SizeLeaseStorage implements StorageProvider {
   }
 }
 
+function pngBody(byteSize: number, fill: number): Buffer {
+  const body = Buffer.alloc(byteSize, fill);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(body);
+  return body;
+}
+
 let h: Harness;
 let storage: SizeLeaseStorage;
 
@@ -70,7 +76,9 @@ describe('direct S3/R2 uploads are finalized against the approved byte lease', (
 
     // This models the production-only gap: direct S3/R2 PUT bytes bypass
     // Fastify, so a bearer can store more bytes than were declared to the API.
-    storage.bodies.set(objectKey, Buffer.alloc(declaredBytes + 8, 0x41));
+    // Keep the bytes valid PNG so this assertion isolates the SIZE lease rather
+    // than passing only because the independent magic-byte guard rejects them.
+    storage.bodies.set(objectKey, pngBody(declaredBytes + 8, 0x41));
 
     const finalized = await h.app.inject({
       method: 'POST',
@@ -118,7 +126,7 @@ describe('direct S3/R2 uploads are finalized against the approved byte lease', (
     });
     expect(ticket.statusCode, ticket.body).toBe(200);
     const objectKey = ticket.json<{ objectKey: string }>().objectKey;
-    storage.bodies.set(objectKey, Buffer.alloc(declaredBytes, 0x42));
+    storage.bodies.set(objectKey, pngBody(declaredBytes, 0x42));
 
     const finalized = await h.app.inject({
       method: 'POST',
