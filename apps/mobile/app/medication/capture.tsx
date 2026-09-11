@@ -299,11 +299,17 @@ function CaptureProfileScreen() {
   }, [captureAction, picker, t, uploadAndAnalyze]);
 
   const grantConsent = useCallback(async () => {
+    if (!activeProfile) return;
     const isCurrent = captureAction();
     if (!isCurrent()) return;
     setBusyLabel(t('capture.analyzing'));
     try {
-      await api.put('/v1/me/consents', { type: 'ocr_image_processing', granted: true, version: '1.0' });
+      await api.put('/v1/me/consents', {
+        type: 'ocr_image_processing',
+        granted: true,
+        version: '1.0',
+        patientProfileId: activeProfile.id,
+      });
       if (!isCurrent()) return;
       if (imageKey) await analyze(imageKey);
     } catch (err) {
@@ -313,7 +319,7 @@ function CaptureProfileScreen() {
     } finally {
       if (isCurrent()) setBusyLabel(null);
     }
-  }, [analyze, captureAction, failWith, imageKey, t]);
+  }, [activeProfile, analyze, captureAction, failWith, imageKey, t]);
 
   const goManual = useCallback(() => {
     clearMedicationDrafts();
