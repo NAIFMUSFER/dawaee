@@ -60,13 +60,14 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     expect(runtimeCommit({ RENDER_GIT_COMMIT: '<script>', GIT_COMMIT: 'refs/heads/main' })).toBe('unknown');
   });
 
-  it('the worker persists its build identity and production readiness reads it', () => {
+  it('the worker persists its build identity and production readiness reads every critical job', () => {
     const worker = readFileSync(resolve(ROOT, 'apps/worker/src/context.ts'), 'utf8');
     const health = readFileSync(resolve(ROOT, 'apps/api/src/routes/health.ts'), 'utf8');
     expect(worker).toContain('buildCommit = runtimeCommit()');
     expect(worker).toContain('JSON.stringify({ buildCommit })');
+    expect(health).toContain("const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch']");
     expect(health).toContain("metadata->>'buildCommit'");
-    expect(health).toContain('checks.worker = worker');
+    expect(health).toContain('checks.worker = failures.length === 0');
   });
 
   it('runtime authenticates with the same worker secret that pre-deploy writes to Postgres', () => {
