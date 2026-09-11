@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
@@ -83,6 +84,12 @@ function isValidDate(value: string): boolean {
 }
 
 export default function ClinicianReportScreen() {
+  const { user, activeProfile } = useApp();
+  const key = profileScopeKey(user?.id, activeProfile);
+  return <ClinicianReportProfileScreen key={key} />;
+}
+
+function ClinicianReportProfileScreen() {
   const { t, formatDate, formatTime, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
@@ -96,6 +103,7 @@ export default function ClinicianReportScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
+  const requestScope = useRequestScope(`${activeProfile?.id ?? 'none'}:${from}:${to}`);
 
   const rangeError = useMemo(() => {
     if (!isValidDate(from) || !isValidDate(to)) return t('reports.rangeInvalid');
@@ -108,6 +116,8 @@ export default function ClinicianReportScreen() {
 
   const load = useCallback(async () => {
     if (!activeProfile || rangeError) return;
+    const isCurrent = requestScope.begin();
+    if (!isCurrent()) return;
     setLoading(true);
     setError(null);
     try {
@@ -118,10 +128,12 @@ export default function ClinicianReportScreen() {
         api.get<ClinicianReport>('/v1/reports/clinician', { profileId: activeProfile.id, from, to }),
         api.get<{ medications: MedicationView[] }>('/v1/medications', { profileId: activeProfile.id }),
       ]);
+      if (!isCurrent()) return;
       setReport(reportRes);
       setMedications(medRes.medications);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else if (err instanceof ApiError) {
@@ -131,9 +143,9 @@ export default function ClinicianReportScreen() {
         setError(t('error.internal_error'));
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, from, to, rangeError, setOffline, t]);
+  }, [activeProfile, from, to, rangeError, requestScope, setOffline, t]);
 
   // A range arriving from the hub is already chosen; build it without a tap,
   // but only the first time — afterwards the range belongs to the user.
