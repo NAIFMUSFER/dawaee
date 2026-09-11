@@ -69,6 +69,19 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
 
   let sent = 0;
   for (const row of rows) {
+    // A delivery can sit in the outbox after the relationship that authorised
+    // it has been narrowed. Re-check at the last application boundary before
+    // invoking an external provider. This also retires legacy queued rows that
+    // pre-date the database trigger/backfill in migration 0049.
+    if (!await caregiverDeliveryStillAuthorized(client, row)) {
+      await finalise(ctx, row,
+        `UPDATE notification_deliveries
+            SET status = 'skipped', lease_until = NULL, lease_token = NULL
+          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
+        []);
+      continue;
+    }
+
     const result = await sendOne(ctx, client, row);
 
     if (result.ok) {
@@ -108,6 +121,36 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
   }
 
   return { itemsProcessed: sent };
+}
+
+/**
+ * Relationship-backed deliveries are capabilities, not immutable messages.
+ * The patient can narrow a caregiver at any time. Every caregiver delivery
+ * therefore still needs an active relationship plus receive_notifications at
+ * dispatch time. Daily/weekly summaries additionally expose adherence and
+ * schedule-derived data, matching the same two data permissions required by
+ * /v1/adherence and by the digest producer itself.
+ */
+async function caregiverDeliveryStillAuthorized(client: PoolClient, row: DeliveryRow): Promise<boolean> {
+  if (!row.relationship_id) return true;
+  if (!row.patient_profile_id || !row.recipient_user_id) return false;
+
+  const { rows } = await client.query<{ permissions: string[] }>(
+    `SELECT permissions
+       FROM caregiver_relationships
+      WHERE id = $1
+        AND patient_profile_id = $2
+        AND caregiver_user_id = $3
+        AND status = 'active'`,
+    [row.relationship_id, row.patient_profile_id, row.recipient_user_id],
+  );
+  const permissions = rows[0]?.permissions;
+  if (!permissions?.includes('receive_notifications')) return false;
+
+  if (row.kind === 'daily_summary' || row.kind === 'weekly_summary') {
+    return permissions.includes('view_adherence') && permissions.includes('view_schedule');
+  }
+  return true;
 }
 
 async function finalise(
