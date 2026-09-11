@@ -345,7 +345,22 @@ async function enqueueNotification(
   const scheduledLocal = localTimeInZone(dose.scheduled_at, dose.profile_timezone);
   const foodKey = `food.${dose.food_instruction}` as never;
   const food = t(locale, foodKey);
-  const showMedication = dose.show_medication === true;
+
+  // The patient's lock-screen opt-in is necessary but not sufficient for a
+  // caregiver. A caregiver may receive adherence alerts while deliberately
+  // lacking view_medications; notification text must not become a side channel
+  // around that permission boundary.
+  let recipientCanViewMedication = isPatient;
+  if (!isPatient && recipient.relationshipId) {
+    const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
+      `SELECT status = 'active' AND 'view_medications' = ANY(permissions) AS can_view_medication
+         FROM caregiver_relationships
+        WHERE id = $1 AND patient_profile_id = $2`,
+      [recipient.relationshipId, dose.patient_profile_id],
+    );
+    recipientCanViewMedication = permissionRows[0]?.can_view_medication === true;
+  }
+  const showMedication = dose.show_medication === true && recipientCanViewMedication;
   const title = isPatient ? t(locale, 'reminder.title') : t(locale, 'caregiver.alertTitle');
 
   const body = grouped
