@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
@@ -88,8 +89,10 @@ function optionalModule<T>(load: () => unknown): T | null {
 export default function PrivacyScreen() {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
-  const { activeProfile, signOut } = useApp();
+  const { user, activeProfile, signOut } = useApp();
   const apiErrorText = useApiErrorText();
+  const exportScopeKey = profileScopeKey(user?.id, activeProfile);
+  const { begin: beginExport } = useRequestScope(exportScopeKey);
 
   const [consents, setConsents] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -126,6 +129,14 @@ export default function PrivacyScreen() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    // Export state belongs to the selected patient. A profile switch invalidates
+    // both an in-flight export and any success/error state left by the old one.
+    setExporting(false);
+    setExportNotice(null);
+    setExportError(null);
+  }, [exportScopeKey]);
+
   const setConsent = async (type: ConsentType, granted: boolean) => {
     setPendingConsent(type);
     setError(null);
@@ -145,24 +156,33 @@ export default function PrivacyScreen() {
 
   const exportData = async () => {
     if (!activeProfile) return;
+    const isCurrent = beginExport();
+    const patientProfileId = activeProfile.id;
     setExporting(true);
     setExportError(null);
     setExportNotice(null);
     try {
-      const payload = await api.get<unknown>('/v1/reports/export', { profileId: activeProfile.id });
+      const payload = await api.get<unknown>('/v1/reports/export', { profileId: patientProfileId });
+      if (!isCurrent()) return;
       const json = JSON.stringify(payload, null, 2);
       const kilobytes = Math.max(1, Math.round(json.length / 1024));
-      const fileName = `dawaee-export-${activeProfile.id}.json`;
+      const fileName = `dawaee-export-${patientProfileId}.json`;
 
       const fileSystem = optionalModule<FileSystemModule>(() => require('expo-file-system'));
       const sharing = optionalModule<SharingModule>(() => require('expo-sharing'));
+      const canShareFile = fileSystem?.Paths?.document && fileSystem?.File && sharing
+        ? await sharing.isAvailableAsync()
+        : false;
+      if (!isCurrent()) return;
 
-      if (fileSystem?.Paths?.document && fileSystem?.File && sharing && (await sharing.isAvailableAsync())) {
+      if (canShareFile && fileSystem?.Paths?.document && fileSystem?.File && sharing) {
         // SDK 55's File/Paths API replaces documentDirectory + writeAsStringAsync.
         // Using the current API avoids a runtime throw from the legacy surface.
         const file = new fileSystem.File(fileSystem.Paths.document, fileName);
         file.write(json);
+        if (!isCurrent()) return;
         await sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
+        if (!isCurrent()) return;
         setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
         return;
       }
@@ -170,15 +190,18 @@ export default function PrivacyScreen() {
       // No file system to write to (Expo Web, or a build without the module):
       // hand the JSON to the platform share sheet instead of pretending a file
       // was saved.
+      if (!isCurrent()) return;
       const result = await Share.share({ message: json, title: fileName });
+      if (!isCurrent()) return;
       if (result.action === Share.dismissedAction) setExportNotice(null);
       else setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else if (err instanceof ApiError) setExportError(t('privacy.exportFailed'));
       else setExportError(t('privacy.exportShareUnavailable'));
     } finally {
-      setExporting(false);
+      if (isCurrent()) setExporting(false);
     }
   };
 
