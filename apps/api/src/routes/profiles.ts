@@ -46,7 +46,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       if (!u) throw AppError.notFound('Account not found');
 
       const { rows: consents } = await tx.query(
-        'SELECT type::text AS type, granted, version, granted_at FROM consents WHERE user_id = $1',
+        'SELECT type::text AS type, granted, version, patient_profile_id, granted_at FROM consents WHERE user_id = $1',
         [userId],
       );
 
@@ -74,7 +74,10 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           lowStockThresholdDays: u.low_stock_threshold_days ?? 7,
           expiryWarningDays: u.expiry_warning_days ?? 30,
         },
-        consents: consents.map((c) => ({ type: c.type, granted: c.granted, version: c.version, grantedAt: c.granted_at })),
+        consents: consents.map((c) => ({
+          type: c.type, granted: c.granted, version: c.version,
+          patientProfileId: c.patient_profile_id, grantedAt: c.granted_at,
+        })),
       };
     });
   });
