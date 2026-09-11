@@ -76,7 +76,9 @@ export class LocalStorageProvider implements StorageProvider {
       objectKey: input.objectKey,
       uploadUrl: `/v1/uploads/local/${encodeURIComponent(input.objectKey)}?expires=${expires}&sig=${sig}`,
       method: 'PUT',
-      headers: { 'content-type': input.contentType },
+      // Match production's conditional-write contract: an upload capability is
+      // create-only, not a 15-minute overwrite capability after finalization.
+      headers: { 'content-type': input.contentType, 'if-none-match': '*' },
       expiresAt: new Date(expires).toISOString(),
     };
   }
@@ -98,11 +100,22 @@ export class LocalStorageProvider implements StorageProvider {
     if (body.length > this.maxBytes) throw new Error('object exceeds configured upload limit');
     const target = this.path(objectKey);
     await mkdir(dirname(target), { recursive: true });
-    const handle = await open(
-      target,
-      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW,
-      0o600,
-    );
+    let handle;
+    try {
+      // O_EXCL is the local equivalent of S3/R2 If-None-Match: *. Two callers
+      // racing the same one-shot ticket cannot both pass a separate existence
+      // check and then overwrite each other.
+      handle = await open(
+        target,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+        0o600,
+      );
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new AppError(ERROR_CODES.UPLOAD_REJECTED, 409, 'Upload ticket has already been used');
+      }
+      throw err;
+    }
     try {
       await handle.writeFile(body);
     } finally {
@@ -222,11 +235,15 @@ export class S3StorageProvider implements StorageProvider {
 
   async createUploadTicket(input: { objectKey: string; contentType: string }): Promise<UploadTicket> {
     const ttl = 900;
+    const headers = { 'content-type': input.contentType, 'if-none-match': '*' };
     return {
       objectKey: input.objectKey,
-      uploadUrl: this.presign('PUT', input.objectKey, ttl, {}, { 'content-type': input.contentType }),
+      // AWS S3 and Cloudflare R2 both support conditional PutObject. Signing
+      // If-None-Match: * makes the capability create-only at the object store
+      // itself, so it cannot overwrite the verified bytes after /finalize.
+      uploadUrl: this.presign('PUT', input.objectKey, ttl, {}, headers),
       method: 'PUT',
-      headers: { 'content-type': input.contentType },
+      headers,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
     };
   }
