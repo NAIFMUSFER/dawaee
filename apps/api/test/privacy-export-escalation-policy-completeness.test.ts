@@ -54,8 +54,8 @@ describe('privacy export escalation-policy completeness', () => {
         patient_profile_id: patient.profileId,
         enabled: true,
         stages: [{ afterMinutes: 17, target: 'primary', channels: ['push'] }],
-        quiet_hours_start: '22:00:00',
-        quiet_hours_end: '07:00:00',
+        quiet_hours_start: '22:00',
+        quiet_hours_end: '07:00',
       }),
     ]));
   });
