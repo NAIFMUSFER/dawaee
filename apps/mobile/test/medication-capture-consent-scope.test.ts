@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -10,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 describe('medication capture OCR consent scope', () => {
   it('grants OCR consent only for the active patient profile', () => {
     const source = readFileSync(
-      new URL('../app/medication/capture.tsx', import.meta.url),
+      fileURLToPath(new URL('../app/medication/capture.tsx', import.meta.url)),
       'utf8',
     );
     const start = source.indexOf('const grantConsent = useCallback');
