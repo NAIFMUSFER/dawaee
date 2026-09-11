@@ -45,20 +45,44 @@ async function requestUpload(user: TestUser, profileId?: string) {
   });
 }
 
+async function requestFinalizedUpload(user: TestUser, profileId?: string): Promise<string> {
+  const requested = await requestUpload(user, profileId);
+  expect(requested.statusCode, requested.body).toBe(200);
+  const ticket = requested.json<{
+    objectKey: string;
+    upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string> };
+  }>();
+
+  const stored = await h.app.inject({
+    method: ticket.upload.method,
+    url: ticket.upload.uploadUrl,
+    headers: { ...ticket.upload.headers, ...client() },
+    payload: PNG,
+  });
+  expect(stored.statusCode, stored.body).toBe(200);
+
+  const finalized = await h.app.inject({
+    method: 'POST',
+    url: '/v1/uploads/finalize',
+    headers: { ...authHeaders(user), ...client() },
+    payload: { objectKey: ticket.objectKey },
+  });
+  expect(finalized.statusCode, finalized.body).toBe(200);
+  return ticket.objectKey;
+}
+
 // ══════════════════════════════════════ PART A — uploads
 
 describe('an uploaded image belongs to one account', () => {
-  it('a patient can request, read and analyse their own object', async () => {
+  it('a patient can request, finalize and read their own object', async () => {
     const a = await signIn(h, phone());
-    const req = await requestUpload(a, a.profileId);
-    expect(req.statusCode, req.body).toBe(200);
-    const { objectKey } = req.json<{ objectKey: string }>();
+    const objectKey = await requestFinalizedUpload(a, a.profileId);
 
     const url = await h.app.inject({
       method: 'GET', url: `/v1/uploads/url?objectKey=${encodeURIComponent(objectKey)}`,
       headers: { ...authHeaders(a), ...client() },
     });
-    expect(url.statusCode).toBe(200);
+    expect(url.statusCode, url.body).toBe(200);
   });
 
   /**
@@ -68,10 +92,10 @@ describe('an uploaded image belongs to one account', () => {
    * one, because a policy change three migrations away would turn it into a
    * read of anyone's object. Asserted rather than assumed.
    */
-  it('a second patient cannot get a read URL for the first one\'s object', async () => {
+  it('a second patient cannot get a read URL for the first one\'s finalized object', async () => {
     const a = await signIn(h, phone());
     const b = await signIn(h, phone());
-    const { objectKey } = (await requestUpload(a, a.profileId)).json<{ objectKey: string }>();
+    const objectKey = await requestFinalizedUpload(a, a.profileId);
 
     const stolen = await h.app.inject({
       method: 'GET', url: `/v1/uploads/url?objectKey=${encodeURIComponent(objectKey)}`,
@@ -80,10 +104,10 @@ describe('an uploaded image belongs to one account', () => {
     expect(stolen.statusCode, 'one patient obtained a read URL for another\'s image').toBe(404);
   });
 
-  it('a second patient cannot run OCR over the first one\'s object', async () => {
+  it('a second patient cannot run OCR over the first one\'s finalized object', async () => {
     const a = await signIn(h, phone());
     const b = await signIn(h, phone());
-    const { objectKey } = (await requestUpload(a, a.profileId)).json<{ objectKey: string }>();
+    const objectKey = await requestFinalizedUpload(a, a.profileId);
 
     // B consents, so consent is not what refuses this.
     await h.app.inject({
@@ -389,7 +413,7 @@ describe('what leaves for the OCR provider, and what comes back', () => {
 
   it('analysis requires a recorded consent, and says so rather than proceeding', async () => {
     const a = await signIn(h, phone());
-    const { objectKey } = (await requestUpload(a, a.profileId)).json<{ objectKey: string }>();
+    const objectKey = await requestFinalizedUpload(a, a.profileId);
     const r = await h.app.inject({
       method: 'POST', url: '/v1/ocr/analyze', headers: { ...authHeaders(a), ...client() },
       payload: { imageKey: objectKey, patientProfileId: a.profileId, kind: 'medication_label' },
