@@ -102,9 +102,13 @@ describe('caregiver save mutation profile isolation', () => {
       await h.flush();
       expect(h.text()).toContain('SYNTHETIC-A-ONLY');
 
-      const saveRule = h.find('Button', (props: any) => props.label === 'common.save' && props.tone === 'secondary');
-      expect(saveRule).not.toBeNull();
-      saveRule.onPress();
+      // The deterministic harness intentionally evaluates the route and keyed
+      // screen boundary only; presentation children are left opaque. Invoke the
+      // rule card callback exposed by that boundary instead of pretending its
+      // nested Button was rendered by React Native.
+      const ruleCard = h.find('ChannelRuleCard', (props: any) => props.channel === 'push');
+      expect(ruleCard).not.toBeNull();
+      ruleCard.onSave();
 
       h.switchProfile('B');
       await h.flush();
