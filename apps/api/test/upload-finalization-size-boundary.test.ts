@@ -6,6 +6,7 @@ class SizeLeaseStorage implements StorageProvider {
   readonly name = 's3';
   readonly deleted: string[] = [];
   readonly bodies = new Map<string, Buffer>();
+  readonly expectedByteReads: Array<{ objectKey: string; expectedBytes?: number }> = [];
 
   async createUploadTicket(input: { objectKey: string; contentType: string; byteSize: number }): Promise<UploadTicket> {
     return {
@@ -22,6 +23,7 @@ class SizeLeaseStorage implements StorageProvider {
   }
 
   async getObject(objectKey: string, expectedBytes?: number): Promise<Buffer> {
+    this.expectedByteReads.push({ objectKey, expectedBytes });
     const body = this.bodies.get(objectKey);
     if (!body) throw new Error('object missing');
     if (expectedBytes !== undefined && body.length !== expectedBytes) {
@@ -89,6 +91,11 @@ describe('direct S3/R2 uploads are finalized against the approved byte lease', (
 
     expect(finalized.statusCode, finalized.body).toBe(400);
     expect(finalized.json<{ error: { code: string } }>().error.code).toBe('upload_rejected');
+    // The provider boundary must receive the recorded lease so remote S3/R2
+    // reads stop as soon as the object is known to exceed the approved size,
+    // rather than buffering up to the global upload cap before route-level
+    // comparison rejects it.
+    expect(storage.expectedByteReads.at(-1)).toEqual({ objectKey, expectedBytes: declaredBytes });
     expect(storage.deleted).toEqual([objectKey]);
 
     // The rejected lease must not remain reachable through the normal private
@@ -136,6 +143,7 @@ describe('direct S3/R2 uploads are finalized against the approved byte lease', (
     });
     expect(finalized.statusCode, finalized.body).toBe(200);
     expect(finalized.json<{ ok: boolean }>().ok).toBe(true);
+    expect(storage.expectedByteReads.at(-1)).toEqual({ objectKey, expectedBytes: declaredBytes });
 
     const read = await h.app.inject({
       method: 'GET',
