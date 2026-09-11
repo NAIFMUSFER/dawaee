@@ -20,11 +20,12 @@ As of the 2026-09-11 audit:
 - GitHub CI and Security gates have executed successfully on the current audit
   branch head for PostgreSQL 16 and 17, RLS, migrations, managed-Postgres smoke,
   unit/integration tests, mobile production exports, Docker, dependency checks,
-  CodeQL, Gitleaks and Trivy. **Re-check the actual release SHA; do not inherit
+  CodeQL, Gitleaks and Trivy. **Re-check the actual candidate SHA; do not inherit
   this PASS by assumption.**
 - `main` and the currently deployed canonical Render services are behind the
-  audit branch. Record the exact release SHA and exact pre-release Render deploy
-  IDs immediately before release; never use a SHA copied from this document.
+  audit branch. Record the exact candidate SHA, resulting post-merge release SHA,
+  and exact pre-release Render deploy IDs immediately before release; never use
+  a SHA copied from this document.
 - Fresh production worker evidence shows the `materialize` job failing with
   SQLSTATE `42501` / `permission denied for table dose_occurrences`. The audit
   branch contains the least-privilege remediation. Its disappearance after the
@@ -51,9 +52,9 @@ an explicit verification step below.
 
 Do not begin until every line is true.
 
-- [ ] The exact release SHA is recorded as `RELEASE_SHA`.
-- [ ] All required GitHub checks are green on **that SHA**. The active `main`
-      ruleset requires PR-based integration and the configured CI/security
+- [ ] The exact PR/audit branch head is recorded as `CANDIDATE_SHA`.
+- [ ] All required GitHub checks are green on **that candidate SHA**. The active
+      `main` ruleset requires PR-based integration and the configured CI/security
       checks; verify the ruleset still exists before relying on it.
 - [ ] Canonical `dawaee-api` and `dawaee-worker` auto-deploy are off. Verify in
       Render even if they were already off during the audit.
@@ -94,17 +95,29 @@ stop and investigate release drift before proceeding.
 
 ---
 
-## 3. Merge behind required checks
+## 3. Merge behind required checks and pin the release identity
 
 Merge the audit/release branch to `main` only through the protected pull request
-and only after all required checks are green on `RELEASE_SHA`.
+and only after all required checks are green on `CANDIDATE_SHA`.
 
 Because canonical auto-deploy is disabled, merging must not start a production
 deploy. If Render starts one unexpectedly, stop it before continuing and find
 which deploy control or Blueprint sync re-enabled automation.
 
-After merge, record the resulting `main` SHA and confirm it contains the intended
-release commit.
+After merge, update local `main` and record the **post-merge** commit as the
+release identity:
+
+```bash
+git checkout main
+git pull --ff-only
+RELEASE_SHA="$(git rev-parse HEAD)"
+git merge-base --is-ancestor "$CANDIDATE_SHA" "$RELEASE_SHA"
+printf 'candidate: %s\nrelease: %s\n' "$CANDIDATE_SHA" "$RELEASE_SHA"
+```
+
+The ancestry command must exit 0. From this point onward, migrations, worker,
+API and mobile release evidence refer to `RELEASE_SHA`, not the pre-merge branch
+head. This avoids a subtle release split when GitHub creates a merge commit.
 
 ---
 
@@ -113,12 +126,12 @@ release commit.
 Never infer the live schema from the Git branch, an old release note, or this
 runbook. Read it.
 
-At the checked-out release commit:
+At the checked-out `RELEASE_SHA`:
 
 ```bash
-find db/migrations -maxdepth 1 -type f \
-  -name '[0-9][0-9][0-9][0-9]_*.sql' -printf '%f\n' \
-  | LC_ALL=C sort > release-migrations.txt
+for f in db/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+  basename "$f"
+done | LC_ALL=C sort > release-migrations.txt
 
 TARGET_MIGRATION="$(tail -n 1 release-migrations.txt)"
 TARGET_COUNT="$(wc -l < release-migrations.txt | tr -d ' ')"
@@ -184,7 +197,7 @@ permissions later. See `docs/RUNBOOK-migrate-preflight.md`.
 Restore the fresh production backup into a scratch database owned by a role
 with `rolsuper = false` and `rolbypassrls = false`.
 
-Use the **same release commit** and run:
+Use the **same `RELEASE_SHA`** and run:
 
 ```bash
 DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh \
@@ -236,7 +249,7 @@ scratch rehearsal, stop and create a release-specific migration plan.
 
 ## 8. Apply production migrations deliberately
 
-With the production backup verified and the exact release commit checked out:
+With the production backup verified and `RELEASE_SHA` checked out:
 
 ```bash
 git checkout "$RELEASE_SHA"
@@ -264,7 +277,7 @@ Deploy canonical `dawaee-worker` manually at `RELEASE_SHA`.
 Required evidence:
 
 - pre-deploy migration run is a no-op and ends successfully;
-- worker reaches live on the intended SHA;
+- worker reaches live on `RELEASE_SHA`;
 - regular ticks continue;
 - `materialize` succeeds;
 - the pre-release production error
@@ -437,7 +450,7 @@ Do not restore merely to make schema and code versions look cosmetically equal.
 
 Keep together:
 
-- `RELEASE_SHA`;
+- `CANDIDATE_SHA` and post-merge `RELEASE_SHA`;
 - PR and required-check results;
 - GitHub ruleset snapshot/reference;
 - pre-release API/worker deploy IDs and SHAs;
