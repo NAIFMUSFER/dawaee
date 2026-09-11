@@ -7,6 +7,7 @@ import { MultiPicker, Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationScheduleView } from '@/api/types';
@@ -53,6 +54,13 @@ interface HighRiskPrompt {
 }
 
 export default function ScheduleScreen() {
+  const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
+  const { user, activeProfile } = useApp();
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.medicationId ?? 'none'}:${params.scheduleId ?? 'new'}:${params.mode ?? 'create'}`;
+  return <ScheduleProfileScreen key={key} />;
+}
+
+function ScheduleProfileScreen() {
   const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
   const medicationId = params.medicationId;
   const isEdit = params.mode === 'edit';
