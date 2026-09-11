@@ -28,6 +28,13 @@ describe('production release runbook cannot drift behind the migration artefact'
     expect(runbook).not.toContain('db7061f1');
   });
 
+  it('pins the deploy identity after merge instead of reusing the candidate head', () => {
+    expect(runbook).toContain('CANDIDATE_SHA');
+    expect(runbook).toContain('RELEASE_SHA="$(git rev-parse HEAD)"');
+    expect(runbook).toContain('git merge-base --is-ancestor "$CANDIDATE_SHA" "$RELEASE_SHA"');
+    expect(runbook).toContain('same `RELEASE_SHA`');
+  });
+
   it('uses release-time deploy identities and preserves the proven production blocker checks', () => {
     expect(runbook).toContain('PRE_RELEASE_API_DEPLOY');
     expect(runbook).toContain('PRE_RELEASE_WORKER_DEPLOY');
