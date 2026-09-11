@@ -11,6 +11,13 @@ const { createHarness, deferred, NetworkError, ApiError } = require('./profile-s
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/reports/adherence.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 
+const testTheme = {
+  colors: new Proxy({}, { get: () => '#000' }),
+  spacing: new Proxy({}, { get: () => 4 }),
+  radius: new Proxy({}, { get: () => 4 }),
+  touch: 44,
+};
+
 function response(label: string) {
   return {
     profileId: label,
@@ -54,6 +61,7 @@ function harness() {
   const b = deferred();
   const requests: string[] = [];
   const h = createHarness(screen, hook, {}, {
+    '@/hooks/useTheme': { useTheme: () => testTheme },
     '@/api/client': {
       NetworkError,
       ApiError,
