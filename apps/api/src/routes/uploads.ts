@@ -256,7 +256,7 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
     }
     const { userId } = currentUser(req);
 
-    return withUserReadOnly(userId, async (tx) => {
+    const access = await withUserReadOnly(userId, async (tx) => {
       // RLS still scopes this to objects the caller is related to at all: an
       // unrelated patient's object is invisible and answers 404, exactly as a
       // key that does not exist does.
@@ -275,15 +275,32 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
 
       const carriesMedicationIdentity = object.purpose === 'medication_image'
         || object.purpose === 'prescription_image';
-      if (object.patient_profile_id && object.owner_user_id !== userId && carriesMedicationIdentity) {
+      const requiresMedicationPermission = Boolean(
+        object.patient_profile_id && object.owner_user_id !== userId && carriesMedicationIdentity,
+      );
+      if (requiresMedicationPermission) {
         // 403 rather than 404: the caller is legitimately in this patient's care
         // circle, and P12 settled that an explicit refusal beats a screen that
         // silently shows nothing.
-        await requireProfileAccess(tx, userId, object.patient_profile_id, 'view_medications');
+        await requireProfileAccess(tx, userId, object.patient_profile_id!, 'view_medications');
       }
 
-      return { url: await providers.storage.createReadUrl(objectKey, 300), expiresInSeconds: 300 };
+      return { patientProfileId: object.patient_profile_id, requiresMedicationPermission };
     });
+
+    // Never hold a database transaction open across external provider I/O. The
+    // capability is generated only after an initial authorization check, then
+    // the same live permission is checked again before the capability is
+    // disclosed to the caller. A revoke during signing therefore returns 403
+    // and the generated URL remains undisclosed.
+    const url = await providers.storage.createReadUrl(objectKey, 300);
+    if (access.requiresMedicationPermission && access.patientProfileId) {
+      await withUserReadOnly(userId, async (tx) => {
+        await requireProfileAccess(tx, userId, access.patientProfileId!, 'view_medications');
+      });
+    }
+
+    return { url, expiresInSeconds: 300 };
   });
 
   /**
