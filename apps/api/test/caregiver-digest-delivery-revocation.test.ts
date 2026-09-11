@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dispatchJob } from '../../worker/src/jobs/dispatcher.js';
@@ -17,7 +19,20 @@ beforeAll(async () => {
   caregiver = await signIn(h, '+966500097822');
 }, 120_000);
 
-beforeEach(() => h.push.reset());
+beforeEach(async () => {
+  h.push.reset();
+  // The two regressions deliberately exercise the same patient/caregiver pair.
+  // Keep them independent so the active-relationship uniqueness constraint is
+  // testing product behaviour rather than leaking state between test cases.
+  await db.query(
+    'DELETE FROM notification_deliveries WHERE patient_profile_id=$1 AND recipient_user_id=$2',
+    [patient.profileId, caregiver.userId],
+  );
+  await db.query(
+    'DELETE FROM caregiver_relationships WHERE patient_profile_id=$1 AND caregiver_user_id=$2',
+    [patient.profileId, caregiver.userId],
+  );
+});
 
 afterAll(async () => {
   await db.end();
@@ -103,5 +118,12 @@ describe('queued caregiver digests follow current adherence permissions', () => 
       'dispatcher sent adherence data after view_adherence had already been removed').toHaveLength(0);
     expect(await deliveryStatus(deliveryId),
       'unauthorised legacy digest was not retired from the outbox').toBe('skipped');
+  });
+
+  it('retires an unauthorized claimed digest only while its lease is still current', () => {
+    const code = readFileSync(resolve(import.meta.dirname, '../../worker/src/jobs/dispatcher.ts'), 'utf8');
+    expect(code).toMatch(
+      /SET status = 'skipped', lease_until = NULL, lease_token = NULL[\s\S]*?WHERE id = \$1 AND status = 'sending' AND lease_token = \$2/,
+    );
   });
 });
