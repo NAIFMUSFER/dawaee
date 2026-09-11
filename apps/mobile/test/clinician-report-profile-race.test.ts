@@ -112,17 +112,13 @@ describe('clinician report profile isolation', () => {
     }
   });
 
-  it('late patient A completion cannot overwrite an already-loaded patient B report', async () => {
+  it('autoloads patient B and ignores a late patient A completion after profile switch', async () => {
     const { h, gates, requests } = harness();
     try {
       await h.flush();
       expect(requests.filter((request) => request.profileId === 'A')).toHaveLength(2);
 
       h.switchProfile('B');
-      await h.flush();
-      const generate = h.find('Button', (props: { label?: string }) => props.label === 'reports.generate');
-      expect(generate).toBeTruthy();
-      generate.onPress();
       await h.flush();
       expect(requests.filter((request) => request.profileId === 'B')).toHaveLength(2);
 
