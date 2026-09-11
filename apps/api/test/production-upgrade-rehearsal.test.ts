@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
 const script = resolve(root, 'scripts/upgrade-rehearsal-0033-to-head.sh');
+const hotfixScript = resolve(root, 'scripts/upgrade-rehearsal-hotfix-0047.sh');
 const migrationsDir = resolve(root, 'db/migrations');
 
 const migrations = readdirSync(migrationsDir)
@@ -33,5 +34,23 @@ describe('production-shaped migration upgrade', () => {
     expect(output).toContain(`upgraded through : ${latest}`);
     expect(output).toContain(`pending migrations: ${pending.length} (0034..${latestNumber}), then no-op`);
     expect(output).toContain('unsafe control    : 0034 refused mismatched units atomically at schema 0033');
+  }, 120_000);
+
+  it('rehearses the actual production ledger with emergency 0047 already applied out of order', () => {
+    const dbName = `dawaee_upgrade_hotfix_${process.pid}`;
+    const output = execFileSync('bash', [hotfixScript, dbName], {
+      cwd: root,
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 120_000,
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    expect(output).toContain('PRODUCTION-HOTFIX UPGRADE REHEARSAL PASSED');
+    expect(output).toContain('baseline          : 0001..0033 + 0047_worker_materialization_privileges.sql');
+    expect(output).toContain(`catch-up          : ${migrations.length - 34} migration(s), recorded 0047 skipped`);
+    expect(output).toContain(`upgraded through  : ${latest}`);
+    expect(output).toContain('0047 privileges   : preserved least-privilege boundary');
   }, 120_000);
 });
