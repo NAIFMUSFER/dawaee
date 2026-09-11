@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER, promoteMedicationIdHeader, rewritePrivateResourceUrl,
+  DOSE_ID_HEADER, MEDICATION_ID_HEADER, SCHEDULE_ID_HEADER, promoteMedicationIdHeader, rewritePrivateResourceUrl,
 } from '../src/middleware/private-resource-routing.js';
 import { PROFILE_ID_HEADER } from '../src/middleware/profile-routing.js';
 
 const MEDICATION_ID = '11111111-2222-4333-8444-555555555555';
 const PROFILE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const SCHEDULE_ID = '99999999-8888-4777-8666-555555555555';
+const DOSE_ID = '77777777-6666-4555-8444-333333333333';
 
 describe('fixed public resource paths', () => {
   it.each([
@@ -17,6 +18,13 @@ describe('fixed public resource paths', () => {
   ])('rewrites %s internally without putting the id in the public path', (publicPath, internalPath) => {
     expect(rewritePrivateResourceUrl(publicPath, { [MEDICATION_ID_HEADER]: MEDICATION_ID })).toBe(internalPath);
     expect(publicPath).not.toContain(MEDICATION_ID);
+  });
+
+  it('rewrites a dose detail read internally without exposing its id', () => {
+    const publicPath = '/v1/dose';
+    expect(rewritePrivateResourceUrl(publicPath, { [DOSE_ID_HEADER]: DOSE_ID }))
+      .toBe(`/v1/doses/${DOSE_ID}`);
+    expect(publicPath).not.toContain(DOSE_ID);
   });
 
   it('rewrites a schedule update internally without exposing its id', () => {
@@ -58,6 +66,8 @@ describe('fixed public resource paths', () => {
   it('does not let a malformed routing header become part of a route', () => {
     expect(rewritePrivateResourceUrl('/v1/medication', { [MEDICATION_ID_HEADER]: '../admin' }))
       .toBe('/v1/medication');
+    expect(rewritePrivateResourceUrl('/v1/dose', { [DOSE_ID_HEADER]: '../admin' }))
+      .toBe('/v1/dose');
     expect(rewritePrivateResourceUrl('/v1/schedule', { [SCHEDULE_ID_HEADER]: '../admin' }))
       .toBe('/v1/schedule');
     expect(rewritePrivateResourceUrl('/v1/profile', { [PROFILE_ID_HEADER]: 'not-a-uuid' }))
@@ -67,6 +77,7 @@ describe('fixed public resource paths', () => {
   it('does not rewrite unrelated routes or fixed paths without metadata', () => {
     expect(rewritePrivateResourceUrl('/v1/today', { [MEDICATION_ID_HEADER]: MEDICATION_ID })).toBe('/v1/today');
     expect(rewritePrivateResourceUrl('/v1/medication/stock', {})).toBe('/v1/medication/stock');
+    expect(rewritePrivateResourceUrl('/v1/dose', {})).toBe('/v1/dose');
     expect(rewritePrivateResourceUrl('/v1/schedule', {})).toBe('/v1/schedule');
   });
 });
