@@ -191,12 +191,32 @@ async function applyCurrentNotificationPrivacy(
       WHERE pp.id = $1`,
     [row.patient_profile_id],
   );
-  if (rows[0]?.show_medication === true) return { body: row.body, payload: row.payload };
+  let mayRevealMedication = rows[0]?.show_medication === true;
+
+  // The patient's lock-screen preference controls whether medication identity
+  // may appear at all. For caregiver deliveries there is a second independent
+  // authorization boundary: current relationship state and view_medications.
+  // Re-check it here because a delivery can be queued before a permission is
+  // narrowed or the relationship is revoked.
+  if (mayRevealMedication && row.relationship_id) {
+    const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
+      `SELECT status = 'active'
+              AND caregiver_user_id = $2
+              AND 'view_medications' = ANY(permissions) AS can_view_medication
+         FROM caregiver_relationships
+        WHERE id = $1 AND patient_profile_id = $3`,
+      [row.relationship_id, row.recipient_user_id, row.patient_profile_id],
+    );
+    mayRevealMedication = permissionRows[0]?.can_view_medication === true;
+  }
+
+  if (mayRevealMedication) return { body: row.body, payload: row.payload };
 
   // A delivery can wait in the outbox for minutes after it was composed. The
-  // privacy preference is therefore checked again at the last possible moment.
-  // Copy rather than mutate the claimed row so a failed provider call retains
-  // the original durable record and a later retry re-evaluates the preference.
+  // privacy preference and caregiver authorization are therefore checked again
+  // at the last possible moment. Copy rather than mutate the claimed row so a
+  // failed provider call retains the durable record and a later retry
+  // re-evaluates both boundaries.
   const payload = { ...row.payload };
   delete payload.medicationName;
   delete payload.medications;
