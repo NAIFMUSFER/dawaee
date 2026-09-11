@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDatabase, signIn, startHarness, type Harness } from './harness.js';
@@ -27,7 +26,7 @@ afterAll(async () => {
 });
 
 describe('remote push eligibility follows current device authentication', () => {
-  it('excludes a still-active push token once that device has no live session', async () => {
+  it('filters the dispatcher query when an active token has no live session', async () => {
     const phone = '+966500096854';
     const expiredDevice = 'device-expired-push-0001';
     const liveDevice = 'device-live-push-0001';
@@ -48,8 +47,8 @@ describe('remote push eligibility follows current device authentication', () => 
     );
 
     // Time-based expiry does not execute the revocation trigger added in 0051.
-    // This reproduces the gap directly: the routing token remains active even
-    // though app.session_is_live() would now reject that device's session.
+    // Reproduce that exact boundary: the routing token remains active in storage
+    // even though the device no longer has an authenticated session.
     await owner.query(
       `UPDATE auth_sessions
           SET expires_at = now() - interval '1 minute'
@@ -66,22 +65,33 @@ describe('remote push eligibility follows current device authentication', () => 
       { device_id: liveDevice, active: true },
     ]);
 
+    // This is the exact SQL shape used by dispatcher.ts. The real non-bypass
+    // worker role must see only the installation backed by a live same-device
+    // session; the expired token stays hidden by push_tokens worker RLS.
     const eligible = await worker.query<{ token: string }>(
-      'SELECT token FROM app.list_live_push_tokens($1, 5)',
+      'SELECT token FROM push_tokens WHERE user_id = $1 AND active ORDER BY last_seen_at DESC LIMIT 5',
       [expired.userId],
     );
     expect(eligible.rows).toEqual([{ token: 'ExponentPushToken[live-session-may-send]' }]);
   });
 
-  it('keeps dispatcher push selection behind the live-session function', () => {
-    const dispatcher = fs.readFileSync(
-      new URL('../../worker/src/jobs/dispatcher.ts', import.meta.url),
-      'utf8',
-    );
+  it('keeps auth_sessions unavailable to the worker and exposes only the RLS predicate', async () => {
+    await expect(worker.query('SELECT id FROM auth_sessions LIMIT 1')).rejects.toMatchObject({ code: '42501' });
 
-    expect(dispatcher).toContain('SELECT token FROM app.list_live_push_tokens($1, 5)');
-    expect(dispatcher).not.toContain(
-      'SELECT token FROM push_tokens WHERE user_id = $1 AND active ORDER BY last_seen_at DESC LIMIT 5',
+    const { rows } = await owner.query<{
+      worker_exec: boolean;
+      public_exec: boolean;
+      worker_session_select: boolean;
+    }>(
+      `SELECT
+         has_function_privilege('dawaee_worker', 'app.push_token_device_has_live_session(uuid,text)', 'EXECUTE') AS worker_exec,
+         has_function_privilege('public', 'app.push_token_device_has_live_session(uuid,text)', 'EXECUTE') AS public_exec,
+         has_table_privilege('dawaee_worker', 'public.auth_sessions', 'SELECT') AS worker_session_select`,
     );
+    expect(rows).toEqual([{
+      worker_exec: true,
+      public_exec: false,
+      worker_session_select: false,
+    }]);
   });
 });
