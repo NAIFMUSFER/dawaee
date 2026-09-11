@@ -79,7 +79,7 @@ export function assessIntegrationReadiness(providers: Providers, isProduction: b
   };
 }
 
-const REQUIRED_WORKER_JOBS = ['materialize', 'reminders'] as const;
+const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch'] as const;
 
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
@@ -124,13 +124,15 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
      * readiness endpoint still returned READY because it never asked whether a
      * worker was alive, successful, or running the same release.
      *
-     * Both `materialize` and `reminders` are required release heartbeats. They
-     * run independently on every worker tick, and `runJob` deliberately catches
-     * one job's failure so the later jobs can continue. Production evidence on
-     * 2026-09-11 showed exactly that split: rolling-horizon materialization was
-     * failing every minute with SQLSTATE 42501 while later reminder work could
-     * still run. Looking at reminders alone therefore reports a clinically
-     * incomplete worker as ready.
+     * `materialize`, `reminders`, and `dispatch` are required release heartbeats.
+     * They run independently on every worker tick, and `runJob` deliberately
+     * catches one job's failure so later jobs can continue. Production evidence
+     * on 2026-09-11 showed exactly that split for rolling-horizon materialization:
+     * it was failing every minute with SQLSTATE 42501 while later reminder work
+     * could still run. The same fail-open shape exists for dispatch: reminders
+     * can enqueue deliveries successfully while a failed dispatcher sends none.
+     * Readiness must therefore prove both schedule generation and the complete
+     * enqueue-to-delivery path, not only one successful worker stage.
      *
      * New workers stamp every job_run with their build commit. A pre-fix worker
      * still fails closed as "identity unavailable" instead of being mistaken
@@ -168,7 +170,7 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
         }
 
         checks.worker = failures.length === 0
-          ? { ok: true, detail: 'materialize and reminders healthy' }
+          ? { ok: true, detail: 'materialize, reminders, and dispatch healthy' }
           : { ok: false, detail: failures.join('; ') };
       } catch (err) {
         checks.worker = { ok: false, detail: err instanceof Error ? err.message : 'unverifiable' };
