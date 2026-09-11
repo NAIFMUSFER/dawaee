@@ -8,6 +8,7 @@ import {
 import { QrCode, encodeQr } from '@/components/QrCode';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { MESSAGES, type MessageKey } from '@dawaee/shared';
@@ -51,6 +52,11 @@ interface EmergencyCardState {
 }
 
 export default function EmergencyQrScreen() {
+  const { user, activeProfile } = useApp();
+  return <EmergencyQrView key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function EmergencyQrView() {
   const { t, formatNumber, formatDate } = useI18n();
   const theme = useTheme();
   const { activeProfile } = useApp();
