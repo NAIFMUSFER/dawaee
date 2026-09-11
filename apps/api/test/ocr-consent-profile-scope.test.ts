@@ -54,11 +54,13 @@ async function consent(user: TestUser, granted: boolean, patientProfileId?: stri
 
 async function analyze(user: TestUser, profileId: string, kind: OcrKind) {
   const imageKey = `synthetic-consent-scope/${profileId}/${kind}`;
+  // This suite isolates consent semantics. Its synthetic object represents an
+  // upload whose lease has already been finalized by the dedicated upload flow.
   await withUser(user.userId, async (tx) => {
     await tx.query(
       `INSERT INTO stored_objects
-         (object_key, owner_user_id, patient_profile_id, purpose, content_type, byte_size)
-       VALUES ($1,$2,$3,$4,'image/png',$5) ON CONFLICT (object_key) DO NOTHING`,
+         (object_key, owner_user_id, patient_profile_id, purpose, content_type, byte_size, uploaded_at, scan_status)
+       VALUES ($1,$2,$3,$4,'image/png',$5,now(),'clean') ON CONFLICT (object_key) DO NOTHING`,
       [imageKey, user.userId, profileId,
         kind === 'medication_label' ? 'medication_image' : 'prescription_image', IMAGE.length],
     );
