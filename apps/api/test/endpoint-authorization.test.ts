@@ -5,6 +5,7 @@ import {
   type Harness, type TestUser,
 } from './harness.js';
 import { CAREGIVER_PERMISSIONS } from '@dawaee/shared';
+import type { UploadTicket } from '../src/providers/index.js';
 
 /**
  * P12 — endpoint-wide authorization.
@@ -103,6 +104,30 @@ type InjectArgs = Parameters<Harness['app']['inject']>[0] & object;
 /** Every request in this file goes through here, so none of them can forget. */
 function send(args: InjectArgs) {
   return h.app.inject({ remoteAddress: probeAddress(), ...(args as object) } as InjectArgs);
+}
+
+/** Complete the real local upload lifecycle; a ticket alone is not an image. */
+async function uploadAndFinalize(user: TestUser, objectKey: string, upload: UploadTicket, bytes: Buffer) {
+  expect(upload.method).toBe('PUT');
+  const target = new URL(upload.uploadUrl, 'http://localhost');
+  expect(target.pathname).toMatch(/^\/v1\/uploads\/local\//);
+  const written = await send({
+    method: 'PUT', url: `${target.pathname}${target.search}`,
+    headers: upload.headers, payload: bytes,
+  });
+  expect(written.statusCode, written.body).toBe(200);
+  // Stored bytes stay unavailable until the authenticated owner finalizes them.
+  const staged = await send({
+    method: 'GET', url: '/v1/uploads/url',
+    headers: { ...authHeaders(user), 'x-dawaee-object-key': objectKey },
+  });
+  expect(staged.statusCode, staged.body).toBe(404);
+  const finalized = await send({
+    method: 'POST', url: '/v1/uploads/finalize', headers: authHeaders(user),
+    payload: { objectKey },
+  });
+  expect(finalized.statusCode, finalized.body).toBe(200);
+  expect(finalized.json()).toMatchObject({ ok: true, objectKey });
 }
 
 type Exposure =
@@ -225,6 +250,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/emergency/scan/:token': 'capability',
 
   'POST /v1/uploads/request': 'authenticated',
+  'POST /v1/uploads/finalize': 'authenticated',
   'GET /v1/uploads/url': 'authenticated',
   'POST /v1/ocr/analyze': 'authenticated',
   // Development storage sink only; `STORAGE_PROVIDER=local` is refused in
@@ -1089,8 +1115,11 @@ describe('P12-8 every route works for the person entitled to use it', () => {
         byteSize: 24_000, patientProfileId: own.profileId,
       },
     });
-    const { objectKey } = req.json<{ objectKey: string }>();
+    const { objectKey, upload } = req.json<{ objectKey: string; upload: UploadTicket }>();
     expect(objectKey).toBeTruthy();
+    const bytes = Buffer.alloc(24_000);
+    Buffer.from('89504e470d0a1a0a', 'hex').copy(bytes);
+    await uploadAndFinalize(carol, objectKey, upload, bytes);
     await ok('GET /v1/uploads/url', { method: 'GET', url: `/v1/uploads/url?objectKey=${encodeURIComponent(objectKey)}` });
   });
 
@@ -1901,7 +1930,11 @@ describe('P19-1 an image is medication identity, and needs the same permission',
       payload: { purpose, contentType: 'image/jpeg', byteSize: 4096, ...(profileId ? { patientProfileId: profileId } : {}) },
     });
     expect(res.statusCode, `${purpose}: ${res.body}`).toBe(200);
-    return res.json<{ objectKey: string }>().objectKey;
+    const { objectKey, upload } = res.json<{ objectKey: string; upload: UploadTicket }>();
+    const bytes = Buffer.alloc(4096);
+    Buffer.from([0xff, 0xd8, 0xff]).copy(bytes);
+    await uploadAndFinalize(user, objectKey, upload, bytes);
+    return objectKey;
   }
 
   const readUrl = (user: TestUser, key: string) => send({
