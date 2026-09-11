@@ -414,6 +414,27 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
       throw AppError.badRequest(ERROR_CODES.UPLOAD_REJECTED, 'Stored file is not the approved image type');
     }
 
+    // Storage reads can cross a revocation instant. Consent is a live
+    // disclosure boundary, not a capability captured at request start, so read
+    // it again after the potentially slow object fetch and immediately before
+    // handing the image bytes to the external OCR provider.
+    await withUserReadOnly(userId, async (tx) => {
+      const { rows: consent } = await tx.query<{ granted: boolean }>(
+        `SELECT granted FROM consents
+          WHERE user_id = $1 AND type = 'ocr_image_processing'
+            AND (patient_profile_id = $2 OR patient_profile_id IS NULL)
+          ORDER BY patient_profile_id NULLS LAST
+          LIMIT 1`,
+        [userId, body.patientProfileId],
+      );
+      if (!consent[0]?.granted) {
+        throw new AppError(
+          ERROR_CODES.CONSENT_REQUIRED, 428,
+          'Image analysis requires your consent to process medication images',
+        );
+      }
+    });
+
     try {
       if (body.kind === 'medication_label') {
         const result = await providers.ocr.readMedicationLabel(buffer, sniffed);
