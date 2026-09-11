@@ -116,6 +116,29 @@ describe('admin operational read model stays useful without bypassing clinical R
       'delivery statistics lost the failed row to RLS').toBe(true);
   });
 
+  it('revokes an already-issued admin access token as soon as the operator removes the role', async () => {
+    const admin = await signIn(h, '+966500098803');
+    const token = await adminToken(admin.userId, admin.phone);
+
+    const before = await h.app.inject({
+      method: 'GET', url: '/v1/admin/overview',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(before.statusCode, before.body).toBe(200);
+
+    // Role changes are operator/database state, just like disabled_at. Keeping
+    // the old JWT's admin claim authoritative would leave a removed operator
+    // globally privileged until access-token expiry even though every request
+    // already checks live server-side session state.
+    await owner.query('UPDATE users SET is_admin=false WHERE id=$1', [admin.userId]);
+
+    const after = await h.app.inject({
+      method: 'GET', url: '/v1/admin/overview',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(after.statusCode, 'removed admin retained privileged access through a stale JWT role').toBe(403);
+  });
+
   it('keeps the raw clinical tables hidden and grants only the bounded definer shapes', async () => {
     const raw = await appRole.query<{ n: string }>('SELECT count(*) AS n FROM medications');
     expect(Number(raw.rows[0]!.n), 'dawaee_app gained global raw medication visibility').toBe(0);
