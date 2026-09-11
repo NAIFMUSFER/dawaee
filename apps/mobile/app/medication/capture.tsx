@@ -247,6 +247,8 @@ function CaptureProfileScreen() {
       const put = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob });
       if (!isCurrent()) return;
       if (!put.ok) throw new ApiError('upload_rejected', put.status, 'upload failed');
+      await api.post('/v1/uploads/finalize', { objectKey: ticket.objectKey });
+      if (!isCurrent()) return;
       setImageKey(ticket.objectKey);
       await analyze(ticket.objectKey);
     } catch (err) {
