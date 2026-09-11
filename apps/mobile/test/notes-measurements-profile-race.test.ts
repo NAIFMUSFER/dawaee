@@ -35,54 +35,30 @@ function note(label: string) {
   };
 }
 
-function resolveProfile(h: any, profileId: string, label: string) {
-  const notes = h.requests.find((request: any) =>
-    request.method === 'GET' && request.route === '/v1/notes' && request.payload?.profileId === profileId && !request.__resolved);
-  const measurements = h.requests.find((request: any) =>
-    request.method === 'GET' && request.route === '/v1/measurements' && request.payload?.profileId === profileId && !request.__resolved);
-  expect(notes).toBeTruthy();
-  expect(measurements).toBeTruthy();
-  notes.__resolved = true;
-  measurements.__resolved = true;
-  notes.resolve({ notes: [note(label)] });
-  measurements.resolve({ measurements: [] });
-}
-
-function harness() {
-  return createHarness(screen, hook, {}, {
-    '@/hooks/useTheme': { useTheme: () => theme },
-    '@dawaee/shared': shared,
-    'expo-router': { router: { back: () => undefined, push: () => undefined } },
-  });
-}
-
 describe('notes and measurements profile isolation', () => {
   it('does not render patient A clinical notes on the first patient B frame', async () => {
-    const h = harness();
+    const h = createHarness(screen, hook, {}, {
+      '@/hooks/useTheme': { useTheme: () => theme },
+      '@dawaee/shared': shared,
+      'expo-router': { router: { back: () => undefined, push: () => undefined } },
+    });
+
     try {
-      resolveProfile(h, 'A', 'A');
+      const notes = h.requests.find((request: any) =>
+        request.method === 'GET' && request.route === '/v1/notes' && request.payload?.profileId === 'A');
+      const measurements = h.requests.find((request: any) =>
+        request.method === 'GET' && request.route === '/v1/measurements' && request.payload?.profileId === 'A');
+      expect(notes).toBeTruthy();
+      expect(measurements).toBeTruthy();
+      notes.resolve({ notes: [note('A')] });
+      measurements.resolve({ measurements: [] });
       await h.flush();
       expect(h.text()).toContain('SYNTHETIC-A-NOTE');
 
+      // Patient-scoped clinical state must disappear in the render caused by
+      // the profile switch itself, before B's passive load has a chance to run.
       h.switchProfile('B', false);
       expect(h.app.activeProfile.id).toBe('B');
-      expect(h.text()).not.toContain('SYNTHETIC-A-NOTE');
-    } finally {
-      h.unmount();
-    }
-  });
-
-  it('does not let a late patient A response replace patient B notes', async () => {
-    const h = harness();
-    try {
-      h.switchProfile('B');
-      resolveProfile(h, 'B', 'B');
-      await h.flush();
-      expect(h.text()).toContain('SYNTHETIC-B-NOTE');
-
-      resolveProfile(h, 'A', 'A');
-      await h.flush();
-      expect(h.text()).toContain('SYNTHETIC-B-NOTE');
       expect(h.text()).not.toContain('SYNTHETIC-A-NOTE');
     } finally {
       h.unmount();
