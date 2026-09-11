@@ -221,6 +221,9 @@ export function registerReportRoutes(app: FastifyInstance): void {
       const tables: Record<string, unknown[]> = {};
       const queries: Array<[string, string]> = [
         ['profile', 'SELECT * FROM patient_profiles WHERE id = $1'],
+        ['consents', `SELECT id, user_id, patient_profile_id, type, granted, version,
+                             granted_at, withdrawn_at, updated_at
+                        FROM consents WHERE patient_profile_id = $1`],
         ['medications', 'SELECT * FROM medications WHERE patient_profile_id = $1'],
         ['prescriptions', 'SELECT * FROM prescriptions WHERE patient_profile_id = $1'],
         ['schedules', 'SELECT * FROM medication_schedules WHERE patient_profile_id = $1'],
