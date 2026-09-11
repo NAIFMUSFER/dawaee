@@ -80,17 +80,17 @@ describe('remote push eligibility follows current device authentication', () => 
 
     const { rows } = await owner.query<{
       worker_exec: boolean;
-      public_exec: boolean;
+      app_exec: boolean;
       worker_session_select: boolean;
     }>(
       `SELECT
          has_function_privilege('dawaee_worker', 'app.push_token_device_has_live_session(uuid,text)', 'EXECUTE') AS worker_exec,
-         has_function_privilege('public', 'app.push_token_device_has_live_session(uuid,text)', 'EXECUTE') AS public_exec,
+         has_function_privilege('dawaee_app', 'app.push_token_device_has_live_session(uuid,text)', 'EXECUTE') AS app_exec,
          has_table_privilege('dawaee_worker', 'public.auth_sessions', 'SELECT') AS worker_session_select`,
     );
     expect(rows).toEqual([{
       worker_exec: true,
-      public_exec: false,
+      app_exec: false,
       worker_session_select: false,
     }]);
   });
