@@ -39,6 +39,15 @@ async function upload(url: string, bytes: Buffer) {
   });
 }
 
+async function finalize(objectKey: string) {
+  return h.app.inject({
+    method: 'POST',
+    url: '/v1/uploads/finalize',
+    headers: { ...authHeaders(user), ...client },
+    payload: { objectKey },
+  });
+}
+
 async function analyze(objectKey: string) {
   return h.app.inject({
     method: 'POST',
@@ -68,25 +77,32 @@ beforeAll(async () => {
 afterAll(async () => { await h.close(); });
 
 describe('OCR reads exactly the bytes approved by the upload lease', () => {
-  it('refuses a valid image when the stored object is larger than the declared lease', async () => {
+  it('rejects a valid image when the stored object is larger than the declared lease before OCR can read it', async () => {
     const ticket = await lease(PNG.length);
     const mismatched = Buffer.concat([PNG, Buffer.from([0x00])]);
 
-    // The direct-upload sink can receive bytes that differ from the declaration;
-    // that is the boundary this regression protects. The later OCR read must
-    // compare the object against stored_objects.byte_size before invoking OCR.
+    // A direct-upload provider may receive bytes that differ from the lease.
+    // Finalization is now the trust boundary: it must reject those bytes before
+    // any signed read URL or OCR operation can make the object visible.
     const put = await upload(ticket.upload.uploadUrl, mismatched);
     expect(put.statusCode, put.body).toBe(200);
 
+    const completed = await finalize(ticket.objectKey);
+    expect(completed.statusCode, completed.body).toBe(400);
+    expect(completed.json<{ error: { code: string } }>().error.code).toBe('upload_rejected');
+
     const result = await analyze(ticket.objectKey);
-    expect(result.statusCode, result.body).toBe(503);
+    expect(result.statusCode, result.body).toBe(404);
     expect(result.body).not.toContain('SYNTHETIC');
   });
 
-  it('keeps the ordinary exact-size OCR path working', async () => {
+  it('keeps the ordinary exact-size finalization and OCR path working', async () => {
     const ticket = await lease(PNG.length);
     const put = await upload(ticket.upload.uploadUrl, PNG);
     expect(put.statusCode, put.body).toBe(200);
+
+    const completed = await finalize(ticket.objectKey);
+    expect(completed.statusCode, completed.body).toBe(200);
 
     const result = await analyze(ticket.objectKey);
     expect(result.statusCode, result.body).toBe(200);
