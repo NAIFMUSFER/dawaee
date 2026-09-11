@@ -79,7 +79,9 @@ export function assessIntegrationReadiness(providers: Providers, isProduction: b
   };
 }
 
-const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts'] as const;
+const REQUIRED_WORKER_JOBS = [
+  'materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests',
+] as const;
 
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
@@ -124,21 +126,23 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
      * readiness endpoint still returned READY because it never asked whether a
      * worker was alive, successful, or running the same release.
      *
-     * `materialize`, `reminders`, `dispatch`, `mark-missed`, and `stock-alerts`
-     * are required release heartbeats. They run independently on every normal
-     * worker tick, and `runJob` deliberately catches one job's failure so later
-     * jobs can continue. Production evidence on 2026-09-11 showed exactly that
-     * split for rolling-horizon materialization: it was failing every minute with
-     * SQLSTATE 42501 while later reminder work could still run. The same fail-open
-     * shape exists for dispatch: reminders can enqueue deliveries successfully
-     * while a failed dispatcher sends none. It also exists for missed-dose
-     * persistence: a healthy delivery pipeline can coexist with `mark-missed`
-     * failing, which leaves the stored clinical history and caregiver-dashboard
-     * state stale even though dose lateness can still be derived at read time.
-     * Finally, low-stock alerts are the proactive refill safety path; their job can
-     * fail independently while dose reminders remain green. Readiness must
-     * therefore prove schedule generation, the complete enqueue-to-delivery path,
-     * missed-dose history persistence, and stock-alert processing rather than
+     * `materialize`, `reminders`, `dispatch`, `mark-missed`, `stock-alerts`, and
+     * `digests` are required release heartbeats. They run independently on every
+     * normal worker tick, and `runJob` deliberately catches one job's failure so
+     * later jobs can continue. Production evidence on 2026-09-11 showed exactly
+     * that split for rolling-horizon materialization: it was failing every minute
+     * with SQLSTATE 42501 while later reminder work could still run. The same
+     * fail-open shape exists for dispatch: reminders can enqueue deliveries
+     * successfully while a failed dispatcher sends none. It also exists for
+     * missed-dose persistence: a healthy delivery pipeline can coexist with
+     * `mark-missed` failing, which leaves the stored clinical history and
+     * caregiver-dashboard state stale even though dose lateness can still be
+     * derived at read time. Low-stock alerts are the proactive refill safety
+     * path, and caregiver digests are the quiet monitoring path selected instead
+     * of per-dose alerts; either job can fail independently while dose reminders
+     * remain green. Readiness must therefore prove schedule generation, the
+     * complete enqueue-to-delivery path, missed-dose history persistence,
+     * stock-alert processing, and caregiver summary processing rather than
      * accepting a partial tick.
      *
      * New workers stamp every job_run with their build commit. A pre-fix worker
@@ -177,7 +181,7 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
         }
 
         checks.worker = failures.length === 0
-          ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, and stock-alerts healthy' }
+          ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, stock-alerts, and digests healthy' }
           : { ok: false, detail: failures.join('; ') };
       } catch (err) {
         checks.worker = { ok: false, detail: err instanceof Error ? err.message : 'unverifiable' };
