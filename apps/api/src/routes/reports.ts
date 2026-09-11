@@ -251,7 +251,8 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ['notes', 'SELECT * FROM symptom_notes WHERE patient_profile_id = $1'],
         ['measurements', 'SELECT * FROM health_measurements WHERE patient_profile_id = $1'],
         ['emergencyCard', `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
-                                  include_medications, include_allergies, include_contacts, qr_enabled
+                                  include_medications, include_allergies, include_contacts, include_conditions,
+                                  qr_enabled, qr_rotated_at, qr_view_count, qr_last_viewed_at, updated_at
                              FROM emergency_cards WHERE patient_profile_id = $1`],
         ['auditLog', 'SELECT * FROM audit_logs WHERE patient_profile_id = $1 ORDER BY at DESC'],
       ];
