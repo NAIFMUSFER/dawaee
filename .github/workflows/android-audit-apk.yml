@@ -3,6 +3,8 @@ name: Android Audit APK
 on:
   push:
     branches: [build/android-apk-audit-2026-09-11]
+  pull_request:
+    branches: [audit/e2e-red-white-black-2026-09-09]
   workflow_dispatch:
 
 permissions:
