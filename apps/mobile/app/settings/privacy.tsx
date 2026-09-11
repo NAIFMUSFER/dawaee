@@ -92,7 +92,7 @@ export default function PrivacyScreen() {
   const { user, activeProfile, signOut } = useApp();
   const apiErrorText = useApiErrorText();
   const profileKey = profileScopeKey(user?.id, activeProfile);
-  const { begin: beginConsentLoad } = useRequestScope(profileKey);
+  const { begin: beginConsentLoad, capture: captureConsent } = useRequestScope(profileKey);
   const { begin: beginExport } = useRequestScope(profileKey);
 
   const [consentState, setConsentState] = useState<{
@@ -103,7 +103,12 @@ export default function PrivacyScreen() {
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingConsent, setPendingConsent] = useState<ConsentType | null>(null);
+  const [pendingConsentState, setPendingConsentState] = useState<{
+    scopeKey: string;
+    types: Partial<Record<ConsentType, boolean>>;
+  } | null>(null);
+  const pendingConsents: Partial<Record<ConsentType, boolean>> = pendingConsentState?.scopeKey === profileKey
+    ? pendingConsentState.types : {};
 
   const [exporting, setExporting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -155,13 +160,19 @@ export default function PrivacyScreen() {
     setExporting(false);
     setExportNotice(null);
     setExportError(null);
+    setPendingConsentState(null);
   }, [profileKey]);
 
   const setConsent = async (type: ConsentType, granted: boolean) => {
-    if (!activeProfile) return;
+    const isCurrent = captureConsent();
+    if (!isCurrent() || !activeProfile || !consents || loading || pendingConsents[type]) return;
     const consentScopeKey = profileKey;
     const patientProfileId = activeProfile.id;
-    setPendingConsent(type);
+    const previousGranted = consents[type] ?? false;
+    setPendingConsentState((current) => ({
+      scopeKey: consentScopeKey,
+      types: { ...(current?.scopeKey === consentScopeKey ? current.types : {}), [type]: true },
+    }));
     setError(null);
     // Optimistic: withdrawing a consent should look instant. Keep the state
     // attached to the profile that initiated the write so a late failure from
@@ -174,13 +185,22 @@ export default function PrivacyScreen() {
         type, granted, version: CONSENT_VERSION, patientProfileId,
       });
     } catch (err) {
+      // Scope identity, not just an equal profile key: A → B → A starts a new
+      // lifetime. No old rollback, error or offline state may enter that visit.
+      if (!isCurrent()) return;
       setConsentState((current) => current?.scopeKey === consentScopeKey
-        ? { scopeKey: consentScopeKey, values: { ...current.values, [type]: !granted } }
+        ? { scopeKey: consentScopeKey, values: { ...current.values, [type]: previousGranted } }
         : current);
       if (err instanceof NetworkError) setOffline(true);
       else setError(t('privacy.consentFailed'));
     } finally {
-      setPendingConsent(null);
+      if (isCurrent()) {
+        // Different consent rows can save independently; settling one must not
+        // re-enable a second row whose request is still pending.
+        setPendingConsentState((current) => current?.scopeKey === consentScopeKey
+          ? { scopeKey: consentScopeKey, types: { ...current.types, [type]: false } }
+          : current);
+      }
     }
   };
 
@@ -284,7 +304,7 @@ export default function PrivacyScreen() {
                     </View>
                     <Switch
                       value={granted}
-                      disabled={pendingConsent === row.type}
+                      disabled={!activeProfile || !consents || loading || !!pendingConsents[row.type]}
                       onValueChange={(next) => void setConsent(row.type, next)}
                       accessibilityRole="switch"
                       accessibilityLabel={t(row.labelKey)}
