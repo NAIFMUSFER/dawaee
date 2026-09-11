@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import {
@@ -71,6 +72,11 @@ function samePermissions(a: readonly CaregiverPermission[], b: readonly Caregive
 }
 
 export default function InviteCaregiverScreen() {
+  const { user, activeProfile } = useApp();
+  return <InviteCaregiverProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function InviteCaregiverProfileScreen() {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
