@@ -59,6 +59,10 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
         snoozedUntil: d.snoozed_until?.toISOString() ?? null,
         notifiedAt: d.notified_at?.toISOString() ?? null,
         confirmedAt: d.confirmed_at?.toISOString() ?? null,
+        thresholds: {
+          lateAfterMinutes: d.late_after_minutes,
+          missedAfterMinutes: d.missed_after_minutes,
+        },
       })),
       now,
       thresholds: {
