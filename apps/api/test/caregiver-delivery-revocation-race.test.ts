@@ -112,7 +112,10 @@ describe('caregiver notification revocation is authoritative over worker leases'
 
     // Simulate the provider returning success to the worker that claimed before
     // the patient revoked access. Its stale finaliser must lose authority.
-    const stale = await db.query(sent, [deliveryId, mine!.lease_token, 'expo', 'provider-after-revoke']);
+    const stale = await db.query(
+      sent,
+      [deliveryId, mine!.lease_token, new Date(), 'expo', 'provider-after-revoke'],
+    );
     expect(stale.rowCount,
       'a pre-revoke worker lease was still authorised to turn skipped back into sent').toBe(0);
 
