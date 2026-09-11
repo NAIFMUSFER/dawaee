@@ -232,7 +232,9 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ['stock', 'SELECT * FROM medication_stock WHERE patient_profile_id = $1'],
         ['stockTransactions', 'SELECT * FROM stock_transactions WHERE patient_profile_id = $1'],
         ['refills', 'SELECT * FROM refill_events WHERE patient_profile_id = $1'],
-        ['caregivers', `SELECT id, invited_name, role, status, permissions, escalation_priority, accepted_at
+        ['caregivers', `SELECT id, invited_phone_e164, invited_name, role, status, permissions,
+                               escalation_priority, invitation_channel, invitation_expires_at,
+                               accepted_at, declined_at, revoked_at, created_at, updated_at
                           FROM caregiver_relationships WHERE patient_profile_id = $1`],
         ['escalationPolicies', 'SELECT * FROM escalation_policies WHERE patient_profile_id = $1'],
         ['caregiverNotificationRules', 'SELECT * FROM caregiver_notification_rules WHERE patient_profile_id = $1'],
