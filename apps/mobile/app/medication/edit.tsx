@@ -7,7 +7,7 @@ import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
-import { profileScopeKey } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
@@ -121,6 +121,7 @@ function EditMedicationProfileScreen() {
   const { t, formatNumber, formatMeasure } = useI18n();
   const theme = useTheme();
   const { activeProfile } = useApp();
+  const { capture: captureSave } = useRequestScope();
 
   const [draft, setDraft] = useState<Draft>(() =>
     applyPrefill(emptyDraft(activeProfile?.timezone), params.prefill));
@@ -202,6 +203,8 @@ function EditMedicationProfileScreen() {
       setNameError(t('medication.nameRequired'));
       return;
     }
+    const isCurrent = captureSave();
+    if (!isCurrent()) return;
     setNameError(null);
     setError(null);
     setSaving(true);
@@ -212,6 +215,7 @@ function EditMedicationProfileScreen() {
           ...body(),
           ...(options.confirmHighRiskChange ? { confirmHighRiskChange: true } : {}),
         });
+        if (!isCurrent()) return;
         setHighRisk(null);
         router.replace(`/medication/${medicationId}`);
         return;
@@ -223,10 +227,12 @@ function EditMedicationProfileScreen() {
         identitySource: 'user',
         ...(options.acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      if (!isCurrent()) return;
       // A medication with no schedule never reminds anyone, so creating one
       // hands straight over to the schedule builder rather than to the detail.
       router.replace(`/medication/schedule?medicationId=${created.medication.id}&mode=create`);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
         const meta = err.meta as { duplicates?: DuplicateMatch[] } | undefined;
         setDuplicates(meta?.duplicates ?? []);
@@ -237,7 +243,7 @@ function EditMedicationProfileScreen() {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
