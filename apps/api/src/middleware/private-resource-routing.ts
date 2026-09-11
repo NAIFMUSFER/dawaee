@@ -12,6 +12,7 @@ import { PROFILE_ID_HEADER } from './profile-routing.js';
  */
 export const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
 export const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
+export const DOSE_ID_HEADER = 'x-dawaee-dose-id';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -69,6 +70,11 @@ export function promoteMedicationIdHeader(req: {
 
 export function rewritePrivateResourceUrl(rawUrl: string, headers: IncomingHttpHeaders): string {
   const { path, suffix } = splitUrl(rawUrl);
+
+  const doseId = routingId(headers, DOSE_ID_HEADER);
+  if (doseId && path === '/v1/dose') {
+    return `/v1/doses/${doseId}${suffix}`;
+  }
 
   const scheduleId = routingId(headers, SCHEDULE_ID_HEADER);
   if (scheduleId && path === '/v1/schedule') {
