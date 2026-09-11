@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withUser } from '../src/lib/db.js';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
@@ -35,7 +36,17 @@ async function requestObject(purpose: 'medication_image' | 'prescription_image' 
     },
   });
   expect(res.statusCode, res.body).toBe(200);
-  return res.json<{ objectKey: string }>().objectKey;
+  const objectKey = res.json<{ objectKey: string }>().objectKey;
+  // This suite is about provenance binding, not the upload lease. Model an
+  // object that already completed the separately-tested finalization step.
+  await withUser(user.userId, async (tx) => {
+    await tx.query(
+      `UPDATE stored_objects SET uploaded_at = now(), scan_status = 'clean'
+        WHERE object_key = $1 AND owner_user_id = $2`,
+      [objectKey, user.userId],
+    );
+  });
+  return objectKey;
 }
 
 describe('P20 OCR provenance binds image, patient profile, and purpose', () => {
