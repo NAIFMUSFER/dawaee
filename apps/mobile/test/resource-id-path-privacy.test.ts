@@ -16,6 +16,7 @@ let client: Client;
 const MEDICATION_ID = '11111111-2222-4333-8444-555555555555';
 const PROFILE_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const SCHEDULE_ID = '99999999-8888-4777-8666-555555555555';
+const DOSE_ID = '77777777-6666-4555-8444-333333333333';
 
 beforeEach(async () => {
   vi.resetModules();
@@ -81,6 +82,17 @@ describe('stable resource ids stay out of platform-visible request paths', () =>
     expect(init.headers).toMatchObject({
       authorization: 'Bearer test-access',
       'x-dawaee-schedule-id': SCHEDULE_ID,
+    });
+  });
+
+  it('routes dose detail reads through a fixed path', async () => {
+    await client.api.get(`/v1/doses/${DOSE_ID}`);
+    const [rawUrl, init] = h.fetch.mock.calls.at(-1) as [string, RequestInit];
+    expect(new URL(rawUrl).pathname).toBe('/v1/dose');
+    expect(rawUrl).not.toContain(DOSE_ID);
+    expect(init.headers).toMatchObject({
+      authorization: 'Bearer test-access',
+      'x-dawaee-dose-id': DOSE_ID,
     });
   });
 
