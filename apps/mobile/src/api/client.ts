@@ -56,8 +56,10 @@ const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
 const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
 const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
 const DOSE_ID_HEADER = 'x-dawaee-dose-id';
+const DEVICE_ID_HEADER = 'x-dawaee-device-id';
 const OBJECT_KEY_HEADER = 'x-dawaee-object-key';
 const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
+const DEVICE_ID = /^[A-Za-z0-9._~-]{1,128}$/;
 
 interface PrivatePathRouting {
   path: string;
@@ -65,6 +67,7 @@ interface PrivatePathRouting {
   medicationId: string | null;
   scheduleId: string | null;
   doseId: string | null;
+  deviceId: string | null;
 }
 
 /**
@@ -74,11 +77,32 @@ interface PrivatePathRouting {
  * keeps the old path because it never makes a network request.
  */
 export function privatizeResourcePath(path: string): PrivatePathRouting {
-  if (DEMO_MODE) return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null };
+  if (DEMO_MODE) {
+    return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null, deviceId: null };
+  }
 
   const queryAt = path.indexOf('?');
   const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
   const suffix = queryAt === -1 ? '' : path.slice(queryAt);
+
+  const device = /^\/v1\/devices\/push-token\/([^/]+)$/.exec(pathname);
+  if (device) {
+    try {
+      const deviceId = decodeURIComponent(device[1]!);
+      if (DEVICE_ID.test(deviceId)) {
+        return {
+          path: `/v1/devices/push-token${suffix}`,
+          profileId: null,
+          medicationId: null,
+          scheduleId: null,
+          doseId: null,
+          deviceId,
+        };
+      }
+    } catch {
+      // Leave malformed legacy paths untouched; the server will reject them.
+    }
+  }
 
   const dose = new RegExp(`^/v1/doses/(${UUID_PATH})$`, 'i').exec(pathname);
   if (dose) {
@@ -88,6 +112,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       medicationId: null,
       scheduleId: null,
       doseId: dose[1]!,
+      deviceId: null,
     };
   }
 
@@ -99,6 +124,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       medicationId: null,
       scheduleId: schedule[1]!,
       doseId: null,
+      deviceId: null,
     };
   }
 
@@ -110,6 +136,7 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       medicationId: medication[1]!,
       scheduleId: null,
       doseId: null,
+      deviceId: null,
     };
   }
 
@@ -121,10 +148,11 @@ export function privatizeResourcePath(path: string): PrivatePathRouting {
       medicationId: null,
       scheduleId: null,
       doseId: null,
+      deviceId: null,
     };
   }
 
-  return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null };
+  return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null, deviceId: null };
 }
 
 export class ApiError extends Error {
@@ -397,6 +425,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   );
   const routedScheduleId = privatePath.scheduleId;
   const routedDoseId = privatePath.doseId;
+  const routedDeviceId = privatePath.deviceId;
   // Only the signed-read route has an objectKey query contract. Keep arbitrary
   // query fields named objectKey untouched elsewhere, but move this private
   // storage identifier to request metadata before the platform sees the URL.
@@ -453,6 +482,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
           ...(routedScheduleId ? { [SCHEDULE_ID_HEADER]: routedScheduleId } : {}),
           ...(routedDoseId ? { [DOSE_ID_HEADER]: routedDoseId } : {}),
+          ...(routedDeviceId ? { [DEVICE_ID_HEADER]: routedDeviceId } : {}),
           ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
