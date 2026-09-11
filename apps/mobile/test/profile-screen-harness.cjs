@@ -110,6 +110,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       const result = []; for (let d = from; d <= to; d = addDays(d, 1)) result.push(d); return result;
     } },
   };
+  const vmGlobals = overrides.__globals && typeof overrides.__globals === 'object' ? overrides.__globals : {};
   Object.assign(modules, overrides);
   const evaluate = (sourceFile) => {
     const code = ts.transpileModule(fs.readFileSync(sourceFile, 'utf8'), {
@@ -119,6 +120,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     const exports = {};
     vm.runInNewContext(code, {
       exports, Date, Intl, console,
+      ...vmGlobals,
       require: (id) => {
         if (id === '@/hooks/useRequestScope') {
           if (!modules[id]) modules[id] = evaluate(hookFile || path.resolve(path.dirname(file), '../../src/hooks/useRequestScope.ts'));
