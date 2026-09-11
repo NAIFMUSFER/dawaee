@@ -57,6 +57,7 @@ describe('production readiness covers every per-tick safety-critical worker prer
       { job_name: 'reminders', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'dispatch', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'mark-missed', started_at: new Date(), succeeded: true, build_commit: COMMIT },
+      { job_name: 'stock-alerts', started_at: new Date(), succeeded: true, build_commit: COMMIT },
     ];
   });
 
@@ -96,5 +97,16 @@ describe('production readiness covers every per-tick safety-critical worker prer
     const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
     expect(body.checks.worker?.ok).toBe(false);
     expect(body.checks.worker?.detail).toMatch(/mark-missed/i);
+  });
+
+  it('returns 503 when stock alerts failed even though dose reminders and dispatch are healthy', async () => {
+    workerRows = workerRows.map((row) => row.job_name === 'stock-alerts' ? { ...row, succeeded: false } : row);
+
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+
+    expect(response.statusCode, response.body).toBe(503);
+    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
+    expect(body.checks.worker?.ok).toBe(false);
+    expect(body.checks.worker?.detail).toMatch(/stock-alerts/i);
   });
 });
