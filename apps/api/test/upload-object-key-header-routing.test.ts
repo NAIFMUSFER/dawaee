@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withUser } from '../src/lib/db.js';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
@@ -29,7 +30,17 @@ async function createPrivateObject(user: TestUser): Promise<string> {
     },
   });
   expect(ticket.statusCode, ticket.body).toBe(200);
-  return ticket.json<{ objectKey: string }>().objectKey;
+  const objectKey = ticket.json<{ objectKey: string }>().objectKey;
+  // Routing is the subject here. Represent a lease that already passed the
+  // independently-tested finalization boundary so staging state cannot mask it.
+  await withUser(user.userId, async (tx) => {
+    await tx.query(
+      `UPDATE stored_objects SET uploaded_at = now(), scan_status = 'clean'
+        WHERE object_key = $1 AND owner_user_id = $2`,
+      [objectKey, user.userId],
+    );
+  });
+  return objectKey;
 }
 
 describe('private upload object-key transport', () => {
