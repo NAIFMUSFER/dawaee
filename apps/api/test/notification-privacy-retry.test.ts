@@ -81,7 +81,9 @@ describe('notification privacy is evaluated again before a queued retry leaves t
     expect(queued.rows).toHaveLength(1);
     expect(queued.rows[0]!.status).toBe('queued');
     expect(queued.rows[0]!.body).toContain('SYNTHETIC-PRIVATE-RETRY-DRUG');
-    expect(queued.rows[0]!.next_attempt_at.getTime()).toBeGreaterThan(at('20:00').getTime());
+    // Retry time is derived from the worker's authoritative clock, not the
+    // database wall clock. First backoff is exactly thirty seconds.
+    expect(queued.rows[0]!.next_attempt_at.toISOString()).toBe('2026-04-04T17:00:30.000Z');
     expect(h.push.sent).toHaveLength(0);
 
     // Privacy becomes stricter before the retry is due. This must affect what
