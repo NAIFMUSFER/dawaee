@@ -8,6 +8,7 @@ import { todayLocalDate } from '@/components/DateField';
 import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { DOSE_UNITS, type DoseUnit, type MessageKey, type StockForecast } from '@dawaee/shared';
@@ -72,6 +73,13 @@ function nextDay(date: string): string {
 }
 
 export default function StockScreen() {
+  const params = useLocalSearchParams<{ medicationId?: string }>();
+  const { user, activeProfile } = useApp();
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.medicationId ?? 'none'}`;
+  return <StockProfileScreen key={key} />;
+}
+
+function StockProfileScreen() {
   const params = useLocalSearchParams<{ medicationId?: string }>();
   const medicationId = params.medicationId;
 
