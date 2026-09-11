@@ -4,10 +4,11 @@ import { describe, expect, it } from 'vitest';
 /**
  * P20 upload-retention regression.
  *
- * Direct S3/R2 PUTs do not call the API after the bytes arrive, so
- * `stored_objects.uploaded_at` is not currently an authoritative completion
- * signal. Housekeeping must therefore never delete a ticket that patient data
- * already references merely because uploaded_at is still NULL.
+ * Direct S3/R2 PUTs bypass the API while bytes are transferred. The explicit
+ * finalization route now verifies the stored bytes against the approved lease
+ * and is the only path that makes `stored_objects.uploaded_at` authoritative.
+ * Housekeeping must still never delete metadata that live patient data already
+ * references, regardless of age or completion state.
  *
  * The reference query intentionally lives in a SECURITY DEFINER helper. The
  * least-privilege worker cannot SELECT prescriptions, and CI proved that doing
@@ -34,10 +35,11 @@ describe('upload retention does not erase authorization metadata for live images
     expect(src).not.toContain('FROM prescriptions');
   });
 
-  it('does not pretend uploaded_at is currently acknowledged by the upload route', () => {
+  it('makes uploaded_at authoritative only through explicit verified finalization', () => {
     const route = readFileSync(new URL('../src/routes/uploads.ts', import.meta.url), 'utf8');
-    // A future explicit completion endpoint may make uploaded_at authoritative.
-    // Until then, this absence is exactly why reference checks are mandatory.
-    expect(route).not.toMatch(/UPDATE\s+stored_objects[\s\S]{0,200}uploaded_at\s*=/i);
+    expect(route).toContain("app.post('/v1/uploads/finalize'");
+    expect(route).toMatch(/SET\s+uploaded_at\s*=\s*now\(\),\s*scan_status\s*=\s*'clean'/i);
+    // Both signed-read and OCR paths stay fail-closed for a staged lease.
+    expect(route.match(/!object\.uploaded_at/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 });
