@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Loading } from '@/components/ui';
 import { MedicationDetailView, type MedicationDetail, type StockResponse } from '@/components/MedicationDetailView';
 import { useI18n } from '@/i18n';
-import { useRequestScope } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationScheduleView, MedicationView } from '@/api/types';
@@ -20,6 +20,13 @@ function shiftDate(date: string, days: number): string {
 }
 
 export default function MedicationDetailScreen() {
+  const params = useLocalSearchParams<{ id?: string }>();
+  const { user, activeProfile } = useApp();
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.id ?? 'none'}`;
+  return <MedicationDetailProfileScreen key={key} />;
+}
+
+function MedicationDetailProfileScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const medicationId = params.id;
   const { t, formatNumber, formatWeekday, isRtl } = useI18n();
