@@ -32,6 +32,7 @@ function MedicationDetailProfileScreen() {
   const { t, formatNumber, formatWeekday, isRtl } = useI18n();
   const { activeProfile, setOffline } = useApp();
   const requestScope = useRequestScope(`${activeProfile?.id ?? 'none'}:${medicationId ?? 'none'}`);
+  const mutationScope = useRequestScope('mutations');
 
   const [medication, setMedication] = useState<MedicationDetail | null>(null);
   const [schedules, setSchedules] = useState<MedicationScheduleView[]>([]);
@@ -138,34 +139,42 @@ function MedicationDetailProfileScreen() {
 
   const setStatus = async (status: MedicationView['status']) => {
     if (!medicationId) return;
+    const isCurrent = mutationScope.capture();
+    if (!isCurrent()) return;
     setBusy(true);
     setError(null);
     try {
       await api.patch(`/v1/medications/${medicationId}`, { status });
+      if (!isCurrent()) return;
       if (status === 'archived') {
         router.replace('/(tabs)/medications');
         return;
       }
       await load();
     } catch (err) {
+      if (!isCurrent()) return;
       setError(describeError(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
   const remove = async (force: boolean) => {
     if (!medicationId) return;
+    const isCurrent = mutationScope.capture();
+    if (!isCurrent()) return;
     setBusy(true);
     setError(null);
     try {
       await api.delete(`/v1/medications/${medicationId}`, force ? { force: 'true' } : undefined);
+      if (!isCurrent()) return;
       setConfirmingDelete(false);
       router.replace('/(tabs)/medications');
     } catch (err) {
+      if (!isCurrent()) return;
       setError(describeError(err));
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   };
 
