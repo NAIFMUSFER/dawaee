@@ -1,12 +1,10 @@
-import { createHash } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sha256 } from '../src/lib/crypto.js';
 import { resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness } from './harness.js';
 
 let h: Harness;
 let owner: pg.Pool;
-
-const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 
 beforeAll(async () => {
   resetDatabase();
