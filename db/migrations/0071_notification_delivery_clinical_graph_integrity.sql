@@ -9,6 +9,11 @@
 -- dispatcher would treat a relationship-less row as an ordinary patient
 -- delivery. Bind the clinical edges at the database boundary.
 --
+-- Relationship-less deliveries are patient deliveries in the current worker
+-- contract. Their user target is the profile's linked account when present,
+-- otherwise its owner. Bind that recipient as well so a valid Bob clinical
+-- graph cannot be routed to Alice by an independent worker-column mistake.
+--
 -- Existing data is checked first and the migration fails closed rather than
 -- silently rewriting durable notification history.
 -- =============================================================================
@@ -48,6 +53,18 @@ BEGIN
     RAISE EXCEPTION
       'existing notification delivery dose/medication mismatch; reconcile data before migration';
   END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM public.notification_deliveries nd
+      JOIN public.patient_profiles pp ON pp.id = nd.patient_profile_id
+     WHERE nd.relationship_id IS NULL
+       AND nd.recipient_user_id IS NOT NULL
+       AND nd.recipient_user_id IS DISTINCT FROM COALESCE(pp.linked_user_id, pp.owner_user_id)
+  ) THEN
+    RAISE EXCEPTION
+      'existing patient notification recipient/profile mismatch; reconcile data before migration';
+  END IF;
 END $$;
 
 CREATE OR REPLACE FUNCTION app.assert_notification_delivery_clinical_graph()
@@ -60,6 +77,7 @@ DECLARE
   dose_profile uuid;
   dose_medication uuid;
   medication_profile uuid;
+  patient_recipient uuid;
 BEGIN
   IF NEW.dose_occurrence_id IS NOT NULL THEN
     SELECT d.patient_profile_id, d.medication_id
@@ -96,6 +114,21 @@ BEGIN
     END IF;
   END IF;
 
+  IF NEW.relationship_id IS NULL AND NEW.recipient_user_id IS NOT NULL THEN
+    SELECT COALESCE(pp.linked_user_id, pp.owner_user_id)
+      INTO patient_recipient
+      FROM public.patient_profiles pp
+     WHERE pp.id = NEW.patient_profile_id;
+
+    -- patient_profile_id itself has an existing foreign key. When it resolves,
+    -- the relationship-less delivery may only target that profile's patient.
+    IF FOUND AND patient_recipient IS DISTINCT FROM NEW.recipient_user_id THEN
+      RAISE EXCEPTION
+        'patient notification recipient does not belong to patient profile'
+        USING ERRCODE = '23514', CONSTRAINT = 'notification_delivery_patient_recipient_match';
+    END IF;
+  END IF;
+
   RETURN NEW;
 END $$;
 
@@ -104,6 +137,6 @@ REVOKE ALL ON FUNCTION app.assert_notification_delivery_clinical_graph() FROM PU
 DROP TRIGGER IF EXISTS notification_delivery_clinical_graph_guard
   ON public.notification_deliveries;
 CREATE TRIGGER notification_delivery_clinical_graph_guard
-BEFORE INSERT OR UPDATE OF patient_profile_id, dose_occurrence_id, medication_id
+BEFORE INSERT OR UPDATE OF patient_profile_id, dose_occurrence_id, medication_id, recipient_user_id, relationship_id
 ON public.notification_deliveries
 FOR EACH ROW EXECUTE FUNCTION app.assert_notification_delivery_clinical_graph();
