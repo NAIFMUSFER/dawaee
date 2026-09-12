@@ -30,24 +30,24 @@ describe('logout does not trust client device-id as a session boundary', () => {
     const sibling = await signIn(h, phone, sharedDeviceId);
 
     expect(sibling.userId).toBe(first.userId);
-    expect(sibling.sessionId).not.toBe(first.sessionId);
+    expect(sibling.token).not.toBe(first.token);
 
     // Positive control: both independent sessions are live before logout.
     expect((await h.app.inject({
       method: 'GET',
       url: '/v1/me',
-      headers: { authorization: `Bearer ${first.accessToken}` },
+      headers: { authorization: `Bearer ${first.token}` },
     })).statusCode).toBe(200);
     expect((await h.app.inject({
       method: 'GET',
       url: '/v1/me',
-      headers: { authorization: `Bearer ${sibling.accessToken}` },
+      headers: { authorization: `Bearer ${sibling.token}` },
     })).statusCode).toBe(200);
 
     const logout = await h.app.inject({
       method: 'POST',
       url: '/v1/auth/logout',
-      headers: { authorization: `Bearer ${first.accessToken}` },
+      headers: { authorization: `Bearer ${first.token}` },
     });
     expect(logout.statusCode, logout.body).toBe(200);
 
@@ -55,7 +55,7 @@ describe('logout does not trust client device-id as a session boundary', () => {
     expect((await h.app.inject({
       method: 'GET',
       url: '/v1/me',
-      headers: { authorization: `Bearer ${first.accessToken}` },
+      headers: { authorization: `Bearer ${first.token}` },
     })).statusCode).toBe(401);
 
     // Security boundary: an unrelated session survives despite the colliding
@@ -63,7 +63,7 @@ describe('logout does not trust client device-id as a session boundary', () => {
     expect((await h.app.inject({
       method: 'GET',
       url: '/v1/me',
-      headers: { authorization: `Bearer ${sibling.accessToken}` },
+      headers: { authorization: `Bearer ${sibling.token}` },
     })).statusCode, 'logout revoked an unrelated session solely by shared client device id').toBe(200);
 
     const siblingRefresh = await h.app.inject({
