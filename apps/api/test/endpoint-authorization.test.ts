@@ -33,6 +33,8 @@ let h: Harness;
 let alice: TestUser;
 /** Patient B — unrelated to A, and the owner of every id A will try. */
 let bob: TestUser;
+/** A live session on the installation whose push token belongs to B. */
+let bobDeviceSession: TestUser;
 let admin: TestUser;
 
 const bobIds = {
@@ -326,8 +328,10 @@ beforeAll(async () => {
   bobIds.relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
 
   bobIds.deviceId = `bob-device-${Date.now()}`;
+  bobDeviceSession = await signIn(h, bob.phone, bobIds.deviceId);
+  expect(bobDeviceSession.userId).toBe(bob.userId);
   const dev = await send({
-    method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(bob),
+    method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(bobDeviceSession),
     payload: { deviceId: bobIds.deviceId, token: 'ExponentPushToken[bbbbbbbbbbbbbbbbbbbbbb]', platform: 'ios' },
   });
   expect(dev.statusCode, dev.body).toBe(200);
@@ -511,12 +515,11 @@ const ATTEMPTS: Attempt[] = [
 
 /**
  * `DELETE /v1/devices/push-token/:deviceId` is deliberately not in the table
- * above, because a status code cannot answer the question for it. The handler
- * updates `WHERE user_id = $1 AND device_id = $2` with the caller's own id, so
- * Patient A's request matches zero rows and returns `{ok:true}` — a vacuous
- * success, not a cross-tenant write. That is also the non-leaking behaviour:
- * the response is identical whether or not the device exists. The only honest
- * assertion is on the row itself.
+ * above because the authoritative assertion is the row itself. Deregistration
+ * is now also bound to the authenticated session's live device, so a sibling
+ * or unrelated installation is refused before it can mutate the token. The
+ * row assertion below keeps the BOLA guarantee pinned independently of the
+ * exact denial status.
  */
 const DEVICE_ATTEMPT = {
   name: 'unregister B’s device',
@@ -591,8 +594,11 @@ describe('P12-4 Patient A holding Patient B’s real ids', () => {
     const res = await send({ method: 'DELETE', url: DEVICE_ATTEMPT.url(), headers: authHeaders(alice) });
     expect(active(), `A silenced B’s reminders (status ${res.statusCode})`).toBe('t');
 
-    // Positive control: the owner can, so the row is genuinely reachable.
-    await send({ method: 'DELETE', url: DEVICE_ATTEMPT.url(), headers: authHeaders(bob) });
+    // Positive control: the installation that owns the token can deactivate it.
+    const ownDelete = await send({
+      method: 'DELETE', url: DEVICE_ATTEMPT.url(), headers: authHeaders(bobDeviceSession),
+    });
+    expect(ownDelete.statusCode, ownDelete.body).toBe(200);
     expect(active(), 'B could not deactivate B’s own device — the check above proves nothing').toBe('f');
   });
 
@@ -872,7 +878,7 @@ describe('P12-8 every route works for the person entitled to use it', () => {
   const own = { profileId: '', medicationId: '', scheduleId: '', doseId: '', relationshipId: '' };
 
   beforeAll(async () => {
-    carol = await signIn(h, '+966500090004');
+    carol = await signIn(h, '+966500090004', 'carol-device');
   }, 60_000);
 
   const ok = async (label: string, args: InjectArgs) => {
