@@ -96,8 +96,10 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
       const start = Date.now();
       await getPool().query('SELECT 1');
       checks.database = { ok: true, detail: `${Date.now() - start}ms` };
-    } catch (err) {
-      checks.database = { ok: false, detail: err instanceof Error ? err.message : 'unreachable' };
+    } catch {
+      // This endpoint is public: driver errors can contain private connection
+      // or record details. Expose the failed check, never the raw exception.
+      checks.database = { ok: false, detail: 'unreachable' };
     }
 
     // Reachable is not the same as usable. A database can answer SELECT 1 while
@@ -114,8 +116,8 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
               schema.mismatched.length ? `checksum differs: ${schema.mismatched.join(', ')}` : '',
             ].filter(Boolean).join('; '),
           };
-      } catch (err) {
-        checks.schema = { ok: false, detail: err instanceof Error ? err.message : 'unverifiable' };
+      } catch {
+        checks.schema = { ok: false, detail: 'unverifiable' };
       }
     }
 
@@ -183,8 +185,8 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
         checks.worker = failures.length === 0
           ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, stock-alerts, and digests healthy' }
           : { ok: false, detail: failures.join('; ') };
-      } catch (err) {
-        checks.worker = { ok: false, detail: err instanceof Error ? err.message : 'unverifiable' };
+      } catch {
+        checks.worker = { ok: false, detail: 'unverifiable' };
       }
     }
 
