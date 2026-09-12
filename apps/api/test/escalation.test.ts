@@ -47,9 +47,6 @@ const iso = (p: { y: number; mo: number; da: number }) =>
 const NEXT = riyadhParts(new Date(Date.now() + 48 * 60 * 60 * 1000));
 const SCENARIO_DATE = iso(SCENARIO);
 const NEXT_DATE = iso(NEXT);
-// The schedule starts ON the scenario day. Starting it earlier would leave
-// real doses due before 19:59, and the first tick would escalate those instead
-// of the one the scenario is about.
 const START_DATE = SCENARIO_DATE;
 
 /** Riyadh is UTC+3 year round, so 20:00 local on the scenario date is 17:00Z. */
@@ -80,15 +77,10 @@ async function acceptInvite(inviter: TestUser, invitee: TestUser, permissions: s
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
-  patient = await signIn(h, '0533000001');
-  son = await signIn(h, '0533000002');
-  daughter = await signIn(h, '0533000003');
+  patient = await signIn(h, '0533000001', `${PATIENT_DEVICE}-1`);
+  son = await signIn(h, '0533000002', `${SON_DEVICE}-1`);
+  daughter = await signIn(h, '0533000003', `${DAUGHTER_DEVICE}-1`);
 
-  // Adherence joins medication_schedules for each schedule's late/missed
-  // thresholds, so view_schedule is a real data dependency of view_adherence.
-  // This scenario also asserts that the son can see Panadol by name, hence the
-  // separate view_medications grant. The dedicated dependency suite proves
-  // view_adherence alone is rejected rather than returning an empty 200.
   const sonRel = await acceptInvite(
     patient, son,
     ['view_adherence', 'view_schedule', 'view_medications', 'receive_notifications'],
@@ -107,9 +99,6 @@ beforeAll(async () => {
     });
   }
 
-  // Every participant registers a device, because push is the only channel
-  // there is: a caregiver with no registered device cannot be reached at all,
-  // and the tokens are what tell the assertions below WHO was contacted.
   for (const [who, token] of [
     [patient, PATIENT_DEVICE], [son, SON_DEVICE], [daughter, DAUGHTER_DEVICE],
   ] as const) {
@@ -171,13 +160,8 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
     await h.tick();
     expect(sentTo(PATIENT_DEVICE)).toHaveLength(1);
     expect(h.push.sent[0]!.priority).toBe('high');
-    // The medication is NOT named: disclosure is off unless the patient opts
-    // in, and this fixture has not. The body still has to be actionable, so it
-    // carries the time. See the opt-in case below for the other half.
     expect(h.push.sent[0]!.body).not.toContain('Panadol');
     expect(h.push.sent[0]!.body).toContain('20:00');
-    // The family is not told anything yet. This is the whole point of the
-    // ladder: a patient who is simply slow must not summon their children.
     expect(sentTo(SON_DEVICE)).toHaveLength(0);
     expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
@@ -199,7 +183,6 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   it('20:30 — stage 3 reaches the PRIMARY caregiver, and only them', async () => {
     h.setNow(at('20:30'));
     await h.tick();
-    // The son is priority 1. The daughter is priority 5 and hears nothing yet.
     expect(sentTo(SON_DEVICE)).toHaveLength(1);
     expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
@@ -217,8 +200,6 @@ describe('brief §17 / §66 — escalation walks outward and stops on confirmati
   it('21:00 — the secondary caregiver is NOT contacted', async () => {
     h.setNow(at('21:00'));
     await h.tick();
-    // Still exactly the one message to the son from 20:30, and nothing at all
-    // to the daughter: confirmation stops the ladder where it stood.
     expect(sentTo(SON_DEVICE)).toHaveLength(1);
     expect(sentTo(DAUGHTER_DEVICE)).toHaveLength(0);
   });
@@ -262,7 +243,6 @@ describe('caregiver visibility of the outcome', () => {
 
 describe('escalation is suppressed correctly', () => {
   it('does not escalate a snoozed dose, and resumes afterwards', async () => {
-    // A fresh dose on the following day.
     const doses = await h.app.inject({
       method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=${NEXT_DATE}&to=${NEXT_DATE}`,
       headers: authHeaders(patient),
@@ -285,26 +265,18 @@ describe('escalation is suppressed correctly', () => {
     expect(snooze.statusCode).toBe(200);
     expect(snooze.json().snoozeCount).toBe(1);
 
-    // The API stamps `snoozed_until` from the real wall clock while the worker
-    // is running on a simulated one, so the window is re-anchored to the
-    // simulated timeline. The endpoint above is still the thing under test.
     const { execFileSync } = await import('node:child_process');
     execFileSync('psql', ['-d', 'dawaee_test', '-c',
       `UPDATE dose_occurrences SET snoozed_until = timestamptz '${new Date(snoozeAt.getTime() + 60 * 60_000).toISOString()}' WHERE id = '${tomorrow.id}'`], {
       env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
     });
 
-    // 30 minutes in, the family would normally be told. It is snoozed, so no.
     h.setNow(new Date(snoozeAt.getTime() + 30 * 60_000));
     await h.tick();
     expect(sentToFamily()).toBe(familyBefore);
 
-    // Once the snooze lapses, escalation resumes exactly where it left off.
     h.setNow(new Date(snoozeAt.getTime() + 70 * 60_000));
     await h.tick();
-    // Whichever caregiver the ladder has reached by then — at 70 minutes late
-    // it is the secondary — the point is that suppression ended rather than
-    // permanently cancelled the escalation.
     expect(sentToFamily()).toBeGreaterThan(familyBefore);
   });
 });
