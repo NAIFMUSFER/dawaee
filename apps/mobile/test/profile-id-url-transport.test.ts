@@ -45,24 +45,35 @@ afterEach(() => {
 });
 
 describe('profile routing metadata stays out of platform request URLs', () => {
-  it('does not put profileId in the URL and sends it as dedicated request metadata', async () => {
-    await client.api.get('/v1/doses', {
-      profileId: PROFILE_ID,
-      from: '2026-09-01',
-      to: '2026-09-10',
-    });
+  const activeLegacySurfaces = [
+    { path: '/v1/today', query: { profileId: PROFILE_ID } },
+    { path: '/v1/medications', query: { profileId: PROFILE_ID, status: 'active' } },
+    { path: '/v1/doses', query: { profileId: PROFILE_ID, from: '2026-09-01', to: '2026-09-10' } },
+    { path: '/v1/adherence', query: { profileId: PROFILE_ID, from: '2026-09-01', to: '2026-09-10' } },
+    { path: '/v1/care-circle', query: { profileId: PROFILE_ID } },
+  ] as const;
 
-    expect(h.fetch).toHaveBeenCalledTimes(1);
-    const [rawUrl, init] = h.fetch.mock.calls[0] as [string, RequestInit];
-    const url = new URL(rawUrl);
+  it.each(activeLegacySurfaces)(
+    'keeps profileId out of the public URL for $path while preserving ordinary filters',
+    async ({ path, query }) => {
+      await client.api.get(path, query);
 
-    expect(url.searchParams.has('profileId')).toBe(false);
-    expect(rawUrl).not.toContain(PROFILE_ID);
-    expect(url.searchParams.get('from')).toBe('2026-09-01');
-    expect(url.searchParams.get('to')).toBe('2026-09-10');
-    expect(init.headers).toMatchObject({
-      authorization: 'Bearer test-access',
-      'x-dawaee-profile-id': PROFILE_ID,
-    });
-  });
+      expect(h.fetch).toHaveBeenCalledTimes(1);
+      const [rawUrl, init] = h.fetch.mock.calls[0] as [string, RequestInit];
+      const url = new URL(rawUrl);
+
+      expect(url.pathname).toBe(path);
+      expect(url.searchParams.has('profileId')).toBe(false);
+      expect(rawUrl).not.toContain(PROFILE_ID);
+      if ('status' in query) expect(url.searchParams.get('status')).toBe(query.status);
+      if ('from' in query) expect(url.searchParams.get('from')).toBe(query.from);
+      if ('to' in query) expect(url.searchParams.get('to')).toBe(query.to);
+      expect(init.headers).toMatchObject({
+        authorization: 'Bearer test-access',
+        'x-dawaee-profile-id': PROFILE_ID,
+      });
+
+      h.fetch.mockClear();
+    },
+  );
 });
