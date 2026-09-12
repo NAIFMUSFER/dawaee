@@ -228,9 +228,11 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
    * `avatar` is deliberately exempt: a profile picture is not medication data,
    * and every caregiver is meant to see whose profile they are looking at.
    *
-   * The uploader keeps access to what they uploaded. Medication-image creation
-   * now explicitly depends on `view_medications`, so a caregiver who can create
-   * the image can also review the medication identity it represents.
+   * Upload ownership is a storage/lifecycle fact, not a durable clinical-data
+   * capability. A caregiver may upload while delegated, but medication and
+   * prescription images bound to a patient profile always require the caller's
+   * current `view_medications` permission. Revocation must therefore cut off an
+   * uploader exactly as it cuts off a caregiver who did not upload the object.
    *
    * The object key is also private routing metadata. New clients send it in a
    * header so the upstream platform request path does not retain it; legacy
@@ -276,7 +278,7 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
       const carriesMedicationIdentity = object.purpose === 'medication_image'
         || object.purpose === 'prescription_image';
       const requiresMedicationPermission = Boolean(
-        object.patient_profile_id && object.owner_user_id !== userId && carriesMedicationIdentity,
+        object.patient_profile_id && carriesMedicationIdentity,
       );
       if (requiresMedicationPermission) {
         // 403 rather than 404: the caller is legitimately in this patient's care
