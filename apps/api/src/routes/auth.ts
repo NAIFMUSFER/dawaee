@@ -414,6 +414,12 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   app.post('/v1/auth/logout-all', { preHandler: authenticate }, async (req) => {
     const { userId } = currentUser(req);
     const revoked = await withUser(userId, async (tx) => {
+      // Serialize before the account-wide UPDATE in a separate statement. A
+      // refresh that already holds the same per-user advisory lock commits its
+      // descendant first; this UPDATE then starts with a fresh READ COMMITTED
+      // snapshot and cannot miss it. If logout-all wins the lock first, refresh
+      // cannot mint a descendant until every existing session is revoked.
+      await tx.query('SELECT app.lock_current_auth_account()');
       const { rowCount } = await tx.query(
         'UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL',
         [userId],
