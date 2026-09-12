@@ -53,7 +53,12 @@ REVOKE ALL ON FUNCTION app.assert_medication_patient_profile_immutable() FROM PU
 DROP TRIGGER IF EXISTS medication_patient_profile_immutable_guard
   ON public.medications;
 CREATE TRIGGER medication_patient_profile_immutable_guard
-BEFORE UPDATE OF patient_profile_id
+-- AFTER is deliberate. For dawaee_app, PostgreSQL must evaluate the existing
+-- RLS WITH CHECK boundary first, so a cross-profile re-parent attempt remains
+-- an authorization denial (42501). The AFTER trigger is the independent graph-
+-- integrity backstop for privileged/owner writes that can bypass RLS; raising
+-- here still aborts and rolls back the UPDATE atomically.
+AFTER UPDATE OF patient_profile_id
 ON public.medications
 FOR EACH ROW EXECUTE FUNCTION app.assert_medication_patient_profile_immutable();
 
