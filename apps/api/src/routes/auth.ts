@@ -373,8 +373,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       });
     });
 
-    // Changing a password does not end other sessions here; that is a separate
-    // deliberate action so a patient mid-dose is never logged out unexpectedly.
+    // The transaction above deliberately preserves only the session making the
+    // password change and revokes every other live session for the account.
     return { updated: true };
   });
 
@@ -471,13 +471,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       }
 
       await tx.query(
-        `INSERT INTO push_tokens (user_id, token, platform, device_id, app_version, active, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,true, now())
+        `INSERT INTO push_tokens
+           (user_id, token, platform, device_id, app_version, session_id, active, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,true, now())
          ON CONFLICT (user_id, device_id) DO UPDATE
            SET token = EXCLUDED.token, platform = EXCLUDED.platform,
-               app_version = EXCLUDED.app_version, active = true,
-               failure_count = 0, last_seen_at = now()`,
-        [userId, body.token, body.platform, body.deviceId, body.appVersion ?? null],
+               app_version = EXCLUDED.app_version, session_id = EXCLUDED.session_id,
+               active = true, failure_count = 0, last_seen_at = now()`,
+        [userId, body.token, body.platform, body.deviceId, body.appVersion ?? null, sessionId],
       );
     });
     return { ok: true };
@@ -503,7 +504,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         throw AppError.forbidden('Push token device does not match the authenticated session');
       }
 
-      await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1 AND device_id = $2', [userId, deviceId]);
+      await tx.query(
+        'UPDATE push_tokens SET active = false WHERE user_id = $1 AND device_id = $2 AND session_id = $3',
+        [userId, deviceId, sessionId],
+      );
     });
     return { ok: true };
   });
