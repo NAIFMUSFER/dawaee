@@ -258,9 +258,12 @@ async function scheduleCurrentNotifications(
         content: {
           title: text.title,
           body: text.body,
+          // The action handler needs only the occurrence id. Keeping the
+          // medication id in OS notification metadata added a second stable,
+          // health-linked identifier without any functional use.
           data: grouped
             ? { doseIds: group.map((dose) => dose.id), kind: 'dose_group_reminder' }
-            : { doseId: first.id, medicationId: first.medicationId, kind: 'dose_reminder' },
+            : { doseId: first.id, kind: 'dose_reminder' },
           sound: 'default',
           ...(grouped ? {} : { categoryIdentifier: MEDICATION_CATEGORY_ID }),
           interruptionLevel: 'timeSensitive',
