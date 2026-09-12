@@ -251,6 +251,10 @@ BEGIN
           FROM auth_sessions child
           JOIN replacement_lineage lineage ON child.id = lineage.id
          WHERE child.user_id = s.user_id
+           -- Every server-created successor inherits its predecessor device_id.
+           -- Keep that invariant as an additional narrowing condition while the
+           -- session ids in replacement_lineage remain the authority boundary.
+           AND child.device_id = s.device_id
            AND child.replaced_by IS NOT NULL
       )
       UPDATE auth_sessions target
@@ -295,4 +299,4 @@ BEGIN
 END $$;
 
 COMMENT ON FUNCTION app.rotate_session(text,text,text,int) IS
-  'Rotates refresh tokens under the account advisory lock, transfers exact push-session ownership to the normal successor, and on reuse revokes only the server-linked replacement lineage.';
+  'Rotates refresh tokens under the account advisory lock, transfers exact push-session ownership to the normal successor, and on reuse revokes only the server-linked replacement lineage on the original device.';
