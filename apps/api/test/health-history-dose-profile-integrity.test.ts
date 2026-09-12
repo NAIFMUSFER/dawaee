@@ -54,7 +54,7 @@ afterAll(async () => {
   await h.close();
 });
 
-describe('health-history dose references stay inside one patient profile', () => {
+describe('patient-history dose references stay inside one patient profile', () => {
   it('rejects a symptom note linked to another patient dose at the database boundary', async () => {
     await expect(owner.query(
       `INSERT INTO symptom_notes
@@ -73,6 +73,15 @@ describe('health-history dose references stay inside one patient profile', () =>
     )).rejects.toMatchObject({ code: '23514', constraint: 'measurement_dose_profile_match' });
   });
 
+  it('rejects a dose event linked to another patient dose at the database boundary', async () => {
+    await expect(owner.query(
+      `INSERT INTO dose_events
+         (dose_occurrence_id, patient_profile_id, type, metadata)
+       VALUES ($1, $2, 'notified', '{}'::jsonb)`,
+      [bobDoseId, alice.profileId],
+    )).rejects.toMatchObject({ code: '23514', constraint: 'dose_event_profile_match' });
+  });
+
   it('still accepts same-profile dose references and null references', async () => {
     const note = await owner.query<{ id: string }>(
       `INSERT INTO symptom_notes
@@ -89,5 +98,13 @@ describe('health-history dose references stay inside one patient profile', () =>
       [alice.profileId, alice.userId],
     );
     expect(measurement.rowCount).toBe(1);
+
+    const event = await owner.query<{ id: string }>(
+      `INSERT INTO dose_events
+         (dose_occurrence_id, patient_profile_id, type, metadata)
+       VALUES ($1, $2, 'notified', '{}'::jsonb) RETURNING id::text`,
+      [aliceDoseId, alice.profileId],
+    );
+    expect(event.rowCount).toBe(1);
   });
 });
