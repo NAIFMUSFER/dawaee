@@ -14,7 +14,7 @@
     "npm": ">=10.9"
   },
   "scripts": {
-    "build": "npm run build -w @dawaee/shared && npm run build -w @dawaee/core && npm run build -w @dawaee/api && npm run build -w @dawaee/worker",
+    "build": "npm run build -w @dawaee/shared && npm run build -w @dawaee/core && npm run build -w @dawaee/api && npm run build -w @dawaee/worker && node scripts/build-audit-preview-web.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:unit": "vitest run packages",
