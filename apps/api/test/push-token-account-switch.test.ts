@@ -35,10 +35,10 @@ afterAll(async () => {
 
 describe('push token ownership follows the account currently using one installation', () => {
   it('reassigns an active token after the previous account signed out offline', async () => {
-    const a = await signIn(h, '+966500006101');
-    const b = await signIn(h, '+966500006102');
-    const token = 'ExponentPushToken[audit-account-switch-token-0001]';
     const deviceId = 'audit-shared-installation-0001';
+    const a = await signIn(h, '+966500006101', deviceId);
+    const b = await signIn(h, '+966500006102', deviceId);
+    const token = 'ExponentPushToken[audit-account-switch-token-0001]';
 
     const first = await h.app.inject({
       method: 'POST',
@@ -74,8 +74,10 @@ describe('push token ownership follows the account currently using one installat
   });
 
   it('does not let knowledge of a token alone transfer another installation', async () => {
-    const a = await signIn(h, '+966500006103');
-    const b = await signIn(h, '+966500006104');
+    const ownerDeviceId = 'audit-installation-owner-0002';
+    const differentDeviceId = 'audit-different-installation-0002';
+    const a = await signIn(h, '+966500006103', ownerDeviceId);
+    const b = await signIn(h, '+966500006104', differentDeviceId);
     const token = 'ExponentPushToken[audit-account-switch-token-0002]';
 
     const first = await h.app.inject({
@@ -85,7 +87,7 @@ describe('push token ownership follows the account currently using one installat
       payload: {
         token,
         platform: 'ios',
-        deviceId: 'audit-installation-owner-0002',
+        deviceId: ownerDeviceId,
         appVersion: '1.0.0',
       },
     });
@@ -100,7 +102,7 @@ describe('push token ownership follows the account currently using one installat
       payload: {
         token,
         platform: 'ios',
-        deviceId: 'audit-different-installation-0002',
+        deviceId: differentDeviceId,
         appVersion: '1.0.0',
       },
     });
@@ -112,7 +114,7 @@ describe('push token ownership follows the account currently using one installat
     );
     expect(rows.rows.filter((row) => row.active)).toEqual([{
       user_id: a.userId,
-      device_id: 'audit-installation-owner-0002',
+      device_id: ownerDeviceId,
       active: true,
     }]);
   });
