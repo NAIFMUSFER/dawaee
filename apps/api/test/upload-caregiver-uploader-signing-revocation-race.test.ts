@@ -48,7 +48,7 @@ afterAll(async () => {
 });
 
 describe('delegated uploader authorization stays live while a signed URL is created', () => {
-  it('does not disclose the capability when caregiver access is revoked during signing', async () => {
+  it('does not disclose the signed URL when caregiver access is revoked during signing', async () => {
     const signingStarted = deferred<void>();
     const releaseSigning = deferred<string>();
 
@@ -74,10 +74,10 @@ describe('delegated uploader authorization stays live while a signed URL is crea
       [relationshipId, patient.userId],
     );
 
-    releaseSigning.resolve('https://storage.invalid/revoked-uploader-race-capability');
+    releaseSigning.resolve('https://storage.invalid/signed-url-placeholder');
     const response = await inFlight;
 
-    expect(response.statusCode, response.body).toBe(403);
-    expect(response.body).not.toContain('revoked-uploader-race-capability');
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.body).not.toContain('signed-url-placeholder');
   });
 });
