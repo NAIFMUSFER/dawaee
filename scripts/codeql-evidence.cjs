@@ -57,11 +57,27 @@ function summarizeSarif(report) {
   }
   return rows;
 }
-module.exports = { summarizeSarif };
+
+/**
+ * The security workflow promises that a CodeQL finding blocks the build.
+ * `github/codeql-action/analyze` uploads SARIF but does not itself fail merely
+ * because results exist, so the metadata pass must make that policy executable.
+ */
+function gateExitCode(rows) {
+  assert.ok(Array.isArray(rows), 'CodeQL finding rows are missing');
+  return rows.length === 0 ? 0 : 1;
+}
+
+module.exports = { summarizeSarif, gateExitCode };
 if (require.main === module) {
   const rows = summarizeSarif(JSON.parse(readFileSync('codeql-results/javascript.sarif', 'utf8')));
   console.log(JSON.stringify({ codeqlEvidence: 'metadata-only', findings: rows.length }));
   // JSON framing escapes line breaks; report content cannot become a workflow
-  // command. This diagnostic does not dismiss findings or replace either gate.
+  // command. This diagnostic never prints finding messages or source snippets.
   for (const row of rows) console.log(JSON.stringify(row));
+  const exitCode = gateExitCode(rows);
+  if (exitCode !== 0) {
+    console.error(JSON.stringify({ codeqlGate: 'blocked', findings: rows.length }));
+    process.exitCode = exitCode;
+  }
 }
