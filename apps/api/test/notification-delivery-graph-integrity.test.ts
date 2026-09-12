@@ -114,4 +114,25 @@ describe('notification delivery clinical graph integrity', () => {
     expect(result.errorCode, result.error ?? 'mismatched medication delivery unexpectedly queued').toBe('23514');
     expect(result.constraint).toBe('notification_delivery_medication_profile_match');
   });
+
+  it('does not let a relationship-less Bob delivery target Alice as recipient', async () => {
+    const result = await attempt(
+      `INSERT INTO notification_deliveries
+         (patient_profile_id, recipient_user_id, kind, channel,
+          dose_occurrence_id, medication_id, locale, title, body, payload,
+          dedupe_key, scheduled_for, next_attempt_at)
+       VALUES ($1,$2,'dose_reminder','push',$3,$4,'en','Reminder','private',$5::jsonb,$6,now(),now())`,
+      [
+        bob.profileId,
+        alice.userId,
+        bobDoseId,
+        bobMedicationId,
+        JSON.stringify({ doseId: bobDoseId, medicationId: bobMedicationId, medicationName: 'Bob private medication' }),
+        `red-cross-recipient-${Date.now()}-${seq++}`,
+      ],
+    );
+
+    expect(result.errorCode, result.error ?? 'cross-user patient delivery unexpectedly queued').toBe('23514');
+    expect(result.constraint).toBe('notification_delivery_patient_recipient_match');
+  });
 });
