@@ -22,7 +22,7 @@ afterAll(async () => {
   await h.close();
 });
 
-async function waitUntilPasswordRevocationIsBlocked(): Promise<void> {
+async function waitUntilPasswordSecurityTransactionIsBlocked(): Promise<void> {
   for (let attempt = 0; attempt < 160; attempt++) {
     const { rows } = await owner.query<{ waiting: boolean }>(
       `SELECT EXISTS (
@@ -30,14 +30,17 @@ async function waitUntilPasswordRevocationIsBlocked(): Promise<void> {
            FROM pg_stat_activity
           WHERE datname = current_database()
             AND state = 'active'
-            AND query LIKE 'UPDATE auth_sessions SET revoked_at = now()%'
             AND wait_event_type = 'Lock'
+            AND (
+              query LIKE 'UPDATE auth_sessions SET revoked_at = now()%'
+              OR query LIKE 'SELECT app.set_password%'
+            )
        ) AS waiting`,
     );
     if (rows[0]?.waiting) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('password-change session revocation never reached the forced refresh lock');
+  throw new Error('password-change security transaction never reached the forced refresh lock');
 }
 
 describe('password change versus an in-flight refresh on another device', () => {
@@ -71,13 +74,16 @@ describe('password change versus an in-flight refresh on another device', () => 
         return response;
       });
 
-      await waitUntilPasswordRevocationIsBlocked();
-      expect(passwordFinished, 'password change completed while the target refresh still held its row lock').toBe(false);
+      await waitUntilPasswordSecurityTransactionIsBlocked();
+      expect(passwordFinished, 'password change completed while the target refresh still held its security lock').toBe(false);
 
-      // Commit the refresh only after password change has already taken its
-      // UPDATE snapshot and is blocked on the predecessor row. A correct
-      // password-change revocation must still catch the just-committed
-      // descendant rather than letting it survive outside that snapshot.
+      // The red probe originally forced password change to take the session
+      // revocation UPDATE snapshot while the refresh predecessor row was
+      // locked. The fixed implementation may block earlier on the shared
+      // per-user serialization lock instead. In either case, committing the
+      // in-flight refresh here exercises the same required invariant: after
+      // password change returns 200, no descendant on the other device may
+      // remain live.
       await refreshTx.query('COMMIT');
       const change = await passwordChange;
       expect(change.statusCode, change.body).toBe(200);
