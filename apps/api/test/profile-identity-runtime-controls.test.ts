@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
+import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
 let appPool: pg.Pool;
@@ -62,11 +63,19 @@ describe('profile identity runtime guard preserves supported operations', () => 
 
   it('still permits an unlinked dependent owned by the caller', async () => {
     await asAliceRollback(async (client) => {
+      // Match POST /v1/profiles: profiles_read uses a STABLE same-table lookup,
+      // so INSERT ... RETURNING cannot see the new row in that statement's
+      // snapshot. Keep RLS intact and read the exact generated id separately.
+      const profileId = randomUUID();
+      const inserted = await client.query(
+        `INSERT INTO patient_profiles (id, owner_user_id, display_name, is_self)
+         VALUES ($1,$2,'Synthetic dependent',false)`,
+        [profileId, alice.userId],
+      );
+      expect(inserted.rowCount).toBe(1);
       const result = await client.query<{ owner_user_id: string; linked_user_id: string | null }>(
-        `INSERT INTO patient_profiles (owner_user_id, display_name, is_self)
-         VALUES ($1,'Synthetic dependent',false)
-         RETURNING owner_user_id, linked_user_id`,
-        [alice.userId],
+        'SELECT owner_user_id, linked_user_id FROM patient_profiles WHERE id = $1',
+        [profileId],
       );
       expect(result.rowCount).toBe(1);
       expect(result.rows[0]).toEqual({ owner_user_id: alice.userId, linked_user_id: null });
@@ -75,13 +84,46 @@ describe('profile identity runtime guard preserves supported operations', () => 
 
   it('does not reject a link to the same account that already owns the new profile', async () => {
     await asAliceRollback(async (client) => {
-      const result = await client.query(
-        `INSERT INTO patient_profiles (owner_user_id, linked_user_id, display_name, is_self)
-         VALUES ($1,$1,'Same-account profile',false) RETURNING id`,
-        [alice.userId],
+      // As above, the supported creation contract is INSERT then SELECT.
+      const profileId = randomUUID();
+      const inserted = await client.query(
+        `INSERT INTO patient_profiles (id, owner_user_id, linked_user_id, display_name, is_self)
+         VALUES ($1,$2,$2,'Same-account profile',false)`,
+        [profileId, alice.userId],
+      );
+      expect(inserted.rowCount).toBe(1);
+      const result = await client.query<{ owner_user_id: string; linked_user_id: string | null }>(
+        'SELECT owner_user_id, linked_user_id FROM patient_profiles WHERE id = $1',
+        [profileId],
       );
       expect(result.rowCount).toBe(1);
+      expect(result.rows[0]).toEqual({ owner_user_id: alice.userId, linked_user_id: alice.userId });
     });
+  });
+
+  it('creates a dependent through the real API and lists it only for its owner', async () => {
+    const created = await h.app.inject({
+      method: 'POST', url: '/v1/profiles', headers: authHeaders(alice),
+      payload: { displayName: 'Synthetic API dependent', timezone: 'Asia/Riyadh', isSelf: false },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const profileId = created.json<{ profile: { id: string } }>().profile.id;
+    expect(profileId).toEqual(expect.any(String));
+    expect(profileId).not.toBe(alice.profileId);
+
+    const own = await h.app.inject({
+      method: 'GET', url: '/v1/profiles', headers: authHeaders(alice),
+    });
+    expect(own.statusCode, own.body).toBe(200);
+    expect(own.json<{ profiles: Array<{ id: string }> }>().profiles.map(p => p.id)).toContain(profileId);
+
+    const other = await h.app.inject({
+      method: 'GET', url: '/v1/profiles', headers: authHeaders(bob),
+    });
+    expect(other.statusCode, other.body).toBe(200);
+    const otherIds = other.json<{ profiles: Array<{ id: string }> }>().profiles.map(p => p.id);
+    expect(otherIds).toContain(bob.profileId);
+    expect(otherIds).not.toContain(profileId);
   });
 
   it('allows explicit unchanged identity columns in an ordinary metadata update', async () => {
