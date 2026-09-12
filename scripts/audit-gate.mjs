@@ -25,7 +25,7 @@
  *    stale and fails the run. An exception outliving the vulnerability is how
  *    a list stops describing reality.
  *  - A baseline entry past its review date fails the run. The exception is not
- *    revoked automatically — that would break the build for a reason unrelated
+ *    revoked automatically — that would break a build for a reason unrelated
  *    to security — but it has to be re-read and re-dated by a person.
  *
  * Usage:
@@ -83,6 +83,25 @@ const WORKSPACES = {
  * the current upstream-compatible version is being retained.
  */
 const BASELINE = [
+  {
+    workspace: 'root',
+    module: 'vitest',
+    severity: 'critical',
+    advisories: ['GHSA-5xrq-8626-4rwp', 'GHSA-82fw-gwwq-j7x9'],
+    accepted: '2026-09-12',
+    reviewBy: '2026-10-12',
+    reason:
+      'Build/test-only on this repository. CI invokes `vitest run`, vitest.config.ts uses the Node '
+      + 'environment, and no UI, Browser Mode, or API server is enabled. GHSA-5xrq-8626-4rwp is '
+      + 'critical when the Vitest UI/API server is exposed to the network or when UI/Browser Mode '
+      + 'runs on Windows; this CI runs Ubuntu and starts neither surface. GHSA-82fw-gwwq-j7x9 also '
+      + 'targets dev-server/mocker transport. The complete fix for both is Vitest >=4.1.11, a '
+      + 'two-major test-toolchain migration from 2.1.8 that must be validated against the full suite. '
+      + 'This is a short-lived visible exception, not an omitted dependency class.',
+    endsWhen:
+      'Upgrade Vitest and @vitest/mocker to >=4.1.11 with the full suite green, or immediately if '
+      + 'this repository enables/exposes Vitest UI, Browser Mode, or its API server.',
+  },
   {
     workspace: 'mobile',
     module: 'uuid',
@@ -276,7 +295,7 @@ function check(workspaceName) {
     if (!usedBaseline.has(b.module)) {
       problems.push(
         `STALE EXCEPTION     ${b.module} (${b.advisories.join(', ')}) no longer matches any advisory. `
-        + 'Remove it — an exception that outlives its vulnerability stops describing reality.',
+        + 'Remove it — an exception that outlives the vulnerability stops describing reality.',
       );
     }
   }
