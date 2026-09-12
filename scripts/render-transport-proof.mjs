@@ -19,7 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const CANDIDATE = 'a50846f215513d2842747bfa390fc35210803f5f';
 const BRANCH = 'audit/render-transport-proof-2026-09-12';
-const SERVICE = 'dawaee-transport-proof-20260912';
+const SERVICE = 'dawaee-transport-proof-v2-20260912';
 const ORIGIN = `https://${SERVICE}.onrender.com`;
 const FILE = 'scripts/render-transport-proof.mjs';
 const FORBIDDEN_ENV = [
@@ -76,6 +76,10 @@ if (process.argv.includes('--self-test')) {
 }
 
 async function main() {
+  // Render deploys a shallow Git checkout. Fetch only the pinned candidate
+  // when absent, then retain the unchanged source-equivalence assertion.
+  try { execFileSync('git', ['cat-file', '-e', `${CANDIDATE}^{commit}`], { stdio: 'pipe' }); }
+  catch { execFileSync('git', ['fetch', '--depth=1', 'https://github.com/NAIFMUSFER/dawaee.git', CANDIDATE], { stdio: 'pipe', timeout: 30000 }); }
   // Only this harness may differ from the already-green candidate.
   execFileSync('git', ['diff', '--exit-code', CANDIDATE, 'HEAD', '--', '.', `:(exclude)${FILE}`], { stdio: 'pipe' });
   const state = {
@@ -280,7 +284,7 @@ async function main() {
     const b = await import(pathToFileURL(clientPath).href + '?b');
     assert.equal(a.DEMO_MODE, false);
     assert.equal(b.DEMO_MODE, false);
-    let pa, pb, ma, dose, schedule, relationship, objectKey, qrToken;
+    let pa, pb, ma, dose, doseScheduledAt, schedule, relationship, objectKey, qrToken;
     const deviceId = 'dev-synthetic-transport-a';
     privateSentinels.push(deviceId);
     async function register(client, label, device) {
@@ -308,8 +312,15 @@ async function main() {
     await check('anonymous_medication_denied', async () => { await assert.rejects(a.api.anonymous.get(`/v1/medications/${ma}`), e => e.status === 401); });
     await check('stock_private_path', async () => { await a.api.get(`/v1/medications/${ma}/stock`); });
     await check('schedule_create_private_path', async () => { const r = await a.api.post(`/v1/medications/${ma}/schedules`, { rule: { kind: 'fixed_times', times: ['08:00'] }, doseQuantity: 1, doseUnit: 'tablet', startDate: '2026-09-12' }); schedule = r.schedule.id; assert.ok(schedule); privateSentinels.push(schedule); });
-    await check('dose_history_private_filters', async () => { const r = await a.api.get('/v1/doses', { profileId: pa, medicationId: ma, from: '2026-09-12', to: '2026-09-13' }); assert.ok(r.doses.length > 0); assert.ok(r.doses.every(d => d.medicationId === ma)); dose = r.doses[0].id; assert.ok(dose); privateSentinels.push(dose); });
+    await check('dose_history_private_filters', async () => { const r = await a.api.get('/v1/doses', { profileId: pa, medicationId: ma, from: '2026-09-12', to: '2026-09-13' }); assert.ok(r.doses.length > 0); assert.ok(r.doses.every(d => d.medicationId === ma)); const selected = [...r.doses].sort((x,y) => x.scheduledAt.localeCompare(y.scheduledAt))[0]; dose = selected.id; doseScheduledAt = selected.scheduledAt; assert.ok(dose); assert.ok(Number.isFinite(Date.parse(doseScheduledAt))); privateSentinels.push(dose); });
     await check('dose_detail_private_path', async () => { const r = await a.api.get(`/v1/doses/${dose}`); assert.ok(JSON.stringify(r).includes(dose)); });
+    // The initial run correctly returned 422 for a future occurrence. Use the
+    // occurrence's own scheduled instant; do not weaken the product guard.
+    await check('early_dose_action_still_denied', async () => {
+      setClockSource(() => new Date(Date.parse(doseScheduledAt) - 16 * 60000));
+      await assert.rejects(a.api.post('/v1/dose/action', { doseId: dose, action: 'taken', clientEventId: randomUUID(), deviceId, method: 'app' }), e => e.status === 422);
+      setClockSource(() => new Date(doseScheduledAt));
+    });
     await check('dose_taken_fixed_body', async () => { await a.api.post('/v1/dose/action', { doseId: dose, action: 'taken', clientEventId: randomUUID(), deviceId, method: 'app' }); });
     await check('dose_undo_fixed_body', async () => { await a.api.post('/v1/dose/action', { doseId: dose, action: 'undo' }); });
     await check('cross_account_dose_action_denied', async () => { await assert.rejects(b.api.post('/v1/dose/action', { doseId: dose, action: 'undo' }), e => e.status === 404); });
