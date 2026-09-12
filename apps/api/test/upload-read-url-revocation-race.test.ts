@@ -47,7 +47,7 @@ afterAll(async () => {
   if (h) await h.close();
 });
 
-describe('signed medication-image URL honors access revoked while capability is being issued', () => {
+describe('signed medication-image URL honors access revoked while the URL is being issued', () => {
   it('does not return a signed URL after the caregiver relationship is revoked', async () => {
     const signingStarted = deferred<void>();
     const releaseSigning = deferred<string>();
@@ -66,9 +66,6 @@ describe('signed medication-image URL honors access revoked while capability is 
       },
     });
 
-    // Reaching the signing provider proves object visibility and the initial
-    // view_medications authorization both passed. Revoke the care relationship
-    // before the capability is returned to the caller.
     await signingStarted.promise;
     await db.query(
       `UPDATE caregiver_relationships
@@ -77,10 +74,10 @@ describe('signed medication-image URL honors access revoked while capability is 
       [relationshipId, patient.userId],
     );
 
-    releaseSigning.resolve('https://storage.invalid/private-capability');
+    releaseSigning.resolve('https://storage.invalid/signed-url-placeholder');
     const response = await inFlight;
 
-    expect(response.statusCode, response.body).toBe(403);
-    expect(response.body).not.toContain('private-capability');
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.body).not.toContain('signed-url-placeholder');
   });
 });
