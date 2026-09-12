@@ -68,6 +68,13 @@ function scenarios(file) {
     assert.equal(result.scheduled, 1); assert.equal(result.failed, 0); assert.equal(state.active.length, 1);
     assert.equal(state.active[0].content.categoryIdentifier, 'MEDICATION_REMINDER');
   });
+  add('single-dose notification keeps only the action identifier it actually needs', async (api, state) => {
+    await api.rescheduleLocalNotifications([dose('A')], 'en', { showMedication: false });
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].content.data.doseId, 'A');
+    assert.equal(state.active[0].content.data.medicationId, undefined,
+      'a stable medication id was persisted in OS notification metadata without being used by notification actions');
+  });
   add('duplicates remain deduplicated and grouped reminders have no single-dose action', async (api, state) => {
     const a = dose('A'); const b = { ...dose('B'), scheduledAt: a.scheduledAt };
     await api.rescheduleLocalNotifications([a, a, b], 'en');
