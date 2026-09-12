@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { summarizeSarif } = require('./codeql-evidence.cjs');
+const { summarizeSarif, gateExitCode } = require('./codeql-evidence.cjs');
 function scenarios() {
   const physical = { artifactLocation: { uri: 'apps/api/src/example.ts' }, region: { startLine: 12, endLine: 14, snippet: { text: 'DO_NOT_LOG_SNIPPET' } } };
   const report = { runs: [{ tool: { driver: { rules: [{ id: 'js/example', properties: { 'security-severity': '8.1' }, defaultConfiguration: { level: 'warning' } }] } }, results: [{ ruleId: 'js/example', message: { text: 'DO_NOT_LOG_MESSAGE' }, locations: [{ physicalLocation: physical }], codeFlows: [{ threadFlows: [{ locations: [{ location: { physicalLocation: physical, message: { text: 'DO_NOT_LOG_FLOW_MESSAGE' } } }] }] }], fixes: [{ description: { text: 'DO_NOT_LOG_FIX' } }] }] }] };
@@ -31,6 +31,12 @@ function scenarios() {
     } },
     { name: 'does not emit snippets, messages, fixes or unrelated report content', run() {
       assert.doesNotMatch(JSON.stringify(summarizeSarif(report)), /DO_NOT_LOG/);
+    } },
+    { name: 'blocks the workflow when SARIF contains any finding', run() {
+      assert.equal(gateExitCode(summarizeSarif(report)), 1);
+    } },
+    { name: 'allows the workflow only when SARIF contains zero findings', run() {
+      assert.equal(gateExitCode(summarizeSarif({ runs: [{ results: [] }] })), 0);
     } },
     { name: 'supports indexed rule and artifact references without reading artifact files', run() {
       const rows = summarizeSarif({ runs: [{ tool: report.runs[0].tool, artifacts: [{ location: { uri: 'indexed.ts' }, contents: { text: 'DO_NOT_LOG' } }], results: [{ ruleIndex: 0, locations: [{ physicalLocation: { artifactLocation: { index: 0 }, region: { startLine: 7 } } }] }] }] });
