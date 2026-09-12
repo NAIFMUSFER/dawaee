@@ -10,6 +10,11 @@ import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
+import {
+  shareTemporaryExportFile,
+  type ExportFileSystemModule,
+  type ExportSharingModule,
+} from '@/privacy/export-file';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -58,19 +63,6 @@ const CONSENT_ROWS: ConsentRow[] = [
 
 interface MeResponse {
   consents: Array<{ type: string; granted: boolean; patientProfileId?: string | null }>;
-}
-
-interface FileSystemModule {
-  Paths: { document: unknown };
-  File: new (base: unknown, name: string) => {
-    uri: string;
-    write: (contents: string) => void;
-  };
-}
-
-interface SharingModule {
-  isAvailableAsync: () => Promise<boolean>;
-  shareAsync: (url: string, options?: { mimeType?: string; dialogTitle?: string; UTI?: string }) => Promise<void>;
 }
 
 /**
@@ -218,29 +210,25 @@ export default function PrivacyScreen() {
       const kilobytes = Math.max(1, Math.round(json.length / 1024));
       const fileName = `dawaee-export-${patientProfileId}.json`;
 
-      const fileSystem = optionalModule<FileSystemModule>(() => require('expo-file-system'));
-      const sharing = optionalModule<SharingModule>(() => require('expo-sharing'));
-      const canShareFile = fileSystem?.Paths?.document && fileSystem?.File && sharing
-        ? await sharing.isAvailableAsync()
-        : false;
+      const fileSystem = optionalModule<ExportFileSystemModule>(() => require('expo-file-system'));
+      const sharing = optionalModule<ExportSharingModule>(() => require('expo-sharing'));
+      const sharedFile = await shareTemporaryExportFile({
+        fileSystem,
+        sharing,
+        fileName,
+        contents: json,
+        dialogTitle: t('settings.exportData'),
+      });
       if (!isCurrent()) return;
 
-      if (canShareFile && fileSystem?.Paths?.document && fileSystem?.File && sharing) {
-        // SDK 55's File/Paths API replaces documentDirectory + writeAsStringAsync.
-        // Using the current API avoids a runtime throw from the legacy surface.
-        const file = new fileSystem.File(fileSystem.Paths.document, fileName);
-        file.write(json);
-        if (!isCurrent()) return;
-        await sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: t('settings.exportData') });
-        if (!isCurrent()) return;
+      if (sharedFile) {
         setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
         return;
       }
 
-      // No file system to write to (Expo Web, or a build without the module):
+      // No native file-sharing path (Expo Web, or a build without the module):
       // hand the JSON to the platform share sheet instead of pretending a file
       // was saved.
-      if (!isCurrent()) return;
       const result = await Share.share({ message: json, title: fileName });
       if (!isCurrent()) return;
       if (result.action === Share.dismissedAction) setExportNotice(null);

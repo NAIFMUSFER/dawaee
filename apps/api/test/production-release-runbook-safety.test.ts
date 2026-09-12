@@ -42,4 +42,14 @@ describe('production release runbook cannot drift behind the migration artefact'
     expect(runbook).toContain('Render platform request logs');
     expect(runbook).toContain('no stable\n  profile, medication, dose, schedule, upload-object or caregiver relationship\n  identifiers in paths or queries');
   });
+
+  it('keeps platform-owned Supabase extension maintenance out of ordinary migrations', () => {
+    expect(runbook).toContain('must be owner of function set_limit');
+    expect(runbook).toContain('ALTER EXTENSION pg_trgm SET SCHEMA extensions;');
+    expect(runbook).toContain('ALTER EXTENSION btree_gist SET SCHEMA extensions;');
+    expect(runbook).toContain('medications_name_trgm_idx');
+    expect(runbook).toContain('rerun the Supabase Security Advisor');
+    expect(runbook).toContain('Do not add either `ALTER EXTENSION` statement to a numbered Dawaee migration');
+    expect(runbook).toContain('do not grant the migration role superuser/BYPASSRLS');
+  });
 });

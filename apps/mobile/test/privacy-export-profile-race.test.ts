@@ -7,6 +7,7 @@ const { createHarness } = require('./profile-screen-harness.cjs') as {
 
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/settings/privacy.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
+const exportFileMock = { shareTemporaryExportFile: async () => false };
 
 function reactNativeWithShare(sharedMessages: string[]) {
   const known = {
@@ -33,6 +34,7 @@ describe('privacy data export profile isolation', () => {
     const sharedMessages: string[] = [];
     const h = createHarness(screen, hook, {}, {
       'react-native': reactNativeWithShare(sharedMessages),
+      '@/privacy/export-file': exportFileMock,
     });
 
     try {

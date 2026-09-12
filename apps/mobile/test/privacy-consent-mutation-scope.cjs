@@ -18,7 +18,10 @@ function scenarios(screen, hook) {
         return gate.promise;
       },
     };
-    const h = createHarness(screen, hook, {}, { '@/api/client': { api, NetworkError, ApiError } });
+    const h = createHarness(screen, hook, {}, {
+      '@/api/client': { api, NetworkError, ApiError },
+      '@/privacy/export-file': { shareTemporaryExportFile: async () => false },
+    });
     const toggle = (label = 'privacy.ocr') => h.find('Switch', (p) => p.accessibilityLabel === label);
     const load = async (profileId = 'A', granted = true) => {
       const read = reads.at(-1);

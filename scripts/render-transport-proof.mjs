@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const CANDIDATE = 'a50846f215513d2842747bfa390fc35210803f5f';
+const CANDIDATE = '4530d0070a588fa71a8d9664189572e6ea416dde';
 const BRANCH = 'audit/render-transport-proof-2026-09-12';
 const SERVICE = 'dawaee-transport-proof-v2-20260912';
 const ORIGIN = `https://${SERVICE}.onrender.com`;

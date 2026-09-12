@@ -176,6 +176,52 @@ artefact; it does **not** permit skipping the remaining release checks.
 Confirm the backup/restore point recorded in the preconditions exists for the
 same database host used above.
 
+### Supabase extension-placement maintenance boundary
+
+The live Supabase Security Advisor can report `pg_trgm` and `btree_gist` in
+`public`. Treat that as a separate administrative maintenance change, not an
+ordinary Dawaee migration. PostgreSQL 16, PostgreSQL 17 and the managed Render
+preview all reproduced the same boundary: the non-superuser database owner can
+own the extension record while a trusted extension member is still owned by the
+platform/bootstrap role. A normal migration then fails at relocation with
+`must be owner of function set_limit`.
+
+Do not add either `ALTER EXTENSION` statement to a numbered Dawaee migration,
+do not grant the migration role superuser/BYPASSRLS, and do not drop/recreate an
+extension to make the warning disappear. Those approaches either break every
+managed deployment or weaken the privilege model.
+
+If extension placement is included in the release window, inspect it only after
+the backup above:
+
+```sql
+SELECT e.extname,
+       n.nspname AS schema_name,
+       e.extrelocatable,
+       pg_get_userbyid(e.extowner) AS owner
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+ WHERE e.extname IN ('pg_trgm', 'btree_gist')
+ ORDER BY e.extname;
+```
+
+Both extensions must report `extrelocatable = true`. If either remains in
+`public`, use the Supabase administrative extension surface—not the Dawaee
+migration connection—to execute only:
+
+```sql
+ALTER EXTENSION pg_trgm SET SCHEMA extensions;
+ALTER EXTENSION btree_gist SET SCHEMA extensions;
+```
+
+Do not edit migrations `0001` or `0003`; both have already shipped. Immediately
+verify that `public.medications_name_trgm_idx` remains valid/ready and its
+opclass now belongs to `extensions`, run an exact-name medication-search smoke
+test, then rerun the Supabase Security Advisor. If the administrative surface
+cannot relocate either extension, stop and involve Supabase support. Until the
+advisor is clean and those post-change checks pass, record extension placement
+as open; a green Dawaee migration ledger does not close it.
+
 Then run the non-mutating migration preflight:
 
 ```bash

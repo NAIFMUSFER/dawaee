@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useMemo } from 'react';
 import { I18nManager } from 'react-native';
 import { isRtl, t as translate, type Locale, type MessageKey } from '@dawaee/shared';
+import { syncWebDocumentDirection } from './web-document-direction.js';
 
 /**
  * Localization.
@@ -59,6 +60,10 @@ export interface I18nProviderProps {
 
 export function I18nProvider({ locale, numeralSystem = 'latn', calendar = 'gregory', children }: I18nProviderProps) {
   const rtl = isRtl(locale);
+
+  useEffect(() => {
+    syncWebDocumentDirection(locale);
+  }, [locale]);
 
   const value = useMemo<I18nValue>(() => {
     const bcp = locale === 'ar' ? `ar-SA-u-nu-${numeralSystem}-ca-${calendar}` : 'en-GB';
