@@ -1,10 +1,15 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const script = resolve(import.meta.dirname, '../../../..', 'scripts/audit-preview-start.mjs');
+const script = resolve(import.meta.dirname, '../../..', 'scripts/audit-preview-start.mjs');
 
 describe('managed audit preview bootstrap safety', () => {
+  it('resolves the bootstrap inside this repository rather than its parent directory', () => {
+    expect(existsSync(script)).toBe(true);
+  });
+
   it('validates target identity, partial schemas and runtime credential isolation without connecting', () => {
     const output = execFileSync(process.execPath, [script, '--self-test'], { encoding: 'utf8' });
     expect(output).toMatch(/AUDIT_PREVIEW_GUARDS: \d+ assertions passed \(no database connection\)/);
