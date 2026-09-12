@@ -11,12 +11,22 @@ import type { Config } from '../config.js';
  * and is stored separately from confirmed data until a human accepts it. The
  * parser below therefore aims to be conservative — it would rather return no
  * value than a confidently wrong strength.
+ *
+ * SECURITY: every quantified fragment in the patterns that scan provider text
+ * has a small clinical/document-format bound. OCR text is attacker-influenced
+ * via uploaded images; unbounded search patterns such as `\d+\s*...` made the
+ * parser polynomial on long non-matching text and could pin the Node event
+ * loop. Keep these bounds finite when extending the parser.
  */
 
-const STRENGTH_RE = /(\d+(?:[.,]\d+)?)\s*(mg|mcg|µg|g|ml|iu|%)\b/i;
+const STRENGTH_RE = /(\d{1,6}(?:[.,]\d{1,4})?)\s{0,8}(mg|mcg|µg|g|ml|iu|%)\b/i;
 const BARCODE_RE = /\b(\d{8}|\d{12,14})\b/;
 const EXPIRY_RE =
-  /\b(?:exp(?:iry|\.|ires)?|صلاحية|ينتهي|انتهاء)\s*[:.]?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}[-/]\d{2})/i;
+  /\b(?:exp(?:iry|\.|ires)?|صلاحية|ينتهي|انتهاء)\s{0,8}[:.]?\s{0,8}(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}[-/]\d{2})/i;
+const FREQUENCY_RE =
+  /(\d{1,3}\s{0,8}(?:x|times?)\s{0,8}(?:a\s{0,8})?day|once daily|twice daily|three times daily|every\s{0,8}\d{1,3}\s{0,8}hours?|مرة يوميا|مرتين يوميا|ثلاث مرات|كل\s{0,8}\d{1,3}\s{0,8}ساعات?)/i;
+const DURATION_RE =
+  /(?:for\s{0,8})?(\d{1,4})\s{0,8}(days?|weeks?|months?|يوم|أيام|أسبوع|أسابيع|شهر|أشهر)/i;
 const FORM_KEYWORDS: Array<[RegExp, string]> = [
   [/\b(tablet|tablets|tab|caplet)\b|أقراص|قرص|حبوب|حبة/i, 'tablet'],
   [/\b(capsule|caps)\b|كبسول/i, 'capsule'],
@@ -100,10 +110,8 @@ export function parsePrescriptionText(rawText: string, providerName: string): Pr
 
   for (const line of rawLines) {
     const strength = line.match(STRENGTH_RE);
-    const frequency = line.match(
-      /(\d+\s*(?:x|times?)\s*(?:a\s*)?day|once daily|twice daily|three times daily|every\s*\d+\s*hours?|مرة يوميا|مرتين يوميا|ثلاث مرات|كل\s*\d+\s*ساعات?)/i,
-    );
-    const duration = line.match(/(?:for\s*)?(\d+)\s*(days?|weeks?|months?|يوم|أيام|أسبوع|أسابيع|شهر|أشهر)/i);
+    const frequency = line.match(FREQUENCY_RE);
+    const duration = line.match(DURATION_RE);
     // A line is only treated as a medication line when it carries at least one
     // prescription-shaped signal. Everything else stays raw text.
     if (!strength && !frequency && !duration) continue;
