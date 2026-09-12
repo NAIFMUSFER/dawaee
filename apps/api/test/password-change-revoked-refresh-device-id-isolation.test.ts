@@ -27,6 +27,20 @@ describe('revoked refresh reuse is isolated from unrelated sessions sharing a cl
     const ejected = await signIn(h, phone, sharedDeviceId);
     expect(ejected.userId).toBe(current.userId);
 
+    // TestUser intentionally exposes only public auth artifacts. Resolve the
+    // current session id through the same authenticated session-list API a real
+    // client can use instead of reaching for a nonexistent harness-only field.
+    const sessionList = await h.app.inject({
+      method: 'GET',
+      url: '/v1/auth/sessions',
+      headers: { authorization: `Bearer ${current.token}` },
+    });
+    expect(sessionList.statusCode, sessionList.body).toBe(200);
+    const currentSessionId = sessionList
+      .json<{ sessions: Array<{ id: string; current: boolean }> }>()
+      .sessions.find((session) => session.current)?.id;
+    expect(currentSessionId).toBeTruthy();
+
     const change = await h.app.inject({
       method: 'POST',
       url: '/v1/auth/password',
@@ -44,7 +58,7 @@ describe('revoked refresh reuse is isolated from unrelated sessions sharing a cl
         WHERE id = $1
           AND revoked_at IS NULL
           AND expires_at > now()`,
-      [current.sessionId],
+      [currentSessionId],
     );
     expect(beforeReplay.rows).toHaveLength(1);
 
@@ -64,7 +78,7 @@ describe('revoked refresh reuse is isolated from unrelated sessions sharing a cl
         WHERE id = $1
           AND revoked_at IS NULL
           AND expires_at > now()`,
-      [current.sessionId],
+      [currentSessionId],
     );
     expect(
       afterReplay.rows,
