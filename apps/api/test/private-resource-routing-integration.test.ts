@@ -14,6 +14,7 @@ let aliceMedicationId = '';
 let bobMedicationId = '';
 let aliceScheduleId = '';
 let bobScheduleId = '';
+const ALICE_DEVICE_ID = 'dev-private-routing-alice';
 
 async function addMedication(user: TestUser): Promise<string> {
   const res = await h.app.inject({
@@ -45,7 +46,7 @@ beforeAll(async () => {
   setClockSource(() => new Date('2026-09-10T05:30:00.000Z'));
   resetDatabase();
   h = await startHarness();
-  alice = await signIn(h, '+966500091101');
+  alice = await signIn(h, '+966500091101', ALICE_DEVICE_ID);
   bob = await signIn(h, '+966500091102');
   aliceMedicationId = await addMedication(alice);
   bobMedicationId = await addMedication(bob);
@@ -148,7 +149,7 @@ describe('fixed public resource routing reaches the established authorization ha
   });
 
   it('removes an owner push token through a fixed path containing no stable device id', async () => {
-    const deviceId = 'dev-private-routing-alice';
+    const deviceId = ALICE_DEVICE_ID;
     const registration = await h.app.inject({
       method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(alice),
       payload: { token: 'ExponentPushToken[private-routing-alice]', platform: 'ios', deviceId },
