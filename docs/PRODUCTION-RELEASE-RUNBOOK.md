@@ -176,9 +176,23 @@ artefact; it does **not** permit skipping the remaining release checks.
 Confirm the backup/restore point recorded in the preconditions exists for the
 same database host used above.
 
-If `pending-migrations.txt` contains
-`0075_relocate_public_extensions.sql`, inspect the live extension placement and
-ownership before running the generic preflight:
+### Supabase extension-placement maintenance boundary
+
+The live Supabase Security Advisor can report `pg_trgm` and `btree_gist` in
+`public`. Treat that as a separate administrative maintenance change, not an
+ordinary Dawaee migration. PostgreSQL 16, PostgreSQL 17 and the managed Render
+preview all reproduced the same boundary: the non-superuser database owner can
+own the extension record while a trusted extension member is still owned by the
+platform/bootstrap role. A normal migration then fails at relocation with
+`must be owner of function set_limit`.
+
+Do not add either `ALTER EXTENSION` statement to a numbered Dawaee migration,
+do not grant the migration role superuser/BYPASSRLS, and do not drop/recreate an
+extension to make the warning disappear. Those approaches either break every
+managed deployment or weaken the privilege model.
+
+If extension placement is included in the release window, inspect it only after
+the backup above:
 
 ```sql
 SELECT e.extname,
@@ -191,26 +205,22 @@ SELECT e.extname,
  ORDER BY e.extname;
 ```
 
-Both extensions must be relocatable and end in `extensions`. On a regular
-PostgreSQL database the migration owner can perform the relocation itself. On a
-Supabase-managed database the extensions can be owned by a platform role even
-when the application schema is owned by the release connection. If either is
-still in `public`, use the Supabase administrative extension surface, after the
-backup above, to execute only:
+Both extensions must report `extrelocatable = true`. If either remains in
+`public`, use the Supabase administrative extension surface—not the Dawaee
+migration connection—to execute only:
 
 ```sql
 ALTER EXTENSION pg_trgm SET SCHEMA extensions;
 ALTER EXTENSION btree_gist SET SCHEMA extensions;
 ```
 
-Do not drop/recreate either extension and do not edit migration `0001` or
-`0003`; both have already shipped. Verify that
-`public.medications_name_trgm_idx` remains valid/ready and its opclass now
-belongs to `extensions`, then rerun the Supabase Security Advisor. If the
-administrative surface cannot relocate an extension, stop and involve Supabase
-support. Migration `0075` deliberately refuses to record success while an
-extension remains in `public`; after the administrative relocation it is a
-safe no-op that records the invariant in the Dawaee migration ledger.
+Do not edit migrations `0001` or `0003`; both have already shipped. Immediately
+verify that `public.medications_name_trgm_idx` remains valid/ready and its
+opclass now belongs to `extensions`, run an exact-name medication-search smoke
+test, then rerun the Supabase Security Advisor. If the administrative surface
+cannot relocate either extension, stop and involve Supabase support. Until the
+advisor is clean and those post-change checks pass, record extension placement
+as open; a green Dawaee migration ledger does not close it.
 
 Then run the non-mutating migration preflight:
 
