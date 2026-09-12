@@ -452,8 +452,24 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   /** Push token registration. Re-registering the same device replaces its token. */
   app.post('/v1/devices/push-token', { preHandler: authenticate }, async (req) => {
     const body = registerPushTokenSchema.parse(req.body);
-    const { userId } = currentUser(req);
+    const { userId, sessionId } = currentUser(req);
     await withUser(userId, async (tx) => {
+      // Bind the provider endpoint to the device that actually owns this
+      // authenticated session. The row lock makes this atomic with session
+      // revocation: if registration wins, a following revoke waits and then
+      // deactivates the token; if revocation wins, this registration refuses.
+      const { rows } = await tx.query<{ device_id: string }>(
+        `SELECT device_id
+           FROM auth_sessions
+          WHERE id = $1 AND user_id = $2
+            AND revoked_at IS NULL AND expires_at > now()
+          FOR SHARE`,
+        [sessionId, userId],
+      );
+      if (rows[0]?.device_id !== body.deviceId) {
+        throw AppError.forbidden('Push token device does not match the authenticated session');
+      }
+
       await tx.query(
         `INSERT INTO push_tokens (user_id, token, platform, device_id, app_version, active, last_seen_at)
          VALUES ($1,$2,$3,$4,$5,true, now())
