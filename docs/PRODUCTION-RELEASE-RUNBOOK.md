@@ -176,6 +176,42 @@ artefact; it does **not** permit skipping the remaining release checks.
 Confirm the backup/restore point recorded in the preconditions exists for the
 same database host used above.
 
+If `pending-migrations.txt` contains
+`0075_relocate_public_extensions.sql`, inspect the live extension placement and
+ownership before running the generic preflight:
+
+```sql
+SELECT e.extname,
+       n.nspname AS schema_name,
+       e.extrelocatable,
+       pg_get_userbyid(e.extowner) AS owner
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+ WHERE e.extname IN ('pg_trgm', 'btree_gist')
+ ORDER BY e.extname;
+```
+
+Both extensions must be relocatable and end in `extensions`. On a regular
+PostgreSQL database the migration owner can perform the relocation itself. On a
+Supabase-managed database the extensions can be owned by a platform role even
+when the application schema is owned by the release connection. If either is
+still in `public`, use the Supabase administrative extension surface, after the
+backup above, to execute only:
+
+```sql
+ALTER EXTENSION pg_trgm SET SCHEMA extensions;
+ALTER EXTENSION btree_gist SET SCHEMA extensions;
+```
+
+Do not drop/recreate either extension and do not edit migration `0001` or
+`0003`; both have already shipped. Verify that
+`public.medications_name_trgm_idx` remains valid/ready and its opclass now
+belongs to `extensions`, then rerun the Supabase Security Advisor. If the
+administrative surface cannot relocate an extension, stop and involve Supabase
+support. Migration `0075` deliberately refuses to record success while an
+extension remains in `public`; after the administrative relocation it is a
+safe no-op that records the invariant in the Dawaee migration ledger.
+
 Then run the non-mutating migration preflight:
 
 ```bash

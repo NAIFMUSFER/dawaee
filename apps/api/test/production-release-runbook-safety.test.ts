@@ -42,4 +42,13 @@ describe('production release runbook cannot drift behind the migration artefact'
     expect(runbook).toContain('Render platform request logs');
     expect(runbook).toContain('no stable\n  profile, medication, dose, schedule, upload-object or caregiver relationship\n  identifiers in paths or queries');
   });
+
+  it('requires an owned Supabase extension relocation instead of dropping or rewriting shipped migrations', () => {
+    expect(runbook).toContain('0075_relocate_public_extensions.sql');
+    expect(runbook).toContain('ALTER EXTENSION pg_trgm SET SCHEMA extensions;');
+    expect(runbook).toContain('ALTER EXTENSION btree_gist SET SCHEMA extensions;');
+    expect(runbook).toContain('medications_name_trgm_idx');
+    expect(runbook).toContain('rerun the Supabase Security Advisor');
+    expect(runbook).toContain('Do not drop/recreate either extension');
+  });
 });
