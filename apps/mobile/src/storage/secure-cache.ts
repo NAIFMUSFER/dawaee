@@ -26,6 +26,15 @@ export type StoreOutcome =
 export interface CacheSlot {
   /** The legacy plaintext key, e.g. `dawaee.offlineQueue`. */
   plaintextKey: string;
+  /**
+   * Whether this slot has a genuine predecessor from a release that wrote the
+   * same logical value in plaintext. Defaults to true for the historical dose
+   * queue/cache slots. New security-sensitive slots must opt out so an
+   * attacker-controlled unscoped AsyncStorage value can never be promoted into
+   * authenticated ciphertext merely because the encrypted copy is absent or
+   * temporarily unreadable.
+   */
+  migratePlaintext?: boolean;
 }
 
 function encKey(slot: CacheSlot, userId: string): string {
@@ -39,9 +48,10 @@ function encKey(slot: CacheSlot, userId: string): string {
  *
  * AUTHORITY, stated once and applied everywhere: the ENCRYPTED copy is
  * authoritative whenever it exists and decrypts. Plaintext is consulted only
- * when there is no readable ciphertext at all. A stale plaintext copy can
- * therefore never overwrite newer encrypted data, which is the failure mode
- * that would resurrect a dose the user already un-did.
+ * when there is no readable ciphertext at all AND this slot explicitly permits
+ * migration from a real legacy plaintext predecessor. A stale plaintext copy
+ * can therefore never overwrite newer encrypted data, and a newly introduced
+ * encrypted-only slot can never authenticate attacker-controlled plaintext.
  *
  * Returns null for "nothing stored", and throws only for a key that is
  * present-but-unusable, which the caller turns into a rebuild.
@@ -86,6 +96,15 @@ export async function readSlot(slot: CacheSlot, userId: string): Promise<string 
       }
       throw err;
     }
+  }
+
+  // A slot introduced after encrypted persistence existed has no legitimate
+  // plaintext predecessor. Never let a missing/failed encrypted read turn an
+  // arbitrary unscoped AsyncStorage value into authenticated account state.
+  // Removal is best effort: failure to delete must still fail closed.
+  if (slot.migratePlaintext === false) {
+    await AsyncStorage.removeItem(slot.plaintextKey).catch(() => undefined);
+    return null;
   }
 
   // ---------------------------------------------------------------- migrate

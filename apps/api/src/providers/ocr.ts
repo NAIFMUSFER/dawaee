@@ -138,9 +138,12 @@ export class GoogleVisionOcrProvider implements OcrProvider {
   }
 
   private async detect(image: Buffer): Promise<string> {
-    const res = await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${this.cfg.GOOGLE_VISION_API_KEY}`, {
+    const res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': this.cfg.GOOGLE_VISION_API_KEY!,
+      },
       body: JSON.stringify({
         requests: [
           {

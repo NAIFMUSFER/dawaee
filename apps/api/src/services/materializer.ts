@@ -24,6 +24,29 @@ export interface MaterializeResult {
   horizonEnd: Date;
 }
 
+/**
+ * Serializes every transaction that can change a medication's actionable dose
+ * lifecycle. The key is deterministic per medication. A theoretical hash
+ * collision can only serialize two unrelated medications; it cannot let two
+ * operations for the same medication run concurrently, so the safety property
+ * is preserved.
+ *
+ * We intentionally use a transaction advisory lock instead of SELECT ... FOR
+ * SHARE on medications. The latter participates in PostgreSQL's UPDATE
+ * privilege / row-security semantics and caused a proven least-privilege
+ * regression: a caregiver with the exact grants required to add a medication,
+ * view it, and edit/view its schedule could create the medication and schedule
+ * but materialization then saw no lockable medication row and returned zero
+ * doses unless edit_medication was also granted. That permission is unrelated
+ * to schedule creation and must not be smuggled in as a hidden dependency.
+ */
+export async function lockMedicationLifecycle(tx: PoolClient, medicationId: string): Promise<void> {
+  await tx.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0::bigint))',
+    [medicationId],
+  );
+}
+
 export function scheduleFromRow(row: {
   id: string; medication_id: string; patient_profile_id: string; rule: ScheduleRule; rule_kind: string;
   dose_quantity: string | number; dose_unit: string; timezone: string; start_date: string;
@@ -66,6 +89,29 @@ export async function materializeSchedule(
   const horizonEnd = new Date(now.getTime() + horizonDays * 86_400_000);
 
   if (!schedule.active || schedule.rule.kind === 'as_needed') {
+    await tx.query('UPDATE medication_schedules SET materialized_through = $2 WHERE id = $1', [
+      schedule.id, horizonEnd,
+    ]);
+    return { scheduleId: schedule.id, created: 0, horizonEnd };
+  }
+
+  /**
+   * Medication status is authoritative for whether a schedule may create an
+   * actionable occurrence. The lifecycle advisory lock is also taken by every
+   * medication status/archive path and by rematerialization before it touches
+   * existing dose rows. Therefore the status read and occurrence inserts are
+   * one serialized lifecycle operation:
+   *
+   * - if pause/completion/archive wins, this waits and then sees inactive;
+   * - if materialization wins, the status transition waits, then cancels the
+   *   newly created future doses before it commits.
+   */
+  await lockMedicationLifecycle(tx, schedule.medicationId);
+  const { rows: medicationRows } = await tx.query<{ status: string }>(
+    'SELECT status::text AS status FROM medications WHERE id = $1',
+    [schedule.medicationId],
+  );
+  if (medicationRows[0]?.status !== 'active') {
     await tx.query('UPDATE medication_schedules SET materialized_through = $2 WHERE id = $1', [
       schedule.id, horizonEnd,
     ]);
@@ -122,6 +168,10 @@ export async function rematerializeSchedule(
   schedule: MedicationSchedule,
   now: Date,
 ): Promise<{ removed: number; created: number }> {
+  // Lock before deleting dose rows. Taking this after the DELETE would allow a
+  // deadlock with a concurrent status transition that owns the lifecycle lock
+  // and is waiting to cancel the same dose rows.
+  await lockMedicationLifecycle(tx, schedule.medicationId);
   const { rowCount: removed } = await tx.query(
     `DELETE FROM dose_occurrences
       WHERE schedule_id = $1
@@ -137,9 +187,14 @@ export async function rematerializeSchedule(
 
 /** Cancels future doses when a medication is paused, completed or archived. */
 export async function cancelFutureDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
+  // A status transition calls this before its transaction can commit. Taking
+  // the same lifecycle lock as materialization means either materialization
+  // finishes first and these rows are cancelled, or the transition commits
+  // first and the materializer observes the inactive status.
+  await lockMedicationLifecycle(tx, medicationId);
   const { rowCount } = await tx.query(
     `UPDATE dose_occurrences
-        SET status = 'cancelled'
+        SET status = 'cancelled', snoozed_until = NULL
       WHERE medication_id = $1
         AND scheduled_at > $2
         AND status IN ('upcoming','due','pending_confirmation','snoozed')`,
@@ -154,17 +209,25 @@ export async function cancelFutureDoses(tx: PoolClient, medicationId: string, no
  * Materialization alone cannot do this: the cancelled rows still occupy their
  * (schedule_id, scheduled_at) slots, so `ON CONFLICT DO NOTHING` skips them and
  * a resumed medication would silently never remind anyone again. Only FUTURE,
- * untouched doses are revived — a dose that was already answered keeps its
- * recorded status.
+ * untouched doses from schedules that are still active are revived — a dose
+ * from a deliberately stopped schedule stays cancelled, and a dose that was
+ * already answered keeps its recorded status.
  */
 export async function reviveCancelledDoses(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
+  // Activation and top-up are one lifecycle operation. The later call to
+  // materializeSchedule is re-entrant on the same transaction advisory lock.
+  await lockMedicationLifecycle(tx, medicationId);
   const { rowCount } = await tx.query(
-    `UPDATE dose_occurrences
-        SET status = 'upcoming', notified_at = NULL, escalation_stage = 0, escalation_completed_at = NULL
-      WHERE medication_id = $1
-        AND scheduled_at > $2
-        AND status = 'cancelled'
-        AND confirmed_at IS NULL`,
+    `UPDATE dose_occurrences d
+        SET status = 'upcoming', snoozed_until = NULL, notified_at = NULL,
+            escalation_stage = 0, escalation_completed_at = NULL
+       FROM medication_schedules s
+      WHERE d.schedule_id = s.id
+        AND s.active
+        AND d.medication_id = $1
+        AND d.scheduled_at > $2
+        AND d.status = 'cancelled'
+        AND d.confirmed_at IS NULL`,
     [medicationId, now],
   );
   return rowCount ?? 0;

@@ -80,6 +80,18 @@ const schema = z.object({
 
   CORS_ORIGINS: z.string().default(''),
   /**
+   * Trust Cloudflare's edge-authenticated client address and replace any
+   * caller-supplied X-Forwarded-For chain before Fastify derives req.ip.
+   *
+   * This is deliberately OFF by default because CF-Connecting-IP is just a
+   * request header on a deployment that is not guaranteed to sit behind
+   * Cloudflare. Render guarantees that public web-service traffic passes through
+   * Cloudflare and that the edge supplies this value, so render.yaml turns it on
+   * explicitly. When enabled, TRUST_PROXY_HOPS must remain exactly 1 because the
+   * application collapses the chain to one trusted address first.
+   */
+  TRUST_CF_CONNECTING_IP: envBoolean(false),
+  /**
    * How many proxies sit in front of this app — NOT a boolean.
    *
    * It used to be `envBoolean(true)`, and Fastify's `trustProxy: true` means
@@ -91,16 +103,16 @@ const schema = z.object({
    * a single header away from being nothing, which is also what made
    * registration enumeration unbounded rather than 6-per-10-minutes.
    *
-   * A hop count fixes it. `trustProxy: 1` tells Fastify to skip one entry from
-   * the RIGHT — the address the immediate upstream proxy appended itself — so
-   * the value comes from infrastructure rather than from the request body's
-   * author. Render terminates TLS at exactly one proxy, hence the default of 1.
+   * Render production later proved that trusting its raw forwarded chain with a
+   * fixed hop count could resolve the application client address to a private
+   * infrastructure range. The Render deployment therefore binds the trusted
+   * Cloudflare client address into a one-entry forwarded chain before Fastify
+   * applies this hop count. Other deployments keep the original hop-count model.
    *
-   * Set it to the real number of trusted hops for the deployment. `0` disables
-   * `X-Forwarded-For` entirely and uses the socket address, which is correct
-   * when nothing is in front of the app; a larger number is correct behind a
-   * CDN plus a load balancer. Never make it large "to be safe" — each extra hop
-   * is one more attacker-controlled entry treated as trusted.
+   * Set it to the real number of trusted hops for deployments that do not use
+   * TRUST_CF_CONNECTING_IP. `0` disables `X-Forwarded-For` entirely. Never make
+   * it large "to be safe" — each extra hop is one more caller-controlled entry
+   * treated as trusted.
    */
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   /** Salt for hashing IPs in the audit log — we never store a raw address. */
@@ -150,8 +162,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.OTP_DEBUG_ECHO) throw new Error('OTP_DEBUG_ECHO must be false in production');
     if (cfg.IP_HASH_SALT === 'dawaee-dev-salt') throw new Error('IP_HASH_SALT must be set in production');
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
+    if (cfg.PUSH_PROVIDER !== 'expo') {
+      throw new Error('PUSH_PROVIDER must be "expo" in production');
+    }
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
+    }
+    if (cfg.TRUST_CF_CONNECTING_IP && cfg.TRUST_PROXY_HOPS !== 1) {
+      throw new Error('TRUST_CF_CONNECTING_IP requires TRUST_PROXY_HOPS=1');
     }
     // Fails the boot rather than the audit. `no-verify` accepts any
     // certificate from anyone, which leaves an active attacker between Render

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView, TodayResponse } from '@/api/types';
@@ -125,6 +126,11 @@ function channelsFor(target: StageTarget): readonly NotificationChannel[] {
 }
 
 export default function EscalationScreen() {
+  const { user, activeProfile } = useApp();
+  return <EscalationProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function EscalationProfileScreen() {
   const { t, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();

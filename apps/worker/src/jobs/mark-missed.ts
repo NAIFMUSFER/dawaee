@@ -40,6 +40,7 @@ export async function markMissedJob(ctx: WorkerContext, client: PoolClient): Pro
     `WITH newly_missed AS (
        UPDATE dose_occurrences d
           SET status = 'missed',
+              snoozed_until = NULL,
               escalation_completed_at = COALESCE(d.escalation_completed_at, now())
          FROM medication_schedules s
         WHERE s.id = d.schedule_id

@@ -121,7 +121,13 @@ export async function startNotificationActionListener(
       response.actionIdentifier,
       response.notification.request.content.data ?? {},
     );
-    if (outcome) onHandled?.(outcome);
+    if (outcome) {
+      onHandled?.(outcome);
+      // Expo keeps the cold-start response available until explicitly cleared.
+      // Without consuming it, reopening the app can replay the same Snooze with
+      // a brand-new clientEventId and move the reminder again.
+      await N.clearLastNotificationResponseAsync?.();
+    }
   };
 
   const last = await N.getLastNotificationResponseAsync();
@@ -133,10 +139,34 @@ export async function startNotificationActionListener(
   return () => sub.remove();
 }
 
+// Native scheduling/cancellation are asynchronous. A cancellation must run
+// AFTER any already-started native write, or that write can recreate PHI-bearing
+// reminders on a signed-out phone. New intent invalidates older loops at once;
+// the serial tail makes the final native state belong to the newest operation.
+let scheduleGeneration = 0;
+let scheduleTail: Promise<void> = Promise.resolve();
+
+/** Capture before asynchronous HTTP/cache work that carries rendered options.
+ * New privacy/rebuild/cancel intent makes that caller's reminder work stale,
+ * without discarding its otherwise valid clinical response. */
+export function captureLocalReminderContext(): () => boolean {
+  const generation = scheduleGeneration;
+  return () => generation === scheduleGeneration;
+}
+
+function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
+  const generation = ++scheduleGeneration;
+  const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
+  scheduleTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 export async function cancelAllLocalNotifications(): Promise<void> {
-  const N = await load();
-  if (!N) return;
-  await N.cancelAllScheduledNotificationsAsync();
+  return withScheduleMutation(async () => {
+    const N = await load();
+    if (!N) return;
+    await N.cancelAllScheduledNotificationsAsync();
+  });
 }
 
 export interface ScheduleResult {
@@ -147,7 +177,16 @@ export interface ScheduleResult {
 
 function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
   const groups = new Map<string, DoseView[]>();
+  const seenDoseIds = new Set<string>();
   for (const dose of doses) {
+    // `/v1/today` intentionally returns the local-day list AND a forward
+    // prefetch window. A future dose later today therefore exists in both
+    // arrays. The caller combines those arrays for offline scheduling, so the
+    // notification layer must treat occurrence id as identity before it groups
+    // by time; otherwise one real dose becomes a fake "2 medications" alert.
+    if (seenDoseIds.has(dose.id)) continue;
+    seenDoseIds.add(dose.id);
+
     const at = new Date(dose.scheduledAt).getTime();
     if (at <= now) continue;
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
@@ -172,8 +211,17 @@ export async function rescheduleLocalNotifications(
   locale: Locale,
   opts: { voiceEnabled?: boolean; showMedication?: boolean } = {},
 ): Promise<ScheduleResult> {
+  return withScheduleMutation((isCurrent) => scheduleCurrentNotifications(doses, locale, opts, isCurrent));
+}
+
+async function scheduleCurrentNotifications(
+  doses: DoseView[],
+  locale: Locale,
+  opts: { voiceEnabled?: boolean; showMedication?: boolean },
+  isCurrent: () => boolean,
+): Promise<ScheduleResult> {
   const N = await load();
-  if (!N) return { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
+  if (!N || !isCurrent()) return { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
 
   await N.cancelAllScheduledNotificationsAsync();
 
@@ -183,6 +231,7 @@ export async function rescheduleLocalNotifications(
   const now = Date.now();
 
   for (const group of groupSchedulableDoses(doses, now)) {
+    if (!isCurrent()) break;
     const first = group[0]!;
     const grouped = group.length > 1;
     const text = grouped
@@ -209,9 +258,12 @@ export async function rescheduleLocalNotifications(
         content: {
           title: text.title,
           body: text.body,
+          // The action handler needs only the occurrence id. Keeping the
+          // medication id in OS notification metadata added a second stable,
+          // health-linked identifier without any functional use.
           data: grouped
             ? { doseIds: group.map((dose) => dose.id), kind: 'dose_group_reminder' }
-            : { doseId: first.id, medicationId: first.medicationId, kind: 'dose_reminder' },
+            : { doseId: first.id, kind: 'dose_reminder' },
           sound: 'default',
           ...(grouped ? {} : { categoryIdentifier: MEDICATION_CATEGORY_ID }),
           interruptionLevel: 'timeSensitive',
@@ -230,8 +282,10 @@ export async function rescheduleLocalNotifications(
     }
   }
 
-  if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
-  else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
+  if (isCurrent()) {
+    if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
+    else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
+  }
 
   return { scheduled, failed, exactAlarmsUnavailable };
 }
@@ -280,9 +334,14 @@ export async function rebuildRemindersFromCache(
   const empty: ScheduleResult = { scheduled: 0, failed: 0, exactAlarmsUnavailable: false };
   if (!profileId) return empty;
 
+  // Reserve intent BEFORE reading storage. Merely observing the generation
+  // lets two cached rebuilds share it: the older read can finish first and
+  // suppress a newer privacy choice. Storage must stay outside scheduleTail so
+  // cancellation never waits on a stalled cache read.
+  const expectedGeneration = ++scheduleGeneration;
   const { readCachedSchedule } = await import('../storage/offline-queue.js');
   const cache = await readCachedSchedule(profileId);
-  if (!cache) return empty;
+  if (!cache || expectedGeneration !== scheduleGeneration) return empty;
 
   return rescheduleLocalNotifications(
     cache.doses.map((d) => ({

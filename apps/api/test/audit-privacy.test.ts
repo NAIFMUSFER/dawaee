@@ -11,13 +11,7 @@ import {
  * The audit trail is the one place in this system that is SUPPOSED to remember
  * what happened to a patient's medication. So "does it contain health data" is
  * the wrong question; it does, and it should. The right questions are narrower:
- *
- *   Is its readership no wider than the data it describes?
- *   Can the actor be forged?
- *   Can it be rewritten?
- *   Does it carry anything that is a secret rather than a record?
- *
- * The answers below are measured against real rows written by real requests.
+ * readership, attribution, immutability, and absence of secrets.
  */
 
 let h: Harness;
@@ -34,7 +28,6 @@ let probeAddr = 0;
 const send = (args: Record<string, unknown>) =>
   h.app.inject({ remoteAddress: `198.51.108.${(probeAddr++ % 250) + 1}`, ...args } as never);
 
-/** Distinctive values planted so a match in a log or a row cannot be chance. */
 const PROBE = {
   medication: 'Zoprexa-Audit-Probe',
   doctorInstructions: 'probe-doctor-instructions',
@@ -97,11 +90,15 @@ beforeAll(async () => {
     method: 'GET', url: `/v1/doses?profileId=${patient.profileId}&from=2026-09-01&to=2026-09-30`,
     headers: authHeaders(patient),
   });
-  const doseId = doses.json<{ doses: Array<{ id: string }> }>().doses[0]!.id;
-  await send({
-    method: 'POST', url: `/v1/doses/${doseId}/taken`, headers: authHeaders(patient),
+  const dose = doses.json<{ doses: Array<{ id: string; scheduledAt: string }> }>().doses[0]!;
+  // This suite is testing audit privacy, not the early-action guard. Exercise a
+  // real confirmation at the occurrence instead of relying on a future dose.
+  h.setServerNow(new Date(dose.scheduledAt));
+  const confirmation = await send({
+    method: 'POST', url: `/v1/doses/${dose.id}/taken`, headers: authHeaders(patient),
     payload: { clientEventId: 'audit-probe-0001', note: { tags: ['nausea'], text: PROBE.symptom } },
   });
+  expect(confirmation.statusCode, confirmation.body).toBe(200);
 }, 240_000);
 
 afterAll(async () => { await h.close(); });
@@ -113,28 +110,15 @@ const allAudit = () => psql(
 describe('P13-9 the audit trail records the act, not the contents', () => {
   it('carries no secret of any kind', () => {
     const rows = allAudit();
-    // Keys that would mean a credential or a capability had been copied in.
-    // `"method": "password"` is not one of them — that is the NAME of the way
-    // the account signed in, which is exactly what an auth audit should say,
-    // and an earlier version of this assertion matched it by accident.
     for (const forbidden of [
       '"token"', '"refreshToken"', '"codeHash"', '"password":', '"qrTokenHash"',
       '"invitationTokenHash"', '"passwordHash"', '"accessToken"',
     ]) {
       expect(rows, `audit_logs carried ${forbidden}`).not.toContain(forbidden);
     }
-    // And no value that looks like one.
     expect(rows).not.toMatch(/\beyJ[A-Za-z0-9_-]{4,}\./);
   });
 
-  /**
-   * `auth.register` records the deviceId the client sent. It is opaque to the
-   * server and its purpose — telling one of a patient's phones from another in
-   * the sign-in history — is legitimate, but it is CLIENT-CONTROLLED text in a
-   * retained table, so whatever the app puts there is what gets kept. This
-   * test harness happens to name devices after the phone number, which is what
-   * made the exposure visible; a real client should not.
-   */
   it('records the device identifier verbatim, whatever the client chose', () => {
     const row = psql("SELECT coalesce(new_value::text,'') FROM audit_logs WHERE action = 'auth.register' LIMIT 1");
     expect(row).toContain('deviceId');
@@ -160,10 +144,6 @@ describe('P13-9 the audit trail records the act, not the contents', () => {
   });
 
   it('does record the medication name and the notes that changed — and that is the point', () => {
-    // Stated rather than removed. "Who added this medication, and what did they
-    // change it to" is the accountability record; an audit trail that cannot
-    // answer it is not one. It is defensible here only because of the next
-    // block: the row is readable by the profile owner and nobody else.
     const created = psql("SELECT coalesce(new_value::text,'') FROM audit_logs WHERE action = 'medication.created'");
     expect(created).toContain(PROBE.medication);
     const updated = psql("SELECT coalesce(previous_value::text,'') || coalesce(new_value::text,'') FROM audit_logs WHERE action = 'medication.updated'");
@@ -190,9 +170,6 @@ describe('P13-10 the audit trail is readable only by the profile owner', () => {
   });
 
   it('and neither can an administrator, through any endpoint', async () => {
-    // Deliberate: an operator debugging deliveries has no business reading a
-    // patient's medication history. `audit_read` is scoped to
-    // `app.owns_profile`, and no admin route selects from the table.
     for (const url of [
       '/v1/admin/overview', '/v1/admin/jobs', '/v1/admin/webhooks/unprocessed',
       '/v1/admin/deliveries/failed', '/v1/admin/deliveries/stats',
@@ -220,9 +197,6 @@ describe('P13-10 the audit trail is readable only by the profile owner', () => {
     const res = await send({ method: 'GET', url: '/v1/admin/webhooks/unprocessed', headers: authHeaders(admin) });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.body, 'the raw provider payload reached the API').not.toContain('probe-webhook-body-value');
-    // The endpoint selects id, provider, event_type, signature_ok and
-    // received_at — enough to know an event is stuck, and nothing more. Even
-    // `external_id` stays behind.
     expect(res.body, 'but the event itself is visible').toContain('"provider":"probe"');
     expect(res.body).not.toContain('payload');
   });
@@ -239,8 +213,6 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
   });
 
   it('and the append-only trigger refuses an UPDATE even as the table owner', () => {
-    // The grant is the first line; the trigger is what holds if a future
-    // migration widens it, or if someone connects as the owner.
     let refused = false;
     try {
       psql("UPDATE audit_logs SET action = 'forged' WHERE id = (SELECT min(id) FROM audit_logs)");
@@ -265,9 +237,7 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
     const res = await send({
       method: 'PATCH', url: `/v1/medications/${medicationId}`, headers: authHeaders(patient),
       payload: {
-        notes: 'attribution probe',
-        // Every shape a caller might use to claim to be someone else.
-        actorUserId: other.userId, actor_user_id: other.userId,
+        notes: 'attribution probe', actorUserId: other.userId, actor_user_id: other.userId,
         userId: other.userId, createdByUserId: other.userId, actorRole: 'admin',
       },
     });
@@ -287,14 +257,14 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
       method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(patient),
       payload: {
         patientProfileId: patient.profileId, invitedName: 'Carer', invitedPhone: carer.phone,
-        // `view_history` is required to read the dated dose list, and
-        // `view_medications` travels with any dose read — see P12-14.
         role: 'caregiver',
         permissions: ['view_schedule', 'view_history', 'view_medications', 'confirm_dose'],
         escalationPriority: 2,
       },
     });
-    const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
+    const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
+    const token = invitationLink.split('/invite/')[1]!;
+    expect(token, 'invite response did not contain a fragment token').toBeTruthy();
     expect((await send({
       method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
@@ -304,9 +274,10 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
       headers: authHeaders(carer),
     });
     expect(doses.statusCode, `caregiver could not list doses: ${doses.body}`).toBe(200);
-    const target = doses.json<{ doses: Array<{ id: string; status: string }> }>()
+    const target = doses.json<{ doses: Array<{ id: string; status: string; scheduledAt: string }> }>()
       .doses.find((d) => d.status !== 'taken')!;
     expect(target, 'no unconfirmed dose to use').toBeTruthy();
+    h.setServerNow(new Date(target.scheduledAt));
     const done = await send({
       method: 'POST', url: `/v1/doses/${target.id}/taken`, headers: authHeaders(carer),
       payload: { clientEventId: 'audit-probe-carer-1' },
@@ -325,9 +296,7 @@ describe('P13-12 the client address is hashed where it is kept, raw only where i
   it('every audit row carries a hash, and no row carries an address', () => {
     const hashes = psql("SELECT coalesce(string_agg(DISTINCT ip_hash, '|'), '') FROM audit_logs WHERE ip_hash IS NOT NULL");
     expect(hashes.length, 'no audit row recorded an address at all').toBeGreaterThan(0);
-    // 128 bits of sha256 over a secret salt plus the address.
     for (const hash of hashes.split('|')) expect(hash).toMatch(/^[0-9a-f]{32}$/);
-    // The probe addresses used by this file must not appear anywhere in the row.
     const everything = psql("SELECT coalesce(string_agg(row_to_json(a)::text, ' '), '') FROM audit_logs a");
     expect(everything, 'a raw client address was persisted').not.toMatch(/198\.51\.108\.\d+/);
   });
@@ -335,14 +304,11 @@ describe('P13-12 the client address is hashed where it is kept, raw only where i
   it('the same address hashes the same way, and a different one differently', () => {
     const distinct = Number(psql('SELECT count(DISTINCT ip_hash) FROM audit_logs WHERE ip_hash IS NOT NULL'));
     const rows = Number(psql('SELECT count(*) FROM audit_logs WHERE ip_hash IS NOT NULL'));
-    // This file rotates the source address per request, so most rows differ.
     expect(distinct).toBeGreaterThan(1);
     expect(distinct).toBeLessThanOrEqual(rows);
   });
 
   it('no other table keeps a client address', () => {
-    // A hash in the audit trail is a deliberate, retained record. A second copy
-    // somewhere else would quietly undo the decision.
     const columns = psql(
       `SELECT coalesce(string_agg(table_name || '.' || column_name, ' '), 'none')
          FROM information_schema.columns
@@ -375,8 +341,8 @@ describe('P13-13 capability values never survive into a request log line', () =>
     expect(redactUrl(CASES[3]![1])).toBe('/v1/uploads/url?[redacted]');
   });
 
-  it('positive control: an ordinary route is logged in full', () => {
+  it('pseudonymizes an ordinary health-linked identifier while keeping the route and filters legible', () => {
     const url = `/v1/doses?profileId=${patient.profileId}&from=2026-09-01&to=2026-09-30`;
-    expect(redactUrl(url)).toBe(url);
+    expect(redactUrl(url)).toBe('/v1/doses?profileId=[id]&from=2026-09-01&to=2026-09-30');
   });
 });

@@ -192,6 +192,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
   /**
    * Create a medication, optionally with its first schedule and stock, in one
    * transaction so a half-created medication can never exist.
+   *
+   * `add_medication` authorizes the medication row itself. The optional nested
+   * writes keep their own product permissions: `edit_schedule` for timing and
+   * `update_stock` for inventory. PostgreSQL RLS already enforces those table
+   * boundaries independently; checking them here turns a low-level policy
+   * rejection into an explicit 403 before the transaction writes anything.
    */
   app.post('/v1/medications', async (req) => {
     const body = createMedicationSchema.parse(req.body);
@@ -200,6 +206,8 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, body.patientProfileId, 'add_medication');
+      if (body.schedule) await requireProfileAccess(tx, userId, body.patientProfileId, 'edit_schedule');
+      if (body.stock) await requireProfileAccess(tx, userId, body.patientProfileId, 'update_stock');
 
       if (!body.acknowledgeDuplicate) {
         const { rows: existing } = await tx.query(
@@ -217,8 +225,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           })),
         );
         if (duplicates.length) {
-          // 409 with the candidates attached: the client shows
-          // "View existing / Add anyway" and retries with acknowledgeDuplicate.
           throw AppError.conflict(
             ERROR_CODES.DUPLICATE_MEDICATION,
             'This medication may already exist in the medication list',
@@ -301,14 +307,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     });
   });
 
-  /**
-   * Update a medication.
-   *
-   * Changes that alter what the patient physically takes require
-   * `confirmHighRiskChange`. This is a usability safeguard against a mis-tap,
-   * NOT clinical validation — the app has no opinion on whether the new value
-   * is medically appropriate and never suggests one.
-   */
   app.patch('/v1/medications/:medicationId', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
     const body = updateMedicationSchema.parse(req.body);
@@ -326,28 +324,47 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const before = mapMedication(beforeRows[0]);
 
       const highRisk = detectHighRiskChanges({
-        before: { name: before.name as string, strengthValue: before.strengthValue as number | null },
-        after: { name: body.name, strengthValue: body.strengthValue ?? undefined },
+        before: {
+          name: before.name as string,
+          strengthValue: before.strengthValue as number | null,
+          strengthUnit: before.strengthUnit as string | null,
+        },
+        after: { name: body.name, strengthValue: body.strengthValue, strengthUnit: body.strengthUnit },
       });
       if (highRisk.length && !body.confirmHighRiskChange) {
         throw AppError.conflict(
           ERROR_CODES.HIGH_RISK_CONFIRMATION_REQUIRED,
           'This change affects the medication identity or strength and needs explicit confirmation',
-          { changes: highRisk, before: { name: before.name, strengthValue: before.strengthValue } },
+          {
+            changes: highRisk,
+            before: {
+              name: before.name,
+              strengthValue: before.strengthValue,
+              strengthUnit: before.strengthUnit,
+            },
+          },
         );
       }
 
       const { rows } = await tx.query(
         `UPDATE medications SET
-           name = COALESCE($2, name), brand_name = COALESCE($3, brand_name),
-           generic_name = COALESCE($4, generic_name), form = COALESCE($5::medication_form, form),
-           strength_value = COALESCE($6, strength_value), strength_unit = COALESCE($7::strength_unit, strength_unit),
-           manufacturer = COALESCE($8, manufacturer), barcode = COALESCE($9, barcode),
-           image_key = COALESCE($10, image_key), instructions = COALESCE($11, instructions),
-           doctor_instructions = COALESCE($12, doctor_instructions),
+           name = COALESCE($2, name),
+           brand_name = CASE WHEN $19::boolean THEN $3 ELSE brand_name END,
+           generic_name = CASE WHEN $20::boolean THEN $4 ELSE generic_name END,
+           form = COALESCE($5::medication_form, form),
+           strength_value = CASE WHEN $21::boolean THEN $6 ELSE strength_value END,
+           strength_unit = CASE WHEN $22::boolean THEN $7::strength_unit ELSE strength_unit END,
+           manufacturer = CASE WHEN $23::boolean THEN $8 ELSE manufacturer END,
+           barcode = CASE WHEN $24::boolean THEN $9 ELSE barcode END,
+           image_key = CASE WHEN $30::boolean THEN $10 ELSE image_key END,
+           prescription_id = CASE WHEN $32::boolean THEN $31::uuid ELSE prescription_id END,
+           instructions = CASE WHEN $25::boolean THEN $11 ELSE instructions END,
+           doctor_instructions = CASE WHEN $26::boolean THEN $12 ELSE doctor_instructions END,
            food_instruction = COALESCE($13::food_instruction, food_instruction),
-           notes = COALESCE($14, notes), start_date = COALESCE($15, start_date),
-           end_date = COALESCE($16, end_date), expiry_date = COALESCE($17, expiry_date),
+           notes = CASE WHEN $27::boolean THEN $14 ELSE notes END,
+           start_date = COALESCE($15, start_date),
+           end_date = CASE WHEN $28::boolean THEN $16 ELSE end_date END,
+           expiry_date = CASE WHEN $29::boolean THEN $17 ELSE expiry_date END,
            status = COALESCE($18::medication_status, status),
            archived_at = CASE WHEN $18::medication_status = 'archived' THEN now() ELSE archived_at END
          WHERE id = $1
@@ -359,21 +376,30 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.instructions ?? null, body.doctorInstructions ?? null, body.foodInstruction ?? null,
           body.notes ?? null, body.startDate ?? null, body.endDate ?? null, body.expiryDate ?? null,
           body.status ?? null,
+          body.brandName !== undefined,
+          body.genericName !== undefined,
+          body.strengthValue !== undefined,
+          body.strengthUnit !== undefined,
+          body.manufacturer !== undefined,
+          body.barcode !== undefined,
+          body.instructions !== undefined,
+          body.doctorInstructions !== undefined,
+          body.notes !== undefined,
+          body.endDate !== undefined,
+          body.expiryDate !== undefined,
+          body.imageKey !== undefined,
+          body.prescriptionId ?? null,
+          body.prescriptionId !== undefined,
         ],
       );
       const after = mapMedication(rows[0]!);
 
-      // Pausing, completing or archiving must stop future reminders — but
-      // never touch doses the patient has already acted on.
       let cancelled = 0;
       if (body.status && ['paused', 'completed', 'archived', 'expired'].includes(body.status)) {
         cancelled = await cancelFutureDoses(tx, medicationId, now);
       }
       let revived = 0;
       if (body.status === 'active' && before.status !== 'active') {
-        // Resuming must undo the pause, not just stop cancelling: the doses
-        // cancelled on pause still occupy their slots, so they are revived
-        // first and only then is the horizon topped up.
         revived = await reviveCancelledDoses(tx, medicationId, now);
         const schedules = await loadSchedules(tx, medicationId);
         for (const s of schedules) {
@@ -395,11 +421,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     });
   });
 
-  /**
-   * Delete. Archival is strongly preferred and enforced: a medication with
-   * dose history can only be archived, because deleting it would erase the
-   * patient's adherence record.
-   */
   app.delete('/v1/medications/:medicationId', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
     const { force } = req.query as { force?: string };
@@ -439,8 +460,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       return { deleted: true, archived: false };
     });
   });
-
-  // ------------------------------------------------------------ schedules
 
   app.post('/v1/medications/:medicationId/schedules', async (req) => {
     const { medicationId } = req.params as { medicationId: string };
@@ -522,7 +541,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
            dose_unit = COALESCE($5::dose_unit, dose_unit),
            timezone = COALESCE($6, timezone),
            start_date = COALESCE($7, start_date),
-           end_date = COALESCE($8, end_date),
+           end_date = CASE WHEN $12::boolean THEN $8 ELSE end_date END,
            missed_after_minutes = COALESCE($9, missed_after_minutes),
            late_after_minutes = COALESCE($10, late_after_minutes),
            active = COALESCE($11, active)
@@ -536,6 +555,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.startDate ?? null, body.endDate === undefined ? null : body.endDate,
           body.missedAfterMinutes ?? null, body.lateAfterMinutes ?? null,
           body.active === undefined ? null : body.active,
+          body.endDate !== undefined,
         ],
       );
 
@@ -566,7 +586,6 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
       await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
-      // Deactivate rather than delete: the dose history references it.
       await tx.query('UPDATE medication_schedules SET active = false WHERE id = $1', [scheduleId]);
       const { rowCount } = await tx.query(
         `UPDATE dose_occurrences SET status = 'cancelled'

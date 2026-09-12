@@ -192,6 +192,22 @@ describe('caregiver eligibility', () => {
     expect(d.recipients).toHaveLength(0);
   });
 
+  it('never treats caregiver local/in-app rules as remotely delivered', () => {
+    for (const channel of ['local', 'in_app'] as NotificationChannel[]) {
+      const localOnly = caregiver('son', 1, [channel]);
+      const stages: EscalationStage[] = [
+        { afterMinutes: 30, target: 'primary_caregiver', channels: [channel] },
+      ];
+      const d = evaluateEscalation(input({
+        now: at('20:30'), caregivers: [localOnly],
+        occurrence: occurrence({ escalationStage: 0 }),
+        policy: { enabled: true, stages, quietHoursStart: null, quietHoursEnd: null },
+      }));
+      expect(d.recipients, `${channel} produced a phantom caregiver delivery`).toHaveLength(0);
+      expect(d.reason).toBe('no_recipients');
+    }
+  });
+
   it('honours a "never" notification rule', () => {
     const never = caregiver('son', 1, ['push']);
     never.rules[0]!.mode = 'never';
