@@ -20,7 +20,7 @@ beforeAll(async () => {
   h = await startHarness();
   db = new pg.Pool({ connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test' });
   patient = await signIn(h, '+966500097797');
-  caregiver = await signIn(h, '+966500097798');
+  caregiver = await signIn(h, '+966500097798', 'caregiver-permission-boundary');
 
   // The patient explicitly opts in to seeing medication names on THEIR own
   // lock screen. That preference must not silently grant medication visibility
