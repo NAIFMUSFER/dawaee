@@ -62,11 +62,17 @@ async function acceptCaregiver(patient: TestUser, caregiver: TestUser, token: st
   });
   expect(rule.statusCode, rule.body).toBe(200);
 
+  // Push registration is installation-bound. Give this notification endpoint a
+  // real live session on the same device instead of inventing an unrelated
+  // device id in the fixture.
+  const deviceId = `caregiver-${caregiver.phone.replace(/\D/g, '')}`;
+  const caregiverDeviceSession = await signIn(h, caregiver.phone, deviceId);
+  expect(caregiverDeviceSession.userId).toBe(caregiver.userId);
   const device = await h.app.inject({
     method: 'POST',
     url: '/v1/devices/push-token',
-    headers: authHeaders(caregiver),
-    payload: { token, platform: 'ios', deviceId: `${token}-device` },
+    headers: authHeaders(caregiverDeviceSession),
+    payload: { token, platform: 'ios', deviceId },
   });
   expect(device.statusCode, device.body).toBe(200);
   return relationshipId;
