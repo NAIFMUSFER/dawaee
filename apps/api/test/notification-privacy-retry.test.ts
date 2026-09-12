@@ -14,7 +14,7 @@ const at = (hhmm: string) => {
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
-  patient = await signIn(h, '+966500097797');
+  patient = await signIn(h, '+966500097797', 'privacy-retry-1');
 
   await h.app.inject({
     method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(patient),
