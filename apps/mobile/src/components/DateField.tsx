@@ -3,6 +3,11 @@ import { Modal, Pressable, View } from 'react-native';
 import { Button, Card, Row, Txt } from './ui.js';
 import { useI18n } from '../i18n/index.js';
 import { useTheme } from '../hooks/useTheme.js';
+import {
+  dateFieldDisplayLocale,
+  dateFieldGridLocale,
+  formatDateFieldMonthTitle,
+} from './date-field-calendar.js';
 
 /** Accepts a complete, real Gregorian calendar date only. */
 export function isValidLocalDate(value: string): boolean {
@@ -48,9 +53,8 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => initialMonth(value));
-  const displayLocale = locale === 'ar'
-    ? `ar-SA-u-nu-${numeralSystem}-ca-${calendar}`
-    : 'en-GB';
+  const displayLocale = dateFieldDisplayLocale(locale, numeralSystem, calendar);
+  const gridLocale = dateFieldGridLocale(locale, numeralSystem);
 
   const days = useMemo(() => {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -61,7 +65,7 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
     return cells;
   }, [month]);
 
-  const monthTitle = new Intl.DateTimeFormat(displayLocale, { month: 'long', year: 'numeric' }).format(month);
+  const monthTitle = formatDateFieldMonthTitle(month, locale, numeralSystem);
   const display = value && isValidLocalDate(value)
     ? new Intl.DateTimeFormat(displayLocale, { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${value}T12:00:00`))
     : (optional ? t('common.none') : t('schedule.startDate'));
@@ -95,7 +99,7 @@ export function DateField({ label, value, onChange, hint, error, optional }: {
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {days.map((day, index) => {
                   const selected = day ? wireDate(day) === value : false;
-                  const dayLabel = day ? new Intl.NumberFormat(displayLocale).format(day.getDate()) : '';
+                  const dayLabel = day ? new Intl.NumberFormat(gridLocale).format(day.getDate()) : '';
                   return (
                     <View key={`${index}-${day?.getDate() ?? 'x'}`} style={{ width: '14.285%', padding: 2 }}>
                       {day ? (
