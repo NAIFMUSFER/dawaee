@@ -13,24 +13,29 @@
 -- sessions were ejected.
 --
 -- Do not paper over this with a second UPDATE: an attacker holding the refresh
--- token can rotate the newly-visible descendant again between passes. Instead
--- use the users row as the per-account transaction lock shared by BOTH security
--- operations. Password change obtains it inside app.set_password() and keeps it
--- until its surrounding transaction commits. Refresh resolves the token to a
--- user without locking, takes that same user lock, then re-reads and locks the
--- session row before making any decision. That lock order is deliberately
--- user -> session on refresh, matching password change's user -> sessions order
--- and avoiding a session -> user deadlock cycle.
+-- token can rotate the newly-visible descendant again between passes. Both
+-- security operations instead take the same transaction-scoped advisory lock,
+-- derived from the user id, before password/session mutation. A 64-bit advisory
+-- key collision can only cause harmless extra serialization; it cannot merge
+-- authorization state or grant access.
+--
+-- An earlier version used SELECT ... FOR UPDATE on users as the shared lock.
+-- CI then proved a deadlock with audit_logs.actor_user_id's FK lock while a
+-- concurrent refresh waited on auth_sessions. The advisory lock deliberately
+-- lives outside table/FK lock graphs and is released automatically at commit or
+-- rollback.
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION app.set_password(p_user_id uuid, p_password_hash text)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, app AS $$
 BEGIN
-  -- Account-wide auth serialization point. This row lock is held until the
-  -- caller's transaction ends, so no refresh rotation for this user can mint a
-  -- descendant between the password write and revocation of other sessions.
-  PERFORM 1 FROM users u WHERE u.id = p_user_id FOR UPDATE;
+  -- Account-wide auth serialization point. Keep it for the whole surrounding
+  -- transaction so no refresh can mint a descendant between the password write
+  -- and the route's revocation of every other session.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_user_id::text, 20260912));
+
+  PERFORM 1 FROM users u WHERE u.id = p_user_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'user not found' USING ERRCODE = 'no_data_found';
   END IF;
@@ -45,9 +50,9 @@ BEGIN
 END $$;
 
 COMMENT ON FUNCTION app.set_password(uuid,text) IS
-  'Sets a password while holding the per-user auth serialization lock until '
-  'transaction end, preventing concurrent refresh descendants from escaping '
-  'the password-change session revocation boundary.';
+  'Sets a password while holding a transaction-scoped per-user advisory auth '
+  'lock, preventing concurrent refresh descendants from escaping the '
+  'password-change session revocation boundary.';
 
 CREATE OR REPLACE FUNCTION app.rotate_session(
   p_presented_hash text,
@@ -65,9 +70,10 @@ DECLARE
   disabled timestamptz;
   grace constant interval := interval '30 seconds';
 BEGIN
-  -- First resolve the account WITHOUT taking the session row lock. Taking the
-  -- session lock first and the user lock second would deadlock with password
-  -- change, which deliberately takes the user lock before revoking sessions.
+  -- Resolve the account without a tuple lock so the shared advisory lock is
+  -- always acquired before the session-row lock. The token is re-read under a
+  -- row lock after advisory serialization, so this optimistic lookup cannot
+  -- authorize or rotate stale state.
   SELECT * INTO s
     FROM auth_sessions
    WHERE refresh_token_hash = p_presented_hash;
@@ -77,19 +83,14 @@ BEGIN
     RETURN;
   END IF;
 
-  -- The same account-wide lock held by app.set_password(). All refreshes for a
-  -- user serialize here, and a password-change transaction keeps this blocked
-  -- until its password write + other-session revocation are committed.
-  PERFORM 1 FROM users u WHERE u.id = s.user_id FOR UPDATE;
-  IF NOT FOUND THEN
-    RETURN QUERY SELECT 'invalid'::text, NULL::uuid, NULL::boolean, NULL::uuid, NULL::timestamptz;
-    RETURN;
-  END IF;
+  -- Same transaction-scoped account lock as app.set_password(). No users-row
+  -- tuple lock is taken here, avoiding cycles with audit-log foreign keys and
+  -- other operations that legitimately reference the user row.
+  PERFORM pg_advisory_xact_lock(hashtextextended(s.user_id::text, 20260912));
 
-  -- Re-read after waiting for the account lock: another refresh may have
-  -- rotated this predecessor before we obtained the lock. The existing
-  -- superseded/reuse policy must judge the committed current state, not the
-  -- optimistic lookup above.
+  -- Re-read after waiting for serialization: another refresh or password
+  -- change may have committed while we waited. Existing superseded/reuse
+  -- policy must judge this committed current state.
   SELECT * INTO s
     FROM auth_sessions
    WHERE refresh_token_hash = p_presented_hash
@@ -145,7 +146,8 @@ BEGIN
 END $$;
 
 COMMENT ON FUNCTION app.rotate_session(text,text,text,int) IS
-  'Rotates a refresh token under a per-user auth lock followed by the token row '
-  'lock. Exactly one concurrent caller wins; password changes share the user '
-  'lock so a refresh descendant cannot cross the password-change revocation '
-  'boundary. Superseded/reuse behavior remains migration-0023 compatible.';
+  'Rotates a refresh token under a transaction-scoped per-user advisory lock, '
+  'then the token row lock. Exactly one concurrent caller wins; password '
+  'changes share the advisory lock so no refresh descendant can cross the '
+  'password-change revocation boundary. Superseded/reuse behavior remains '
+  'migration-0023 compatible.';
