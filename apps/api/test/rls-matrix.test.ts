@@ -24,7 +24,7 @@ import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type Te
 let h: Harness;
 let alice: TestUser;      // Patient A
 let bob: TestUser;        // Patient B
-let carol: TestUser;      // Caregiver of A
+let carol: TestUser;       // Caregiver of A
 let dave: TestUser;       // Caregiver of B
 let mallory: TestUser;    // Caregiver of A, later REVOKED
 
@@ -373,6 +373,7 @@ describe('Patient A supplies Patient B ids directly', () => {
     ['stock_transactions', 'SELECT * FROM stock_transactions WHERE medication_id = $1', 'medId'],
     ['dose_events', 'SELECT * FROM dose_events WHERE dose_occurrence_id = $1', 'doseId'],
   ];
+
   it('reads nothing of Patient B, on any table, with the real id in hand', async () => {
     for (const [resource, sql, which] of RESOURCES) {
       const id = which === 'profileId' ? bob.profileId : which === 'medId' ? bobMedId
@@ -605,7 +606,7 @@ describe('a caregiver is scoped to the patient who invited them', () => {
     });
     await denied('dose_occurrences', 'Caregiver of A', 'UPDATE', async () => {
       const r = await asUser(carol.userId,
-        "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [aliceDoseId]);
+        "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [bobDoseId]);
       return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
   });
