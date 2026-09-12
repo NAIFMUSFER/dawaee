@@ -7,6 +7,7 @@ const { createHarness } = require('./profile-screen-harness.cjs') as {
 
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/settings/privacy.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
+const exportFileMock = { shareTemporaryExportFile: async () => false };
 
 type Pending = {
   route: string;
@@ -60,7 +61,10 @@ function consentRows() {
 describe('privacy consent profile isolation', () => {
   it('uses the active profile decision rather than a sibling row returned later', async () => {
     const client = controlledClient();
-    const h = createHarness(screen, hook, {}, { '@/api/client': client.module });
+    const h = createHarness(screen, hook, {}, {
+      '@/api/client': client.module,
+      '@/privacy/export-file': exportFileMock,
+    });
 
     try {
       expect(client.pending).toHaveLength(1);
@@ -78,7 +82,10 @@ describe('privacy consent profile isolation', () => {
 
   it('writes the consent decision for the active patient profile', async () => {
     const client = controlledClient();
-    const h = createHarness(screen, hook, {}, { '@/api/client': client.module });
+    const h = createHarness(screen, hook, {}, {
+      '@/api/client': client.module,
+      '@/privacy/export-file': exportFileMock,
+    });
 
     try {
       client.pending[0]!.resolve({
@@ -108,7 +115,10 @@ describe('privacy consent profile isolation', () => {
 
   it('reloads on profile switch and ignores a late response from the previous profile', async () => {
     const client = controlledClient();
-    const h = createHarness(screen, hook, {}, { '@/api/client': client.module });
+    const h = createHarness(screen, hook, {}, {
+      '@/api/client': client.module,
+      '@/privacy/export-file': exportFileMock,
+    });
 
     try {
       expect(client.pending).toHaveLength(1);
