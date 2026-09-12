@@ -1,10 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dispatchJob } from '../../worker/src/jobs/dispatcher.js';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
+let db: pg.Pool;
 let patient: TestUser;
 let caregiver: TestUser;
 let seq = 0;
@@ -12,31 +14,36 @@ let seq = 0;
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  // Fixture ownership is intentionally separate from the worker role. The
+  // worker is least-privileged and must not gain caregiver_relationships write
+  // access merely so this regression can arrange pre-existing rows.
+  db = new pg.Pool({ connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test', max: 4 });
   patient = await signIn(h, '+966500097821');
   caregiver = await signIn(h, '+966500097822');
 }, 120_000);
 
 beforeEach(async () => {
   h.push.reset();
-  // The two regressions deliberately exercise the same patient/caregiver pair.
+  // The regressions deliberately exercise the same patient/caregiver pair.
   // Keep them independent so the active-relationship uniqueness constraint is
   // testing product behaviour rather than leaking state between test cases.
-  await h.worker.pool.query(
+  await db.query(
     'DELETE FROM notification_deliveries WHERE patient_profile_id=$1 AND recipient_user_id=$2',
     [patient.profileId, caregiver.userId],
   );
-  await h.worker.pool.query(
+  await db.query(
     'DELETE FROM caregiver_relationships WHERE patient_profile_id=$1 AND caregiver_user_id=$2',
     [patient.profileId, caregiver.userId],
   );
 });
 
 afterAll(async () => {
+  await db.end();
   await h.close();
 });
 
 async function createRelationship(permissions: string[]): Promise<string> {
-  const { rows } = await h.worker.pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `INSERT INTO caregiver_relationships
        (patient_profile_id, caregiver_user_id, invited_phone_e164, invited_name,
         role, status, permissions, escalation_priority, invited_by_user_id, accepted_at)
@@ -48,7 +55,7 @@ async function createRelationship(permissions: string[]): Promise<string> {
 }
 
 async function enqueueDigest(relationshipId: string): Promise<string> {
-  const { rows } = await h.worker.pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `INSERT INTO notification_deliveries
        (patient_profile_id, recipient_user_id, relationship_id, kind, channel, locale,
         title, body, payload, dedupe_key, scheduled_for, next_attempt_at, status)
@@ -77,7 +84,7 @@ async function registerPushToken(): Promise<void> {
 }
 
 async function deliveryStatus(id: string): Promise<string> {
-  const { rows } = await h.worker.pool.query<{ status: string }>(
+  const { rows } = await db.query<{ status: string }>(
     'SELECT status::text AS status FROM notification_deliveries WHERE id=$1', [id],
   );
   return rows[0]!.status;
