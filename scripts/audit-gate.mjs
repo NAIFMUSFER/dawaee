@@ -43,22 +43,26 @@ const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical'];
 const WORKSPACES = {
   root: {
     cwd: ROOT,
-    // Runtime only. A build-time advisory in a dev dependency cannot be reached
-    // by a request from the internet, and treating it as equal to one in the
-    // running service is what makes a gate too noisy to keep.
-    args: ['audit', '--json', '--omit=dev'],
+    // Audit the complete install because root dev dependencies execute on CI
+    // and Render during build. A critical build-tool advisory is a supply-chain
+    // risk even when no request can import it at runtime. A second runtime-only
+    // audit below (`runtimeArgs`) distinguishes those findings instead of
+    // deleting them from the evidence with --omit=dev.
+    args: ['audit', '--json'],
+    runtimeArgs: ['audit', '--json', '--omit=dev'],
     failRuntimeAt: 'high',
     failBuildAt: 'critical',
-    label: 'root (API + worker runtime dependencies)',
+    label: 'root (API + worker dependencies)',
   },
   mobile: {
     cwd: resolve(ROOT, 'apps/mobile'),
     // `--omit=dev` is deliberately NOT used here, and it would change nothing
-    // if it were: measured, mobile reports the same 33 entries either way,
+    // if it were: measured, mobile reports the same advisory tree either way,
     // because `expo` is a runtime dependency and the entire CLI and bundler
     // hang beneath it. The build/runtime split that matters is computed from
     // the dependency graph instead — see BUILD_TOOLCHAIN.
     args: ['audit', '--json'],
+    runtimeArgs: null,
     failRuntimeAt: 'high',
     failBuildAt: 'critical',
     label: 'mobile (Expo application)',
@@ -71,7 +75,8 @@ const WORKSPACES = {
  *
  * `reviewBy` is the date this entry must be looked at again. Passing it fails
  * the gate: the exception is not silently revoked — that would break a build
- * for a reason unrelated to security — it is escalated to a person.
+ * for a reason unrelated to security — but it has to be re-read and re-dated
+ * by a person.
  *
  * Each entry is classified against the current dependency graph. Build-only and
  * runtime-reachable exceptions are held to separate thresholds and must state why
@@ -114,9 +119,9 @@ function severityAtLeast(severity, threshold) {
   return SEVERITY_ORDER.indexOf(severity) >= SEVERITY_ORDER.indexOf(threshold);
 }
 
-function runAudit(ws) {
+function runAudit(ws, args = ws.args) {
   try {
-    return execFileSync('npm', ws.args, { cwd: ws.cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    return execFileSync('npm', args, { cwd: ws.cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   } catch (err) {
     // `npm audit` exits non-zero whenever it finds anything at or above its
     // default level. That is the normal case here, and the JSON is on stdout.
@@ -137,11 +142,9 @@ function runAudit(ws) {
  *
  * `npm audit` reports a vulnerability against every ANCESTOR of the affected
  * package as well as against the package itself, so one leaf advisory appears
- * many times. Measured on this tree: six real advisory roots were reported as
- * thirty-three entries, with `expo` and `react-native` both listed HIGH purely
- * because something far beneath them was. Reading the aggregate count as the
- * finding count turns a dependency report into theatre — in both directions,
- * since it also buries the one entry that matters.
+ * many times. Reading the aggregate count as the finding count turns a
+ * dependency report into theatre — in both directions, since it also buries
+ * the entries that matter.
  *
  * A root is a package whose `via` holds an advisory object rather than the
  * name of another package.
@@ -163,19 +166,17 @@ function advisoryRoots(report) {
 }
 
 /**
- * Packages that exist only to build the app, never to run it.
+ * Packages that exist only to build the mobile app, never to run it.
  *
  * npm's dev/production split does not model React Native's bundling boundary.
  * `expo` is a runtime dependency; `@expo/cli` and the Metro bundler are its
  * dependencies; so npm classifies the whole build toolchain as production. It
- * is not. `tar`, `postcss` and Metro run on a developer's machine or a build
- * server, none of them is bundled into the binary a patient installs, and an
- * arbitrary-file-write in `tar` reached through `@expo/cli` is a build-server
- * risk rather than a patient risk.
+ * is not. Metro and the prebuild helpers run on a developer's machine or a
+ * build server, none of them is bundled into the binary a patient installs.
  *
- * Holding both to one threshold is what makes a gate noisy enough to be
- * switched off. They are separated here and held to different thresholds —
- * separated, not ignored.
+ * Root is different: npm can model its boundary directly because its build
+ * dependencies are dev dependencies. The root check therefore compares a full
+ * audit with a second --omit=dev audit; this graph walk is only for mobile.
  */
 const BUILD_TOOLCHAIN = new Set([
   '@expo/cli', '@expo/metro-config', '@expo/image-utils', '@expo/prebuild-config',
@@ -213,7 +214,17 @@ function check(workspaceName) {
 
   const report = JSON.parse(runAudit(ws));
   const roots = advisoryRoots(report);
-  for (const r of roots) r.buildTime = isBuildTimeOnly(r.module, report.vulnerabilities);
+
+  if (workspaceName === 'root') {
+    // Presence in --omit=dev proves that at least one runtime dependency path
+    // reaches this advisory root. Absence means the finding exists only in the
+    // build install, so it is held to the build threshold rather than erased.
+    const runtimeReport = JSON.parse(runAudit(ws, ws.runtimeArgs));
+    const runtimeModules = new Set(advisoryRoots(runtimeReport).map((r) => r.module));
+    for (const r of roots) r.buildTime = !runtimeModules.has(r.module);
+  } else {
+    for (const r of roots) r.buildTime = isBuildTimeOnly(r.module, report.vulnerabilities);
+  }
 
   const baseline = BASELINE.filter((b) => b.workspace === workspaceName);
   const today = new Date().toISOString().slice(0, 10);
