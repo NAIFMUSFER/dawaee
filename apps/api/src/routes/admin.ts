@@ -14,6 +14,14 @@ const NOTIFICATION_CHANNELS = ['push', 'local', 'whatsapp', 'sms', 'email', 'in_
  * operator debugging a failed notification does not need to know what the
  * medication was, and giving them that access would make every support
  * engineer a holder of medical records.
+ *
+ * Clinical tables are FORCE-RLS and the API connects as the same unprivileged
+ * `dawaee_app` role for every request. Admin JWTs therefore do not, and must
+ * not, turn into a global database identity. The two clinical/global views
+ * below go through migration 0048's bounded SECURITY DEFINER functions, whose
+ * return shapes contain only aggregate or delivery-mechanics fields. Jobs and
+ * webhook inbox rows are already explicit read-only operational tables with no
+ * RLS (pinned by app-operational-privilege-boundary.test.ts).
  */
 export function registerAdminRoutes(app: FastifyInstance): void {
   app.addHook('preHandler', async (req) => {
@@ -25,17 +33,8 @@ export function registerAdminRoutes(app: FastifyInstance): void {
 
   app.get('/v1/admin/overview', async () =>
     withTransaction(async (tx) => {
-      const { rows: counts } = await tx.query(`
-        SELECT
-          (SELECT count(*) FROM users WHERE disabled_at IS NULL) AS users,
-          (SELECT count(*) FROM patient_profiles WHERE archived_at IS NULL) AS profiles,
-          (SELECT count(*) FROM medications WHERE status = 'active') AS active_medications,
-          (SELECT count(*) FROM caregiver_relationships WHERE status = 'active') AS active_caregivers,
-          (SELECT count(*) FROM dose_occurrences WHERE scheduled_at > now() - interval '24 hours') AS doses_24h,
-          (SELECT count(*) FROM dose_occurrences
-            WHERE scheduled_at > now() - interval '24 hours' AND status IN ('taken','taken_late')) AS taken_24h
-      `);
-      return { counts: counts[0] };
+      const { rows } = await tx.query('SELECT * FROM app.admin_operational_overview()');
+      return { counts: rows[0] };
     }),
   );
 
@@ -43,14 +42,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     const { channel, limit } = req.query as { channel?: string; limit?: string };
     return withTransaction(async (tx) => {
       const { rows } = await tx.query(
-        `SELECT id, kind::text AS kind, channel::text AS channel, provider, error_code,
-                attempts, created_at, scheduled_for
-           FROM notification_deliveries
-          WHERE status = 'failed'
-            AND ($1::text IS NULL OR channel = $1::notification_channel)
-          ORDER BY created_at DESC LIMIT $2`,
-        // `$1::notification_channel` on an unknown string is an "invalid input
-        // value for enum" error, i.e. a 500 for a typo'd query parameter.
+        'SELECT * FROM app.admin_failed_deliveries($1::notification_channel, $2::int)',
         [requireEnum(channel, NOTIFICATION_CHANNELS, 'channel'), requireLimit(limit, 100, 500)],
       );
       // No recipient, no patient, no medication — just the failure shape.
@@ -60,12 +52,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
 
   app.get('/v1/admin/deliveries/stats', async () =>
     withTransaction(async (tx) => {
-      const { rows } = await tx.query(`
-        SELECT channel::text AS channel, status::text AS status, count(*)::int AS count
-          FROM notification_deliveries
-         WHERE created_at > now() - interval '7 days'
-         GROUP BY 1,2 ORDER BY 1,2
-      `);
+      const { rows } = await tx.query('SELECT * FROM app.admin_delivery_stats()');
       return { window: '7d', stats: rows };
     }),
   );

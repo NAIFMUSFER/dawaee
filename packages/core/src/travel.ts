@@ -1,4 +1,4 @@
-import type { LocalDate, MedicationSchedule, TimeZone, UUID } from '@dawaee/shared';
+import { timezone, type LocalDate, type MedicationSchedule, type TimeZone, type UUID } from '@dawaee/shared';
 import { localDateInZone, zonedWallTimeToUtc } from './time.js';
 
 /**
@@ -18,16 +18,21 @@ export interface TimezoneChangeDetection {
 }
 
 export function detectTimezoneChange(scheduleTz: TimeZone, deviceTz: TimeZone, at: Date): TimezoneChangeDetection {
-  if (scheduleTz === deviceTz) {
-    return { changed: false, from: scheduleTz, to: deviceTz, offsetShiftHours: 0 };
+  // Device timezone is caller-controlled at the API boundary. Validate it with
+  // the same IANA contract used by profile writes before Intl sees it; Intl
+  // throws RangeError for unknown zones, which otherwise becomes a misleading
+  // 500 instead of the existing validation_failed response.
+  const validatedDeviceTz = timezone.parse(deviceTz);
+  if (scheduleTz === validatedDeviceTz) {
+    return { changed: false, from: scheduleTz, to: validatedDeviceTz, offsetShiftHours: 0 };
   }
   const probe = localDateInZone(at, scheduleTz) as LocalDate;
   const inSchedule = zonedWallTimeToUtc(probe, '12:00', scheduleTz).getTime();
-  const inDevice = zonedWallTimeToUtc(probe, '12:00', deviceTz).getTime();
+  const inDevice = zonedWallTimeToUtc(probe, '12:00', validatedDeviceTz).getTime();
   return {
     changed: true,
     from: scheduleTz,
-    to: deviceTz,
+    to: validatedDeviceTz,
     offsetShiftHours: Number(((inSchedule - inDevice) / 3_600_000).toFixed(2)),
   };
 }

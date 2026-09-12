@@ -1,332 +1,308 @@
 # Production release runbook
 
-Written during P17 (read-only audit, 2026-09-06). **Nothing in this document has
-been executed.** It is the procedure for a release that has not happened yet.
+Current operational procedure for Dawaee production releases.
 
-No secret values appear here. Where a value is needed, the runbook names the
-variable and where to read it, never the value.
+This document deliberately contains **no fixed production migration count or
+fixed rollback SHA**. Those values become stale as soon as the audit branch
+moves. The release artefact and the live `schema_migrations` ledger are the
+sources of truth. Historical P17/P18 evidence remains in Git history and the
+phase review documents; it is not an executable release plan.
 
----
-
-## The situation this runbook exists for
-
-| | |
-|---|---|
-| Repository `main` | see `git rev-parse HEAD` — P18-R added `0030` and a startup gate |
-| `dawaee-api` live commit | `db7061f1ae8fc52a02d68aea76da8a46ff382b04` |
-| `dawaee-worker` live commit | `db7061f1ae8fc52a02d68aea76da8a46ff382b04` |
-| Delta | 113 files changed, 20 152 insertions, 380 deletions |
-| Pending migrations | **11** — `0020` … `0030` (production ledger stops at `0019`) |
-
-Production is running the **audit baseline**. Every fix from P5 through P16 is
-unshipped. This is therefore not a routine deploy: it is an eleven-migration,
-twenty-thousand-line jump, and it should be treated as the highest-risk release
-the project has had.
-
-### The sequencing problem, stated plainly
-
-`render.yaml` puts `preDeployCommand: ./scripts/migrate.sh` on the **worker**
-only. The API has no pre-deploy command, because Render does not offer one on
-the free plan. Both services carry `autoDeployTrigger: commit`, so a push to
-`main` starts **both** deploys at the same time.
-
-That means the API can be serving new code before the worker's pre-deploy has
-finished applying migrations. In this particular release that is not a
-theoretical concern:
-
-| New API code path | Requires | From migration |
-|---|---|---|
-| Startup itself | the whole ledger through `0030` | **the API now refuses to boot below it** |
-| Shared auth rate limiting | `app.consume_rate_budget` | `0029` |
-| Password change | `app.password_hash_for_user` | `0022` |
-| OTP challenge issue | one-live-challenge unique index | `0028` |
-| Worker's session reads | `auth_sessions` grant to `dawaee_worker` | `0021` |
-
-An API that boots before `0029` lands used to fail every authentication request
-with an undefined-function error while `/health` and `/health/ready` both
-answered 200 — measured, twelve logins out of twelve. **It no longer boots at
-all**: `assertSchemaContract` compares the shipped `db/migrations` against the
-ledger and exits 1 before binding a port, naming the migrations that are
-missing. The ordering below is still the right ordering; it is now enforced by
-the artefact rather than by the runbook.
-
-**The runbook below therefore does not rely on auto-deploy.** Auto-deploy is
-suspended for the release, migrations are driven deliberately, and the API is
-started last. Step 0 is what makes the rest of it true.
+No secret values belong in this file. Read secrets from the approved operator
+surfaces and pass them only through the process environment.
 
 ---
 
-## Preconditions for the whole release
+## 0. Current audit evidence and open blockers
+
+As of the 2026-09-11 audit:
+
+- GitHub CI and Security gates have executed successfully on the current audit
+  branch head for PostgreSQL 16 and 17, RLS, migrations, managed-Postgres smoke,
+  unit/integration tests, mobile production exports, Docker, dependency checks,
+  CodeQL, Gitleaks and Trivy. **Re-check the actual candidate SHA; do not inherit
+  this PASS by assumption.**
+- `main` and the currently deployed canonical Render services are behind the
+  audit branch. Record the exact candidate SHA, resulting post-merge release SHA,
+  and exact pre-release Render deploy IDs immediately before release; never use
+  a SHA copied from this document.
+- Fresh production worker evidence shows the `materialize` job failing with
+  SQLSTATE `42501` / `permission denied for table dose_occurrences`. The audit
+  branch contains the least-privilege remediation. Its disappearance after the
+  worker release is a required production verification.
+- Render platform request logs on the deployed build still contain stable
+  profile/medication/dose/caregiver identifiers in request paths and queries.
+  The audit branch moves those identifiers to fixed-path private-header
+  transport, but this finding is **not closed until production logs after the
+  cutover prove the identifiers are absent**.
+- The canonical API is currently on a configuration that has produced cold-start
+  HTTP 503s. The release candidate expects paid/non-sleeping service behaviour
+  and `/health/ready` as the traffic gate. Verify the Render service after the
+  deploy; repository configuration alone is not production proof.
+- Four duplicate Dawaee Render services are fail-closed and have no working
+  application instance. Do not delete or suspend them as part of this release;
+  follow `docs/RENDER-CLEANUP-RUNBOOK.md` and obtain explicit operator approval.
+
+No merge or deploy should begin while any release-blocking audit finding lacks
+an explicit verification step below.
+
+---
+
+## 1. Preconditions
 
 Do not begin until every line is true.
 
-- [x] CI is green on the current release branch head for **both** PostgreSQL 16 and 17,
-      including the realistic migration-owner/RLS smoke, Docker, dependency, mobile,
-      CodeQL, Gitleaks and Trivy gates.
-- [ ] A named operator is at a machine with the Render dashboard, the Supabase
-      dashboard, and `psql`.
-- [ ] A second person is available to authorize a rollback.
-- [ ] The release is scheduled for a window with the fewest scheduled doses.
-      Reminders stop while the worker is down; a dose window missed during a
-      deploy is a patient-visible failure, not just an ops one.
-- [ ] A Supabase point-in-time / manual backup taken **within the last hour**,
-      and its identifier written down (Step 2).
-- [ ] `PUSH_PROVIDER` decision made — see the Known-state section below.
+- [ ] The exact PR/audit branch head is recorded as `CANDIDATE_SHA`.
+- [ ] All required GitHub checks are green on **that candidate SHA**. The active
+      `main` ruleset requires PR-based integration and the configured CI/security
+      checks; verify the ruleset still exists before relying on it.
+- [ ] Canonical `dawaee-api` and `dawaee-worker` auto-deploy are off. Verify in
+      Render even if they were already off during the audit.
+- [ ] A named operator has Render, Supabase and `psql` access.
+- [ ] A second operator is available for rollback authorization.
+- [ ] The release window is chosen to minimize scheduled-dose impact.
+- [ ] A production database backup/restore point from the last hour exists and
+      its identifier and timestamp are recorded.
+- [ ] The production `DATABASE_URL` host has been confirmed to be the intended
+      production database before taking or trusting the backup.
+- [ ] The intended push/OCR/storage provider state has been decided. `/health/ready`
+      after deploy is authoritative for what the running API considers mocked or
+      unavailable; do not infer provider readiness from repository defaults.
 
 ---
 
-## Step 0 — Stop auto-deploy from racing the release
+## 2. Freeze deployment and record rollback identities
 
-**PRECONDITION:** Nothing. Do this first, before anything is merged.
+Before merging anything:
 
-**ACTION:** In the Render dashboard, set auto-deploy to **off** on all six
-Dawaee services:
+1. Disable auto-deploy for the canonical API and worker in Render.
+2. Leave the four duplicate fail-closed services disabled from any release
+   workflow; do not configure secrets on them.
+3. Record the current canonical deploy IDs and commit identities as:
 
-- `dawaee-api` (`srv-dad9mvf10e5c73dva9vg`)
-- `dawaee-worker` (`srv-dad9meijnfac73f1o3tg`)
-- `dawaee-api-phop`, `dawaee-api-htra`, `dawaee-worker-phop`, `dawaee-worker-htra`
+```text
+PRE_RELEASE_API_DEPLOY=<Render deploy id>
+PRE_RELEASE_WORKER_DEPLOY=<Render deploy id>
+PRE_RELEASE_API_SHA=<reported commit>
+PRE_RELEASE_WORKER_SHA=<reported commit>
+```
 
-The four legacy services are included because they also carry
-`autoDeploy: yes` on `main` and will burn build minutes and produce four red
-badges during the release, which is exactly when a red badge needs to mean
-something. See `docs/RENDER-CLEANUP-RUNBOOK.md`.
+These recorded deploy IDs, not historical SHAs in documentation, are the only
+approved R1/R2 rollback targets.
 
-**EXPECTED RESULT:** All six services show auto-deploy disabled. A push to
-`main` now builds nothing.
-
-**ROLLBACK CONDITION:** None — this step is reversible and removes risk.
-
-**NOTE:** `render.yaml` still says `autoDeployTrigger: commit`. A Blueprint sync
-re-asserts that. If the dashboard setting reverts mid-release, a Blueprint sync
-fired; stop and re-disable before continuing.
+If the API and worker do not report the same expected pre-release release line,
+stop and investigate release drift before proceeding.
 
 ---
 
-## Step 1 — Merge to `main` behind required checks
+## 3. Merge behind required checks and pin the release identity
 
-**PRECONDITION:** Step 0 complete. CI green on the branch head.
+Merge the audit/release branch to `main` only through the protected pull request
+and only after all required checks are green on `CANDIDATE_SHA`.
 
-**ACTION:** Merge the release branch into `main` through a pull request. Do not
-push directly.
+Because canonical auto-deploy is disabled, merging must not start a production
+deploy. If Render starts one unexpectedly, stop it before continuing and find
+which deploy control or Blueprint sync re-enabled automation.
 
-**EXPECTED RESULT:** `main` is at the release commit. Record it:
+After merge, update local `main` and record the **post-merge** commit as the
+release identity:
 
 ```bash
-git rev-parse HEAD    # write this down; it is referenced throughout
+git checkout main
+git pull --ff-only
+RELEASE_SHA="$(git rev-parse HEAD)"
+git merge-base --is-ancestor "$CANDIDATE_SHA" "$RELEASE_SHA"
+printf 'candidate: %s\nrelease: %s\n' "$CANDIDATE_SHA" "$RELEASE_SHA"
 ```
 
-Because of Step 0, no deploy starts.
-
-**ROLLBACK CONDITION:** CI fails on `main` after merge → revert the merge
-commit and stop. Nothing has reached production; there is nothing to undo
-beyond the revert.
-
-**BLOCKER:** P16 classified branch protection and required checks as NOT
-VERIFIED. If `main` has no required status checks, this step is a convention
-rather than a control. Verify before relying on it.
+The ancestry command must exit 0. From this point onward, migrations, worker,
+API and mobile release evidence refer to `RELEASE_SHA`, not the pre-merge branch
+head. This avoids a subtle release split when GitHub creates a merge commit.
 
 ---
 
-## Step 2 — Back up the database, and prove the backup exists
+## 4. Capture the live migration ledger and derive the target
 
-**PRECONDITION:** Steps 0–1 complete.
+Never infer the live schema from the Git branch, an old release note, or this
+runbook. Read it.
 
-**ACTION:** In Supabase, take a manual backup of the production project. Record
-its identifier and timestamp.
-
-Then capture the pre-release schema state so a divergence is provable later:
+At the checked-out `RELEASE_SHA`:
 
 ```bash
-psql "$DATABASE_URL" -tAc \
-  'SELECT filename, applied_at FROM schema_migrations ORDER BY filename' \
-  > pre-release-ledger.txt
+for f in db/migrations/[0-9][0-9][0-9][0-9]_*.sql; do
+  basename "$f"
+done | LC_ALL=C sort > release-migrations.txt
+
+TARGET_MIGRATION="$(tail -n 1 release-migrations.txt)"
+TARGET_COUNT="$(wc -l < release-migrations.txt | tr -d ' ')"
+
+psql "$DATABASE_URL" -Atc \
+  'SELECT filename FROM schema_migrations ORDER BY filename' \
+  > pre-release-ledger-names.txt
+
+psql "$DATABASE_URL" -Atc \
+  "SELECT filename || '|' || checksum FROM schema_migrations ORDER BY filename" \
+  > pre-release-ledger-checksums.txt
+
+comm -23 release-migrations.txt pre-release-ledger-names.txt \
+  > pending-migrations.txt
+comm -13 release-migrations.txt pre-release-ledger-names.txt \
+  > unexpected-production-migrations.txt
+
+PENDING_COUNT="$(wc -l < pending-migrations.txt | tr -d ' ')"
+LIVE_LATEST="$(tail -n 1 pre-release-ledger-names.txt)"
+
+printf 'live latest: %s\ntarget: %s\npending: %s\n' \
+  "$LIVE_LATEST" "$TARGET_MIGRATION" "$PENDING_COUNT"
 ```
 
-**EXPECTED RESULT:** `pre-release-ledger.txt` ends at `0019_client_event_scope.sql`.
-A backup identifier is written down.
+Required checks before proceeding:
 
-**ROLLBACK CONDITION:** Backup cannot be taken or verified → **stop the
-release.** Eleven migrations including a `DELETE` (`0025`) and an `UPDATE` (`0028`)
-must not be applied without a restore point.
+- `unexpected-production-migrations.txt` is empty. If production contains a
+  migration filename the release artefact does not know, **stop**.
+- Every live migration is an ordered prefix/subset consistent with the release
+  artefact. Gaps or divergent history are a blocker.
+- `pending-migrations.txt` is the exact list to review, rehearse and later apply.
+- Keep `pre-release-ledger-checksums.txt` with the release record. The migration
+  runner also refuses an already-applied migration whose checksum changed.
 
-**NOTE:** `dawaee-db` (`dpg-dacego15efls73e58ukg-a`) is a *separate*, free-plan
-PostgreSQL 16 instance that shows ~0 connections and expires **2026-10-03**. It
-is believed not to be the production database, but that inference has not been
-confirmed by reading `DATABASE_URL`. Confirm which host `DATABASE_URL` names
-**before** backing up, so the backup is of the right database.
+A zero pending count is valid. It means the schema is already at the release
+artefact; it does **not** permit skipping the remaining release checks.
 
 ---
 
-## Step 2b — Preflight, which now refuses before it can half-apply
+## 5. Backup and preflight
 
-**PRECONDITION:** Step 2 complete.
+Confirm the backup/restore point recorded in the preconditions exists for the
+same database host used above.
 
-**ACTION:**
+Then run the non-mutating migration preflight:
 
 ```bash
-DATABASE_URL='…' DAWAEE_APP_PASSWORD='…' DAWAEE_WORKER_PASSWORD='…' \
-  ./scripts/migrate.sh --preflight-only
+DATABASE_URL='…' \
+DAWAEE_APP_PASSWORD='…' \
+DAWAEE_WORKER_PASSWORD='…' \
+./scripts/migrate.sh --preflight-only
 ```
 
-**EXPECTED RESULT:** five lines, exit 0, and **nothing applied**:
+Expected: exit 0 and `preflight complete — no migration was applied`.
 
-```
-preflight: connection
-preflight: migrating as '<role>'
-preflight: role administration OK
-preflight: definer policies
-preflight complete — no migration was applied
-```
-
-**ROLLBACK CONDITION:** any non-zero exit → stop and fix what it names. Nothing
-has been applied, which is the entire point: P18 measured both of the failures
-this replaces, and both of them committed migrations first.
-
-**WHAT IT CATCHES.** See `docs/RUNBOOK-migrate-preflight.md`. In short: migrating
-as a runtime role; a migration role that cannot set the runtime roles' passwords
-(PostgreSQL 16+ needs ADMIN on a role to do that, and the old script discovered
-this *after* committing ten migrations); and a missing definer privilege path,
-without which `0025`'s dedup `DELETE` matches zero rows in silence and the index
-build that follows aborts the deploy at `0025` with `0020`–`0024` already
-committed.
-
-**A SIDE EFFECT WORTH KNOWING.** The preflight installs the definer policies on
-whatever schema it finds — including a database still at `0019`. Measured: the
-currently deployed build (`db7061f`) returns **404** to `POST /v1/auth/register`
-on a database whose owner cannot bypass row-level security, and **200** on the
-same database seconds after the preflight runs. If production is in that state,
-the preflight alone repairs registration before a single migration is applied.
+Any non-zero exit is a release stop. Do not apply migrations first and diagnose
+permissions later. See `docs/RUNBOOK-migrate-preflight.md`.
 
 ---
 
-## Step 3 — Rehearse the migrations against a copy
+## 6. Rehearse the exact pending upgrade on a production-shaped copy
 
-**PRECONDITION:** Step 2b clean.
+Restore the fresh production backup into a scratch database owned by a role
+with `rolsuper = false` and `rolbypassrls = false`.
 
-**ACTION:** Restore the backup into a scratch database **owned by a role with
-`rolsuper = false` and `rolbypassrls = false`** — this is not optional, and is
-the single thing P18's rehearsal got wrong — then:
+Use the **same `RELEASE_SHA`** and run:
 
 ```bash
-DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh
-DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh   # second run
-psql "postgres://…/scratch" -f db/seed/rls_probe.sql
+DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh \
+  | tee scratch-migrate-first.log
+DATABASE_URL="postgres://…/scratch" ./scripts/migrate.sh \
+  | tee scratch-migrate-second.log
+psql "postgres://…/scratch" -f db/seed/rls_probe.sql \
+  | tee scratch-rls.log
 ```
 
-**EXPECTED RESULT:**
+Verify:
 
-- First run prints `applying 0020_…` through `applying 0030_…`, then
-  `applied 11 migration(s)`.
-- Second run prints exactly `no pending migrations`.
-- The RLS probe prints no line beginning `FAIL`.
-- Record the wall-clock duration. Measured on a seeded database: **0.9 s**.
+- The first run applies exactly the files represented by
+  `pending-migrations.txt` from the restored production baseline.
+- The resulting scratch ledger ends exactly at `TARGET_MIGRATION` and contains
+  exactly `TARGET_COUNT` release migrations.
+- The second run prints `no pending migrations`.
+- The RLS probe has no `FAIL`.
+- No migration or integrity assertion fails.
 
-**ROLLBACK CONDITION:** any migration fails, the second run is not a no-op, or
-the probe reports FAIL → **stop.** Nothing has touched production.
+The repository CI also carries a production-shaped upgrade rehearsal from its
+known test baseline to current head. That is regression evidence; the restored
+production copy above is still the release authority because the live ledger may
+have moved since the CI baseline was created.
 
-**IF THE SCRATCH DATABASE IS OWNED BY A SUPERUSER**, this step proves nothing.
-That is precisely how P18's first rehearsal passed while the upgrade would have
-aborted at `0025` in production.
+If any result differs, stop. Do not adjust the expected count by hand merely to
+make the rehearsal pass.
 
-## Step 4 — Apply migrations, deliberately, before any new code runs
+---
 
-**PRECONDITION:** Step 3 clean. Backup identifier in hand. Outage window open.
+## 7. Review every pending migration before production
 
-**ACTION:** Run the migration from an operator machine that can reach the
-production database, at the release commit, with the production `DATABASE_URL`,
-`DAWAEE_APP_PASSWORD` and `DAWAEE_WORKER_PASSWORD` supplied from the environment
-— never typed into a file, never echoed:
+Do not carry forward blanket claims such as “all pending migrations are
+additive.” The pending set changes over time.
+
+For each filename in `pending-migrations.txt`, review and record:
+
+- DDL (`CREATE`, `ALTER`, `DROP`, constraints, indexes, triggers/functions)
+- DML (`INSERT`, `UPDATE`, `DELETE`)
+- table-lock / index-build implications
+- backfill volume and runtime
+- whether old code can safely run against the post-migration schema
+- rollback consequence if the file succeeds and code deployment later fails
+
+If the review finds destructive or long-locking behaviour not exercised by the
+scratch rehearsal, stop and create a release-specific migration plan.
+
+---
+
+## 8. Apply production migrations deliberately
+
+With the production backup verified and `RELEASE_SHA` checked out:
 
 ```bash
-git checkout <release commit>
-./scripts/migrate.sh 2>&1 | tee migrate-$(date +%s).log
+git checkout "$RELEASE_SHA"
+./scripts/migrate.sh 2>&1 | tee "migrate-$(date +%s).log"
 ```
 
-Migrations `0020`–`0030` are additive: no `DROP TABLE`, no `DROP COLUMN`, no
-`TRUNCATE`. Two carry data statements and must be read before running:
+Expected:
 
-| Migration | Data statement | Effect |
-|---|---|---|
-| `0025_missed_event_uniqueness.sql` | `DELETE` | removes duplicate missed-dose events so a unique index can be created |
-| `0028_one_live_otp_challenge.sql` | `UPDATE` | retires surplus live OTP challenges so one-live-challenge can be enforced |
+- If `PENDING_COUNT` was greater than zero, the applied count and filenames
+  match the reviewed pending set.
+- If `PENDING_COUNT` was zero, the runner prints `no pending migrations`.
+- The runner ends with `migrations complete`.
+- A second run is a no-op.
+- The live ledger now ends at `TARGET_MIGRATION` with no unknown entries.
 
-Neither destroys medication, dose or profile data. Both are irreversible without
-the Step 2 backup.
-
-**EXPECTED RESULT:** `applied 11 migration(s)`, then `applying role grants…`,
-then `migrations complete`. The old code (`db7061f1`) is still serving and is
-unaffected: every migration is additive, so the running API keeps working.
-
-**ROLLBACK CONDITION:** Any migration fails → the transaction for that file
-rolls back and the ledger has no row for it. Do **not** retry blindly. Read the
-log, and if the schema is in a state the rehearsal did not produce, restore from
-the Step 2 backup. Production is still on old code, so a restore costs data
-written since the backup, not a broken service.
-
-**IF `migrate.sh` REFUSES** with `was already applied but its contents have
-changed` — a shipped migration was edited. Stop. That is a repository defect,
-not a deploy problem.
+Any failure: stop. Do not retry blindly. Compare the live ledger to the scratch
+result and use the backup only if code rollback cannot restore safe operation.
 
 ---
 
-## Step 5 — Deploy the worker
+## 9. Deploy and verify the worker first
 
-**PRECONDITION:** Step 4 succeeded. Migrations at `0030`.
+Deploy canonical `dawaee-worker` manually at `RELEASE_SHA`.
 
-**ACTION:** In Render, deploy `dawaee-worker` at the release commit
-(Manual Deploy → the recorded commit).
+Required evidence:
 
-Its `preDeployCommand: ./scripts/migrate.sh` will run again. After Step 4 this
-is a no-op and that is the point: it is the confirmation that the worker sees
-the same ledger the operator did.
+- pre-deploy migration run is a no-op and ends successfully;
+- worker reaches live on `RELEASE_SHA`;
+- regular ticks continue;
+- `materialize` succeeds;
+- the pre-release production error
+  `permission denied for table dose_occurrences` no longer appears;
+- no new permission error appears in another worker job;
+- job/run errors remain sanitized and contain no patient data.
 
-**EXPECTED RESULT:**
+Observe multiple ticks, not just process startup.
 
-- Pre-deploy log contains `no pending migrations` and `migrations complete`.
-- The service reaches `live`.
-- Within 60 seconds the worker logs a tick.
-- **`permission denied for table auth_sessions` stops appearing.** It has been
-  logged every hour continuously on `db7061f1`; `0021_worker_least_privilege.sql`
-  is the fix. Its disappearance is the observable proof that `0021` landed.
-
-**ROLLBACK CONDITION:** Pre-deploy exits non-zero, the worker crash-loops, or
-the `auth_sessions` error persists → roll the worker back to `db7061f1` (Step
-R1). The API has not moved, so the system is back to its pre-release state with
-the new schema in place — which is safe, because the migrations are additive.
-
-**WATCH FOR:** `providers: {"push":"mock"}`. If `PUSH_PROVIDER` is still unset,
-the worker records deliveries instead of sending them and **no patient receives
-a reminder.** See Known state.
+Rollback condition: pre-deploy failure, crash loop, materializer still failing,
+or a new worker-wide regression → rollback to `PRE_RELEASE_WORKER_DEPLOY` and
+stop. Do not move the API forward.
 
 ---
 
-## Step 6 — Deploy the API
+## 10. Deploy and verify the API
 
-**PRECONDITION:** Step 5 green for at least 5 minutes with a clean tick log.
+Deploy canonical `dawaee-api` manually at the **same** `RELEASE_SHA`.
 
-**ACTION:** In Render, deploy `dawaee-api` at the same commit.
+Before declaring it live, verify the Render service itself reflects the intended
+release configuration. In particular, the release candidate expects the
+readiness endpoint to be the traffic gate and must not rely on a sleeping free
+service for medication actions/reminders.
 
-**EXPECTED RESULT:** Build succeeds; the service passes its
-`healthCheckPath: /health` and goes `live`.
-
-**ROLLBACK CONDITION:** The service fails its health check, crash-loops, or logs
-`fatal startup error: Invalid environment configuration` → roll back to
-`db7061f1` (Step R2). A config error here means a variable the new code requires
-was never set; the old image does not require it.
-
-**NOTE ON BUILD IDENTITY:** `/version` reads `RENDER_GIT_COMMIT` — which Render
-sets itself, from the commit it built — before falling back to the `GIT_COMMIT`
-build argument. So a Render deploy now reports its real SHA with no build
-argument at all. `unknown` here means the platform variable was absent and
-should be investigated; a *specific but wrong* SHA remains a serious finding.
-
----
-
-## Step 7 — Health and readiness
-
-**PRECONDITION:** Step 6 live.
-
-**ACTION:**
+Probe:
 
 ```bash
 curl -fsS https://<api-host>/health
@@ -334,290 +310,176 @@ curl -fsS https://<api-host>/health/ready
 curl -fsS https://<api-host>/version
 ```
 
-**EXPECTED RESULT:**
+Required evidence:
 
-- `/health` → `{"status":"ok","service":"dawaee-api","time":"…"}`
-- `/health/ready` → **200** with `status: "ready"` and `checks.database.ok: true`,
-  meaning the database is reachable **as the application role** — this is the
-  check that proves `dawaee_app`'s password in Postgres matches the one Render
-  handed the API. Step 4 rewrote both role passwords; if they disagree, this is
-  where it shows. A failed database check returns **503** and `status:
-  "degraded"`.
-- Read `mockedIntegrations` in that same response. It names every provider still
-  on a stub. On current production it will contain `push`. This endpoint is the
-  authoritative answer to "are reminders actually being sent" — do not infer it
-  from anywhere else.
-- `/version` → exactly `{service, commit, version, builtAt, schema}` and nothing
-  else. `commit` now comes from Render's own `RENDER_GIT_COMMIT` first, so it
-  reports the real SHA without anyone maintaining a build argument; `schema` is
-  the migration this build requires.
+- `/health` is 200;
+- `/health/ready` is 200 and reports the required database/schema/worker/provider
+  checks ready;
+- `/version` reports `RELEASE_SHA` and the release schema target;
+- API and worker build identities agree;
+- no cold-start 503 pattern appears after the intended non-sleeping service
+  configuration is active;
+- production Render request logs for fixed-path traffic contain **no stable
+  profile, medication, dose, schedule, upload-object or caregiver relationship
+  identifiers in paths or queries**.
 
-**ROLLBACK CONDITION:** `/health/ready` fails while `/health` succeeds → the
-process is up but cannot reach the database as `dawaee_app`. Roll back the API
-(R2) and re-run the role-grant half of `migrate.sh`.
+That last item is the closure criterion for the open Render platform request-log
+privacy blocker. Application logger redaction alone is insufficient.
 
-**BLOCKED IN THIS AUDIT:** egress to `*.onrender.com` is blocked by proxy policy
-from the environment P17 ran in, so no probe was executed. These commands are
-written, not verified.
+Rollback condition: readiness failure, wrong SHA/schema, crash loop, global auth
+failure, persistent 503 availability problem, or identifier-bearing platform
+URLs after the supposed cutover → rollback to `PRE_RELEASE_API_DEPLOY`; if the
+worker/API contract is no longer coherent, also rollback the worker.
 
 ---
 
-## Step 8 — TLS verification
+## 11. Production smoke tests with synthetic accounts only
 
-**PRECONDITION:** Step 7 passing.
+Use dedicated synthetic accounts. Never use a real patient account for release
+verification.
 
-**ACTION:**
+1. Register/sign in with the supported password flow.
+2. Confirm `/v1/auth/otp/request` fails closed with the documented
+   provider-unavailable response if OTP remains intentionally disabled; do not
+   require a successful OTP while no approved delivery provider exists.
+3. Create a patient profile.
+4. Create a medication, schedule and stock record.
+5. Verify the expected dose occurrences exist and the worker extends the rolling
+   materialization horizon.
+6. Confirm Taken, Skip and Snooze boundaries and idempotent replay behaviour.
+7. Read the patient/profile resources from an unrelated account and prove no
+   cross-tenant data is returned.
+8. Exercise caregiver invitation, least-privilege reads, dose confirmation and
+   permission revocation; revoked permissions must take effect immediately.
+9. Exercise upload → PUT → finalize → OCR/read with synthetic non-sensitive
+   content; cross-profile/object replay must fail.
+10. Check notification privacy defaults and a retry after a privacy/permission
+    change.
+11. Exercise offline/replay reconciliation from a test device/build where
+    available.
+12. Verify admin access with a synthetic admin, then remove `is_admin` in the
+    controlled operator path and prove the already-issued token loses privileged
+    access on the next admin request.
 
-```bash
-openssl s_client -connect <api-host>:443 -servername <api-host> </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject -issuer -dates
-```
+Cross-tenant data exposure, stale revoked privilege, or a dose/stock replay that
+changes clinical state twice is an immediate release stop and incident-level
+finding.
 
-And confirm the **database** side, which matters more: `DATABASE_SSL` must be
-`true` on both services. The value is a literal in `render.yaml`, so a Blueprint
-sync re-asserts it — but confirm it was not overridden in the dashboard.
-
-**EXPECTED RESULT:** A valid, unexpired certificate chaining to a public root
-for the API host. `DATABASE_SSL=true` on both services.
-
-**ROLLBACK CONDITION:** `DATABASE_SSL` is anything other than `true` — in
-particular `no-verify` — → treat as a security incident, not a deploy issue.
-Correct it and redeploy. The service is designed to refuse to boot in production
-with a weaker value; if it booted anyway, that guard has regressed.
-
----
-
-## Step 9 — Smoke tests
-
-**PRECONDITION:** Steps 7–8 passing.
-
-Run against production with a **dedicated test account**, never a real patient
-account. Every step below is a normal user action; none of it writes to another
-tenant.
-
-| # | Action | Expected | Proves |
-|---|---|---|---|
-| 1 | Request an OTP for the test number | 200; exactly one live challenge | `0028` |
-| 2 | Request a second OTP immediately | rate-limited, not a second live challenge | `0029` + `0028` |
-| 3 | Complete login | session issued | auth plane |
-| 4 | `POST /v1/profiles` | **201 with the profile body** | the P12 fix for a 404 that broke profile creation for every user |
-| 5 | Create a medication and a schedule | 201 | core write path |
-| 6 | Read the schedule as the owner | the dose appears | read path |
-| 7 | Read the same profile as a second, unrelated account | **403 or 404 — never data** | cross-tenant isolation |
-| 8 | Invite a caregiver with `view_schedule` but not `view_medications` | explicit **403** on medication-bearing routes, not an empty list | the P12 authorization decision |
-| 9 | Confirm a dose | recorded once | dose write path |
-| 10 | Wait one worker tick and read `job_runs` | a row, with **no raw error text** | P13 operational-error sanitization |
-
-**EXPECTED RESULT:** All ten as described. Test 4 and test 7 are the two that
-must never be waved through.
-
-**ROLLBACK CONDITION:** Test 7 returns another tenant's data → **immediate full
-rollback (R1 + R2) and treat as a data-exposure incident.** Any other failure →
-assess; a failure in 4, 8 or 10 means the release did not deliver what it
-claims and should be rolled back.
-
-**AFTERWARDS:** delete the test data. Do not leave synthetic patients in
-production.
+Delete synthetic test data after verification.
 
 ---
 
-## Step 10 — Native build
+## 12. Native release gates
 
-**PRECONDITION:** API release verified through Step 9 and stable for at least 24
-hours. The mobile app must never ship ahead of the API it calls.
+The mobile app must not ship ahead of the verified API contract.
 
-**ACTION:**
+Before store submission:
 
 ```bash
 cd apps/mobile
-npm ci --legacy-peer-deps     # NOT a workspace member; this flag is required
+npm ci --legacy-peer-deps
 npx tsc --noEmit
 npx expo-doctor
 eas build --platform ios --profile production
 eas build --platform android --profile production
 ```
 
-**EXPECTED RESULT:** Typecheck clean, both builds succeed, build IDs recorded
-alongside the API release commit.
+Then test on physical iOS and Android devices:
 
-**ROLLBACK CONDITION:** Build failure → fix before release. Nothing to roll
-back; the API release stands on its own.
+- notification permission granted and denied;
+- reminder delivery with the app closed;
+- lock-screen notification privacy default and explicit opt-in behaviour;
+- offline reminder/action and reconnect reconciliation;
+- secure token and invite-capability storage;
+- Arabic RTL layouts;
+- timezone/travel behaviour;
+- Emergency QR limited disclosure and capability transport;
+- account/profile switching with no stale cached clinical data.
 
-**NOT RUN:** `expo-doctor`'s online compatibility checks were classified NOT RUN
-in P16 (no network in the audit environment). This is the step where they
-actually run.
+A hardware/OS behaviour that was not observed is `NOT RUN`, not PASS.
 
----
-
-## Step 11 — Device tests
-
-**PRECONDITION:** Step 10 produced installable builds.
-
-Real hardware. Not a simulator. The claims below cannot be verified any other
-way, and several concern platform behaviour the project is explicitly forbidden
-to overstate.
-
-| Test | Device | Must observe |
-|---|---|---|
-| Notification permission prompt | iOS + Android | Granted and denied both handled |
-| Reminder arrives with the app closed | iOS + Android | The notification actually appears |
-| Notification content | both | **No medication name or dose in the visible payload** — the P13 notification-privacy finding |
-| Reminder while offline | both | No crash; state reconciles on reconnect |
-| Token storage | both | Auth tokens in the secure store, **never AsyncStorage** |
-| Arabic RTL layout | both | Correct on the reminder and dose screens |
-| Timezone change | both | Schedule follows the configured travel policy |
-| Emergency QR | both | Scans to the limited card, **never full account information** |
-
-**EXPECTED RESULT:** Every row observed and recorded with device model and OS
-version.
-
-**ROLLBACK CONDITION:** Notification privacy or token storage fails → do not
-ship the mobile release. The API release is unaffected and stays.
-
-**STANDING CONSTRAINT:** if a background-delivery behaviour cannot be observed
-on the device, it is NOT RUN. It does not become PASS because the code looks
-correct.
+Use staged/phased store rollout and halt it on crash or reminder-delivery
+regression.
 
 ---
 
-## Step 12 — Mobile release
+## 13. Auto-deploy decision after release
 
-**PRECONDITION:** Step 11 fully green on both platforms.
+Do not automatically re-enable deploy-on-commit merely because the release is
+green. Record an explicit decision.
 
-**ACTION:** Submit to App Store Connect and Google Play. **Staged rollout on
-Android — start at 10%.** iOS phased release enabled.
+If canonical API/worker auto-deploy is re-enabled, document how a future
+migration-bearing release is ordered so API code cannot outrun the worker's
+pre-deploy migration. A Blueprint sync may re-assert `render.yaml`, so verify the
+actual Render service state after any sync.
 
-**EXPECTED RESULT:** Builds accepted; rollout begins.
-
-**ROLLBACK CONDITION:** Crash rate above baseline, or any report of a reminder
-not arriving → halt the rollout immediately (Play halts; iOS pauses the phased
-release). A mobile rollback is a *new build*, not a revert, so halting early is
-the only fast control that exists.
-
----
-
-## Step 13 — Re-enable auto-deploy
-
-**PRECONDITION:** The release is stable and accepted.
-
-**ACTION:** Re-enable auto-deploy on `dawaee-api` and `dawaee-worker` **only**.
-Leave it off on the four legacy services.
-
-**EXPECTED RESULT:** Two services on auto-deploy; four silent.
-
-**NOTE:** re-enabling restores the API/worker deploy race described at the top
-of this document. It is tolerable for ordinary releases where no migration is
-pending, and it is not tolerable for any release that adds one. The durable fix
-— a paid API instance with its own `preDeployCommand`, or a deploy gate that
-orders the two — is a release blocker for the *next* migration-bearing release,
-not this one.
+Leave the four duplicate fail-closed services out of the release path. Their
+cleanup remains governed by `docs/RENDER-CLEANUP-RUNBOOK.md`.
 
 ---
 
 # Rollback plan
 
-Rollback is by **deploy**, never by editing production. Two independent
-rollbacks, in this order.
+## R1 — Worker
 
-### R1 — Roll the worker back
+Rollback the canonical worker to the recorded `PRE_RELEASE_WORKER_DEPLOY`.
+Confirm it reaches live and resumes its pre-release observable behaviour.
 
-Render → `dawaee-worker` → Deploys → the last deploy on `db7061f1` → **Rollback**.
+## R2 — API
 
-Its pre-deploy runs `migrate.sh` at the *old* commit. That commit's
-`db/migrations/` contains only `0001`–`0019`, and the loop applies pending files
-— it never removes applied ones. Against a database at `0029` it prints
-`no pending migrations` and exits 0. **The schema stays at `0029`.**
+Rollback the canonical API to the recorded `PRE_RELEASE_API_DEPLOY`. Confirm
+`/health` and the pre-release supported user flow recover.
 
-*Time: one deploy cycle. Data loss: none.*
+## R3 — Schema restore, only when code rollback is insufficient
 
-### R2 — Roll the API back
+There are no generic down-migrations. Schema rollback means restoring the
+verified pre-release backup and therefore losing writes after that backup.
 
-Render → `dawaee-api` → Deploys → the last deploy on `db7061f1` → **Rollback**.
+Require:
 
-Confirm `/health` returns 200 afterwards.
+- the specific failure that R1/R2 cannot solve;
+- explicit second-operator authorization;
+- the exact data-loss window;
+- a written incident/recovery record.
 
-*Time: one deploy cycle. Data loss: none.*
-
-### R3 — Schema rollback (only if R1+R2 is insufficient)
-
-**There are no down-migrations.** This is deliberate: a down-migration that
-drops a column drops the data in it, and this system stores medication
-schedules.
-
-Schema rollback therefore means **restore the Step 2 backup**, which loses every
-row written since the backup was taken.
-
-Require, before doing it:
-
-- The specific failure that code rollback did not fix, written down.
-- Explicit operator authorization from a second person.
-- Acknowledgement of the exact data window that will be lost.
-
-**Do not perform R3 to tidy up.** Migrations `0020`–`0029` are additive; old code
-runs against the new schema without error. Leaving the schema ahead of the code
-is the correct resting state after a rollback.
-
-### Rollback decision table
-
-| Symptom | Action |
-|---|---|
-| Migration failed mid-run | Stop. Old code still serving. Read the log; restore only if the schema is in an unrehearsed state |
-| Worker crash-loops | R1 |
-| Worker pre-deploy fails | R1 |
-| `auth_sessions` errors persist after deploy | R1; `0021` did not land |
-| API fails health check | R2 |
-| API config error at boot | R2; a required variable is unset |
-| `/health/ready` fails, `/health` passes | R2, then re-run role grants |
-| Auth broken for everyone | R2 first; if it persists, R1 |
-| **Cross-tenant data visible** | R1 + R2 immediately; incident process |
-| Reminders not delivered | Check `PUSH_PROVIDER` before rolling back — mock is a config state, not a regression |
-| Mobile crash spike | Halt the store rollout; API stays |
-
-### What rollback does **not** undo
-
-- `0025`'s `DELETE` of duplicate missed-dose events.
-- `0028`'s `UPDATE` retiring surplus live OTP challenges.
-- Role passwords rewritten by `migrate.sh`.
-- Any row written by the new code while it was live.
-
-Only R3 reaches these, and only by losing the window.
+Do not restore merely to make schema and code versions look cosmetically equal.
 
 ---
 
-# Known state at the time of writing
+# Release evidence to retain
 
-These are measured facts about production on `db7061f1`, not predictions. Each
-one affects the release.
+Keep together:
 
-| Observation | Consequence for this release |
-|---|---|
-| `providers: {"push":"mock"}` in `env: production` | **Push is mocked in production.** Reminders are recorded, not sent. Deploying new code changes nothing about this. Setting `PUSH_PROVIDER` and `EXPO_ACCESS_TOKEN` is a separate, deliberate decision that turns on real delivery to real patients — do it in its own change, with its own verification, not folded into this release |
-| `permission denied for table auth_sessions`, hourly, continuously | Fixed by `0021`. Its disappearance is Step 5's success signal |
-| `/health` polled every 5 s from `10.216.24.39`; **no external traffic at all** | Production has no real users yet. That lowers the risk of this release considerably — and it means proxy/TLS topology (P17 §19) stays NOT RUN because there is nothing to observe |
-| Four legacy services never boot; no environment variables at all | Not an attack surface. Still six builds per push and four red badges. Step 0 handles them for the release; `docs/RENDER-CLEANUP-RUNBOOK.md` handles them permanently |
-| `dawaee-db` free plan, `expiresAt: 2026-10-03`, ~0 connections | Believed unused, **not confirmed**. Confirm which host `DATABASE_URL` names before Step 2, or the backup may be of the wrong database |
-| `/version` will report `commit: "unknown"` on Render | Expected: build args are not passed. Traceability comes from the deploy record |
+- `CANDIDATE_SHA` and post-merge `RELEASE_SHA`;
+- PR and required-check results;
+- GitHub ruleset snapshot/reference;
+- pre-release API/worker deploy IDs and SHAs;
+- backup identifier/timestamp;
+- `release-migrations.txt`;
+- `pre-release-ledger-names.txt`;
+- `pre-release-ledger-checksums.txt`;
+- `pending-migrations.txt`;
+- preflight output;
+- scratch rehearsal logs;
+- production migration log;
+- worker verification logs;
+- `/health`, `/health/ready`, `/version` results;
+- redacted Render platform-log evidence proving fixed-path privacy cutover;
+- production smoke-test record;
+- physical-device test record for any mobile release.
 
 ---
 
-# What this runbook cannot promise
+# What remains external / cannot be inferred from green CI
 
-Stated so no one reads a green run as more than it is:
+- The live production migration ledger until it is read in Step 4.
+- Existence and restorability of the current Supabase backup.
+- Provider credentials and real push/OCR/storage delivery until readiness and
+  end-to-end provider checks are observed.
+- Physical-device notification/background behaviour until tested on hardware.
+- Store acceptance and staged rollout behaviour.
+- Legal/retention-policy approval; technical controls are not a compliance
+  opinion.
 
-- **GitHub Actions has never executed this CI configuration.** P16 classified it
-  NOT RUN. Step 1's precondition is the first real execution.
-- **Branch protection and required checks are NOT VERIFIED.** Step 1's control
-  is only as strong as a setting nobody has read.
-- **No endpoint of the deployed service has been probed.** Egress to
-  `*.onrender.com` is blocked from the audit environment; Steps 7–9 are written,
-  not verified.
-- **No real-device mobile test has been run.** Step 11 is entirely NOT RUN.
-- **Base image is not pinned by digest.** `node:22-bookworm-slim` is mutable, so
-  two builds of the same commit can differ. Open decision, documented in the
-  `Dockerfile`.
-- **GitHub Actions are not SHA-pinned.** BLOCKED — resolving tags to SHAs
-  requires registry access the audit environment does not have.
-- **Retention policy has no legal approval.** POLICY MISSING since P13. The
-  technical enforcement exists; the approval does not. Saudi PDPL applicability
-  has not been formally assessed, and nothing here should be read as a
-  compliance claim.
+A green repository is necessary evidence, not permission to skip these release
+checks.

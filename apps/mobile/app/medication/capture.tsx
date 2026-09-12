@@ -6,7 +6,13 @@ import { Banner, Button, Card, Loading, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
+import {
+  clearMedicationDrafts,
+  setMedicationConfirmDraft,
+  type MedicationConfirmDraft,
+} from '@/storage/medication-draft';
 import type { MessageKey } from '@dawaee/shared';
 
 type CaptureMode = 'photo' | 'upload' | 'barcode' | 'prescription';
@@ -80,14 +86,6 @@ interface UploadTicketResponse {
   upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string>; expiresAt: string };
 }
 
-export interface ConfirmPayload {
-  imageKey: string;
-  kind: 'medication_label' | 'prescription';
-  detected: Record<string, { value: string; confidence: number }>;
-  rawText: string;
-  remainingLines: number;
-}
-
 function field(source: OcrField | undefined): { value: string; confidence: number } | null {
   if (!source) return null;
   const value = typeof source.value === 'number' ? String(source.value) : source.value.trim();
@@ -95,9 +93,9 @@ function field(source: OcrField | undefined): { value: string; confidence: numbe
   return { value, confidence: source.confidence };
 }
 
-function fromLabel(response: MedicationLabelResponse): ConfirmPayload['detected'] {
+function fromLabel(response: MedicationLabelResponse): MedicationConfirmDraft['detected'] {
   const keys = ['name', 'brandName', 'genericName', 'form', 'strengthValue', 'strengthUnit', 'manufacturer', 'barcode', 'expiryDate', 'instructions'] as const;
-  const detected: ConfirmPayload['detected'] = {};
+  const detected: MedicationConfirmDraft['detected'] = {};
   for (const key of keys) {
     const parsed = field(response.detected[key]);
     if (parsed) detected[key] = parsed;
@@ -105,10 +103,10 @@ function fromLabel(response: MedicationLabelResponse): ConfirmPayload['detected'
   return detected;
 }
 
-function fromPrescription(response: PrescriptionResponse): ConfirmPayload['detected'] {
+function fromPrescription(response: PrescriptionResponse): MedicationConfirmDraft['detected'] {
   const first = response.lines[0];
   if (!first) return {};
-  const detected: ConfirmPayload['detected'] = {};
+  const detected: MedicationConfirmDraft['detected'] = {};
   const name = field(first.medicationName);
   if (name) detected.name = name;
   const parts = [field(first.dosage), field(first.frequency), field(first.duration)]
@@ -125,11 +123,17 @@ function fromPrescription(response: PrescriptionResponse): ConfirmPayload['detec
 type Stage = 'camera' | 'preview' | 'working' | 'consent' | 'unavailable';
 
 export default function CaptureScreen() {
+  const { user, activeProfile } = useApp();
+  return <CaptureProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function CaptureProfileScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode: CaptureMode = MODES.has(params.mode ?? '') ? (params.mode as CaptureMode) : 'photo';
   const { t } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
+  const { capture: captureAction } = useRequestScope();
 
   const cameraRef = useRef<CameraHandle | null>(null);
   const [camera] = useState<CameraModule | null>(() => (mode === 'upload' ? null : loadCamera()));
@@ -177,19 +181,39 @@ export default function CaptureScreen() {
 
   const analyze = useCallback(async (key: string) => {
     if (!activeProfile) return;
+    const isCurrent = captureAction();
+    if (!isCurrent()) return;
+    const patientProfileId = activeProfile.id;
     setBusyLabel(t('capture.analyzing'));
     setStage('working');
     try {
       const response = await api.post<OcrResponse>('/v1/ocr/analyze', {
         imageKey: key,
-        patientProfileId: activeProfile.id,
+        patientProfileId,
         kind: mode === 'prescription' ? 'prescription' : 'medication_label',
       });
-      const payload: ConfirmPayload = response.kind === 'prescription'
-        ? { imageKey: key, kind: 'prescription', detected: fromPrescription(response), rawText: response.rawText, remainingLines: Math.max(0, response.lines.length - 1) }
-        : { imageKey: key, kind: 'medication_label', detected: fromLabel(response), rawText: response.rawText, remainingLines: 0 };
-      router.replace(`/medication/confirm?data=${encodeURIComponent(JSON.stringify(payload))}`);
+      if (!isCurrent()) return;
+      const payload: MedicationConfirmDraft = response.kind === 'prescription'
+        ? {
+            patientProfileId,
+            imageKey: key,
+            kind: 'prescription',
+            detected: fromPrescription(response),
+            remainingLines: Math.max(0, response.lines.length - 1),
+          }
+        : {
+            patientProfileId,
+            imageKey: key,
+            kind: 'medication_label',
+            detected: fromLabel(response),
+            remainingLines: 0,
+          };
+      // Health data stays process-local. Query strings are platform-visible on
+      // web and can be copied into browser history, referrers and request logs.
+      setMedicationConfirmDraft(payload);
+      router.replace('/medication/confirm');
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'consent_required') {
         setStage('consent');
         return;
@@ -197,34 +221,43 @@ export default function CaptureScreen() {
       failWith(err);
       setStage('preview');
     } finally {
-      setBusyLabel(null);
+      if (isCurrent()) setBusyLabel(null);
     }
-  }, [activeProfile, failWith, mode, t]);
+  }, [activeProfile, captureAction, failWith, mode, t]);
 
   const uploadAndAnalyze = useCallback(async (uri: string) => {
     if (!activeProfile) return;
+    const isCurrent = captureAction();
+    if (!isCurrent()) return;
+    const patientProfileId = activeProfile.id;
     setError(null);
     setBusyLabel(t('capture.uploading'));
     setStage('working');
     try {
       const blob = await (await fetch(uri)).blob();
+      if (!isCurrent()) return;
       const contentType = ALLOWED_CONTENT_TYPES.has(blob.type) ? blob.type : 'image/jpeg';
       const ticket = await api.post<UploadTicketResponse>('/v1/uploads/request', {
         purpose: mode === 'prescription' ? 'prescription_image' : 'medication_image',
         contentType,
         byteSize: blob.size,
-        patientProfileId: activeProfile.id,
+        patientProfileId,
       });
+      if (!isCurrent()) return;
       const put = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob });
+      if (!isCurrent()) return;
       if (!put.ok) throw new ApiError('upload_rejected', put.status, 'upload failed');
+      await api.post('/v1/uploads/finalize', { objectKey: ticket.objectKey });
+      if (!isCurrent()) return;
       setImageKey(ticket.objectKey);
       await analyze(ticket.objectKey);
     } catch (err) {
+      if (!isCurrent()) return;
       failWith(err);
       setStage('preview');
       setBusyLabel(null);
     }
-  }, [activeProfile, analyze, failWith, mode, t]);
+  }, [activeProfile, analyze, captureAction, failWith, mode, t]);
 
   const takePhoto = useCallback(async () => {
     setError(null);
@@ -243,41 +276,66 @@ export default function CaptureScreen() {
 
   const pickImage = useCallback(async () => {
     if (!picker) return;
+    const isCurrent = captureAction();
+    if (!isCurrent()) return;
     setError(null);
     try {
       const permission = await picker.requestMediaLibraryPermissionsAsync();
+      if (!isCurrent()) return;
       if (!permission.granted) {
         setError(t('capture.permissionBody'));
         return;
       }
       const result = await picker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ['images'] });
+      if (!isCurrent()) return;
       const asset = result.assets?.[0];
       if (result.canceled || !asset) return;
       setPhotoUri(asset.uri);
       await uploadAndAnalyze(asset.uri);
     } catch {
+      if (!isCurrent()) return;
       setError(t('capture.failed'));
     }
-  }, [picker, t, uploadAndAnalyze]);
+  }, [captureAction, picker, t, uploadAndAnalyze]);
 
   const grantConsent = useCallback(async () => {
+    if (!activeProfile) return;
+    const isCurrent = captureAction();
+    if (!isCurrent()) return;
     setBusyLabel(t('capture.analyzing'));
     try {
-      await api.put('/v1/me/consents', { type: 'ocr_image_processing', granted: true, version: '1.0' });
+      await api.put('/v1/me/consents', {
+        type: 'ocr_image_processing',
+        granted: true,
+        version: '1.0',
+        patientProfileId: activeProfile.id,
+      });
+      if (!isCurrent()) return;
       if (imageKey) await analyze(imageKey);
     } catch (err) {
+      if (!isCurrent()) return;
       failWith(err);
       setStage('preview');
     } finally {
-      setBusyLabel(null);
+      if (isCurrent()) setBusyLabel(null);
     }
-  }, [analyze, failWith, imageKey, t]);
+  }, [activeProfile, analyze, captureAction, failWith, imageKey, t]);
+
+  const goManual = useCallback(() => {
+    clearMedicationDrafts();
+    router.replace('/medication/quick-create');
+  }, []);
+
+  const cancelCapture = useCallback(() => {
+    clearMedicationDrafts();
+    router.back();
+  }, []);
 
   const instructionKey: MessageKey = mode === 'barcode' ? 'capture.instructionBarcode' : mode === 'prescription' ? 'capture.instructionPrescription' : 'capture.instructionLabel';
   const titleKey: MessageKey = mode === 'barcode' ? 'medication.scanBarcode' : mode === 'prescription' ? 'medication.scanPrescription' : mode === 'upload' ? 'medication.uploadImage' : 'medication.takePhoto';
 
   const manualEntry = (
-    <Button label={t('medication.manualEntry')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
+    <Button label={t('medication.manualEntry')} tone="secondary" onPress={goManual} />
   );
 
   if (stage === 'working') {
@@ -291,8 +349,8 @@ export default function CaptureScreen() {
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t('consent.ocrTitle')}</Txt>
           <Card><Txt variant="body">{t('consent.ocrBody')}</Txt></Card>
           <Button label={t('consent.grant')} size="large" onPress={() => void grantConsent()} />
-          <Button label={t('consent.decline')} tone="secondary" onPress={() => router.replace('/medication/quick-create')} />
-          <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('consent.decline')} tone="secondary" onPress={goManual} />
+          <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
         </Screen>
       </SafeAreaView>
     );
@@ -305,7 +363,7 @@ export default function CaptureScreen() {
           <Txt variant="h2" weight="bold" accessibilityRole="header">{t(titleKey)}</Txt>
           <Banner tone="info" title={t('capture.unavailableTitle')} body={t('capture.unavailableBody')} />
           {manualEntry}
-          <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('common.back')} tone="ghost" onPress={cancelCapture} />
         </Screen>
       </SafeAreaView>
     );
@@ -321,7 +379,7 @@ export default function CaptureScreen() {
             <Txt variant="body" color={theme.colors.ink500}>{t('capture.permissionBody')}</Txt>
             <Button label={t('capture.allowCamera')} size="large" onPress={() => void requestPermission()} />
             {manualEntry}
-            <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+            <Button label={t('common.back')} tone="ghost" onPress={cancelCapture} />
           </Screen>
         </SafeAreaView>
       );
@@ -335,7 +393,7 @@ export default function CaptureScreen() {
           <View style={{ flex: 1, borderRadius: theme.radius.lg, overflow: 'hidden', backgroundColor: theme.colors.ink900 }}>{React.createElement(camera.CameraView, cameraProps)}</View>
           {error ? <Banner tone="danger" title={error} /> : null}
           <Button label={t('capture.shutter')} size="large" onPress={() => void takePhoto()} testID="capture-shutter" />
-          <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+          <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
         </View>
       </SafeAreaView>
     );
@@ -356,7 +414,7 @@ export default function CaptureScreen() {
           </>
         )}
         {manualEntry}
-        <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+        <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
       </Screen>
     </SafeAreaView>
   );

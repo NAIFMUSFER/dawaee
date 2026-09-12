@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { errorMessageKey, type MessageKey } from '@dawaee/shared';
@@ -53,6 +54,11 @@ function todayIn(timezone: string): string {
 }
 
 export default function ReportsHubScreen() {
+  const { user, activeProfile } = useApp();
+  return <ReportsHubProfileView key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function ReportsHubProfileView() {
   const { t, formatDate, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();

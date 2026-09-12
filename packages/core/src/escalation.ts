@@ -196,6 +196,12 @@ function channelAllowed(
   consecutiveMissedCount: number,
   patientLocalTime: LocalTime,
 ): boolean {
+  // `local` and `in_app` are device-side channels. The server dispatcher has no
+  // way to cause either one on a caregiver's phone; treating them as successful
+  // would record a notification that no caregiver ever saw. Remote caregiver
+  // escalation is push-only until another real provider is wired end to end.
+  if (channel !== 'push') return false;
+
   const rule = caregiver.rules.find((r) => r.channel === channel);
   // No rule configured for this channel means the caregiver never opted into it.
   if (!rule || !rule.enabled) return false;

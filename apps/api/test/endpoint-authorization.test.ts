@@ -5,6 +5,7 @@ import {
   type Harness, type TestUser,
 } from './harness.js';
 import { CAREGIVER_PERMISSIONS } from '@dawaee/shared';
+import type { UploadTicket } from '../src/providers/index.js';
 
 /**
  * P12 — endpoint-wide authorization.
@@ -105,6 +106,30 @@ function send(args: InjectArgs) {
   return h.app.inject({ remoteAddress: probeAddress(), ...(args as object) } as InjectArgs);
 }
 
+/** Complete the real local upload lifecycle; a ticket alone is not an image. */
+async function uploadAndFinalize(user: TestUser, objectKey: string, upload: UploadTicket, bytes: Buffer) {
+  expect(upload.method).toBe('PUT');
+  const target = new URL(upload.uploadUrl, 'http://localhost');
+  expect(target.pathname).toMatch(/^\/v1\/uploads\/local\//);
+  const written = await send({
+    method: 'PUT', url: `${target.pathname}${target.search}`,
+    headers: upload.headers, payload: bytes,
+  });
+  expect(written.statusCode, written.body).toBe(200);
+  // Stored bytes stay unavailable until the authenticated owner finalizes them.
+  const staged = await send({
+    method: 'GET', url: '/v1/uploads/url',
+    headers: { ...authHeaders(user), 'x-dawaee-object-key': objectKey },
+  });
+  expect(staged.statusCode, staged.body).toBe(404);
+  const finalized = await send({
+    method: 'POST', url: '/v1/uploads/finalize', headers: authHeaders(user),
+    payload: { objectKey },
+  });
+  expect(finalized.statusCode, finalized.body).toBe(200);
+  expect(finalized.json()).toMatchObject({ ok: true, objectKey });
+}
+
 type Exposure =
   /** Reachable with no credentials, by design. */
   | 'public'
@@ -156,6 +181,8 @@ const EXPOSURE: Record<string, Exposure> = {
 
   'GET /v1/doses': 'authenticated',
   'POST /v1/doses/sync': 'authenticated',
+  // Fixed path: dose id and action live in authenticated JSON, not Render's request path.
+  'POST /v1/dose/action': 'authenticated',
   'GET /v1/doses/:doseId': 'authenticated',
   'POST /v1/doses/:doseId/taken': 'authenticated',
   'POST /v1/doses/:doseId/snooze': 'authenticated',
@@ -204,6 +231,13 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/caregivers/:relationshipId/permissions': 'authenticated',
   'PUT /v1/caregivers/:relationshipId/notification-rules': 'authenticated',
 
+  // Privacy-preserving caregiver mutations keep the stable relationship id in
+  // the JSON body so Render request-path logs cannot retain it. They remain
+  // authenticated and preserve the same owner/RLS checks as the legacy routes.
+  'PATCH /v1/caregivers/permissions': 'authenticated',
+  'PUT /v1/caregivers/notification-rules': 'authenticated',
+  'POST /v1/caregivers/revoke': 'authenticated',
+
   'GET /v1/escalation-policy': 'authenticated',
   'PUT /v1/escalation-policy': 'authenticated',
 
@@ -216,6 +250,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/emergency/scan/:token': 'capability',
 
   'POST /v1/uploads/request': 'authenticated',
+  'POST /v1/uploads/finalize': 'authenticated',
   'GET /v1/uploads/url': 'authenticated',
   'POST /v1/ocr/analyze': 'authenticated',
   // Development storage sink only; `STORAGE_PROVIDER=local` is refused in
@@ -946,33 +981,46 @@ describe('P12-8 every route works for the person entitled to use it', () => {
     const list = await ok('GET /v1/doses', {
       method: 'GET', url: `/v1/doses?profileId=${own.profileId}&from=2026-09-01&to=2026-09-30`,
     });
-    const doses = list.json<{ doses: Array<{ id: string }> }>().doses;
-    expect(doses.length).toBeGreaterThan(2);
+    const doses = list.json<{ doses: Array<{ id: string; scheduledAt: string }> }>().doses;
+    expect(doses.length).toBeGreaterThan(3);
     own.doseId = doses[0]!.id;
 
     await ok('GET /v1/doses/:id', { method: 'GET', url: `/v1/doses/${own.doseId}` });
     const evt = (n: string) => `p12-${n}-${Date.now()}`;
-    await ok('POST taken', {
-      method: 'POST', url: `/v1/doses/${own.doseId}/taken`, payload: { clientEventId: evt('taken') },
-    });
-    await ok('POST undo', { method: 'POST', url: `/v1/doses/${own.doseId}/undo`, payload: { clientEventId: evt('undo') } });
-    await ok('POST snooze', {
-      method: 'POST', url: `/v1/doses/${doses[1]!.id}/snooze`,
-      payload: { minutes: 15, clientEventId: evt('snooze') },
-    });
-    await ok('POST skip', {
-      method: 'POST', url: `/v1/doses/${doses[2]!.id}/skip`, payload: { clientEventId: evt('skip') },
-    });
-    await ok('POST /v1/doses/sync', {
-      method: 'POST', url: '/v1/doses/sync',
-      payload: {
-        deviceId: 'carol-offline',
-        actions: [{
-          type: 'taken', doseOccurrenceId: doses[3]!.id,
-          at: '2026-09-01T08:05:00.000Z', clientEventId: evt('sync'),
-        }],
-      },
-    });
+    const restoreNow = new Date();
+    try {
+      h.setServerNow(new Date(doses[0]!.scheduledAt));
+      await ok('POST taken', {
+        method: 'POST', url: `/v1/doses/${own.doseId}/taken`,
+        payload: { clientEventId: evt('taken'), takenAt: doses[0]!.scheduledAt },
+      });
+      await ok('POST undo', { method: 'POST', url: `/v1/doses/${own.doseId}/undo`, payload: { clientEventId: evt('undo') } });
+
+      h.setServerNow(new Date(doses[1]!.scheduledAt));
+      await ok('POST snooze', {
+        method: 'POST', url: `/v1/doses/${doses[1]!.id}/snooze`,
+        payload: { minutes: 15, clientEventId: evt('snooze') },
+      });
+
+      h.setServerNow(new Date(doses[2]!.scheduledAt));
+      await ok('POST skip', {
+        method: 'POST', url: `/v1/doses/${doses[2]!.id}/skip`, payload: { clientEventId: evt('skip') },
+      });
+
+      h.setServerNow(new Date(doses[3]!.scheduledAt));
+      await ok('POST /v1/doses/sync', {
+        method: 'POST', url: '/v1/doses/sync',
+        payload: {
+          deviceId: 'carol-offline',
+          actions: [{
+            type: 'taken', doseOccurrenceId: doses[3]!.id,
+            at: doses[3]!.scheduledAt, clientEventId: evt('sync'),
+          }],
+        },
+      });
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 
   it('records a note and a measurement', async () => {
@@ -1067,8 +1115,11 @@ describe('P12-8 every route works for the person entitled to use it', () => {
         byteSize: 24_000, patientProfileId: own.profileId,
       },
     });
-    const { objectKey } = req.json<{ objectKey: string }>();
+    const { objectKey, upload } = req.json<{ objectKey: string; upload: UploadTicket }>();
     expect(objectKey).toBeTruthy();
+    const bytes = Buffer.alloc(24_000);
+    Buffer.from('89504e470d0a1a0a', 'hex').copy(bytes);
+    await uploadAndFinalize(carol, objectKey, upload, bytes);
     await ok('GET /v1/uploads/url', { method: 'GET', url: `/v1/uploads/url?objectKey=${encodeURIComponent(objectKey)}` });
   });
 
@@ -1879,7 +1930,11 @@ describe('P19-1 an image is medication identity, and needs the same permission',
       payload: { purpose, contentType: 'image/jpeg', byteSize: 4096, ...(profileId ? { patientProfileId: profileId } : {}) },
     });
     expect(res.statusCode, `${purpose}: ${res.body}`).toBe(200);
-    return res.json<{ objectKey: string }>().objectKey;
+    const { objectKey, upload } = res.json<{ objectKey: string; upload: UploadTicket }>();
+    const bytes = Buffer.alloc(4096);
+    Buffer.from([0xff, 0xd8, 0xff]).copy(bytes);
+    await uploadAndFinalize(user, objectKey, upload, bytes);
+    return objectKey;
   }
 
   const readUrl = (user: TestUser, key: string) => send({

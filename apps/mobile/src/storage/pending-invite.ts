@@ -61,6 +61,20 @@ export function claimInviteAttempt(token: string): boolean {
   return true;
 }
 
+/**
+ * Releases only the in-process duplicate-submit claim.
+ *
+ * Do NOT fold this into clearPendingInvite(): a successfully redeemed invite
+ * also clears its stored bearer, and releasing the claim on success would let a
+ * second mounted accept screen immediately submit the already-consumed token.
+ * Permanent refusals call this explicitly after the request settles so opening
+ * the same link again in the same process is allowed to reach the server and
+ * receive a fresh authoritative result instead of being stranded on Loading.
+ */
+export function releaseInviteAttempt(token: string): void {
+  attempted.delete(token);
+}
+
 export async function stashPendingInvite(token: string): Promise<void> {
   memoryPendingInvite = token;
 

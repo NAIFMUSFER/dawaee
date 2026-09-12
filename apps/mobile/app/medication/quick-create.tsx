@@ -10,7 +10,9 @@ import { TimeField, isValidTime } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
+import { clearMedicationDrafts, getMedicationPrefillDraft } from '@/storage/medication-draft';
 import type { MedicationView } from '@/api/types';
 import { DOSE_UNITS, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
 
@@ -35,24 +37,25 @@ type Prefill = {
   identitySource?: 'user' | 'ocr_confirmed_by_user' | 'barcode_confirmed_by_user';
 };
 
-function parsePrefill(raw: string | undefined): Prefill {
-  if (!raw) return {};
-  try {
-    const value = JSON.parse(raw) as Prefill;
-    return value && typeof value === 'object' ? value : {};
-  } catch {
-    return {};
-  }
+export default function QuickCreateMedicationScreen() {
+  const { user, activeProfile } = useApp();
+  return <QuickCreateMedicationProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
 }
 
-export default function QuickCreateMedicationScreen() {
-  const params = useLocalSearchParams<{ prefill?: string }>();
-  const prefill = useMemo(() => parsePrefill(params.prefill), [params.prefill]);
+function QuickCreateMedicationProfileScreen() {
+  const params = useLocalSearchParams<{ source?: string }>();
+  const { activeProfile, preferences } = useApp();
+  const prefill = useMemo<Prefill>(
+    () => params.source === 'capture' && activeProfile
+      ? (getMedicationPrefillDraft(activeProfile.id) ?? {})
+      : {},
+    [params.source, activeProfile?.id],
+  );
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
-  const { activeProfile, preferences } = useApp();
   const arabic = preferences.locale === 'ar';
   const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const { capture: captureSave } = useRequestScope();
 
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
@@ -113,6 +116,7 @@ export default function QuickCreateMedicationScreen() {
       return;
     }
 
+    const isCurrent = captureSave();
     setSaving(true);
     setError(null);
     setNameError(null);
@@ -155,15 +159,18 @@ export default function QuickCreateMedicationScreen() {
         }),
         ...(acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      if (!isCurrent()) return;
+      clearMedicationDrafts();
       router.replace(`/medication/${created.medication.id}`);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
         setDuplicate(true);
       } else {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
@@ -279,7 +286,14 @@ export default function QuickCreateMedicationScreen() {
             <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
           </>
         ) : null}
-        <Button label={t('common.cancel')} tone="ghost" onPress={() => router.back()} />
+        <Button
+          label={t('common.cancel')}
+          tone="ghost"
+          onPress={() => {
+            clearMedicationDrafts();
+            router.back();
+          }}
+        />
       </Screen>
     </SafeAreaView>
   );

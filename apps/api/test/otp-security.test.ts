@@ -391,7 +391,7 @@ describe('codes do not leak, and challenges do not linger', () => {
   it('debug echo cannot be switched on in production', async () => {
     const { loadConfig, resetConfigCache } = await import('../src/config.js');
     const base = {
-      NODE_ENV: 'production', IP_HASH_SALT: 'p6-real-salt-value', STORAGE_PROVIDER: 's3',
+      NODE_ENV: 'production', IP_HASH_SALT: 'p6-real-salt-value', PUSH_PROVIDER: 'expo', STORAGE_PROVIDER: 's3',
       JWT_SECRET: 'p6_secret_at_least_forty_eight_characters_long_0123456789',
       DATABASE_SSL: 'true', DATABASE_URL: 'postgres://u:p@127.0.0.1:5433/d',
     } as NodeJS.ProcessEnv;

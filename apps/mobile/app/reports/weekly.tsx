@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { DOSE_STATUS_COLORS, errorMessageKey, type MessageKey } from '@dawaee/shared';
@@ -56,9 +57,16 @@ interface WeeklyReport {
 }
 
 export default function WeeklyReportScreen() {
+  const { user, activeProfile } = useApp();
+  const key = profileScopeKey(user?.id, activeProfile);
+  return <WeeklyReportProfileScreen key={key} />;
+}
+
+function WeeklyReportProfileScreen() {
   const { t, formatDate, formatTime, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
+  const requestScope = useRequestScope(activeProfile?.id ?? 'none');
 
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,12 +75,16 @@ export default function WeeklyReportScreen() {
 
   const load = useCallback(async () => {
     if (!activeProfile) return;
+    const isCurrent = requestScope.begin();
+    if (!isCurrent()) return;
     setError(null);
     try {
       const res = await api.get<WeeklyReport>('/v1/reports/weekly', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       setReport(res);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else if (err instanceof ApiError) {
@@ -82,9 +94,9 @@ export default function WeeklyReportScreen() {
         setError(t('error.internal_error'));
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, setOffline, t]);
+  }, [activeProfile, requestScope, setOffline, t]);
 
   useEffect(() => { setLoading(true); void load(); }, [load]);
 

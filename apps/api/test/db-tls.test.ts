@@ -33,6 +33,7 @@ const PROD_BASE = {
   DATABASE_URL: 'postgres://u:p@db.example.com:5432/dawaee',
   JWT_SECRET: 'x'.repeat(64),
   IP_HASH_SALT: 'a-real-production-salt-value',
+  PUSH_PROVIDER: 'expo',
   STORAGE_PROVIDER: 's3',
   OTP_DEBUG_ECHO: 'false',
 };

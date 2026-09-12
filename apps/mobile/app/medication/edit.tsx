@@ -7,6 +7,7 @@ import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
@@ -107,12 +108,20 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 
 export default function EditMedicationScreen() {
   const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
+  const { user, activeProfile } = useApp();
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.mode ?? 'create'}:${params.id ?? 'new'}:${params.prefill ?? ''}`;
+  return <EditMedicationProfileScreen key={key} />;
+}
+
+function EditMedicationProfileScreen() {
+  const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
   const isEdit = params.mode === 'edit' && Boolean(params.id);
   const medicationId = params.id;
 
   const { t, formatNumber, formatMeasure } = useI18n();
   const theme = useTheme();
   const { activeProfile } = useApp();
+  const { capture: captureSave } = useRequestScope();
 
   const [draft, setDraft] = useState<Draft>(() =>
     applyPrefill(emptyDraft(activeProfile?.timezone), params.prefill));
@@ -194,6 +203,8 @@ export default function EditMedicationScreen() {
       setNameError(t('medication.nameRequired'));
       return;
     }
+    const isCurrent = captureSave();
+    if (!isCurrent()) return;
     setNameError(null);
     setError(null);
     setSaving(true);
@@ -204,6 +215,7 @@ export default function EditMedicationScreen() {
           ...body(),
           ...(options.confirmHighRiskChange ? { confirmHighRiskChange: true } : {}),
         });
+        if (!isCurrent()) return;
         setHighRisk(null);
         router.replace(`/medication/${medicationId}`);
         return;
@@ -215,10 +227,12 @@ export default function EditMedicationScreen() {
         identitySource: 'user',
         ...(options.acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      if (!isCurrent()) return;
       // A medication with no schedule never reminds anyone, so creating one
       // hands straight over to the schedule builder rather than to the detail.
       router.replace(`/medication/schedule?medicationId=${created.medication.id}&mode=create`);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
         const meta = err.meta as { duplicates?: DuplicateMatch[] } | undefined;
         setDuplicates(meta?.duplicates ?? []);
@@ -229,7 +243,7 @@ export default function EditMedicationScreen() {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 

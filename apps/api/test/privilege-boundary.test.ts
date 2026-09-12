@@ -11,19 +11,16 @@ import { resetDatabase } from './harness.js';
  * adding a table to it is a deliberate act rather than something that happens
  * by default. It used to happen by default — `ALTER DEFAULT PRIVILEGES … GRANT
  * SELECT, INSERT, UPDATE ON TABLES TO dawaee_worker` meant every table any
- * future migration created became readable by the worker automatically, which
- * is how it ended up able to read emergency cards and prescriptions it never
- * queries.
+ * future migration created became readable by the worker automatically.
  *
  * TRUST BOUNDARY: `app.user_id` is a session GUC that the application role sets
  * itself. That is not a flaw to be fixed — it is the mechanism — but it decides
  * what row level security is actually worth, and the answer is written down
- * here rather than assumed. See the final describe block.
+ * here rather than assumed.
  */
 
 let owner: pg.Pool;
 
-/** The owner password differs from the application roles' in this environment. */
 const PASSWORD: Record<string, string> = {
   postgres: 'postgres', dawaee_app: 'devpass', dawaee_worker: 'devpass',
 };
@@ -32,14 +29,7 @@ const conn = (role: string) => new pg.Pool({
   connectionString: `postgres://${role}:${PASSWORD[role]}@127.0.0.1:5433/dawaee_test`, max: 2,
 });
 
-/**
- * The worker's complete, intended privilege set — derived from every SQL
- * statement in apps/worker/src, with the job that needs each one.
- *
- * A diff against this is a review event. That is the entire point: the previous
- * arrangement had no such list, so nobody could tell over-privilege from
- * intent.
- */
+/** The worker's complete intended table privilege set. */
 const WORKER_MANIFEST: Record<string, string[]> = {
   // reminders.ts
   dose_occurrences: ['SELECT', 'UPDATE'],
@@ -56,40 +46,27 @@ const WORKER_MANIFEST: Record<string, string[]> = {
   push_tokens: ['SELECT', 'UPDATE'],
   // stock-alerts.ts
   medication_stock: ['SELECT', 'UPDATE'],
-  // housekeeping.ts
+  // housekeeping.ts — object enumeration/removal is through narrow functions
   caregiver_relationships: ['SELECT', 'UPDATE'],
-  stored_objects: ['DELETE', 'SELECT'],
   // operational, no patient data, no RLS
   job_runs: ['DELETE', 'INSERT', 'SELECT', 'UPDATE'],
   provider_webhook_events: ['DELETE', 'SELECT', 'UPDATE'],
 };
 
 /**
- * The SECURITY DEFINER functions the worker may execute.
- *
- * Only these two, because a SECURITY DEFINER function runs as the table owner
- * and is therefore a deliberate hole through every policy in the schema. The
- * authorization predicates (owns_profile, can_read_profile, caregives_profile,
- * has_permission) are also SECURITY DEFINER and executable by everyone, but
- * they answer a boolean about `app.current_user_id()` — which the worker never
- * sets — so they return false for it and disclose nothing. They are listed as
- * permitted rather than silently excluded.
+ * SECURITY DEFINER functions the worker may execute. Every data-returning
+ * retention helper is deliberately narrow: bounded age/limit arguments, only
+ * ids/object keys, and independent due/reference checks inside the owner context.
  */
 const WORKER_DEFINER_ALLOWED = [
   'can_read_profile', 'caregives_profile', 'cleanup_expired_sessions',
-  'has_permission', 'owns_profile', 'purge_expired_otp',
-  // Retention for the shared auth rate-limit buckets. Deletes by age only; it
-  // cannot read a bucket, and the keys are keyed digests in any case, so this
-  // grant carries no visibility of who tried to sign in or from where.
-  'purge_rate_buckets',
+  'erase_due_account', 'has_permission',
+  'list_abandoned_object_keys', 'list_due_account_ids', 'list_due_account_object_keys',
+  'list_live_push_tokens',
+  'owns_profile', 'purge_expired_otp', 'purge_rate_buckets',
+  'remove_abandoned_object_metadata',
 ];
 
-/**
- * The ones a worker must never reach: they mint sessions, rotate refresh
- * tokens, set passwords, issue and verify one-time codes, redeem caregiver
- * invitations, and resolve emergency cards. Named explicitly so a regression
- * reports which capability leaked rather than a count.
- */
 const WORKER_DEFINER_FORBIDDEN = [
   'accept_caregiver_invitation', 'clear_login_failures', 'create_session',
   'find_or_create_user_by_phone', 'find_user_for_password_login', 'issue_otp',
@@ -129,17 +106,13 @@ describe('the worker holds exactly its manifest and nothing more', () => {
     }
   });
 
-  /**
-   * The specific tables finding P8-1 named. Listed separately from the diff
-   * above so a regression names the data that leaked rather than a count.
-   */
   it('cannot read the PHI tables it never queries', async () => {
     const p = conn('dawaee_worker');
     try {
       for (const table of [
         'emergency_cards', 'symptom_notes', 'health_measurements', 'prescriptions',
         'consents', 'refill_events', 'travel_prompts', 'stock_transactions',
-        'audit_logs', 'user_credentials', 'auth_otp_challenges',
+        'audit_logs', 'user_credentials', 'auth_otp_challenges', 'stored_objects',
       ]) {
         const res = await p.query(`SELECT 1 FROM ${table} LIMIT 1`)
           .then(() => ({ ok: true, msg: '' }))
@@ -150,11 +123,6 @@ describe('the worker holds exactly its manifest and nothing more', () => {
     } finally { await p.end(); }
   });
 
-  /**
-   * auth_sessions holds a refresh token hash, device name and IP hash for every
-   * user. The worker's only session work is deleting long-expired rows, and it
-   * now does that through a function that returns a count.
-   */
   it('cannot touch auth_sessions at all', async () => {
     const p = conn('dawaee_worker');
     try {
@@ -181,7 +149,7 @@ describe('the worker holds exactly its manifest and nothing more', () => {
   });
 });
 
-describe('the session cleanup function is a narrow hole, not a wide one', () => {
+describe('worker SECURITY DEFINER holes stay narrow', () => {
   it('deletes expired sessions and returns only a count', async () => {
     const p = conn('dawaee_worker');
     try {
@@ -193,11 +161,6 @@ describe('the session cleanup function is a narrow hole, not a wide one', () => 
     } finally { await p.end(); }
   });
 
-  /**
-   * A caller passing 0 or a negative number would delete sessions that have not
-   * expired — signing every user of the product out at once. Validated inside
-   * the function rather than trusted from the caller.
-   */
   it('refuses an argument that would delete live sessions', async () => {
     const p = conn('dawaee_worker');
     try {
@@ -221,25 +184,38 @@ describe('the session cleanup function is a narrow hole, not a wide one', () => 
     expect(after.rows[0]!.n).toBe(before.rows[0]!.n);
   });
 
-  it('pins its search_path and is not executable by PUBLIC', async () => {
-    const { rows } = await owner.query<{ proconfig: string[] | null; acl: string | null }>(
-      `SELECT p.proconfig, array_to_string(p.proacl,',') AS acl
-         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-        WHERE n.nspname='app' AND p.proname='cleanup_expired_sessions'`,
-    );
-    expect(rows).toHaveLength(1);
-    expect((rows[0]!.proconfig ?? []).join(',')).toMatch(/search_path=/);
-    expect(rows[0]!.acl ?? '', 'EXECUTE granted to PUBLIC').not.toMatch(/(^|,)=X\//);
-    expect(rows[0]!.acl ?? '').toMatch(/dawaee_worker=X\//);
+  it('does not let retention helper arguments turn into live-data enumeration', async () => {
+    const p = conn('dawaee_worker');
+    try {
+      for (const [sql, args] of [
+        ['SELECT * FROM app.list_abandoned_object_keys($1,$2)', [0, 100]],
+        ['SELECT * FROM app.list_abandoned_object_keys($1,$2)', [24, 0]],
+        ['SELECT * FROM app.list_due_account_ids($1,$2)', [0, 100]],
+        ['SELECT * FROM app.list_due_account_ids($1,$2)', [14, 0]],
+      ] as Array<[string, unknown[]]>) {
+        const err = await p.query(sql, args).then(() => null).catch((e: Error) => e.message);
+        expect(err, `unsafe helper call succeeded: ${sql}`).toMatch(/between|age|limit|grace/i);
+      }
+    } finally { await p.end(); }
   });
 
-  it('is not executable by the API role', async () => {
-    const p = conn('dawaee_app');
-    try {
-      const err = await p.query('SELECT app.cleanup_expired_sessions(30)')
-        .then(() => null).catch((e: Error) => e.message);
-      expect(err, 'the API role can purge sessions').toMatch(/permission denied/i);
-    } finally { await p.end(); }
+  it('pins worker definer search paths and does not grant them to PUBLIC or the API role', async () => {
+    const { rows } = await owner.query<{ proname: string; proconfig: string[] | null; public_exec: boolean; api_exec: boolean }>(
+      `SELECT p.proname, p.proconfig,
+              has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+              has_function_privilege('dawaee_app', p.oid, 'EXECUTE') AS api_exec
+         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='app' AND p.proname = ANY($1)
+        ORDER BY p.proname`,
+      [[
+        'cleanup_expired_sessions', 'erase_due_account', 'list_abandoned_object_keys',
+        'list_due_account_ids', 'list_due_account_object_keys', 'remove_abandoned_object_metadata',
+      ]],
+    );
+    expect(rows).toHaveLength(6);
+    expect(rows.every((r) => (r.proconfig ?? []).join(',').includes('search_path='))).toBe(true);
+    expect(rows.every((r) => r.public_exec === false)).toBe(true);
+    expect(rows.every((r) => r.api_exec === false)).toBe(true);
   });
 
   it('can execute no SECURITY DEFINER function outside its allowlist', async () => {
@@ -253,10 +229,6 @@ describe('the session cleanup function is a narrow hole, not a wide one', () => 
       .toEqual([...WORKER_DEFINER_ALLOWED].sort());
   });
 
-  /**
-   * The capabilities that would matter. Executed rather than inferred from the
-   * ACL, because a grant to PUBLIC would not show up as a grant to the worker.
-   */
   it('cannot execute any session, credential or OTP function', async () => {
     const { rows } = await owner.query<{ proname: string }>(
       `SELECT DISTINCT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
@@ -272,40 +244,12 @@ describe('the session cleanup function is a narrow hole, not a wide one', () => 
 //  THE app.user_id TRUST BOUNDARY
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * Row level security here is scoped by a session GUC that the application role
- * sets for itself. This block establishes, by execution rather than by reading
- * the schema, exactly what that buys — because the honest description of it is
- * narrower than "the database enforces tenancy", and shipping while believing
- * the wider claim is how a system gets built on a boundary that was never there.
- *
- * WHAT IT IS. RLS is a backstop against APPLICATION AUTHORIZATION MISTAKES. If
- * a route forgets an ownership check, or takes a profile id from a request body
- * and trusts it, the policies still scope the query to the authenticated user —
- * which is precisely the class of bug the P8 matrix found nothing of, and the
- * reason that matrix is worth running.
- *
- * WHAT IT IS NOT. It is NOT containment against an attacker who can execute
- * arbitrary SQL on the runtime connection. Such an attacker sets `app.user_id`
- * to any value and reads any patient — the tests below prove it rather than
- * suppose it. So the security of this system against SQL injection rests on
- * parameterised queries and on the runtime role's own privileges, NOT on RLS,
- * and that dependency is what P12 (endpoint review) and P19 (adversarial
- * review) have to carry.
- *
- * The rest of this block establishes the containment that does exist: the
- * runtime role cannot become another role, cannot alter the schema, cannot
- * write a SECURITY DEFINER function, and cannot switch row security off.
- */
 describe('the app.user_id trust boundary, established by execution', () => {
   it('the API role CAN set app.user_id to any value — RLS is not injection containment', async () => {
     const p = conn('dawaee_app');
     try {
       const c = await p.connect();
       await c.query('BEGIN');
-      // An arbitrary identity, accepted without challenge. This is the
-      // mechanism working as designed, and simultaneously the limit of what it
-      // protects against.
       await c.query("SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000000', true)");
       const r = await c.query<{ id: string }>('SELECT app.current_user_id() AS id');
       await c.query('ROLLBACK');
@@ -348,11 +292,6 @@ describe('the app.user_id trust boundary, established by execution', () => {
     } finally { await p.end(); }
   });
 
-  /**
-   * The one that would end everything: a runtime role able to define a
-   * SECURITY DEFINER function can write itself a function that runs as the
-   * table owner and returns any row in the database.
-   */
   it('cannot create a SECURITY DEFINER function', async () => {
     const p = conn('dawaee_app');
     try {
@@ -381,11 +320,6 @@ describe('the app.user_id trust boundary, established by execution', () => {
     } finally { await p.end(); }
   });
 
-  /**
-   * `row_security = off` makes a session error rather than silently returning
-   * everything, but only for a role that is exempt from policies. A non-owner,
-   * non-BYPASSRLS role gains nothing — asserted so the reasoning is on record.
-   */
   it('gains nothing from setting row_security = off', async () => {
     const p = conn('dawaee_app');
     try {
@@ -397,7 +331,6 @@ describe('the app.user_id trust boundary, established by execution', () => {
         .catch((e: Error) => ({ n: -1, err: e.message }));
       await c.query('ROLLBACK').catch(() => undefined);
       c.release();
-      // Either it errors, or it returns nothing. Never everything.
       expect(res.n, 'row_security=off exposed rows').toBeLessThanOrEqual(0);
     } finally { await p.end(); }
   });
@@ -421,14 +354,6 @@ describe('the app.user_id trust boundary, established by execution', () => {
 });
 
 describe('caregiver relationship writes have two independent controls', () => {
-  /**
-   * The trigger compares OLD to NEW and is the only thing that can express
-   * "permissions unchanged" — a WITH CHECK clause cannot see OLD. But the
-   * policy CAN constrain the row a caregiver is allowed to produce, and the
-   * only legitimate caregiver self-update is leaving the care circle. So even
-   * with the trigger gone, a caregiver's UPDATE can now only ever result in a
-   * revoked row.
-   */
   it('the WITH CHECK clause pins the caregiver branch to a revoked row', async () => {
     const { rows } = await owner.query<{ withcheck: string | null }>(
       `SELECT pg_get_expr(polwithcheck, polrelid) AS withcheck
