@@ -255,7 +255,7 @@ function NotesProfileScreen() {
             value={noteText}
             onChangeText={(value) => { setNoteText(value); setNoteError(null); }}
             hint={t('common.optional')}
-            maxLength={1000}
+            maxLength={2000}
             multiline
             error={noteError}
           />
