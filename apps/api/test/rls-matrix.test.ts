@@ -54,18 +54,19 @@ let ownerPool: pg.Pool;
  */
 async function asUser<T extends pg.QueryResultRow = pg.QueryResultRow>(
   actor: string | null, sql: string, params: unknown[] = [], rollback = false,
-): Promise<{ rows: T[]; rowCount: number; error: string | null; errorCode: string | null }> {
+): Promise<{ rows: T[]; rowCount: number; error: string | null; errorCode: string | null; errorConstraint: string | null }> {
   const client = await appPool.connect();
   try {
     await client.query('BEGIN');
     if (actor) await client.query('SELECT set_config($1,$2,true)', ['app.user_id', actor]);
     const res = await client.query<T>(sql, params);
     await client.query(rollback ? 'ROLLBACK' : 'COMMIT');
-    return { rows: res.rows, rowCount: res.rowCount ?? 0, error: null, errorCode: null };
+    return { rows: res.rows, rowCount: res.rowCount ?? 0, error: null, errorCode: null, errorConstraint: null };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     return { rows: [], rowCount: 0, error: (err as Error).message,
-      errorCode: (err as { code?: string }).code ?? null };
+      errorCode: (err as { code?: string }).code ?? null,
+      errorConstraint: (err as { constraint?: string }).constraint ?? null };
   } finally {
     client.release();
   }
@@ -84,17 +85,21 @@ const matrix: Array<{
   resource: string; actor: string; op: string; expected: 'DENY' | 'ALLOW';
   actual: 'DENIED' | 'ALLOWED' | 'ERROR'; status: 'PASS' | 'FAIL' | 'FINDING';
   errorCode: string | null;
+  errorConstraint: string | null;
 }> = [];
 
 /** SQL/schema/connection failures are not evidence of an authorization denial. */
 function classifyAttempt(
   expected: 'DENY' | 'ALLOW', rowCount: number, error: string | null,
   errorCode: string | null, expectedErrorCode = '42501',
+  errorConstraint: string | null = null, expectedErrorConstraint: string | null = null,
 ) {
   const actual: 'DENIED' | 'ALLOWED' | 'ERROR' =
     error ? 'ERROR' : rowCount > 0 ? 'ALLOWED' : 'DENIED';
+  const matchingError = errorCode === expectedErrorCode
+    && (expectedErrorConstraint === null || errorConstraint === expectedErrorConstraint);
   const ok = expected === 'DENY'
-    ? error ? errorCode === expectedErrorCode : rowCount === 0
+    ? error ? matchingError : rowCount === 0 && expectedErrorConstraint === null
     : !error && rowCount > 0;
   return { actual, ok };
 }
@@ -109,10 +114,12 @@ function record(
   resource: string, actor: string, op: string,
   expected: 'DENY' | 'ALLOW', rowCount: number, error: string | null,
   errorCode: string | null = null, finding = false, expectedErrorCode = '42501',
+  errorConstraint: string | null = null, expectedErrorConstraint: string | null = null,
 ) {
-  const { actual, ok } = classifyAttempt(expected, rowCount, error, errorCode, expectedErrorCode);
+  const { actual, ok } = classifyAttempt(expected, rowCount, error, errorCode,
+    expectedErrorCode, errorConstraint, expectedErrorConstraint);
   matrix.push({
-    resource, actor, op, expected, actual, errorCode,
+    resource, actor, op, expected, actual, errorCode, errorConstraint,
     status: ok ? 'PASS' : finding ? 'FINDING' : 'FAIL',
   });
   return { actual, ok };
@@ -252,7 +259,7 @@ afterAll(async () => {
   const mark = { PASS: '  ', FINDING: 'F ', FAIL: '!!' } as const;
   const rows = matrix.map((m) =>
     `${mark[m.status]} ${m.resource.padEnd(34)} ${m.actor.padEnd(20)} ` +
-    `${m.op.padEnd(7)} expected=${m.expected.padEnd(5)} actual=${m.actual} sqlstate=${m.errorCode ?? 'none'}`);
+    `${m.op.padEnd(7)} expected=${m.expected.padEnd(5)} actual=${m.actual} sqlstate=${m.errorCode ?? 'none'} constraint=${m.errorConstraint ?? 'none'}`);
   const failures = matrix.filter((m) => m.status === 'FAIL').length;
   const findings = matrix.filter((m) => m.status === 'FINDING').length;
   console.log(
@@ -366,7 +373,6 @@ describe('Patient A supplies Patient B ids directly', () => {
     ['stock_transactions', 'SELECT * FROM stock_transactions WHERE medication_id = $1', 'medId'],
     ['dose_events', 'SELECT * FROM dose_events WHERE dose_occurrence_id = $1', 'doseId'],
   ];
-
   it('reads nothing of Patient B, on any table, with the real id in hand', async () => {
     for (const [resource, sql, which] of RESOURCES) {
       const id = which === 'profileId' ? bob.profileId : which === 'medId' ? bobMedId
@@ -481,20 +487,29 @@ describe('Patient A writes to Patient B', () => {
   });
 
   /**
-   * Re-parenting: take a row you legitimately own and point it at somebody
-   * else. RLS has to check the NEW row as well as the old one, or this moves
-   * data into another patient's account.
+   * Re-parenting must be stopped even when the OLD row belongs to the caller.
+   * Migration 0069 rejects the change before RLS WITH CHECK with a named
+   * immutable-profile constraint. Require that exact structural refusal here;
+   * unrelated check violations must not be mistaken for successful isolation.
    */
   it('cannot re-parent its OWN row onto B’s profile', async () => {
-    await denied('medications (reparent)', 'Patient A', 'UPDATE', async () => {
-      const r = await asUser(alice.userId,
-        'UPDATE medications SET patient_profile_id=$1 WHERE id=$2', [bob.profileId, aliceMedId]);
-      return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
-    });
+    const r = await asUser(alice.userId,
+      'UPDATE medications SET patient_profile_id=$1 WHERE id=$2', [bob.profileId, aliceMedId]);
+    const { ok } = record('medications (reparent)', 'Patient A', 'UPDATE', 'DENY',
+      r.rowCount, r.error, r.errorCode, false, '23514',
+      r.errorConstraint, 'medication_patient_profile_immutable');
+    expect(ok, `unexpected reparent result: ${r.errorCode}/${r.errorConstraint}: ${r.error}`).toBe(true);
     const [m] = await truth<{ patient_profile_id: string }>(
       'SELECT patient_profile_id FROM medications WHERE id=$1', [aliceMedId],
     );
     expect(m!.patient_profile_id, 'medication was re-parented').toBe(alice.profileId);
+  });
+
+  it('the profile guard still permits a valid owner update with an unchanged profile', async () => {
+    await allowed('medications (same profile)', 'Patient A', 'UPDATE', () =>
+      asUser(alice.userId,
+        'UPDATE medications SET patient_profile_id=$1 WHERE id=$2 RETURNING id',
+        [alice.profileId, aliceMedId], true));
   });
 
   /**
@@ -590,7 +605,7 @@ describe('a caregiver is scoped to the patient who invited them', () => {
     });
     await denied('dose_occurrences', 'Caregiver of A', 'UPDATE', async () => {
       const r = await asUser(carol.userId,
-        "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [bobDoseId]);
+        "UPDATE dose_occurrences SET status='taken' WHERE id=$1", [aliceDoseId]);
       return { rowCount: r.rowCount, error: r.error, errorCode: r.errorCode };
     });
   });
@@ -884,7 +899,7 @@ describe('the worker role is scoped to what a worker needs', () => {
 
 
 describe('RLS evidence classifier rejects false-success', () => {
-  it.each(['42703', '42P01', '42601', '23502', '57014', '08006'])(
+  it.each(['42703', '42P01', '42601', '23502', '23514', '57014', '08006'])(
     'SQLSTATE %s is not an authorization denial', (code) => {
       expect(classifyAttempt('DENY', 0, 'invalid probe', code).ok).toBe(false);
     },
@@ -897,6 +912,16 @@ describe('RLS evidence classifier rejects false-success', () => {
     expect(classifyAttempt('DENY', 0, 'unknown error', null).ok).toBe(false);
     expect(classifyAttempt('DENY', 0, 'unrelated trigger failed', 'P0001').ok).toBe(false);
     expect(classifyAttempt('ALLOW', 0, null, null).ok).toBe(false);
+  });
+
+  it('accepts a structural denial only for the exact expected constraint', () => {
+    const constraint = 'medication_patient_profile_immutable';
+    expect(classifyAttempt('DENY', 0, 'profile rejected', '23514', '23514', constraint, constraint).ok).toBe(true);
+    expect(classifyAttempt('DENY', 0, 'unrelated check', '23514', '23514', 'another_check', constraint).ok).toBe(false);
+    expect(classifyAttempt('DENY', 0, 'unnamed check', '23514', '23514', null, constraint).ok).toBe(false);
+    expect(classifyAttempt('DENY', 0, 'wrong SQLSTATE', '42703', '23514', constraint, constraint).ok).toBe(false);
+    expect(classifyAttempt('DENY', 0, null, null, '23514', null, constraint).ok).toBe(false);
+    expect(classifyAttempt('DENY', 1, null, null, '23514', null, constraint).ok).toBe(false);
   });
 
   it('a real undefined-column error is rejected by the same matrix classifier', async () => {
