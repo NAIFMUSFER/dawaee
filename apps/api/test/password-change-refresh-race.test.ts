@@ -1,6 +1,5 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sha256 } from '../src/lib/crypto.js';
 import { resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness } from './harness.js';
 
 let h: Harness;
@@ -48,12 +47,30 @@ describe('password change versus an in-flight refresh on another device', () => 
     const stolenSession = await signIn(h, phone, 'device-password-race-stolen');
     expect(stolenSession.userId).toBe(ownerSession.userId);
 
+    // This test drives app.rotate_session() directly so it can hold the database
+    // transaction open at the precise race boundary. Read the already-stored
+    // refresh-token digest instead of re-hashing the TestUser return value here:
+    // password hashing is intentionally slow elsewhere, while refresh tokens are
+    // high-entropy random bearer tokens whose SHA-256 digest is the DB lookup key.
+    const { rows: storedSessions } = await owner.query<{ refresh_token_hash: string }>(
+      `SELECT refresh_token_hash
+         FROM auth_sessions
+        WHERE user_id = $1
+          AND device_id = 'device-password-race-stolen'
+          AND revoked_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [stolenSession.userId],
+    );
+    const presentedRefreshHash = storedSessions[0]?.refresh_token_hash;
+    if (!presentedRefreshHash) throw new Error('stolen-device refresh session was not persisted');
+
     const refreshTx = await owner.connect();
     try {
       await refreshTx.query('BEGIN');
       const rotated = await refreshTx.query<{ outcome: string; session_id: string | null }>(
         'SELECT outcome, session_id FROM app.rotate_session($1,$2,$3,$4)',
-        [sha256(stolenSession.refreshToken), sha256('forced-password-race-descendant'), null, 30],
+        [presentedRefreshHash, 'f'.repeat(64), null, 30],
       );
       expect(rotated.rows[0]?.outcome).toBe('rotated');
       expect(rotated.rows[0]?.session_id).toBeTruthy();
