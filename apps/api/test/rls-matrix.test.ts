@@ -489,16 +489,17 @@ describe('Patient A writes to Patient B', () => {
 
   /**
    * Re-parenting must be stopped even when the OLD row belongs to the caller.
-   * Migration 0069 rejects the change before RLS WITH CHECK with a named
-   * immutable-profile constraint. Require that exact structural refusal here;
-   * unrelated check violations must not be mistaken for successful isolation.
+   * Migration 0069 uses an AFTER trigger. A foreign-account target must
+   * therefore fail RLS WITH CHECK first (42501). Same-owner targets reach the
+   * named graph guard instead; the dedicated boundary suite tests both paths.
    */
   it('cannot re-parent its OWN row onto B’s profile', async () => {
     const r = await asUser(alice.userId,
       'UPDATE medications SET patient_profile_id=$1 WHERE id=$2', [bob.profileId, aliceMedId]);
     const { ok } = record('medications (reparent)', 'Patient A', 'UPDATE', 'DENY',
-      r.rowCount, r.error, r.errorCode, false, '23514',
-      r.errorConstraint, 'medication_patient_profile_immutable');
+      r.rowCount, r.error, r.errorCode);
+    expect(r.errorCode, 'foreign-account reparenting must fail RLS first').toBe('42501');
+    expect(r.errorConstraint).toBeNull();
     expect(ok, `unexpected reparent result: ${r.errorCode}/${r.errorConstraint}: ${r.error}`).toBe(true);
     const [m] = await truth<{ patient_profile_id: string }>(
       'SELECT patient_profile_id FROM medications WHERE id=$1', [aliceMedId],
