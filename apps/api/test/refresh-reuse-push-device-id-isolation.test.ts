@@ -27,6 +27,32 @@ describe('refresh-reuse push cleanup does not trust a client device-id collision
     const compromised = await signIn(h, phone, sharedDeviceId);
     expect(compromised.userId).toBe(current.userId);
 
+    // TestUser exposes public auth artifacts, not database session ids. Resolve
+    // each session through the authenticated session-list contract so the test
+    // proves the real API boundary rather than depending on a harness-only id.
+    const currentSessions = await h.app.inject({
+      method: 'GET',
+      url: '/v1/auth/sessions',
+      headers: { authorization: `Bearer ${current.token}` },
+    });
+    expect(currentSessions.statusCode, currentSessions.body).toBe(200);
+    const currentSessionId = currentSessions
+      .json<{ sessions: Array<{ id: string; current: boolean }> }>()
+      .sessions.find((session) => session.current)?.id;
+    expect(currentSessionId).toBeTruthy();
+
+    const compromisedSessions = await h.app.inject({
+      method: 'GET',
+      url: '/v1/auth/sessions',
+      headers: { authorization: `Bearer ${compromised.token}` },
+    });
+    expect(compromisedSessions.statusCode, compromisedSessions.body).toBe(200);
+    const compromisedSessionId = compromisedSessions
+      .json<{ sessions: Array<{ id: string; current: boolean }> }>()
+      .sessions.find((session) => session.current)?.id;
+    expect(compromisedSessionId).toBeTruthy();
+    expect(compromisedSessionId).not.toBe(currentSessionId);
+
     const rotated = await h.app.inject({
       method: 'POST',
       url: '/v1/auth/refresh',
@@ -55,7 +81,7 @@ describe('refresh-reuse push cleanup does not trust a client device-id collision
       `UPDATE auth_sessions
           SET revoked_at = now() - interval '31 seconds'
         WHERE id = $1`,
-      [compromised.sessionId],
+      [compromisedSessionId],
     );
 
     const reuse = await h.app.inject({
@@ -68,7 +94,7 @@ describe('refresh-reuse push cleanup does not trust a client device-id collision
     const currentStillLive = await owner.query<{ id: string }>(
       `SELECT id FROM auth_sessions
         WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()`,
-      [current.sessionId],
+      [currentSessionId],
     );
     expect(currentStillLive.rows).toHaveLength(1);
 
@@ -79,7 +105,7 @@ describe('refresh-reuse push cleanup does not trust a client device-id collision
           AND device_id = $3
           AND revoked_at IS NULL
           AND expires_at > now()`,
-      [current.userId, current.sessionId, sharedDeviceId],
+      [current.userId, currentSessionId, sharedDeviceId],
     );
     expect(compromisedLive.rows).toHaveLength(0);
 
