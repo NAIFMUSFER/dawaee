@@ -485,8 +485,24 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   app.delete('/v1/devices/push-token/:deviceId', { preHandler: authenticate }, async (req) => {
     const { deviceId } = req.params as { deviceId: string };
-    const { userId } = currentUser(req);
+    const { userId, sessionId } = currentUser(req);
     await withUser(userId, async (tx) => {
+      // Deregistration is installation-local just like registration. Bind the
+      // target to the live session so one authenticated device cannot silence
+      // a sibling device's push endpoint. The shared lock serializes this with
+      // revocation for the same reason as registration above.
+      const { rows } = await tx.query<{ device_id: string }>(
+        `SELECT device_id
+           FROM auth_sessions
+          WHERE id = $1 AND user_id = $2
+            AND revoked_at IS NULL AND expires_at > now()
+          FOR SHARE`,
+        [sessionId, userId],
+      );
+      if (rows[0]?.device_id !== deviceId) {
+        throw AppError.forbidden('Push token device does not match the authenticated session');
+      }
+
       await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1 AND device_id = $2', [userId, deviceId]);
     });
     return { ok: true };
