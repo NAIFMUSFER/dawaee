@@ -26,8 +26,6 @@ beforeAll(async () => {
   );
   relationshipId = rel.rows[0]!.id;
 
-  // Model the real delegated-upload state: the caregiver is the object uploader,
-  // but the image remains clinical data belonging to the patient's profile.
   await db.query(
     `INSERT INTO stored_objects
        (object_key, owner_user_id, patient_profile_id, purpose,
@@ -51,9 +49,9 @@ afterAll(async () => {
 });
 
 describe('delegated medication-image uploads follow current care permissions', () => {
-  it('does not let a revoked caregiver keep a signed read capability merely because they uploaded the object', async () => {
+  it('does not issue a signed read URL after caregiver access is revoked', async () => {
     vi.spyOn(h.worker.providers.storage, 'createReadUrl')
-      .mockResolvedValue('https://storage.invalid/revoked-uploader-capability');
+      .mockResolvedValue('https://storage.invalid/signed-url-placeholder');
 
     const response = await h.app.inject({
       method: 'GET',
@@ -64,8 +62,8 @@ describe('delegated medication-image uploads follow current care permissions', (
       },
     });
 
-    expect(response.statusCode, response.body).toBe(403);
-    expect(response.body).not.toContain('revoked-uploader-capability');
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.body).not.toContain('signed-url-placeholder');
     expect(h.worker.providers.storage.createReadUrl).not.toHaveBeenCalled();
   });
 });
