@@ -95,7 +95,9 @@ describe('OCR disclosure honors caregiver access revoked while image bytes are b
     releaseStorage.resolve(IMAGE);
     const response = await inFlight;
 
-    expect(response.statusCode, response.body).toBe(403);
+    // Once access is gone the profile is deliberately concealed as not found,
+    // matching the API's IDOR-resistant resource contract.
+    expect(response.statusCode, response.body).toBe(404);
     expect(ocr).not.toHaveBeenCalled();
   });
 });
