@@ -14,7 +14,7 @@
 # Usage: ./scripts/container-checks.sh dawaee:ci
 set -euo pipefail
 
-IMAGE="${1:?usage: container-checks.sh <image>}"
+IMAGE="${1:?usage: ./scripts/container-checks.sh <image>}"
 failures=0
 
 check() {
@@ -149,9 +149,37 @@ check "the image reports its own version over HTTP" bash -c '
   done
   [ -n "${body:-}" ] || { echo "no response from /version"; docker logs "$cid" 2>&1 | tail -20; exit 1; }
   echo "$body"
-  echo "$body" | grep -q "\"commit\"" || { echo "/version did not report a commit"; exit 1; }
-  echo "$body" | grep -qiE "secret|password|postgres://" && { echo "/version leaked configuration"; exit 1; }
-  true
+
+  # Treat /version as a schema, not a bag of substrings. Migration names are
+  # legitimate metadata and may contain words such as "password". The old
+  # grep therefore produced a proven false positive on migration 0054. Exact
+  # key whitelisting catches accidental configuration fields, while the value
+  # checks below still reject actual credential-shaped material.
+  VERSION_BODY="$body" node -e "
+    let value;
+    try { value = JSON.parse(process.env.VERSION_BODY); }
+    catch { console.error(\"/version did not return JSON\"); process.exit(1); }
+    const required = [\"service\", \"commit\", \"version\", \"builtAt\", \"schema\"];
+    const allowed = new Set(required);
+    const keys = Object.keys(value);
+    const unexpected = keys.filter((key) => !allowed.has(key));
+    const missing = required.filter((key) => !(key in value));
+    if (unexpected.length || missing.length) {
+      console.error(\"unexpected /version shape; extra=\" + unexpected.join(\",\") + \" missing=\" + missing.join(\",\"));
+      process.exit(1);
+    }
+    if (typeof value.commit !== \"string\" || value.commit.length < 7) {
+      console.error(\"/version did not report a usable commit\");
+      process.exit(1);
+    }
+    const values = Object.values(value).map((item) => String(item));
+    const leaked = values.some((item) => /postgres:\/\/[^:\\s\"]+:[^@\\s\"]+@/i.test(item)
+      || /(?:JWT_SECRET|API_KEY|PASSWORD)\\s*=\\s*\\S+/i.test(item));
+    if (leaked) {
+      console.error(\"/version leaked credential-shaped configuration\");
+      process.exit(1);
+    }
+  "
 '
 
 echo
