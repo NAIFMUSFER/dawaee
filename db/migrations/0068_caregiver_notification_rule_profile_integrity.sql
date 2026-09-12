@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0067 — Caregiver notification-rule profile integrity
+-- 0068 — Caregiver notification-rule profile integrity
 --
 -- caregiver_notification_rules redundantly stores both relationship_id and
 -- patient_profile_id. The API currently copies the profile id from the selected
