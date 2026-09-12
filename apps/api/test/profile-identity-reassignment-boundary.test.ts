@@ -42,6 +42,34 @@ async function updateProfileIdentityAsAlice(
   }
 }
 
+async function insertProfileLinkedToBobAsAlice(): Promise<Attempt> {
+  const client = await appPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT set_config($1,$2,true)', ['app.user_id', alice.userId]);
+    const result = await client.query(
+      `INSERT INTO patient_profiles
+         (owner_user_id, linked_user_id, display_name, timezone, home_timezone, is_self)
+       VALUES ($1,$2,'Cross-account linked profile','Asia/Riyadh','Asia/Riyadh',false)
+       RETURNING id`,
+      [alice.userId, bob.userId],
+    );
+    await client.query('ROLLBACK');
+    return { rowCount: result.rowCount ?? 0, errorCode: null, constraint: null, error: null };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    const pgError = error as Error & { code?: string; constraint?: string };
+    return {
+      rowCount: 0,
+      errorCode: pgError.code ?? null,
+      constraint: pgError.constraint ?? null,
+      error: pgError.message,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
@@ -59,6 +87,12 @@ afterAll(async () => {
 });
 
 describe('patient-profile identity edges cannot be reassigned by the authenticated runtime role', () => {
+  it('does not let an owner create a profile that silently grants linked-patient access to another account', async () => {
+    const attempt = await insertProfileLinkedToBobAsAlice();
+    expect(attempt.errorCode, attempt.error ?? 'cross-account linked profile unexpectedly succeeded').toBe('42501');
+    expect(attempt.constraint).toBe('patient_profile_identity_reassignment');
+  });
+
   it('does not let an owner gift linked-patient access to an arbitrary account', async () => {
     const attempt = await updateProfileIdentityAsAlice('linked_user_id', bob.userId);
     expect(attempt.errorCode, attempt.error ?? 'linked_user_id reassignment unexpectedly succeeded').toBe('42501');
