@@ -8,7 +8,7 @@ const MEDICATION = 'SYNTHETIC-PRIVATE-STOCK-DRUG';
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
-  patient = await signIn(h, '+966500097798');
+  patient = await signIn(h, '+966500097798', 'stock-privacy-1');
 
   // Keep the account on the product default: medication names are private in
   // notifications unless the patient explicitly opts in.
