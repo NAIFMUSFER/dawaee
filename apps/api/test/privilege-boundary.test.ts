@@ -62,6 +62,7 @@ const WORKER_DEFINER_ALLOWED = [
   'can_read_profile', 'caregives_profile', 'cleanup_expired_sessions',
   'erase_due_account', 'has_permission',
   'list_abandoned_object_keys', 'list_due_account_ids', 'list_due_account_object_keys',
+  'list_live_push_tokens',
   'owns_profile', 'purge_expired_otp', 'purge_rate_buckets',
   'remove_abandoned_object_metadata',
 ];
