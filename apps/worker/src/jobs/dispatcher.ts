@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sanitizeOperationalError, t, type Locale } from '@dawaee/shared';
 import type { PoolClient } from 'pg';
 import type { PushMessage } from '@dawaee/api/providers';
@@ -5,6 +6,10 @@ import type { WorkerContext } from '../context.js';
 
 const LEASE_SECONDS = 120;
 const AMBIGUOUS_IS_RETRYABLE = true;
+
+function fingerprintPushToken(token: string): string {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
 
 export function isAmbiguous(errorCode: string | undefined): boolean {
   return errorCode === 'network_error' || /^http_5\d\d$/.test(errorCode ?? '');
@@ -30,6 +35,7 @@ interface DeliveryRow {
 interface ReceiptTicket {
   providerMessageId: string;
   pushTokenId: string;
+  tokenFingerprint: string;
 }
 
 export async function claimDeliveries(
@@ -300,7 +306,11 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
   const receiptTickets: ReceiptTicket[] = results.flatMap((result, index) => {
     const endpoint = tokens[index];
     return result.ok && result.providerMessageId && endpoint
-      ? [{ providerMessageId: result.providerMessageId, pushTokenId: endpoint.push_token_id }]
+      ? [{
+          providerMessageId: result.providerMessageId,
+          pushTokenId: endpoint.push_token_id,
+          tokenFingerprint: fingerprintPushToken(endpoint.token),
+        }]
       : [];
   });
   const anyOk = results.some((result) => result.ok);
