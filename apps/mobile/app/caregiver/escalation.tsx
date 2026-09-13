@@ -264,6 +264,7 @@ function EscalationProfileScreen() {
     }),
     [stages],
   );
+  const patientFirst = stages[0]?.target === 'patient';
 
   const dirty = useMemo(() => {
     if (!saved) return false;
@@ -274,6 +275,10 @@ function EscalationProfileScreen() {
     if (!activeProfile) return;
     if (stages.length === 0) {
       setError(t('escalation.stagesRequired'));
+      return;
+    }
+    if (!patientFirst) {
+      setError(t('error.validation_failed'));
       return;
     }
     if (stages.some((s) => s.channels.length === 0)) {
@@ -311,7 +316,7 @@ function EscalationProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [activeProfile, describe, outOfOrder, quietEnd, quietStart, setOffline, stages, t]);
+  }, [activeProfile, describe, outOfOrder, patientFirst, quietEnd, quietStart, setOffline, stages, t]);
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
 
@@ -349,7 +354,7 @@ function EscalationProfileScreen() {
 
   const changeTarget = (index: number, target: StageTarget) => {
     const stage = stages[index];
-    if (!stage) return;
+    if (!stage || (index === 0 && target !== 'patient')) return;
     const allowed = channelsFor(target);
     const channels = stage.channels.filter((c) => allowed.includes(c));
     updateStage(index, { target, channels: channels.length > 0 ? channels : [...allowed].slice(0, 2) });
@@ -362,6 +367,7 @@ function EscalationProfileScreen() {
   };
 
   const removeStage = (index: number) => {
+    if (index === 0) return;
     applyStages(stages.filter((_, i) => i !== index));
   };
 
@@ -374,7 +380,7 @@ function EscalationProfileScreen() {
     const other = index + direction;
     const a = stages[index];
     const b = stages[other];
-    if (!a || !b) return;
+    if (!a || !b || index === 0 || other === 0) return;
     applyStages(stages.map((stage, i) => {
       if (i === index) return { ...stage, target: b.target, channels: [...b.channels] };
       if (i === other) return { ...stage, target: a.target, channels: [...a.channels] };
@@ -452,7 +458,7 @@ function EscalationProfileScreen() {
                       label="↑"
                       tone="ghost"
                       fullWidth={false}
-                      disabled={!isOwner || index === 0}
+                      disabled={!isOwner || index <= 1}
                       accessibilityHint={t('escalation.moveEarlier', { number: formatNumber(index + 1) })}
                       onPress={() => swapWithNeighbour(index, -1)}
                     />
@@ -460,7 +466,7 @@ function EscalationProfileScreen() {
                       label="↓"
                       tone="ghost"
                       fullWidth={false}
-                      disabled={!isOwner || index === stages.length - 1}
+                      disabled={!isOwner || index === 0 || index === stages.length - 1}
                       accessibilityHint={t('escalation.moveLater', { number: formatNumber(index + 1) })}
                       onPress={() => swapWithNeighbour(index, 1)}
                     />
@@ -493,7 +499,7 @@ function EscalationProfileScreen() {
                       key={target}
                       label={`${stage.target === target ? '✓ ' : ''}${t(TARGET_LABEL[target])}`}
                       tone={stage.target === target ? 'primary' : 'secondary'}
-                      disabled={!isOwner}
+                      disabled={!isOwner || (index === 0 && target !== 'patient')}
                       onPress={() => changeTarget(index, target)}
                     />
                   ))}
@@ -562,7 +568,7 @@ function EscalationProfileScreen() {
             label={t('common.save')}
             size="large"
             loading={busy}
-            disabled={!dirty || outOfOrder}
+            disabled={!dirty || outOfOrder || !patientFirst}
             onPress={() => void save()}
             testID="save-escalation"
           />
