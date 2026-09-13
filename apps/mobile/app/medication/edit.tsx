@@ -77,6 +77,8 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
     form: medication.form,
     strengthValue: medication.strengthValue === null ? '' : String(medication.strengthValue),
     strengthUnit: medication.strengthUnit ?? 'mg',
+    manufacturer: medication.manufacturer ?? '',
+    barcode: medication.barcode ?? '',
     instructions: medication.instructions ?? '',
     doctorInstructions: medication.doctorInstructions ?? '',
     foodInstruction: medication.foodInstruction,
