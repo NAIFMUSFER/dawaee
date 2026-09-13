@@ -78,14 +78,17 @@ async function acceptCaregiver(patient: TestUser, caregiver: TestUser, token: st
   return relationshipId;
 }
 
-async function setCaregiverOnlyPolicy(patient: TestUser): Promise<void> {
+async function setPatientFirstCaregiverPolicy(patient: TestUser): Promise<void> {
   const policy = await h.app.inject({
     method: 'PUT',
     url: `/v1/escalation-policy?profileId=${patient.profileId}`,
     headers: authHeaders(patient),
     payload: {
       enabled: true,
-      stages: [{ afterMinutes: 30, target: 'primary_caregiver', channels: ['push'] }],
+      stages: [
+        { afterMinutes: 0, target: 'patient', channels: ['push'] },
+        { afterMinutes: 30, target: 'primary_caregiver', channels: ['push'] },
+      ],
     },
   });
   expect(policy.statusCode, policy.body).toBe(200);
@@ -139,7 +142,7 @@ describe('red team — consecutive-missed caregiver thresholds', () => {
     const caregiver = await signIn(h, '+966500009202');
     const caregiverToken = 'ExponentPushToken[streak-no-double-count]';
     await acceptCaregiver(patient, caregiver, caregiverToken);
-    await setCaregiverOnlyPolicy(patient);
+    await setPatientFirstCaregiverPolicy(patient);
     await createMedication(patient, 'Single missed dose', '20:00', 15);
 
     h.setNow(at('20:30'));
@@ -157,7 +160,7 @@ describe('red team — consecutive-missed caregiver thresholds', () => {
     const caregiver = await signIn(h, '+966500009212');
     const caregiverToken = 'ExponentPushToken[streak-per-schedule-threshold]';
     await acceptCaregiver(patient, caregiver, caregiverToken);
-    await setCaregiverOnlyPolicy(patient);
+    await setPatientFirstCaregiverPolicy(patient);
 
     // At 20:30 this 19:00 dose is only 90 minutes old and therefore NOT
     // missed under its own 240-minute policy.

@@ -66,13 +66,19 @@ beforeAll(async () => {
     [relationshipId, patient.profileId],
   );
 
+  // Enabled escalation ladders are patient-first. The caregiver stage remains
+  // immediately adjacent so this test still exercises caregiver notification
+  // privacy rather than escalation timing.
   const policy = await h.app.inject({
     method: 'PUT',
     url: `/v1/escalation-policy?profileId=${patient.profileId}`,
     headers: authHeaders(patient),
     payload: {
       enabled: true,
-      stages: [{ afterMinutes: 0, target: 'primary_caregiver', channels: ['push'] }],
+      stages: [
+        { afterMinutes: 0, target: 'patient', channels: ['push'] },
+        { afterMinutes: 1, target: 'primary_caregiver', channels: ['push'] },
+      ],
     },
   });
   expect(policy.statusCode, policy.body).toBe(200);
@@ -110,7 +116,7 @@ afterAll(async () => {
 
 describe('caregiver notification text cannot outrank caregiver medication permission', () => {
   it('withholds medication identity from an observer even when the patient opted in to names', async () => {
-    h.setNow(at('20:00'));
+    h.setNow(at('20:01'));
     await h.tick();
 
     const stored = await h.worker.pool.query<{ body: string; payload: unknown }>(
@@ -127,7 +133,7 @@ describe('caregiver notification text cannot outrank caregiver medication permis
     // A worker tick runs reminders before dispatch, so the delivery may already
     // have been sent on this tick. Run one more tick as replay coverage, then
     // inspect the recording provider's real PushMessage field (`token`).
-    h.setNow(at('20:01'));
+    h.setNow(at('20:02'));
     await h.tick();
     const pushes = h.push.sent.filter((item) => item.token === 'ExponentPushToken[caregiver-permission-boundary]');
     expect(pushes.length, 'the caregiver escalation was actually dispatched').toBeGreaterThan(0);
