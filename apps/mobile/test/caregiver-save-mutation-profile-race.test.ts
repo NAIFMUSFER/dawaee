@@ -8,7 +8,7 @@ const { createHarness, deferred, NetworkError, ApiError } = require('./profile-s
   ApiError: new (code: string) => Error;
 };
 
-const screen = path.resolve(process.cwd(), 'apps/mobile/app/caregiver/[id].tsx');
+const screen = path.resolve(process.cwd(), 'apps/mobile/app/caregiver/detail.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 const relationshipId = 'relationship-under-test';
 
@@ -44,8 +44,12 @@ function harness() {
   const ruleGate = deferred();
   const h = createHarness(screen, hook, {}, {
     'expo-router': {
-      useLocalSearchParams: () => ({ id: relationshipId }),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+    },
+    '@/navigation/private-navigation': {
+      getCaregiverDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, relationshipId,
+      }),
     },
     '@/api/client': {
       NetworkError,
