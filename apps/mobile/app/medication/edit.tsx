@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
@@ -14,7 +14,6 @@ import type { MedicationView } from '@/api/types';
 import {
   getMedicationEditRouteIntent,
   setMedicationDetailRouteIntent,
-  setMedicationEditRouteIntent,
   setMedicationScheduleRouteIntent,
 } from '@/navigation/private-navigation';
 import {
@@ -69,30 +68,6 @@ function emptyDraft(timezone: string | undefined): Draft {
   };
 }
 
-function applyPrefill(draft: Draft, raw: string | undefined): Draft {
-  if (!raw) return draft;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return draft;
-    const source = parsed as Record<string, unknown>;
-    const text = (key: string): string | null => (typeof source[key] === 'string' ? source[key] : null);
-    return {
-      ...draft,
-      name: text('name') ?? draft.name,
-      brandName: text('brandName') ?? draft.brandName,
-      genericName: text('genericName') ?? draft.genericName,
-      form: MEDICATION_FORMS.find((f) => f === source.form) ?? draft.form,
-      strengthValue: typeof source.strengthValue === 'number' ? String(source.strengthValue) : draft.strengthValue,
-      strengthUnit: STRENGTH_UNITS.find((u) => u === source.strengthUnit) ?? draft.strengthUnit,
-      manufacturer: text('manufacturer') ?? draft.manufacturer,
-      barcode: text('barcode') ?? draft.barcode,
-      instructions: text('instructions') ?? draft.instructions,
-    };
-  } catch {
-    return draft;
-  }
-}
-
 function fromMedication(medication: MedicationView, timezone: string | undefined): Draft {
   return {
     ...emptyDraft(timezone),
@@ -113,32 +88,17 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 }
 
 export default function EditMedicationScreen() {
-  const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
   const { user, activeProfile } = useApp();
-  const legacyMedicationId = Array.isArray(params.id) ? params.id[0] : params.id;
-  const legacyPrefill = Array.isArray(params.prefill) ? params.prefill[0] : params.prefill;
   const intent = user && activeProfile
     ? getMedicationEditRouteIntent(user.id, activeProfile.id)
     : null;
-  const medicationId = legacyMedicationId ?? intent?.medicationId;
+  const medicationId = intent?.medicationId;
 
-  useEffect(() => {
-    if (!legacyMedicationId && !legacyPrefill) return;
-    if (legacyMedicationId && user && activeProfile) {
-      setMedicationEditRouteIntent({
-        userId: user.id,
-        patientProfileId: activeProfile.id,
-        medicationId: legacyMedicationId,
-      });
-    }
-    router.replace('/medication/edit');
-  }, [activeProfile, legacyMedicationId, legacyPrefill, user]);
-
-  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'new'}:${legacyPrefill ?? ''}`;
-  return <EditMedicationProfileScreen key={key} medicationId={medicationId} prefill={legacyPrefill} />;
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'new'}`;
+  return <EditMedicationProfileScreen key={key} medicationId={medicationId} />;
 }
 
-function EditMedicationProfileScreen({ medicationId, prefill }: { medicationId?: string; prefill?: string }) {
+function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }) {
   const isEdit = Boolean(medicationId);
 
   const { t, formatNumber, formatMeasure } = useI18n();
@@ -146,8 +106,7 @@ function EditMedicationProfileScreen({ medicationId, prefill }: { medicationId?:
   const { activeProfile, user } = useApp();
   const { capture: captureSave } = useRequestScope();
 
-  const [draft, setDraft] = useState<Draft>(() =>
-    applyPrefill(emptyDraft(activeProfile?.timezone), prefill));
+  const [draft, setDraft] = useState<Draft>(() => emptyDraft(activeProfile?.timezone));
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);

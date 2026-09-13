@@ -1,15 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { todayLocalDate } from '@/components/DateField';
 import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
-import {
-  getMedicationStockRouteIntent,
-  setMedicationStockRouteIntent,
-} from '@/navigation/private-navigation';
+import { getMedicationStockRouteIntent } from '@/navigation/private-navigation';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey } from '@/hooks/useRequestScope';
@@ -77,25 +74,11 @@ function nextDay(date: string): string {
 }
 
 export default function StockScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string }>();
   const { user, activeProfile } = useApp();
-  const legacyMedicationId = Array.isArray(params.medicationId) ? params.medicationId[0] : params.medicationId;
   const intent = user && activeProfile
     ? getMedicationStockRouteIntent(user.id, activeProfile.id)
     : null;
-  const medicationId = legacyMedicationId ?? intent?.medicationId;
-
-  useEffect(() => {
-    if (!legacyMedicationId) return;
-    if (user && activeProfile) {
-      setMedicationStockRouteIntent({
-        userId: user.id,
-        patientProfileId: activeProfile.id,
-        medicationId: legacyMedicationId,
-      });
-    }
-    router.replace('/medication/stock');
-  }, [activeProfile, legacyMedicationId, user]);
+  const medicationId = intent?.medicationId;
 
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
   return <StockProfileScreen key={key} medicationId={medicationId} />;

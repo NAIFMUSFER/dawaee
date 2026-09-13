@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { MultiPicker, Picker } from '@/components/Picker';
@@ -14,7 +14,6 @@ import type { MedicationScheduleView } from '@/api/types';
 import {
   getMedicationScheduleRouteIntent,
   setMedicationDetailRouteIntent,
-  setMedicationScheduleRouteIntent,
 } from '@/navigation/private-navigation';
 import {
   DOSE_UNITS, SCHEDULE_RULE_KINDS,
@@ -59,31 +58,13 @@ interface HighRiskPrompt {
 }
 
 export default function ScheduleScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
   const { user, activeProfile } = useApp();
-  const legacyMedicationId = Array.isArray(params.medicationId) ? params.medicationId[0] : params.medicationId;
-  const legacyScheduleId = Array.isArray(params.scheduleId) ? params.scheduleId[0] : params.scheduleId;
-  const legacyMode = (Array.isArray(params.mode) ? params.mode[0] : params.mode) === 'edit' ? 'edit' : 'create';
   const intent = user && activeProfile
     ? getMedicationScheduleRouteIntent(user.id, activeProfile.id)
     : null;
-  const medicationId = legacyMedicationId ?? intent?.medicationId;
-  const mode = legacyMedicationId ? legacyMode : (intent?.mode ?? legacyMode);
-  const scheduleId = legacyScheduleId ?? (legacyMedicationId ? undefined : intent?.scheduleId);
-
-  useEffect(() => {
-    if (!legacyMedicationId && !legacyScheduleId) return;
-    if (medicationId && user && activeProfile) {
-      setMedicationScheduleRouteIntent({
-        userId: user.id,
-        patientProfileId: activeProfile.id,
-        medicationId,
-        mode,
-        ...(scheduleId ? { scheduleId } : {}),
-      });
-    }
-    router.replace('/medication/schedule');
-  }, [activeProfile, legacyMedicationId, legacyScheduleId, medicationId, mode, scheduleId, user]);
+  const medicationId = intent?.medicationId;
+  const mode = intent?.mode ?? 'create';
+  const scheduleId = intent?.scheduleId;
 
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}:${scheduleId ?? 'new'}:${mode}`;
   return <ScheduleProfileScreen key={key} medicationId={medicationId} mode={mode} selectedScheduleId={scheduleId} />;
