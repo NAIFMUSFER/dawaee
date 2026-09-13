@@ -25,4 +25,11 @@ describe('production Render release control', () => {
       expect(block).not.toMatch(/autoDeployTrigger:\s*(?:commit|checksPass)\b/);
     },
   );
+
+  it('keeps the running API on a liveness health check during worker-first cutover', () => {
+    const api = serviceBlock(renderBlueprint(), 'dawaee-api');
+
+    expect(api).toMatch(/healthCheckPath:\s*\/health\b/);
+    expect(api).not.toMatch(/healthCheckPath:\s*\/health\/ready\b/);
+  });
 });
