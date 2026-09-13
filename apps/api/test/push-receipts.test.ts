@@ -94,4 +94,44 @@ describe('push receipt reconciliation', () => {
     );
     expect(endpoint.rows[0]?.active).toBe(false);
   });
+
+  it('does not let a stale DeviceNotRegistered receipt deactivate a fresh token that reused the same endpoint row', async () => {
+    const deviceId = 'receipt-rotated-device';
+    const queued = await queuePush('+966500009403', deviceId, 'receipt-rotated-old');
+    await h.tick();
+
+    const sent = await db.query<{
+      provider_receipts: Array<{ providerMessageId: string; pushTokenId: string }>;
+    }>('SELECT provider_receipts FROM notification_deliveries WHERE id = $1', [queued.deliveryId]);
+    const ticket = sent.rows[0]?.provider_receipts[0];
+    expect(ticket?.providerMessageId).toBeTruthy();
+    expect(ticket?.pushTokenId).toBeTruthy();
+
+    const freshToken = 'ExponentPushToken[receipt-rotated-fresh]';
+    const reregistered = await h.app.inject({
+      method: 'POST',
+      url: '/v1/devices/push-token',
+      headers: authHeaders(queued.user),
+      payload: { token: freshToken, platform: 'ios', deviceId },
+    });
+    expect(reregistered.statusCode, reregistered.body).toBe(200);
+
+    const beforeReceipt = await db.query<{ token: string; active: boolean }>(
+      'SELECT token, active FROM push_tokens WHERE id = $1 AND user_id = $2',
+      [ticket!.pushTokenId, queued.user.userId],
+    );
+    expect(beforeReceipt.rows[0]).toEqual({ token: freshToken, active: true });
+
+    // The receipt belongs to the old provider token. Its internal row id is
+    // intentionally stable across re-registration, so id-only invalidation
+    // would silence the newly registered token instead of the stale one.
+    h.push.receiptErrors.set(ticket!.providerMessageId, 'DeviceNotRegistered');
+    await advance(16);
+
+    const afterReceipt = await db.query<{ token: string; active: boolean }>(
+      'SELECT token, active FROM push_tokens WHERE id = $1 AND user_id = $2',
+      [ticket!.pushTokenId, queued.user.userId],
+    );
+    expect(afterReceipt.rows[0]).toEqual({ token: freshToken, active: true });
+  });
 });
