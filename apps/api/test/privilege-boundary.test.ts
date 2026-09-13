@@ -60,9 +60,9 @@ const WORKER_MANIFEST: Record<string, string[]> = {
  */
 const WORKER_DEFINER_ALLOWED = [
   'can_read_profile', 'caregives_profile', 'cleanup_expired_sessions',
-  'erase_due_account', 'has_permission',
+  'deactivate_push_endpoint', 'erase_due_account', 'has_permission',
   'list_abandoned_object_keys', 'list_due_account_ids', 'list_due_account_object_keys',
-  'list_live_push_tokens',
+  'list_live_push_endpoints', 'list_live_push_tokens',
   'owns_profile', 'purge_expired_otp', 'purge_rate_buckets',
   'remove_abandoned_object_metadata',
 ];
@@ -216,6 +216,14 @@ describe('worker SECURITY DEFINER holes stay narrow', () => {
     expect(rows.every((r) => (r.proconfig ?? []).join(',').includes('search_path='))).toBe(true);
     expect(rows.every((r) => r.public_exec === false)).toBe(true);
     expect(rows.every((r) => r.api_exec === false)).toBe(true);
+  });
+
+  it('does not retain the unused receipt-claim capability', async () => {
+    const { rows } = await owner.query<{ missing: boolean }>(
+      `SELECT to_regprocedure('app.claim_push_receipts(timestamptz,integer)') IS NULL AS missing`,
+    );
+    expect(rows[0]!.missing,
+      'an uncalled SECURITY DEFINER receipt-claim path remains installed').toBe(true);
   });
 
   it('can execute no SECURITY DEFINER function outside its allowlist', async () => {
