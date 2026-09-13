@@ -66,8 +66,8 @@ function matches(pattern: RegExp, useExecutable = true): string[] {
 describe('React Native platform security — static source assertions', () => {
   it('scans the complete mobile runtime without a brittle repository-size ceiling', () => {
     expect(files.length).toBeGreaterThan(20);
-    expect(files.some((file) => file.path === 'api/client.ts')).toBe(true);
-    expect(files.some((file) => file.path === 'api/token-store.ts')).toBe(true);
+    expect(files.some((file) => file.path === 'src/api/client.ts')).toBe(true);
+    expect(files.some((file) => file.path === 'src/api/token-store.ts')).toBe(true);
   });
 
   it('does not contain hardcoded private keys or provider credentials in runtime source', () => {
