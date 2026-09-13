@@ -41,11 +41,13 @@ export interface LockState {
    *
    * The distinction is security-significant. A screen that was already locked
    * must never manufacture a grace window merely by going background → active.
-   * Null is also what makes a late verification result after a real background
-   * event fail closed instead of cancelling that re-lock.
    */
   backgroundedAt: number | null;
-  /** True once a real background event happened and until active processes it. */
+  /**
+   * A real background invalidates any verification already in flight. Keep the
+   * marker even after returning active: the old promise can resolve later. A
+   * NEW local verification attempt explicitly clears it before asking the OS.
+   */
   backgrounded: boolean;
   /** Areas verified since the last background, e.g. 'reports'. */
   verifiedAreas: readonly string[];
@@ -55,6 +57,8 @@ export type LockEvent =
   /** Preferences or session changed. `enabled` is (appLockEnabled && signedIn). */
   | { type: 'configure'; enabled: boolean }
   | { type: 'appStatus'; status: AppStatus; now: number }
+  /** A new local biometric/device-credential prompt is about to begin. */
+  | { type: 'verificationStarted' }
   /** The OS said yes to a whole-app verification. */
   | { type: 'verified' }
   /** The OS said yes to an area verification. */
@@ -121,7 +125,8 @@ export const INITIAL_LOCK_STATE: LockState = {
  *    make the lock impossible to open.
  *  - Anything longer than the window, however the app got there.
  *  - A verification response that arrives after a real background event. It
- *    belongs to the foreground attempt that was interrupted and is discarded.
+ *    belongs to the foreground attempt that was interrupted and is discarded,
+ *    even when that promise resolves only after the app is active again.
  *
  * MANUAL DEVICE LOCK. Pressing the power button reaches the app as a plain
  * `background`, and neither iOS nor Android distinguishes it from an app switch
@@ -188,7 +193,9 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
       }
       // active
       if (!state.pendingRelock) {
-        return { ...state, phase: 'unlocked', backgroundedAt: null, backgrounded: false };
+        // Preserve `backgrounded`: a verification promise started before the
+        // real background may resolve after this active event and remains stale.
+        return { ...state, phase: 'unlocked', backgroundedAt: null };
       }
       const away = state.backgroundedAt === null ? Infinity : event.now - state.backgroundedAt;
       // The grace window is valid only for a forward-moving wall clock AND for
@@ -201,11 +208,25 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
           phase: 'unlocked',
           pendingRelock: false,
           backgroundedAt: null,
-          backgrounded: false,
+          // Keep the invalidation marker until a NEW verification starts.
+          backgrounded: true,
         };
       }
-      return { ...state, phase: 'locked', backgroundedAt: null, backgrounded: false };
+      return {
+        ...state,
+        phase: 'locked',
+        backgroundedAt: null,
+        // Same rule after a long trip: old async verification is still stale.
+        backgrounded: true,
+      };
     }
+
+    case 'verificationStarted':
+      if (!state.enabled) return state;
+      // This event is emitted synchronously immediately before asking the OS.
+      // It distinguishes a fresh post-resume prompt from a promise that began
+      // before the real background event and only resolved afterwards.
+      return { ...state, backgrounded: false };
 
     case 'verified':
       if (!state.enabled) return state;
