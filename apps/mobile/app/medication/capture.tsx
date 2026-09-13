@@ -60,6 +60,19 @@ function loadImagePicker(): ImagePickerModule | null {
   return null;
 }
 
+function resolveImageContentType(blobType: string, pickerMimeType?: string | null): string | null {
+  const normalizedBlob = blobType.trim().toLowerCase();
+  if (normalizedBlob && ALLOWED_CONTENT_TYPES.has(normalizedBlob)) return normalizedBlob;
+
+  const normalizedPicker = pickerMimeType?.trim().toLowerCase() ?? '';
+  if (normalizedPicker) return ALLOWED_CONTENT_TYPES.has(normalizedPicker) ? normalizedPicker : null;
+
+  // Expo Camera produces JPEG by default, while React Native URI blobs can omit
+  // their MIME type. Preserve that camera fallback only when neither source
+  // claims a conflicting type; picker metadata is authoritative when present.
+  return normalizedBlob ? null : 'image/jpeg';
+}
+
 interface OcrField { value: string | number; confidence: number }
 interface MedicationLabelResponse {
   kind: 'medication_label';
@@ -225,7 +238,7 @@ function CaptureProfileScreen() {
     }
   }, [activeProfile, captureAction, failWith, mode, t]);
 
-  const uploadAndAnalyze = useCallback(async (uri: string) => {
+  const uploadAndAnalyze = useCallback(async (uri: string, pickerMimeType?: string | null) => {
     if (!activeProfile) return;
     const isCurrent = captureAction();
     if (!isCurrent()) return;
@@ -236,7 +249,8 @@ function CaptureProfileScreen() {
     try {
       const blob = await (await fetch(uri)).blob();
       if (!isCurrent()) return;
-      const contentType = ALLOWED_CONTENT_TYPES.has(blob.type) ? blob.type : 'image/jpeg';
+      const contentType = resolveImageContentType(blob.type, pickerMimeType);
+      if (!contentType) throw new ApiError('upload_rejected', 400, 'Unsupported image type');
       const ticket = await api.post<UploadTicketResponse>('/v1/uploads/request', {
         purpose: mode === 'prescription' ? 'prescription_image' : 'medication_image',
         contentType,
@@ -291,7 +305,7 @@ function CaptureProfileScreen() {
       const asset = result.assets?.[0];
       if (result.canceled || !asset) return;
       setPhotoUri(asset.uri);
-      await uploadAndAnalyze(asset.uri);
+      await uploadAndAnalyze(asset.uri, asset.mimeType);
     } catch {
       if (!isCurrent()) return;
       setError(t('capture.failed'));
