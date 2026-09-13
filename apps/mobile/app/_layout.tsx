@@ -10,6 +10,7 @@ import { PALETTE } from '@dawaee/shared';
 import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
+import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -44,9 +45,24 @@ function useWebAlertAdapter() {
  * right language and direction — no flash of English in an Arabic app.
  */
 function Shell() {
-  const { ready, preferences, signedIn, deviceId, syncNow: refreshAfterAction } = useApp();
+  const {
+    ready, preferences, signedIn, user, activeProfile, deviceId,
+    syncNow: refreshAfterAction,
+  } = useApp();
   const router = useRouter();
   useWebAlertAdapter();
+
+  /**
+   * Clinical route handoffs deliberately live only in process memory. They are
+   * scoped by account/profile, but a logout followed by a fast re-login as the
+   * same person would otherwise leave the previous medication/caregiver id in
+   * memory until its TTL elapsed. Authentication and patient-profile changes
+   * are privacy boundaries: discard every pending selection before a stale
+   * fixed detail route can revive it under the new context.
+   */
+  useEffect(() => {
+    clearClinicalRouteIntents();
+  }, [signedIn, user?.id, activeProfile?.id]);
 
   useEffect(() => {
     void configureChannels();
