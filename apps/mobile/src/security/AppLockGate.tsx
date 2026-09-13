@@ -131,6 +131,9 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     setFailed(false);
     setVerifying(true);
     try {
+      // Synchronous marker: any result from a prompt started before a real
+      // background remains invalid, even if it resolves only after resume.
+      dispatch({ type: 'verificationStarted' });
       const ok = await verifyLocally(t('applock.unlockPrompt'), t('common.cancel'));
       if (ok) dispatch({ type: 'verified' });
       else setFailed(true);
@@ -141,6 +144,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
 
   const verifyArea = useCallback(
     async (area: string, prompt: string, cancel: string) => {
+      dispatch({ type: 'verificationStarted' });
       const ok = await verifyLocally(prompt, cancel);
       if (ok) dispatch({ type: 'areaVerified', area });
       return ok;
