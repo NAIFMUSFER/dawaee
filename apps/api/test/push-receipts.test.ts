@@ -33,10 +33,10 @@ async function queuePush(phone: string, deviceId: string, dedupe: string) {
 
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO notification_deliveries
-       (recipient_user_id, kind, channel, title, body, payload, dedupe_key, next_attempt_at)
-     VALUES ($1, 'dose_reminder', 'push', 'Receipt test', 'Synthetic body', '{}'::jsonb, $2, '1970-01-01T00:00:00Z')
+       (patient_profile_id, recipient_user_id, kind, channel, title, body, payload, dedupe_key, next_attempt_at)
+     VALUES ($1, $2, 'dose_reminder', 'push', 'Receipt test', 'Synthetic body', '{}'::jsonb, $3, '1970-01-01T00:00:00Z')
      RETURNING id`,
-    [user.userId, dedupe],
+    [user.profileId, user.userId, dedupe],
   );
   return { user, token, deliveryId: rows[0]!.id };
 }

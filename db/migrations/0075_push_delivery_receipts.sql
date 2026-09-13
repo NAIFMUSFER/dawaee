@@ -17,9 +17,6 @@ ALTER TABLE notification_deliveries
 COMMENT ON COLUMN notification_deliveries.provider_receipts IS
   'Worker-only provider receipt tickets: provider message id + internal push-token id; never the push token secret itself.';
 
--- Keep auth-session data out of the worker. This is the receipt-aware sibling
--- of app.list_live_push_tokens and returns only the endpoint id needed for a
--- later DeviceNotRegistered receipt plus the routing token needed right now.
 CREATE OR REPLACE FUNCTION app.list_live_push_endpoints(
   p_user_id uuid,
   p_limit integer DEFAULT 5
@@ -42,16 +39,13 @@ AS $$
           AND s.revoked_at IS NULL
           AND s.expires_at > now()
      )
-   ORDER BY pt.updated_at DESC, pt.id DESC
+   ORDER BY pt.last_seen_at DESC, pt.id DESC
    LIMIT LEAST(GREATEST(COALESCE(p_limit, 5), 1), 20)
 $$;
 
 REVOKE ALL ON FUNCTION app.list_live_push_endpoints(uuid, integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app.list_live_push_endpoints(uuid, integer) TO dawaee_worker;
 
--- Receipt reconciliation can retire exactly the endpoint Expo identified,
--- without granting the worker broad auth-session access or storing a push token
--- in notification metadata.
 CREATE OR REPLACE FUNCTION app.deactivate_push_endpoint(
   p_user_id uuid,
   p_push_token_id uuid
@@ -65,7 +59,8 @@ AS $$
   WITH changed AS (
     UPDATE push_tokens
        SET active = false,
-           updated_at = now()
+           failure_count = failure_count + 1,
+           last_seen_at = now()
      WHERE id = p_push_token_id
        AND user_id = p_user_id
        AND active
