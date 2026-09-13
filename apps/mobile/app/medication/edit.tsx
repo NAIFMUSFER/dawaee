@@ -114,6 +114,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
 
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(activeProfile?.timezone));
   const [loading, setLoading] = useState(isEdit);
+  const [hydrated, setHydrated] = useState(!isEdit);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +130,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
       try {
         const res = await api.get<{ medication: MedicationView }>(`/v1/medications/${medicationId}`);
         setDraft(fromMedication(res.medication, activeProfile?.timezone));
+        setHydrated(true);
       } catch (err) {
         setError(err instanceof NetworkError ? t('notifications.offlineBanner') : t('error.internal_error'));
       } finally {
@@ -186,7 +188,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
   };
 
   const save = async (options: { acknowledgeDuplicate?: boolean; confirmHighRiskChange?: boolean } = {}) => {
-    if (!activeProfile) return;
+    if (!activeProfile || (isEdit && !hydrated)) return;
     if (!draft.name.trim()) {
       setNameError(t('medication.nameRequired'));
       return;
@@ -249,6 +251,17 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
   };
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
+
+  if (isEdit && !hydrated) {
+    return (
+      <SafeAreaView style={{ flex: 1 }}>
+        <Screen>
+          {error ? <Banner tone="danger" title={error} /> : null}
+          <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+        </Screen>
+      </SafeAreaView>
+    );
+  }
 
   const afterValue = (change: string): string => {
     if (change === 'medication_identity') return draft.name.trim();
