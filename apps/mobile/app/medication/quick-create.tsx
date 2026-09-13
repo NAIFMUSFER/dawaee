@@ -211,7 +211,16 @@ function QuickCreateMedicationProfileScreen() {
         {canAdd ? (
           <>
             <Card>
-              <Field label={t('medication.name')} value={name} onChangeText={setName} error={nameError} autoFocus={!prefill.name} />
+              <Field
+                label={t('medication.name')}
+                value={name}
+                onChangeText={(value) => {
+                  setName(value);
+                  setDuplicate(false);
+                }}
+                error={nameError}
+                autoFocus={!prefill.name}
+              />
             </Card>
 
             <SectionTitle>{t('medication.dose')}</SectionTitle>
