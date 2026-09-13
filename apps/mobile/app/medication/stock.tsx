@@ -117,6 +117,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
 
   const load = useCallback(async () => {
     if (!medicationId) return;
+    setLoading(true);
     try {
       const [stockRes, detail] = await Promise.all([
         api.get<StockResponse>(`/v1/medications/${medicationId}/stock`),
@@ -127,6 +128,8 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
       if (stockRes.stock) setRefillUnit(stockRes.stock.unit);
       setError(null);
     } catch (err) {
+      // A failed read is not evidence of untracked or empty stock.
+      setData(null);
       setError(describeError(err));
     } finally {
       setLoading(false);
@@ -152,7 +155,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
   );
 
   const adjust = async (body: { delta: number } | { remainingQuantity: number }) => {
-    if (!medicationId) return;
+    if (!medicationId || !data || loading) return;
     setBusy(true);
     setError(null);
     try {
@@ -167,13 +170,17 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
   };
 
   const saveRefill = async () => {
-    if (!medicationId) return;
+    if (!medicationId || !data || loading) return;
     const quantity = Number(refillQuantity.replace(',', '.'));
     if (!Number.isFinite(quantity) || quantity <= 0) {
       setError(t('error.validation_failed'));
       return;
     }
     const parsedCost = cost.trim() === '' ? null : Number(cost.replace(',', '.'));
+    if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0 || parsedCost > 1_000_000)) {
+      setError(t('error.validation_failed'));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -181,7 +188,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
         quantityAdded: quantity,
         unit: refillUnit,
         pharmacy: pharmacy.trim() || null,
-        cost: parsedCost !== null && Number.isFinite(parsedCost) ? parsedCost : null,
+        cost: parsedCost,
         note: note.trim() || null,
       });
       setRefillQuantity('');
@@ -221,7 +228,21 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
     );
   }
 
-  const stock = data?.stock ?? null;
+  // Both stock and medication detail must load before showing write controls.
+  // A successful response with stock: null is still a valid untracked state.
+  if (!data) {
+    return (
+      <SafeAreaView style={{ flex: 1 }}>
+        <Screen>
+          <Banner tone="danger" title={error ?? t('error.internal_error')} />
+          <Button label={t('common.retry')} onPress={() => void load()} />
+          <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
+        </Screen>
+      </SafeAreaView>
+    );
+  }
+
+  const stock = data.stock;
   const forecast = data?.forecast ?? null;
   const today = todayLocalDate(activeProfile?.timezone);
   const bannerHidden = snoozedUntil !== null && today < snoozedUntil;
