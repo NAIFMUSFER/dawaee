@@ -13,7 +13,7 @@ describe('caregiver dashboard browser URL privacy', () => {
   });
 
   it('switches followed patients through application state instead of the public URL', () => {
-    expect(dashboard).toMatch(/useApp\(\)[\s\S]{0,220}setActiveProfile/);
+    expect(dashboard).toMatch(/const\s*\{[^}]*\bsetActiveProfile\b[^}]*\}\s*=\s*useApp\(\)/);
     expect(dashboard).toContain('onPress={() => setActiveProfile(p.id)}');
   });
 });
