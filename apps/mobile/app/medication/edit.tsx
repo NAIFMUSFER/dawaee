@@ -12,6 +12,12 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
 import {
+  getMedicationEditRouteIntent,
+  setMedicationDetailRouteIntent,
+  setMedicationEditRouteIntent,
+  setMedicationScheduleRouteIntent,
+} from '@/navigation/private-navigation';
+import {
   FOOD_INSTRUCTIONS, MEDICATION_FORMS, STRENGTH_UNITS,
   type FoodInstruction, type MedicationForm, type MessageKey, type StrengthUnit,
 } from '@dawaee/shared';
@@ -109,22 +115,39 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 export default function EditMedicationScreen() {
   const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
   const { user, activeProfile } = useApp();
-  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.mode ?? 'create'}:${params.id ?? 'new'}:${params.prefill ?? ''}`;
-  return <EditMedicationProfileScreen key={key} />;
+  const legacyMedicationId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const legacyPrefill = Array.isArray(params.prefill) ? params.prefill[0] : params.prefill;
+  const intent = user && activeProfile
+    ? getMedicationEditRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = legacyMedicationId ?? intent?.medicationId;
+
+  useEffect(() => {
+    if (!legacyMedicationId && !legacyPrefill) return;
+    if (legacyMedicationId && user && activeProfile) {
+      setMedicationEditRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId: legacyMedicationId,
+      });
+    }
+    router.replace('/medication/edit');
+  }, [activeProfile, legacyMedicationId, legacyPrefill, user]);
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'new'}:${legacyPrefill ?? ''}`;
+  return <EditMedicationProfileScreen key={key} medicationId={medicationId} prefill={legacyPrefill} />;
 }
 
-function EditMedicationProfileScreen() {
-  const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
-  const isEdit = params.mode === 'edit' && Boolean(params.id);
-  const medicationId = params.id;
+function EditMedicationProfileScreen({ medicationId, prefill }: { medicationId?: string; prefill?: string }) {
+  const isEdit = Boolean(medicationId);
 
   const { t, formatNumber, formatMeasure } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
   const { capture: captureSave } = useRequestScope();
 
   const [draft, setDraft] = useState<Draft>(() =>
-    applyPrefill(emptyDraft(activeProfile?.timezone), params.prefill));
+    applyPrefill(emptyDraft(activeProfile?.timezone), prefill));
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -217,7 +240,13 @@ function EditMedicationProfileScreen() {
         });
         if (!isCurrent()) return;
         setHighRisk(null);
-        router.replace(`/medication/${medicationId}`);
+        if (!user) return;
+        setMedicationDetailRouteIntent({
+          userId: user.id,
+          patientProfileId: activeProfile.id,
+          medicationId,
+        });
+        router.replace('/medication/detail');
         return;
       }
 
@@ -230,7 +259,14 @@ function EditMedicationProfileScreen() {
       if (!isCurrent()) return;
       // A medication with no schedule never reminds anyone, so creating one
       // hands straight over to the schedule builder rather than to the detail.
-      router.replace(`/medication/schedule?medicationId=${created.medication.id}&mode=create`);
+      if (!user) return;
+      setMedicationScheduleRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId: created.medication.id,
+        mode: 'create',
+      });
+      router.replace('/medication/schedule');
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
@@ -289,7 +325,15 @@ function EditMedicationProfileScreen() {
                     key={duplicate.medicationId}
                     label={`${t('medication.viewExisting')} · ${duplicate.medicationName}`}
                     tone="secondary"
-                    onPress={() => router.replace(`/medication/${duplicate.medicationId}`)}
+                    onPress={() => {
+                      if (!user || !activeProfile) return;
+                      setMedicationDetailRouteIntent({
+                        userId: user.id,
+                        patientProfileId: activeProfile.id,
+                        medicationId: duplicate.medicationId,
+                      });
+                      router.replace('/medication/detail');
+                    }}
                   />
                 ))}
                 <Button

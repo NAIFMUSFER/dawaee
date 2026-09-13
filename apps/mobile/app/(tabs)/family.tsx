@@ -9,6 +9,7 @@ import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
+import { setCaregiverDetailRouteIntent } from '@/navigation/private-navigation';
 import type { CaregiverPermission } from '@dawaee/shared';
 
 /**
@@ -299,6 +300,17 @@ function CaregiverCard({
 }: { caregiver: CaregiverView; isPrimary: boolean; busy: boolean; onRevoke: () => void }) {
   const { t, formatDate, formatNumber, bidi } = useI18n();
   const theme = useTheme();
+  const { user, activeProfile } = useApp();
+
+  const openCaregiver = () => {
+    if (!user || !activeProfile) return;
+    setCaregiverDetailRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      relationshipId: caregiver.id,
+    });
+    router.push('/caregiver/detail');
+  };
 
   const statusStyle = {
     active: { label: t('family.active'), fg: theme.colors.success700, bg: theme.colors.success100 },
@@ -379,7 +391,7 @@ function CaregiverCard({
           <Button
             label={t('family.manageCaregiver')}
             tone="secondary"
-            onPress={() => router.push(`/caregiver/${caregiver.id}`)}
+            onPress={openCaregiver}
           />
         </View>
         <View style={{ flex: 1 }}>

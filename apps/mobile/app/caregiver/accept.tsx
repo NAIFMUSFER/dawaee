@@ -54,7 +54,7 @@ export default function AcceptInvitationScreen() {
   const params = useLocalSearchParams<{ token?: string }>();
   const { t } = useI18n();
   const theme = useTheme();
-  const { signedIn, profiles, refreshProfiles, setOffline } = useApp();
+  const { signedIn, profiles, refreshProfiles, setActiveProfile, setOffline } = useApp();
 
   const [token, setToken] = useState<string | null>(params.token ?? null);
   const [tokenResolved, setTokenResolved] = useState(false);
@@ -273,10 +273,10 @@ export default function AcceptInvitationScreen() {
         <Button
           label={t('accept.openDashboard')}
           size="large"
-          onPress={() =>
-            router.replace(outcome.profileId
-              ? `/caregiver/dashboard?profileId=${outcome.profileId}`
-              : '/caregiver/dashboard')}
+          onPress={() => {
+            if (outcome.profileId) setActiveProfile(outcome.profileId);
+            router.replace('/caregiver/dashboard');
+          }}
         />
         <Button label={t('common.close')} tone="ghost" onPress={() => router.replace('/')} />
       </Screen>

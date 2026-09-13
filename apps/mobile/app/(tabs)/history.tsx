@@ -14,6 +14,7 @@ import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView } from '@/api/types';
 import { DOSE_STATUS_COLORS, errorMessageKey, type DoseStatus, type MessageKey } from '@dawaee/shared';
 import { addDays, eachDate, weekdayOf } from '@dawaee/core';
+import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
 /**
  * Dose history.
@@ -123,7 +124,7 @@ export default function HistoryScreen() {
 function HistoryProfileScreen() {
   const { t, formatDate, formatWeekday, formatNumber } = useI18n();
   const theme = useTheme();
-  const { activeProfile, offline, setOffline } = useApp();
+  const { activeProfile, offline, setOffline, user } = useApp();
   const timezone = activeProfile?.timezone ?? 'UTC';
 
   const [mode, setMode] = useState<ViewMode>('week');
@@ -137,6 +138,16 @@ function HistoryProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const openMedication = (selectedMedicationId: string) => {
+    if (!user || !activeProfile) return;
+    setMedicationDetailRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId: selectedMedicationId,
+    });
+    router.push('/medication/detail');
+  };
 
   const range = useMemo(() => {
     if (mode === 'day') return { from: anchor, to: anchor };
@@ -403,7 +414,7 @@ function HistoryProfileScreen() {
                 <DoseCard
                   key={dose.id}
                   dose={dose}
-                  onPress={() => router.push(`/medication/${dose.medicationId}`)}
+                  onPress={() => openMedication(dose.medicationId)}
                 />
               ))}
               <Divider />

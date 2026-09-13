@@ -12,8 +12,16 @@ const medicationId = 'medication-under-test';
 function overrides() {
   return {
     'expo-router': {
-      useLocalSearchParams: () => ({ mode: 'edit', id: medicationId }),
+      useLocalSearchParams: () => ({}),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+    },
+    '@/navigation/private-navigation': {
+      getMedicationEditRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, medicationId,
+      }),
+      setMedicationDetailRouteIntent: () => undefined,
+      setMedicationEditRouteIntent: () => undefined,
+      setMedicationScheduleRouteIntent: () => undefined,
     },
     '@/components/DateField': {
       DateField: 'DateField',

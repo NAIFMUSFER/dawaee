@@ -13,8 +13,15 @@ const scheduleId = 'schedule-under-test';
 function overrides() {
   return {
     'expo-router': {
-      useLocalSearchParams: () => ({ medicationId, mode: 'edit', scheduleId }),
+      useLocalSearchParams: () => ({}),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+    },
+    '@/navigation/private-navigation': {
+      getMedicationScheduleRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, medicationId, mode: 'edit', scheduleId,
+      }),
+      setMedicationDetailRouteIntent: () => undefined,
+      setMedicationScheduleRouteIntent: () => undefined,
     },
     '@/components/DateField': {
       DateField: 'DateField',

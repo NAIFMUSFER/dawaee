@@ -12,6 +12,11 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationScheduleView } from '@/api/types';
 import {
+  getMedicationScheduleRouteIntent,
+  setMedicationDetailRouteIntent,
+  setMedicationScheduleRouteIntent,
+} from '@/navigation/private-navigation';
+import {
   DOSE_UNITS, SCHEDULE_RULE_KINDS,
   type DoseUnit, type MessageKey, type ScheduleRule, type ScheduleRuleKind,
 } from '@dawaee/shared';
@@ -56,18 +61,48 @@ interface HighRiskPrompt {
 export default function ScheduleScreen() {
   const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
   const { user, activeProfile } = useApp();
-  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.medicationId ?? 'none'}:${params.scheduleId ?? 'new'}:${params.mode ?? 'create'}`;
-  return <ScheduleProfileScreen key={key} />;
+  const legacyMedicationId = Array.isArray(params.medicationId) ? params.medicationId[0] : params.medicationId;
+  const legacyScheduleId = Array.isArray(params.scheduleId) ? params.scheduleId[0] : params.scheduleId;
+  const legacyMode = (Array.isArray(params.mode) ? params.mode[0] : params.mode) === 'edit' ? 'edit' : 'create';
+  const intent = user && activeProfile
+    ? getMedicationScheduleRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = legacyMedicationId ?? intent?.medicationId;
+  const mode = legacyMedicationId ? legacyMode : (intent?.mode ?? legacyMode);
+  const scheduleId = legacyScheduleId ?? (legacyMedicationId ? undefined : intent?.scheduleId);
+
+  useEffect(() => {
+    if (!legacyMedicationId && !legacyScheduleId) return;
+    if (medicationId && user && activeProfile) {
+      setMedicationScheduleRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId,
+        mode,
+        ...(scheduleId ? { scheduleId } : {}),
+      });
+    }
+    router.replace('/medication/schedule');
+  }, [activeProfile, legacyMedicationId, legacyScheduleId, medicationId, mode, scheduleId, user]);
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}:${scheduleId ?? 'new'}:${mode}`;
+  return <ScheduleProfileScreen key={key} medicationId={medicationId} mode={mode} selectedScheduleId={scheduleId} />;
 }
 
-function ScheduleProfileScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
-  const medicationId = params.medicationId;
-  const isEdit = params.mode === 'edit';
+function ScheduleProfileScreen({
+  medicationId,
+  mode,
+  selectedScheduleId,
+}: {
+  medicationId?: string;
+  mode: 'create' | 'edit';
+  selectedScheduleId?: string;
+}) {
+  const isEdit = mode === 'edit';
 
   const { t, formatNumber, formatWeekday, isRtl } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
   const { capture: captureSave } = useRequestScope();
 
   const [kind, setKind] = useState<ScheduleRuleKind>('fixed_times');
@@ -88,7 +123,7 @@ function ScheduleProfileScreen() {
   const [startDate, setStartDate] = useState(() => todayLocalDate(activeProfile?.timezone));
   const [endDate, setEndDate] = useState('');
 
-  const [scheduleId, setScheduleId] = useState<string | null>(params.scheduleId ?? null);
+  const [scheduleId, setScheduleId] = useState<string | null>(selectedScheduleId ?? null);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState<string | null>(null);
@@ -133,8 +168,8 @@ function ScheduleProfileScreen() {
     void (async () => {
       try {
         const res = await api.get<{ schedules: MedicationScheduleView[] }>(`/v1/medications/${medicationId}`);
-        const wanted = params.scheduleId
-          ? res.schedules.find((s) => s.id === params.scheduleId)
+        const wanted = selectedScheduleId
+          ? res.schedules.find((s) => s.id === selectedScheduleId)
           : res.schedules.find((s) => s.active) ?? res.schedules[0];
         if (wanted) hydrate(wanted);
       } catch (err) {
@@ -143,7 +178,7 @@ function ScheduleProfileScreen() {
         setLoading(false);
       }
     })();
-  }, [hydrate, isEdit, medicationId, params.scheduleId, t]);
+  }, [hydrate, isEdit, medicationId, selectedScheduleId, t]);
 
   const kindOptions = useMemo(
     () => SCHEDULE_RULE_KINDS.map((value) => ({
@@ -307,7 +342,13 @@ function ScheduleProfileScreen() {
       }
       if (!isCurrent()) return;
       setHighRisk(null);
-      router.replace(`/medication/${medicationId}`);
+      if (!user || !activeProfile) return;
+      setMedicationDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId,
+      });
+      router.replace('/medication/detail');
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'high_risk_confirmation_required') {

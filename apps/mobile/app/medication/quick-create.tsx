@@ -13,6 +13,7 @@ import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { clearMedicationDrafts, getMedicationPrefillDraft } from '@/storage/medication-draft';
+import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import type { MedicationView } from '@/api/types';
 import { DOSE_UNITS, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
 
@@ -44,7 +45,7 @@ export default function QuickCreateMedicationScreen() {
 
 function QuickCreateMedicationProfileScreen() {
   const params = useLocalSearchParams<{ source?: string }>();
-  const { activeProfile, preferences } = useApp();
+  const { activeProfile, preferences, user } = useApp();
   const prefill = useMemo<Prefill>(
     () => params.source === 'capture' && activeProfile
       ? (getMedicationPrefillDraft(activeProfile.id) ?? {})
@@ -161,7 +162,13 @@ function QuickCreateMedicationProfileScreen() {
       });
       if (!isCurrent()) return;
       clearMedicationDrafts();
-      router.replace(`/medication/${created.medication.id}`);
+      if (!user) return;
+      setMedicationDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId: created.medication.id,
+      });
+      router.replace('/medication/detail');
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {

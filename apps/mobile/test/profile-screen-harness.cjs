@@ -105,6 +105,18 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       inspectCapability: async () => ({ supported: false }),
       rescheduleLocalNotifications: async (doses) => { h.notifications.push(doses); return { exactAlarmsUnavailable: false }; },
     },
+    '@/navigation/private-navigation': {
+      getMedicationDetailRouteIntent: () => null,
+      getMedicationEditRouteIntent: () => null,
+      getMedicationScheduleRouteIntent: () => null,
+      getMedicationStockRouteIntent: () => null,
+      getCaregiverDetailRouteIntent: () => null,
+      setMedicationDetailRouteIntent: () => undefined,
+      setMedicationEditRouteIntent: () => undefined,
+      setMedicationScheduleRouteIntent: () => undefined,
+      setMedicationStockRouteIntent: () => undefined,
+      setCaregiverDetailRouteIntent: () => undefined,
+    },
     '@dawaee/shared': { DOSE_STATUS_COLORS: new Proxy({}, { get: () => ({ fg: '#000', bg: '#fff' }) }), errorMessageKey: (code) => `error.${code}` },
     '@dawaee/core': { addDays, weekdayOf: (date) => new Date(`${date}T12:00:00Z`).getUTCDay(), eachDate: (from, to) => {
       const result = []; for (let d = from; d <= to; d = addDays(d, 1)) result.push(d); return result;

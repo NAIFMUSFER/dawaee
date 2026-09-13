@@ -6,6 +6,10 @@ import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitl
 import { Picker } from '@/components/Picker';
 import { todayLocalDate } from '@/components/DateField';
 import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
+import {
+  getMedicationStockRouteIntent,
+  setMedicationStockRouteIntent,
+} from '@/navigation/private-navigation';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey } from '@/hooks/useRequestScope';
@@ -75,13 +79,29 @@ function nextDay(date: string): string {
 export default function StockScreen() {
   const params = useLocalSearchParams<{ medicationId?: string }>();
   const { user, activeProfile } = useApp();
-  const key = `${profileScopeKey(user?.id, activeProfile)}:${params.medicationId ?? 'none'}`;
-  return <StockProfileScreen key={key} />;
+  const legacyMedicationId = Array.isArray(params.medicationId) ? params.medicationId[0] : params.medicationId;
+  const intent = user && activeProfile
+    ? getMedicationStockRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = legacyMedicationId ?? intent?.medicationId;
+
+  useEffect(() => {
+    if (!legacyMedicationId) return;
+    if (user && activeProfile) {
+      setMedicationStockRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId: legacyMedicationId,
+      });
+    }
+    router.replace('/medication/stock');
+  }, [activeProfile, legacyMedicationId, user]);
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
+  return <StockProfileScreen key={key} medicationId={medicationId} />;
 }
 
-function StockProfileScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string }>();
-  const medicationId = params.medicationId;
+function StockProfileScreen({ medicationId }: { medicationId?: string }) {
 
   const { t, formatDate, formatNumber } = useI18n();
   const theme = useTheme();
@@ -89,7 +109,7 @@ function StockProfileScreen() {
 
   const [data, setData] = useState<StockResponse | null>(null);
   const [medicationName, setMedicationName] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(medicationId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snoozedUntil, setSnoozedUntil] = useState<string | null>(null);

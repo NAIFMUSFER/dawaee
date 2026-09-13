@@ -15,6 +15,7 @@ import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
 import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
+import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
 function localDateIn(timeZone: string): string {
   try {
@@ -75,6 +76,16 @@ function TodayProfileScreen() {
       && activeProfile.permissions?.includes('view_medications')
     )
   ));
+
+  const openMedication = (medicationId: string) => {
+    if (!user || !activeProfile) return;
+    setMedicationDetailRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId,
+    });
+    router.push('/medication/detail');
+  };
 
   const [data, setData] = useState<TodayResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -394,7 +405,7 @@ function TodayProfileScreen() {
                     dose={dose}
                     busy={busyDoseId === dose.id}
                     onUndo={canConfirmDose ? () => void undo(dose) : undefined}
-                    onPress={() => router.push(`/medication/${dose.medicationId}`)}
+                    onPress={() => openMedication(dose.medicationId)}
                   />
                 ))}
               </View>

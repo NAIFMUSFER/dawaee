@@ -7,7 +7,7 @@ import { useI18n } from '@/i18n';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
-import { getMedicationDetailSelection } from '@/navigation/private-navigation';
+import { getMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import type { DoseView, MedicationScheduleView, MedicationView } from '@/api/types';
 import type { MessageKey, ScheduleRule } from '@dawaee/shared';
 
@@ -22,7 +22,9 @@ function shiftDate(date: string, days: number): string {
 
 export default function MedicationDetailScreen() {
   const { user, activeProfile } = useApp();
-  const selection = activeProfile ? getMedicationDetailSelection(activeProfile.id) : null;
+  const selection = user && activeProfile
+    ? getMedicationDetailRouteIntent(user.id, activeProfile.id)
+    : null;
   const medicationId = selection?.medicationId;
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
   return <MedicationDetailProfileScreen key={key} medicationId={medicationId} />;

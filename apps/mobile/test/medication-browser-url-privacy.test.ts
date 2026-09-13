@@ -10,19 +10,21 @@ const handoff = readFileSync(resolve(ROOT, 'apps/mobile/src/navigation/private-n
 describe('medication detail browser URL privacy', () => {
   it('opens medication detail through a fixed browser path', () => {
     expect(listScreen).toContain("router.push('/medication/detail')");
-    expect(listScreen).toContain('setMedicationDetailSelection');
+    expect(listScreen).toContain('setMedicationDetailRouteIntent');
     expect(listScreen).not.toMatch(/router\.push\s*\(\s*`\/medication\/\$\{/);
   });
 
   it('does not recover the medication id from Expo Router search/path parameters', () => {
     expect(detailScreen).not.toContain('useLocalSearchParams');
-    expect(detailScreen).toContain('getMedicationDetailSelection');
+    expect(detailScreen).toContain('getMedicationDetailRouteIntent');
     expect(detailScreen).toContain("medicationId={medicationId}");
   });
 
   it('binds the process-local handoff to the active patient profile and expires it', () => {
+    expect(handoff).toContain('userId');
     expect(handoff).toContain('patientProfileId');
     expect(handoff).toContain('Date.now() >= slot.expiresAt');
+    expect(handoff).toContain('slot.value.userId !== userId');
     expect(handoff).toContain('slot.value.patientProfileId !== patientProfileId');
   });
 });

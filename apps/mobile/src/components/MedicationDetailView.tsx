@@ -6,6 +6,11 @@ import { Badge, Banner, Button, Card, Divider, Row, SafetyNote, SectionTitle, Tx
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import {
+  setMedicationEditRouteIntent,
+  setMedicationScheduleRouteIntent,
+  setMedicationStockRouteIntent,
+} from '@/navigation/private-navigation';
 import type { DoseView, MedicationScheduleView, MedicationView } from '@/api/types';
 import { statusColors } from '@/theme';
 import type { DoseUnit, MessageKey, ScheduleRule, StockForecast } from '@dawaee/shared';
@@ -60,7 +65,7 @@ export function MedicationDetailView({
 }: Props) {
   const { t, formatDate, formatNumber, formatTime, formatMeasure } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
 
   if (!medication) {
     return (
@@ -78,6 +83,38 @@ export function MedicationDetailView({
     : null;
   const forecast = stock?.forecast ?? null;
   const hasHistory = doses.length > 0;
+
+  const openSchedule = (mode: 'create' | 'edit', scheduleId?: string) => {
+    if (!user || !activeProfile) return;
+    setMedicationScheduleRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId: medication.id,
+      mode,
+      ...(scheduleId ? { scheduleId } : {}),
+    });
+    router.push('/medication/schedule');
+  };
+
+  const openStock = () => {
+    if (!user || !activeProfile) return;
+    setMedicationStockRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId: medication.id,
+    });
+    router.push('/medication/stock');
+  };
+
+  const openEdit = () => {
+    if (!user || !activeProfile) return;
+    setMedicationEditRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId: medication.id,
+    });
+    router.push('/medication/edit');
+  };
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -164,11 +201,7 @@ export function MedicationDetailView({
               label={schedules.length > 0 ? t('schedule.change') : t('schedule.add')}
               tone="ghost"
               fullWidth={false}
-              onPress={() => router.push(
-                schedules.length > 0
-                  ? `/medication/schedule?medicationId=${medication.id}&mode=edit`
-                  : `/medication/schedule?medicationId=${medication.id}&mode=create`,
-              )}
+              onPress={() => openSchedule(schedules.length > 0 ? 'edit' : 'create')}
             />
           }
         >
@@ -180,7 +213,7 @@ export function MedicationDetailView({
           schedules.map((schedule) => (
             <Card
               key={schedule.id}
-              onPress={() => router.push(`/medication/schedule?medicationId=${medication.id}&mode=edit&scheduleId=${schedule.id}`)}
+              onPress={() => openSchedule('edit', schedule.id)}
               accessibilityLabel={summarize(schedule.rule)}
             >
               <Txt variant="bodyLarge" weight="medium">{summarize(schedule.rule)}</Txt>
@@ -203,7 +236,7 @@ export function MedicationDetailView({
               label={t('stock.markRefilled')}
               tone="ghost"
               fullWidth={false}
-              onPress={() => router.push(`/medication/stock?medicationId=${medication.id}`)}
+              onPress={openStock}
             />
           }
         >
@@ -264,8 +297,8 @@ export function MedicationDetailView({
         )}
 
         <SectionTitle>{t('common.edit')}</SectionTitle>
-        <Button label={t('common.edit')} onPress={() => router.push(`/medication/edit?mode=edit&id=${medication.id}`)} />
-        <Button label={t('refill.title')} tone="secondary" onPress={() => router.push(`/medication/stock?medicationId=${medication.id}`)} />
+        <Button label={t('common.edit')} onPress={openEdit} />
+        <Button label={t('refill.title')} tone="secondary" onPress={openStock} />
         <Button
           label={medication.status === 'paused' ? t('medication.resume') : t('medication.pause')}
           tone="secondary"

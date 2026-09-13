@@ -8,7 +8,7 @@ const { createHarness, deferred, NetworkError, ApiError } = require('./profile-s
   ApiError: new (code: string) => Error;
 };
 
-const screen = path.resolve(process.cwd(), 'apps/mobile/app/medication/[id].tsx');
+const screen = path.resolve(process.cwd(), 'apps/mobile/app/medication/detail.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 const medicationId = 'medication-under-test';
 
@@ -49,8 +49,12 @@ describe('medication detail first-frame profile isolation', () => {
     const io = deferredApi();
     const h = createHarness(screen, hook, {}, {
       'expo-router': {
-        useLocalSearchParams: () => ({ id: medicationId }),
         router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+      },
+      '@/navigation/private-navigation': {
+        getMedicationDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+          userId, patientProfileId, medicationId,
+        }),
       },
       '@/components/MedicationDetailView': {
         MedicationDetailView: 'MedicationDetailView',

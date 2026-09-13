@@ -25,8 +25,14 @@ function deferredApi() {
 function overrides(io: ReturnType<typeof deferredApi>) {
   return {
     'expo-router': {
-      useLocalSearchParams: () => ({ medicationId }),
+      useLocalSearchParams: () => ({}),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+    },
+    '@/navigation/private-navigation': {
+      getMedicationStockRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, medicationId,
+      }),
+      setMedicationStockRouteIntent: () => undefined,
     },
     '@/components/DateField': {
       todayLocalDate: () => '2026-09-11',

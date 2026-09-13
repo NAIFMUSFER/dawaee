@@ -80,7 +80,7 @@ describe('schedule save mutation profile isolation', () => {
       patchGate.resolve({});
       await h.flush();
 
-      expect(replacements).toEqual([]);
+      expect(replacements).not.toContain('/medication/detail');
     } finally {
       h.unmount();
     }

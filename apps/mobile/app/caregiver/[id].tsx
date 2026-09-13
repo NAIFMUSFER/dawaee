@@ -12,6 +12,10 @@ import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
+  getCaregiverDetailRouteIntent,
+  setCaregiverDetailRouteIntent,
+} from '@/navigation/private-navigation';
+import {
   CAREGIVER_NOTIFY_MODES, CAREGIVER_PERMISSIONS, toggleCaregiverPermission,
   type CaregiverNotifyMode, type CaregiverPermission,
 } from '@dawaee/shared';
@@ -88,12 +92,35 @@ function timeOrNull(value: string): string | null {
 }
 
 export default function CaregiverDetailScreen() {
+  const params = useLocalSearchParams<{ id?: string }>();
   const { user, activeProfile } = useApp();
-  return <CaregiverDetailProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+  const legacyRelationshipId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const intent = user && activeProfile
+    ? getCaregiverDetailRouteIntent(user.id, activeProfile.id)
+    : null;
+  const relationshipId = legacyRelationshipId ?? intent?.relationshipId;
+
+  useEffect(() => {
+    if (!legacyRelationshipId) return;
+    if (user && activeProfile) {
+      setCaregiverDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        relationshipId: legacyRelationshipId,
+      });
+    }
+    router.replace('/caregiver/detail');
+  }, [activeProfile, legacyRelationshipId, user]);
+
+  return (
+    <CaregiverDetailProfileScreen
+      key={`${profileScopeKey(user?.id, activeProfile)}:${relationshipId ?? 'none'}`}
+      relationshipId={relationshipId}
+    />
+  );
 }
 
-function CaregiverDetailProfileScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+function CaregiverDetailProfileScreen({ relationshipId }: { relationshipId?: string }) {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
@@ -122,14 +149,14 @@ function CaregiverDetailProfileScreen() {
   const load = useCallback(async () => {
     const isCurrent = beginLoad();
     if (!isCurrent()) return;
-    if (!activeProfile) {
+    if (!activeProfile || !relationshipId) {
       setLoading(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
       if (!isCurrent()) return;
-      const found = res.caregivers.find((c) => c.id === id) ?? null;
+      const found = res.caregivers.find((c) => c.id === relationshipId) ?? null;
       setViewerRole(res.viewerRole);
       setCaregiver(found);
       if (found) {
@@ -146,7 +173,7 @@ function CaregiverDetailProfileScreen() {
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, beginLoad, describe, id, setOffline]);
+  }, [activeProfile, beginLoad, describe, relationshipId, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 

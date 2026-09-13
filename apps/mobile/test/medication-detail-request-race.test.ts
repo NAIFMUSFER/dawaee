@@ -58,11 +58,16 @@ function answer(batch: Array<{ route: string; completed?: boolean; resolve: (val
 
 describe('medication detail request boundary', () => {
   it('the newest same-medication refresh wins when responses complete out of order', async () => {
-    const screen = fileURLToPath(new URL('../app/medication/[id].tsx', import.meta.url));
+    const screen = fileURLToPath(new URL('../app/medication/detail.tsx', import.meta.url));
     const h = createHarness(screen, undefined, undefined, {
       'expo-router': {
         router: { push: () => undefined, replace: () => undefined, back: () => undefined },
-        useLocalSearchParams: () => ({ id: 'audit-medication' }),
+      },
+      '@/navigation/private-navigation': {
+        getMedicationDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+          userId, patientProfileId, medicationId: 'audit-medication',
+        }),
+        setMedicationDetailRouteIntent: () => undefined,
       },
       '@/components/MedicationDetailView': {
         MedicationDetailView: (props: Record<string, any>) => ({

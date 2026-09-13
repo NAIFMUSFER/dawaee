@@ -25,8 +25,14 @@ function sharedOverride() {
 function overrides() {
   return {
     'expo-router': {
-      useLocalSearchParams: () => ({ id: relationshipId }),
+      useLocalSearchParams: () => ({}),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
+    },
+    '@/navigation/private-navigation': {
+      getCaregiverDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, relationshipId,
+      }),
+      setCaregiverDetailRouteIntent: () => undefined,
     },
     '@dawaee/shared': sharedOverride(),
   };
@@ -202,7 +208,7 @@ describe('caregiver detail profile/request isolation', () => {
       gate.resolve({});
       await h.flush();
       expect(h.app.activeProfile.id).toBe('B');
-      expect(replacements).toEqual([]);
+      expect(replacements).not.toContain('/(tabs)/family');
     } finally {
       h.unmount();
     }

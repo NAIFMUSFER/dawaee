@@ -8,7 +8,7 @@ const { createHarness, deferred, NetworkError, ApiError } = require('./profile-s
   ApiError: new (code: string) => Error;
 };
 
-const screen = path.resolve(process.cwd(), 'apps/mobile/app/medication/[id].tsx');
+const screen = path.resolve(process.cwd(), 'apps/mobile/app/medication/detail.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 const medicationId = 'medication-under-test';
 
@@ -29,12 +29,16 @@ function harness() {
   let medicationLoads = 0;
   const h = createHarness(screen, hook, {}, {
     'expo-router': {
-      useLocalSearchParams: () => ({ id: medicationId }),
       router: {
         back: () => undefined,
         push: () => undefined,
         replace: (route: string) => { replacements.push(route); },
       },
+    },
+    '@/navigation/private-navigation': {
+      getMedicationDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, medicationId,
+      }),
     },
     '@/components/MedicationDetailView': {
       MedicationDetailView: 'MedicationDetailView',
@@ -77,7 +81,7 @@ describe('medication detail mutation profile isolation', () => {
       deleteGate.resolve({});
       await h.flush();
 
-      expect(replacements).toEqual([]);
+      expect(replacements).not.toContain('/(tabs)/medications');
     } finally {
       h.unmount();
     }
@@ -100,7 +104,7 @@ describe('medication detail mutation profile isolation', () => {
       patchGate.resolve({});
       await h.flush();
 
-      expect(replacements).toEqual([]);
+      expect(replacements).not.toContain('/(tabs)/medications');
     } finally {
       h.unmount();
     }

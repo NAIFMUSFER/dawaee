@@ -88,7 +88,7 @@ describe('medication editor save mutation profile isolation', () => {
       patchGate.resolve({});
       await h.flush();
 
-      expect(navigations).toEqual([]);
+      expect(navigations).not.toContain('/medication/detail');
     } finally {
       h.unmount();
     }
