@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   areaNeedsVerification,
@@ -5,6 +7,8 @@ import {
   lockReducer,
   RELOCK_GRACE_MS,
 } from '../src/security/lock-state.js';
+
+const ROOT = resolve(import.meta.dirname, '../../..');
 
 const locked = () => lockReducer(
   INITIAL_LOCK_STATE,
@@ -145,5 +149,18 @@ describe('app-lock background verification races', () => {
     state = lockReducer(state, { type: 'verificationStarted' });
     state = lockReducer(state, { type: 'areaVerified', area: 'reports' });
     expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(false);
+  });
+
+  it('marks both local-auth prompts as fresh before asking the operating system', () => {
+    const gate = readFileSync(resolve(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
+    expect([...gate.matchAll(/dispatch\(\{ type: 'verificationStarted' \}\)/g)]).toHaveLength(2);
+
+    const unlock = gate.slice(gate.indexOf('const unlock ='), gate.indexOf('const verifyArea ='));
+    expect(unlock.indexOf("dispatch({ type: 'verificationStarted' })")).toBeGreaterThan(-1);
+    expect(unlock.indexOf("dispatch({ type: 'verificationStarted' })")).toBeLessThan(unlock.indexOf('verifyLocally('));
+
+    const area = gate.slice(gate.indexOf('const verifyArea ='), gate.indexOf('const api ='));
+    expect(area.indexOf("dispatch({ type: 'verificationStarted' })")).toBeGreaterThan(-1);
+    expect(area.indexOf("dispatch({ type: 'verificationStarted' })")).toBeLessThan(area.indexOf('verifyLocally('));
   });
 });
