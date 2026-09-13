@@ -1,36 +1,14 @@
-import React, { useEffect } from 'react';
-import { router, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Loading } from '@/components/ui';
-import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
-import { useApp } from '@/state/app-store';
+import React from 'react';
+import { Redirect } from 'expo-router';
 
 /**
- * Compatibility shim for an already-issued dynamic medication URL.
+ * Legacy compatibility tombstone.
  *
- * The first request may already have reached the hosting platform, so current
- * navigation never creates this route. Once account/profile ownership is
- * available, preserve the selection in memory and replace the browser entry
- * with the fixed detail path.
+ * Medication ids are health-linked identifiers and must not be recovered from
+ * browser-visible path parameters. Current navigation uses /medication/detail
+ * plus the account/profile-bound in-memory handoff. A direct legacy URL fails
+ * closed back to the medications tab instead of ingesting the path id.
  */
-export default function LegacyMedicationDetailScreen() {
-  const params = useLocalSearchParams<{ id?: string }>();
-  const { user, activeProfile } = useApp();
-  const medicationId = Array.isArray(params.id) ? params.id[0] : params.id;
-
-  useEffect(() => {
-    if (!medicationId) {
-      router.replace('/medication/detail');
-      return;
-    }
-    if (!user || !activeProfile) return;
-    setMedicationDetailRouteIntent({
-      userId: user.id,
-      patientProfileId: activeProfile.id,
-      medicationId,
-    });
-    router.replace('/medication/detail');
-  }, [activeProfile, medicationId, user]);
-
-  return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
+export default function LegacyMedicationDetailRoute() {
+  return <Redirect href="/(tabs)/medications" />;
 }
