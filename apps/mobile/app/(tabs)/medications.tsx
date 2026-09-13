@@ -10,6 +10,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
+import { setMedicationDetailSelection } from '@/navigation/private-navigation';
 import type { DoseView, MedicationView, TodayResponse } from '@/api/types';
 import type { MessageKey } from '@dawaee/shared';
 
@@ -105,6 +106,12 @@ function MedicationsProfileScreen() {
     return isToday ? time : `${formatDate(dose.scheduledAt, dose.scheduledTimezone, { day: 'numeric', month: 'short' })} · ${time}`;
   };
 
+  const openMedicationDetail = (medicationId: string) => {
+    if (!activeProfile) return;
+    setMedicationDetailSelection({ patientProfileId: activeProfile.id, medicationId });
+    router.push('/medication/detail');
+  };
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <ScrollView
@@ -160,7 +167,7 @@ function MedicationsProfileScreen() {
               const low = medication.stockForecast?.isLow === true;
               const label = [medication.name, describe(medication), `${t('medication.nextDose')}: ${nextDoseText(medication)}`, low ? t('stock.lowBadge') : null].filter(Boolean).join('، ');
               return (
-                <Card key={medication.id} accessibilityLabel={label} onPress={() => router.push(`/medication/${medication.id}`)}>
+                <Card key={medication.id} accessibilityLabel={label} onPress={() => openMedicationDetail(medication.id)}>
                   <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md} align="flex-start">
                     <View style={{ flex: 1, gap: 2 }}>
                       <Txt variant="bodyLarge" weight="bold" numberOfLines={2}>{medication.name}</Txt>
