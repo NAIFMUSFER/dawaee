@@ -12,20 +12,22 @@ import { z } from 'zod';
  * `true` — so every non-empty string, including the word "false", becomes true.
  * That is the opposite of what an operator writing `TRUST_PROXY=false` means,
  * and it fails in the most dangerous direction: a debug or trust flag someone
- * deliberately turned off stays on.
+ * deliberately turned off stays on. Unknown spellings are rejected rather
+ * than silently falling back: `PASSWORD_LOGIN_ENABLED=flase` must not turn a
+ * deliberately disabled authentication path back on.
  */
 const envBoolean = (defaultValue: boolean) =>
-  z
-    .string()
-    .optional()
-    .transform((raw) => {
-      if (raw === undefined) return defaultValue;
-      const v = raw.trim().toLowerCase();
-      if (v === '') return defaultValue;
-      if (['1', 'true', 'yes', 'on'].includes(v)) return true;
-      if (['0', 'false', 'no', 'off'].includes(v)) return false;
-      return defaultValue;
-    });
+  z.preprocess((raw) => {
+    if (raw === undefined) return defaultValue;
+    if (typeof raw !== 'string') return raw;
+    const v = raw.trim().toLowerCase();
+    if (v === '') return defaultValue;
+    if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+    if (['0', 'false', 'no', 'off'].includes(v)) return false;
+    // Leave unknown input as a string so z.boolean() rejects it. Falling back
+    // to a default would turn an operator typo into a silent policy change.
+    return raw;
+  }, z.boolean());
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
