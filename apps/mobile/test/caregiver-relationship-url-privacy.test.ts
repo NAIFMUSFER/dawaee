@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const detail = readFileSync(resolve(import.meta.dirname, '../app/caregiver/[id].tsx'), 'utf8');
+const detail = readFileSync(resolve(import.meta.dirname, '../app/caregiver/detail.tsx'), 'utf8');
 const family = readFileSync(resolve(import.meta.dirname, '../app/(tabs)/family.tsx'), 'utf8');
 
 function caregiverMutationBodies(contents: string): string[] {
