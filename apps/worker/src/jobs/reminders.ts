@@ -227,9 +227,20 @@ async function loadPolicy(client: PoolClient, profileId: string, medicationId: s
   if (!row) {
     return { enabled: true, stages: DEFAULT_ESCALATION_STAGES, quietHoursStart: null, quietHoursEnd: null };
   }
+
+  const storedStages = row.stages?.length ? row.stages : DEFAULT_ESCALATION_STAGES;
+  // The API contract now requires every enabled ladder to start with the
+  // patient, but rows saved before that invariant existed can still be present
+  // because `stages` is JSONB. Never let a legacy row bypass the patient. A
+  // safe default preserves reminders and the outward escalation sequence while
+  // leaving the stored row untouched for the user to correct explicitly.
+  const stages = row.enabled && storedStages[0]?.target !== 'patient'
+    ? DEFAULT_ESCALATION_STAGES
+    : storedStages;
+
   return {
     enabled: row.enabled,
-    stages: row.stages?.length ? row.stages : DEFAULT_ESCALATION_STAGES,
+    stages,
     quietHoursStart: row.quiet_hours_start,
     quietHoursEnd: row.quiet_hours_end,
   };
