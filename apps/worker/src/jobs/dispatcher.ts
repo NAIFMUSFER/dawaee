@@ -27,6 +27,11 @@ interface DeliveryRow {
   lease_token: string;
 }
 
+interface ReceiptTicket {
+  providerMessageId: string;
+  pushTokenId: string;
+}
+
 export async function claimDeliveries(
   ctx: WorkerContext, client: PoolClient, limit = 200,
 ): Promise<DeliveryRow[]> {
@@ -71,8 +76,7 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
   for (const row of rows) {
     // A delivery can sit in the outbox after the relationship that authorised
     // it has been narrowed. Re-check at the last application boundary before
-    // invoking an external provider. This also retires legacy queued rows that
-    // pre-date the database trigger/backfill in migration 0049.
+    // invoking an external provider.
     if (!await caregiverDeliveryStillAuthorized(client, row)) {
       await finalise(ctx, row,
         `UPDATE notification_deliveries
@@ -88,9 +92,9 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
       const applied = await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'sent', sent_at = $3::timestamptz, provider = $4, provider_message_id = $5,
-                error_code = NULL, lease_until = NULL
+                provider_receipts = $6::jsonb, error_code = NULL, error_detail = NULL, lease_until = NULL
           WHERE id = $1 AND lease_token = $2 AND status = 'sending'`,
-        [ctx.now(), result.provider, result.providerMessageId ?? null]);
+        [ctx.now(), result.provider, result.providerMessageId ?? null, JSON.stringify(result.receiptTickets ?? [])]);
       if (applied) sent += 1;
     } else if (
       (isAmbiguous(result.errorCode) ? AMBIGUOUS_IS_RETRYABLE : (result.retryable ?? false))
@@ -123,14 +127,6 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
   return { itemsProcessed: sent };
 }
 
-/**
- * Relationship-backed deliveries are capabilities, not immutable messages.
- * The patient can narrow a caregiver at any time. Every caregiver delivery
- * therefore still needs an active relationship plus receive_notifications at
- * dispatch time. Daily/weekly summaries additionally expose adherence and
- * schedule-derived data, matching the same two data permissions required by
- * /v1/adherence and by the digest producer itself.
- */
 async function caregiverDeliveryStillAuthorized(client: PoolClient, row: DeliveryRow): Promise<boolean> {
   if (!row.relationship_id) return true;
   if (!row.patient_profile_id || !row.recipient_user_id) return false;
@@ -176,6 +172,7 @@ interface SendOutcome {
   ok: boolean;
   provider: string;
   providerMessageId?: string;
+  receiptTickets?: ReceiptTicket[];
   errorCode?: string;
   errorDetail?: string;
   retryable?: boolean;
@@ -236,11 +233,6 @@ async function applyCurrentNotificationPrivacy(
   );
   let mayRevealMedication = rows[0]?.show_medication === true;
 
-  // The patient's lock-screen preference controls whether medication identity
-  // may appear at all. For caregiver deliveries there is a second independent
-  // authorization boundary: current relationship state and view_medications.
-  // Re-check it here because a delivery can be queued before a permission is
-  // narrowed or the relationship is revoked.
   if (mayRevealMedication && row.relationship_id) {
     const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
       `SELECT status = 'active'
@@ -255,11 +247,6 @@ async function applyCurrentNotificationPrivacy(
 
   if (mayRevealMedication) return { body: row.body, payload: row.payload };
 
-  // A delivery can wait in the outbox for minutes after it was composed. The
-  // privacy preference and caregiver authorization are therefore checked again
-  // at the last possible moment. Copy rather than mutate the claimed row so a
-  // failed provider call retains the durable record and a later retry
-  // re-evaluates both boundaries.
   const payload = { ...row.payload };
   delete payload.medicationName;
   delete payload.medications;
@@ -272,13 +259,11 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
     return { ok: false, provider: ctx.providers.push.name, errorCode: 'no_recipient', retryable: false };
   }
 
-  // Remote push is an authenticated-device capability. `push_tokens.active`
-  // alone is insufficient because a session can become invalid purely when its
-  // expiry instant passes, which does not execute a revocation trigger. Keep the
-  // worker out of auth_sessions and ask the narrow SECURITY DEFINER function for
-  // only the provider routing tokens backed by a currently live session.
-  const { rows: tokens } = await client.query<{ token: string }>(
-    'SELECT token FROM app.list_live_push_tokens($1, 5)',
+  // Receipt reconciliation needs the internal endpoint id as well as the
+  // provider token. The SECURITY DEFINER helper returns only live-session
+  // endpoints and keeps auth-session data outside the worker role.
+  const { rows: tokens } = await client.query<{ push_token_id: string; token: string }>(
+    'SELECT push_token_id, token FROM app.list_live_push_endpoints($1, 5)',
     [row.recipient_user_id],
   );
   if (tokens.length === 0) {
@@ -287,8 +272,8 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
 
   const safe = await applyCurrentNotificationPrivacy(client, row);
   const grouped = safe.payload.grouped === true;
-  const messages: PushMessage[] = tokens.map((t) => ({
-    token: t.token,
+  const messages: PushMessage[] = tokens.map((token) => ({
+    token: token.token,
     title: row.title ?? '',
     body: safe.body ?? '',
     data: {
@@ -300,24 +285,33 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
     },
     priority: row.kind === 'dose_reminder' || row.kind === 'dose_reminder_repeat' || row.kind === 'escalation'
       ? 'high' : 'default',
-    // A grouped reminder must not expose a single-dose Taken/Snooze/Skip action.
-    // The patient opens the app and confirms each medicine independently.
     categoryId: row.kind.startsWith('dose_reminder') && !grouped ? 'MEDICATION_REMINDER' : undefined,
     sound: 'default',
   }));
 
   const results = await ctx.providers.push.send(messages);
 
-  const dead = results.flatMap((r) => r.invalidTokens ?? []);
+  const dead = results.flatMap((result) => result.invalidTokens ?? []);
   if (dead.length) {
     await client.query('UPDATE push_tokens SET active = false WHERE token = ANY($1::text[])', [dead]);
     ctx.log.info({ count: dead.length }, 'deactivated push tokens the provider reported as unregistered');
   }
 
-  const anyOk = results.some((r) => r.ok);
-  const first = results.find((r) => !r.ok);
+  const receiptTickets: ReceiptTicket[] = results.flatMap((result, index) => {
+    const endpoint = tokens[index];
+    return result.ok && result.providerMessageId && endpoint
+      ? [{ providerMessageId: result.providerMessageId, pushTokenId: endpoint.push_token_id }]
+      : [];
+  });
+  const anyOk = results.some((result) => result.ok);
+  const first = results.find((result) => !result.ok);
   return anyOk
-    ? { ok: true, provider: ctx.providers.push.name, providerMessageId: results.find((r) => r.ok)?.providerMessageId }
+    ? {
+        ok: true,
+        provider: ctx.providers.push.name,
+        providerMessageId: results.find((result) => result.ok)?.providerMessageId,
+        receiptTickets,
+      }
     : {
         ok: false,
         provider: ctx.providers.push.name,

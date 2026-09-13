@@ -34,9 +34,22 @@ export interface PushSendResult extends SendResult {
   invalidTokens?: string[];
 }
 
+export interface PushReceiptResult {
+  providerMessageId: string;
+  status: 'ok' | 'error';
+  errorCode?: string;
+  errorDetail?: string;
+}
+
 export interface PushProvider {
   readonly name: string;
   send(messages: PushMessage[]): Promise<PushSendResult[]>;
+  /**
+   * Resolve provider tickets after the downstream push service has processed
+   * them. Missing IDs are intentionally omitted: callers keep them pending and
+   * retry until the provider's receipt-retention window expires.
+   */
+  getReceipts?(providerMessageIds: string[]): Promise<PushReceiptResult[]>;
 }
 
 export interface OcrField<T = string> {

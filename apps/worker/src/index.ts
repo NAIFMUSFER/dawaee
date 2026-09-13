@@ -2,6 +2,7 @@ import { createWorkerContext, runJob, type WorkerContext } from './context.js';
 import { materializeJob } from './jobs/materialize.js';
 import { reminderJob } from './jobs/reminders.js';
 import { dispatchJob } from './jobs/dispatcher.js';
+import { pushReceiptJob } from './jobs/push-receipts.js';
 import { markMissedJob } from './jobs/mark-missed.js';
 import { stockAlertJob } from './jobs/stock-alerts.js';
 import { digestJob } from './jobs/digests.js';
@@ -32,6 +33,9 @@ export async function runTick(ctx: WorkerContext, opts?: { includeSlowJobs?: boo
   const materialized = await runJob(ctx, 'materialize', (c) => materializeJob(ctx, c));
   const reminders = await runJob(ctx, 'reminders', (c) => reminderJob(ctx, c));
   const dispatched = await runJob(ctx, 'dispatch', (c) => dispatchJob(ctx, c));
+  // A push ticket only means Expo accepted the request. Reconcile older tickets
+  // separately so `delivered` is reserved for an affirmative provider receipt.
+  await runJob(ctx, 'push-receipts', (c) => pushReceiptJob(ctx, c));
   const missed = await runJob(ctx, 'mark-missed', (c) => markMissedJob(ctx, c));
   const stock = slow ? await runJob(ctx, 'stock-alerts', (c) => stockAlertJob(ctx, c)) : { itemsProcessed: 0 };
   const digests = slow ? await runJob(ctx, 'digests', (c) => digestJob(ctx, c)) : { itemsProcessed: 0 };
@@ -72,8 +76,6 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  // Housekeeping is hourly, not per-tick: it scans large tables and nothing
-  // time-critical depends on it.
   let ticksSinceHousekeeping = 0;
   const housekeepingEveryTicks = Math.max(1, Math.round(3600 / tickSeconds));
 
@@ -88,8 +90,6 @@ async function main(): Promise<void> {
           await runJob(ctx, 'housekeeping', (c) => housekeepingJob(ctx, c));
         }
       } catch (err) {
-        // A failed tick must never stop the loop: the next one retries, and
-        // medication reminders keep flowing.
         ctx.log.error({ err: (err as Error).message }, 'tick failed');
       }
     })();
@@ -97,23 +97,11 @@ async function main(): Promise<void> {
   };
 
   await loop();
-
-  // The interval is deliberately NOT unref'd: it is the handle that keeps this
-  // process alive. It used to be unref'd, with a never-settling promise standing
-  // in as the keep-alive — but an unsettled promise is not a handle, so the only
-  // thing holding the event loop open was whatever sockets the database pool
-  // happened to be keeping. That works right up until the moment it matters:
-  // when the database is unreachable the pool holds nothing, Node finds an empty
-  // event loop, and the worker exits ZERO — no error, no stack, indistinguishable
-  // from a clean shutdown. In production it looked like an instance restarting
-  // for no reason, with backoff, while reminders silently stopped going out.
-  // A medication reminder that fails must fail loudly and keep retrying.
   setInterval(() => void loop(), tickSeconds * 1000);
 }
 
 if (process.env.WORKER_ENABLED !== 'false' && import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-     
     console.error('fatal worker error:', err);
     process.exit(1);
   });
@@ -123,6 +111,7 @@ export { createWorkerContext, runJob } from './context.js';
 export * from './jobs/materialize.js';
 export * from './jobs/reminders.js';
 export * from './jobs/dispatcher.js';
+export * from './jobs/push-receipts.js';
 export * from './jobs/mark-missed.js';
 export * from './jobs/stock-alerts.js';
 export * from './jobs/digests.js';
