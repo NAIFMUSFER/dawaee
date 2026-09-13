@@ -201,13 +201,11 @@ function ScheduleProfileScreen({
       case 'interval': {
         const hours = Number(everyHours);
         if (!Number.isFinite(hours) || hours < 1 || hours > 72 || !isValidTime(anchorTime)) return null;
-        const windowSet = isValidTime(activeFrom) && isValidTime(activeUntil);
-        return {
-          kind: 'interval',
-          everyHours: hours,
-          anchorTime,
-          ...(windowSet ? { activeFrom, activeUntil } : {}),
-        };
+        const hasFrom = activeFrom.trim() !== '';
+        const hasUntil = activeUntil.trim() !== '';
+        if (!hasFrom && !hasUntil) return { kind: 'interval', everyHours: hours, anchorTime };
+        if (!hasFrom || !hasUntil || !isValidTime(activeFrom) || !isValidTime(activeUntil)) return null;
+        return { kind: 'interval', everyHours: hours, anchorTime, activeFrom, activeUntil };
       }
       case 'days_of_week': {
         const days = weekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6).sort();
@@ -224,10 +222,12 @@ function ScheduleProfileScreen({
       case 'as_needed': {
         const max = maxPerDay.trim() === '' ? undefined : Number(maxPerDay);
         const gap = minHoursBetween.trim() === '' ? undefined : Number(minHoursBetween);
+        if (max !== undefined && (!Number.isInteger(max) || max < 1 || max > 24)) return null;
+        if (gap !== undefined && (!Number.isFinite(gap) || gap < 0 || gap > 48)) return null;
         return {
           kind: 'as_needed',
-          ...(max !== undefined && Number.isInteger(max) && max >= 1 ? { maxPerDay: max } : {}),
-          ...(gap !== undefined && Number.isFinite(gap) && gap >= 0 ? { minHoursBetween: gap } : {}),
+          ...(max !== undefined ? { maxPerDay: max } : {}),
+          ...(gap !== undefined ? { minHoursBetween: gap } : {}),
         };
       }
       default:
