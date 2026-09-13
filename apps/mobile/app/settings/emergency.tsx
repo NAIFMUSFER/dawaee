@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { MESSAGES, type MessageKey } from '@dawaee/shared';
@@ -75,6 +76,11 @@ const EMPTY_CARD: EmergencyCardView = {
 };
 
 export default function EmergencyCardScreen() {
+  const { user, activeProfile } = useApp();
+  return <EmergencyCardEditorView key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function EmergencyCardEditorView() {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile } = useApp();

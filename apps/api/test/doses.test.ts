@@ -18,15 +18,29 @@ const BASE = (() => {
 const d = (offsetDays: number): string =>
   new Date(BASE + offsetDays * 86_400_000).toISOString().slice(0, 10);
 
+type DoseRef = { id: string; status: string; scheduledAt: string };
+
 let h: Harness;
 let user: TestUser;
 let medicationId: string;
 
-async function doseIds(from: string, to: string): Promise<Array<{ id: string; status: string; scheduledAt: string }>> {
+async function doseIds(from: string, to: string): Promise<DoseRef[]> {
   const res = await h.app.inject({
     method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=${from}&to=${to}`, headers: authHeaders(user),
   });
   return res.json().doses;
+}
+
+function setNowAt(dose: DoseRef, minutesAfter = 0): void {
+  h.setServerNow(new Date(new Date(dose.scheduledAt).getTime() + minutesAfter * 60_000));
+}
+
+function chronological(doses: DoseRef[]): DoseRef[] {
+  return [...doses].sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+}
+
+function at(dose: DoseRef, minutesAfter = 0): string {
+  return new Date(new Date(dose.scheduledAt).getTime() + minutesAfter * 60_000).toISOString();
 }
 
 beforeAll(async () => {
@@ -53,15 +67,17 @@ afterAll(async () => {
 
 describe('dose actions', () => {
   it('confirms, snoozes and skips distinct doses', async () => {
-    const doses = await doseIds(d(7), d(9));
+    const doses = chronological(await doseIds(d(7), d(9)));
     const [a, b, c] = doses;
 
+    setNowAt(a!);
     const taken = await h.app.inject({
       method: 'POST', url: `/v1/doses/${a!.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: 'evt-taken-a1', method: 'app' },
     });
     expect(taken.statusCode).toBe(200);
 
+    setNowAt(b!);
     const snoozed = await h.app.inject({
       method: 'POST', url: `/v1/doses/${b!.id}/snooze`, headers: authHeaders(user),
       payload: { minutes: 15, clientEventId: 'evt-snooze-b1' },
@@ -69,6 +85,7 @@ describe('dose actions', () => {
     expect(snoozed.statusCode).toBe(200);
     expect(snoozed.json().snoozeCount).toBe(1);
 
+    setNowAt(c!);
     const skipped = await h.app.inject({
       method: 'POST', url: `/v1/doses/${c!.id}/skip`, headers: authHeaders(user),
       payload: { clientEventId: 'evt-skip-c1', reason: 'Away from home' },
@@ -78,8 +95,9 @@ describe('dose actions', () => {
   });
 
   it('refuses to record the same dose twice', async () => {
-    const doses = await doseIds(d(10), d(10));
+    const doses = chronological(await doseIds(d(10), d(10)));
     const dose = doses[0]!;
+    setNowAt(dose);
     await h.app.inject({
       method: 'POST', url: `/v1/doses/${dose.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: 'evt-dup-1', method: 'app' },
@@ -93,7 +111,8 @@ describe('dose actions', () => {
   });
 
   it('rejects a low-confidence voice confirmation and accepts a confident one', async () => {
-    const doses = await doseIds(d(11), d(11));
+    const doses = chronological(await doseIds(d(11), d(11)));
+    setNowAt(doses[0]!);
     const low = await h.app.inject({
       method: 'POST', url: `/v1/doses/${doses[0]!.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: 'evt-voice-low', method: 'voice', voiceConfidence: 0.4 },
@@ -109,8 +128,9 @@ describe('dose actions', () => {
   });
 
   it('undoes a confirmation inside the window and restores stock', async () => {
-    const doses = await doseIds(d(12), d(12));
+    const doses = chronological(await doseIds(d(12), d(12)));
     const dose = doses[0]!;
+    setNowAt(dose);
 
     const before = await h.app.inject({
       method: 'GET', url: `/v1/medications/${medicationId}/stock`, headers: authHeaders(user),
@@ -133,8 +153,9 @@ describe('dose actions', () => {
   });
 
   it('caps repeated snoozing', async () => {
-    const doses = await doseIds(d(8), d(8));
+    const doses = chronological(await doseIds(d(8), d(8)));
     const dose = doses[1]!;
+    setNowAt(dose);
     let last = 0;
     for (let i = 0; i < 7; i++) {
       const res = await h.app.inject({
@@ -149,13 +170,17 @@ describe('dose actions', () => {
 
 describe('offline replay', () => {
   it('applies a batch of queued actions and reports each result', async () => {
-    const doses = await doseIds(d(5), d(6));
+    const doses = chronological(await doseIds(d(5), d(6)));
+    const [takenDose, skippedDose, snoozedDose] = doses;
+    // One sync request has one server clock. Put it at the latest selected
+    // occurrence; the earlier take remains inside the 24h late-recording window.
+    setNowAt(snoozedDose!);
     const payload = {
       deviceId: 'offline-device-1',
       actions: [
-        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' },
-        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: `${d(5)}T11:00:00.000Z`, clientEventId: 'off-batch-2', reason: 'nausea' },
-        { type: 'snoozed', doseOccurrenceId: doses[2]!.id, at: `${d(5)}T19:00:00.000Z`, clientEventId: 'off-batch-3', minutes: 20 },
+        { type: 'taken', doseOccurrenceId: takenDose!.id, at: at(takenDose!, 3), clientEventId: 'off-batch-1' },
+        { type: 'skipped', doseOccurrenceId: skippedDose!.id, at: at(skippedDose!), clientEventId: 'off-batch-2', reason: 'nausea' },
+        { type: 'snoozed', doseOccurrenceId: snoozedDose!.id, at: at(snoozedDose!), clientEventId: 'off-batch-3', minutes: 20 },
       ],
     };
 
@@ -168,19 +193,20 @@ describe('offline replay', () => {
   });
 
   it('is idempotent when the device retries the whole batch', async () => {
-    const doses = await doseIds(d(5), d(6));
+    const doses = chronological(await doseIds(d(5), d(6)));
+    const [takenDose, skippedDose] = doses;
+    setNowAt(skippedDose!);
     const payload = {
       deviceId: 'offline-device-1',
       actions: [
-        { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' },
-        { type: 'skipped', doseOccurrenceId: doses[1]!.id, at: `${d(5)}T11:00:00.000Z`, clientEventId: 'off-batch-2', reason: 'nausea' },
+        { type: 'taken', doseOccurrenceId: takenDose!.id, at: at(takenDose!, 3), clientEventId: 'off-batch-1' },
+        { type: 'skipped', doseOccurrenceId: skippedDose!.id, at: at(skippedDose!), clientEventId: 'off-batch-2', reason: 'nausea' },
       ],
     };
     const res = await h.app.inject({
       method: 'POST', url: '/v1/doses/sync', headers: authHeaders(user), payload,
     });
     expect(res.statusCode).toBe(200);
-    // Everything is recognised as a replay; nothing is applied a second time.
     expect(res.json().replayed).toBe(2);
     expect(res.json().applied).toBe(0);
   });
@@ -191,12 +217,14 @@ describe('offline replay', () => {
     });
     const qtyBefore = before.json().stock.remainingQuantity;
 
-    const doses = await doseIds(d(5), d(5));
+    const doses = chronological(await doseIds(d(5), d(6)));
+    const dose = doses[0]!;
+    setNowAt(dose, 3);
     await h.app.inject({
       method: 'POST', url: '/v1/doses/sync', headers: authHeaders(user),
       payload: {
         deviceId: 'offline-device-1',
-        actions: [{ type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(5)}T05:03:00.000Z`, clientEventId: 'off-batch-1' }],
+        actions: [{ type: 'taken', doseOccurrenceId: dose.id, at: at(dose, 3), clientEventId: 'off-batch-1' }],
       },
     });
 
@@ -207,15 +235,17 @@ describe('offline replay', () => {
   });
 
   it('fails one bad action without losing the good ones', async () => {
-    const doses = await doseIds(d(13), d(13));
+    const doses = chronological(await doseIds(d(13), d(13)));
+    const [first, second] = doses;
+    setNowAt(second!);
     const res = await h.app.inject({
       method: 'POST', url: '/v1/doses/sync', headers: authHeaders(user),
       payload: {
         deviceId: 'offline-device-2',
         actions: [
-          { type: 'taken', doseOccurrenceId: doses[0]!.id, at: `${d(13)}T05:00:00.000Z`, clientEventId: 'mix-ok-1' },
-          { type: 'taken', doseOccurrenceId: '00000000-0000-4000-8000-000000000000', at: `${d(13)}T05:00:00.000Z`, clientEventId: 'mix-bad-1' },
-          { type: 'taken', doseOccurrenceId: doses[1]!.id, at: `${d(13)}T11:00:00.000Z`, clientEventId: 'mix-ok-2' },
+          { type: 'taken', doseOccurrenceId: first!.id, at: at(first!), clientEventId: 'mix-ok-1' },
+          { type: 'taken', doseOccurrenceId: '00000000-0000-4000-8000-000000000000', at: at(first!), clientEventId: 'mix-bad-1' },
+          { type: 'taken', doseOccurrenceId: second!.id, at: at(second!), clientEventId: 'mix-ok-2' },
         ],
       },
     });
@@ -232,8 +262,7 @@ describe('missed doses and safety', () => {
       method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=${d(-2)}&to=${d(-1)}`,
       headers: authHeaders(user),
     });
-    // These are in the past relative to the test clock.
-    const statuses = res.json().doses.map((d: { status: string }) => d.status);
+    const statuses = res.json().doses.map((dose: { status: string }) => dose.status);
     expect(statuses.every((s: string) => s !== 'upcoming')).toBe(true);
   });
 

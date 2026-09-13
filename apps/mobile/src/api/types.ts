@@ -76,6 +76,9 @@ export interface MedicationView {
   name: string;
   brandName: string | null;
   genericName: string | null;
+  /** Nullable live API metadata; optional for older cached/partial records. */
+  manufacturer?: string | null;
+  barcode?: string | null;
   form: MedicationForm;
   strengthValue: number | null;
   strengthUnit: StrengthUnit | null;

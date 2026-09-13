@@ -163,24 +163,24 @@ describe('caregiver permission scope', () => {
       method: 'POST', url: '/v1/caregivers/invite', headers: authHeaders(alice),
       payload: {
         patientProfileId: alice.profileId, invitedName: 'Son', invitedPhone: son.phone,
-        role: 'son', permissions: ['view_adherence', 'receive_notifications'], escalationPriority: 1,
+        role: 'son', permissions: ['view_adherence', 'view_schedule', 'receive_notifications'], escalationPriority: 1,
       },
     })).json().invitationLink;
-    const token = link.split('/invite/')[1]!;
+    const fragment = new URL(link).hash.slice(1);
+    const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
+    expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
     const accept = await h.app.inject({
       method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(son), payload: { token },
     });
     expect(accept.statusCode).toBe(200);
 
-    // Granted: adherence.
     const adherence = await h.app.inject({
       method: 'GET', url: `/v1/adherence?profileId=${alice.profileId}&from=2026-09-01&to=2026-09-30`,
       headers: authHeaders(son),
     });
     expect(adherence.statusCode).toBe(200);
 
-    // Not granted: the medication list, history, reports, emergency card.
     for (const url of [
       `/v1/medications?profileId=${alice.profileId}`,
       `/v1/doses?profileId=${alice.profileId}&from=2026-09-01&to=2026-09-30`,
@@ -240,7 +240,6 @@ describe('caregiver permission scope', () => {
     });
     expect(revoke.statusCode).toBe(200);
 
-    // No cached grant: the very next request is refused.
     const afterRevoke = await h.app.inject({
       method: 'GET', url: `/v1/medications?profileId=${alice.profileId}`, headers: authHeaders(son),
     });
@@ -255,7 +254,10 @@ describe('caregiver permission scope', () => {
         role: 'other', permissions: ['view_adherence'], expiresInHours: 1,
       },
     });
-    const token = invite.json().invitationLink.split('/invite/')[1]!;
+    const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
+    const fragment = new URL(invitationLink).hash.slice(1);
+    const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
+    expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
     const { execFileSync } = await import('node:child_process');
     execFileSync('psql', ['-d', 'dawaee_test', '-c',
@@ -300,7 +302,6 @@ describe('upload security', () => {
       payload: {
         purpose: 'medication_image', contentType: 'image/jpeg', byteSize: 1000,
         patientProfileId: alice.profileId,
-        // A hostile "filename" has nowhere to land: the API never accepts one.
         fileName: '../../etc/passwd',
       },
     });
@@ -308,7 +309,9 @@ describe('upload security', () => {
     const key = res.json().objectKey as string;
     expect(key).not.toContain('..');
     expect(key).not.toContain('passwd');
-    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f]{8}\/[0-9a-f-]{36}\.jpg$/);
+    expect(key).not.toContain(alice.profileId);
+    expect(key).not.toContain(alice.profileId.slice(0, 8));
+    expect(key).toMatch(/^medication_image\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\.jpg$/);
   });
 
   it('rejects a file whose bytes are not a real image', async () => {
@@ -317,8 +320,6 @@ describe('upload security', () => {
       payload: { purpose: 'medication_image', contentType: 'image/png', byteSize: 50, patientProfileId: alice.profileId },
     });
     const url = ticket.json().upload.uploadUrl as string;
-
-    // Declared image/png, actually a shell script.
     const res = await h.app.inject({
       method: 'PUT', url, headers: { 'content-type': 'image/png' },
       payload: Buffer.from('#!/bin/sh\nrm -rf /\n'),
@@ -395,19 +396,7 @@ describe('admin surface', () => {
   });
 });
 
-/**
- * Findings from an authorization audit, each pinned by the test that would
- * have caught it. Every one of these passed a code review and failed against
- * a real database.
- */
 describe('cross-patient writes through an id in the request body', () => {
-  /**
-   * The id arrived in the BODY of a route named `/v1/me/...`, and nothing
-   * checked it. RLS does not catch this: the consents policy constrains
-   * `user_id` only, and a foreign key check does not apply the referenced
-   * table's policies — so one patient could write a consent row, and an entry
-   * in the append-only audit trail, scoped to another patient's profile.
-   */
   it('refuses a consent written against a profile the caller does not own', async () => {
     const res = await h.app.inject({
       method: 'PUT', url: '/v1/me/consents', headers: authHeaders(alice),
@@ -434,10 +423,6 @@ describe('cross-patient writes through an id in the request body', () => {
 });
 
 describe('PATCH /v1/me validates what it writes', () => {
-  /**
-   * `timezone` is what every dose in the account is materialized against, so
-   * an unvalidated string is a broken schedule rather than a cosmetic defect.
-   */
   it('refuses a time zone that is not a time zone', async () => {
     for (const timezone of ['Mars/Olympus', 'Asia/Riyadh; DROP', '../../etc', 'x'.repeat(80)]) {
       const res = await h.app.inject({
@@ -471,23 +456,17 @@ describe('PATCH /v1/me validates what it writes', () => {
 });
 
 describe('the emergency card publishes only what the patient chose', () => {
-  /**
-   * The three include flags defaulted to TRUE and the enable route inserts a
-   * row naming only the QR columns — so a patient who tapped "enable" without
-   * ever opening the card editor published every active medication, their
-   * allergies and their contacts in one action. `conditions_note`, the
-   * free-text "what is wrong with me" field, had no flag at all and could not
-   * be withheld even deliberately.
-   */
   it('reveals nothing but a name when the QR is enabled and nothing was chosen', async () => {
     const enable = await h.app.inject({
       method: 'POST', url: `/v1/emergency/qr/enable?profileId=${bob.profileId}`,
       headers: authHeaders(bob), payload: {},
     });
     expect(enable.statusCode).toBe(200);
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    const token = enable.json().token as string;
 
-    const scan = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` });
+    const scan = await h.app.inject({
+      method: 'GET', url: '/v1/emergency/scan/card', headers: { authorization: `Bearer ${token}` },
+    });
     expect(scan.statusCode).toBe(200);
     const card = scan.json();
     expect(card.medications).toEqual([]);
@@ -514,64 +493,59 @@ describe('the emergency card publishes only what the patient chose', () => {
       method: 'POST', url: `/v1/emergency/qr/enable?profileId=${bob.profileId}`,
       headers: authHeaders(bob), payload: {},
     });
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
-    const card = (await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}` })).json();
+    const token = enable.json().token as string;
+    const card = (await h.app.inject({
+      method: 'GET', url: '/v1/emergency/scan/card', headers: { authorization: `Bearer ${token}` },
+    })).json();
 
     expect(card.allergies).toEqual(['penicillin']);
     expect(card.bloodType).toBe('O-');
-    // The three the patient left off, including the one that had no flag.
     expect(card.conditionsNote).toBeNull();
     expect(card.emergencyContacts).toEqual([]);
     expect(card.medications).toEqual([]);
   });
 });
 
-/** Today and tomorrow in the profile's zone; the suite's doses are materialized forward from today. */
 const riyadhDay = (offsetDays: number) => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date(Date.now() + offsetDays * 86_400_000));
 
 describe('a client event id belongs to one dose, not to the whole database', () => {
-  /**
-   * The idempotency lookup matched on `client_event_id` alone across every
-   * patient, and the unique index was global too. Two failures, one loud and
-   * one silent — the silent one is why this is here.
-   *
-   * A collision with a different dose the caller could read returned THAT
-   * dose's status, reported an idempotent replay, and left the dose named in
-   * the request unconfirmed. The API answered 200 and the adherence record was
-   * wrong, with nothing anywhere reporting a fault.
-   */
   it('does not report a different dose as an already-recorded replay', async () => {
     const doses = await h.app.inject({
       method: 'GET', url: `/v1/doses?profileId=${alice.profileId}&from=${riyadhDay(1)}&to=${riyadhDay(6)}`,
       headers: authHeaders(alice),
     });
-    const list = (doses.json().doses as Array<{ id: string; status: string }>)
+    const list = (doses.json().doses as Array<{ id: string; status: string; scheduledAt: string }>)
       .filter((d) => ['upcoming', 'due', 'pending_confirmation'].includes(d.status));
     expect(list.length, 'the suite needs two unresolved doses to collide').toBeGreaterThan(1);
-    const [first, second] = list as [{ id: string }, { id: string }];
+    const [first, second] = list as [
+      { id: string; scheduledAt: string },
+      { id: string; scheduledAt: string },
+    ];
 
+    const restoreNow = new Date();
     const shared = 'evt-collision-probe-1';
-    const a = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${first.id}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(a.statusCode).toBe(200);
-    expect(a.json().doseId).toBe(first.id);
+    try {
+      h.setServerNow(new Date(first.scheduledAt));
+      const a = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${first.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: first.scheduledAt },
+      });
+      expect(a.statusCode).toBe(200);
+      expect(a.json().doseId).toBe(first.id);
 
-    // Same id, different dose. It must NOT quietly answer with the first one.
-    const b = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${second.id}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(b.json().doseId ?? second.id).not.toBe(first.id);
+      h.setServerNow(new Date(second.scheduledAt));
+      const b = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${second.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: second.scheduledAt },
+      });
+      expect(b.json().doseId ?? second.id).not.toBe(first.id);
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 
-  /**
-   * The same id used by two different patients is two different intents, and
-   * neither should be able to make the other's confirmation fail.
-   */
   it('lets two patients use the same id without colliding', async () => {
     const shared = 'evt-shared-across-patients';
     const doseOf = async (u: TestUser) => {
@@ -579,52 +553,48 @@ describe('a client event id belongs to one dose, not to the whole database', () 
         method: 'GET', url: `/v1/doses?profileId=${u.profileId}&from=${riyadhDay(7)}&to=${riyadhDay(7)}`,
         headers: authHeaders(u),
       });
-      return (res.json().doses as Array<{ id: string }>)[0]!.id;
+      return (res.json().doses as Array<{ id: string; scheduledAt: string }>)[0]!;
     };
     const aliceDose = await doseOf(alice);
     const bobDose = await doseOf(bob);
+    const restoreNow = new Date();
 
-    const one = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${aliceDose}/taken`, headers: authHeaders(alice),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    const two = await h.app.inject({
-      method: 'POST', url: `/v1/doses/${bobDose}/taken`, headers: authHeaders(bob),
-      payload: { clientEventId: shared, method: 'app' },
-    });
-    expect(one.statusCode).toBe(200);
-    expect(two.statusCode, two.body).toBe(200);
+    try {
+      h.setServerNow(new Date(aliceDose.scheduledAt));
+      const one = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${aliceDose.id}/taken`, headers: authHeaders(alice),
+        payload: { clientEventId: shared, method: 'app', takenAt: aliceDose.scheduledAt },
+      });
+      h.setServerNow(new Date(bobDose.scheduledAt));
+      const two = await h.app.inject({
+        method: 'POST', url: `/v1/doses/${bobDose.id}/taken`, headers: authHeaders(bob),
+        payload: { clientEventId: shared, method: 'app', takenAt: bobDose.scheduledAt },
+      });
+      expect(one.statusCode).toBe(200);
+      expect(two.statusCode, two.body).toBe(200);
+    } finally {
+      h.setServerNow(restoreNow);
+    }
   });
 });
 
 describe('the public emergency scan cannot be forced to demand a login', () => {
-  /**
-   * The stock module gated authentication with `req.url.includes('/stock')`,
-   * and `req.url` carries the query string — so appending `?x=/stock` to the
-   * deliberately unauthenticated scan turned it into a 401. A paramedic
-   * following a crafted link would have been asked to sign in.
-   */
   it('ignores a query string crafted to trip another route\'s auth hook', async () => {
     const enable = await h.app.inject({
       method: 'POST', url: `/v1/emergency/qr/enable?profileId=${alice.profileId}`,
       headers: authHeaders(alice), payload: {},
     });
-    const token = (enable.json().qrUrl as string).split('/e/')[1]!;
+    const token = enable.json().token as string;
     for (const suffix of ['', '?x=/stock', '?y=/refill', '?z=/medications']) {
-      const res = await h.app.inject({ method: 'GET', url: `/v1/emergency/scan/${token}${suffix}` });
+      const res = await h.app.inject({
+        method: 'GET', url: `/v1/emergency/scan/card${suffix}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
       expect(res.statusCode, suffix).toBe(200);
     }
   });
 });
 
-/**
- * Notification disclosure, which used to have no setting at all: the medication
- * name and dose were interpolated into every reminder body by both the phone
- * and the worker, and reached the lock screen, Android's notification history,
- * the OS scheduled-notification store, notification_deliveries and the push
- * provider. A phone face-up on a desk named its owner's diagnosis to anyone
- * walking past.
- */
 describe('medication detail in notifications is off until the patient asks', () => {
   it('is false for a brand-new account', async () => {
     const res = await h.app.inject({ method: 'GET', url: '/v1/me', headers: authHeaders(alice) });
@@ -649,10 +619,6 @@ describe('medication detail in notifications is off until the patient asks', () 
       .json().preferences.showMedicationInNotifications).toBe(false);
   });
 
-  /**
-   * Account isolation for the preference itself. One patient opting in must not
-   * change what another patient's notifications say.
-   */
   it('is one patient’s choice and not another’s', async () => {
     await h.app.inject({
       method: 'PATCH', url: '/v1/me/preferences', headers: authHeaders(alice),

@@ -48,7 +48,9 @@ describe('a tap on the reminder', () => {
 
     expect(post).toHaveBeenCalledTimes(1);
     const [path, body] = post.mock.calls[0] as [string, Record<string, unknown>];
-    expect(path).toBe('/v1/doses/dose-1/taken');
+    expect(path).toBe('/v1/dose/action');
+    expect(body.doseId).toBe('dose-1');
+    expect(body.action).toBe('taken');
     expect(body.method).toBe('push_action');
     expect(body.deviceId).toBe('device-under-test');
     expect(outcome).toEqual({ action: 'taken', doseId: 'dose-1', synced: true });
@@ -56,13 +58,18 @@ describe('a tap on the reminder', () => {
 
   it('records "Skip"', async () => {
     await applyNotificationAction('SKIP', DOSE);
-    expect(post.mock.calls[0]?.[0]).toBe('/v1/doses/dose-1/skip');
+    const [path, body] = post.mock.calls[0] as [string, Record<string, unknown>];
+    expect(path).toBe('/v1/dose/action');
+    expect(body.doseId).toBe('dose-1');
+    expect(body.action).toBe('skip');
   });
 
   it('snoozes with a concrete number of minutes', async () => {
     await applyNotificationAction('SNOOZE', DOSE);
-    const [path, body] = post.mock.calls[0] as [string, { minutes: number }];
-    expect(path).toBe('/v1/doses/dose-1/snooze');
+    const [path, body] = post.mock.calls[0] as [string, { doseId: string; action: string; minutes: number }];
+    expect(path).toBe('/v1/dose/action');
+    expect(body.doseId).toBe('dose-1');
+    expect(body.action).toBe('snooze');
     expect(body.minutes).toBeGreaterThan(0);
   });
 

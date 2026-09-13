@@ -1,5 +1,9 @@
 import type { PoolClient } from 'pg';
-import { AppError, type CaregiverPermission } from '@dawaee/shared';
+import {
+  AppError,
+  CAREGIVER_PERMISSION_DEPENDENCIES,
+  type CaregiverPermission,
+} from '@dawaee/shared';
 import { assertCan, resolveRole, type AccessContext } from '@dawaee/core';
 
 /**
@@ -42,8 +46,6 @@ export async function loadProfileAccess(
   );
 
   const row = rows[0];
-  // RLS already hides other patients' profiles; this turns "invisible" into a
-  // clean 404 rather than a confusing empty response.
   if (!row) throw AppError.notFound('Patient profile not found');
 
   const ctx: AccessContext = {
@@ -73,6 +75,33 @@ export async function loadProfileAccess(
 }
 
 /**
+ * Product-level permission dependencies imposed by the queries behind a
+ * capability are defined in @dawaee/shared, not privately here. The mobile
+ * preset/custom controls and this API guard must consume the same map; their
+ * previous drift produced an "Observer" preset that advertised adherence but
+ * created a relationship that this service correctly rejected with 403.
+ *
+ * P20 evidence behind the shared map:
+ * - add_medication without view_medications could not complete its own
+ *   duplicate/RETURNING path;
+ * - edit_schedule without view_schedule failed while materializing the first
+ *   occurrences because the ON CONFLICT path must see the schedule/doses;
+ * - edit_medication/update_stock first resolve a medication row, which itself
+ *   requires view_medications;
+ * - confirm_dose first resolves the dose occurrence and then renders medication
+ *   identity, so the confirmation grant is useful only with schedule + medicine
+ *   visibility;
+ * - reports inner-join dose_occurrences, medications AND medication_schedules.
+ *   A custom caregiver holding view_reports + view_medications but not
+ *   view_schedule therefore passed the API check and received HTTP 200 with an
+ *   empty report because the schedule RLS policy removed every joined row;
+ * - adherence likewise inner-joins medication_schedules to apply each
+ *   schedule's late/missed thresholds. dose_occurrences itself permits
+ *   view_adherence, but the joined schedule does not, so view_adherence alone
+ *   otherwise produces an empty 200 rather than usable analytics.
+ */
+
+/**
  * Requires every permission a route's query actually needs.
  *
  * Accepts a list because a permission check that names one thing while the
@@ -83,20 +112,15 @@ export async function loadProfileAccess(
  * `/v1/doses/:id`. Not a permission error anywhere; just nothing, with no
  * indication why.
  *
- * The cause is that a dose is not readable on its own. Every dose query inner
- * joins `medications` to render the row, and that table's RLS policy requires
- * `view_medications`. So the application layer said `view_schedule` was
- * enough while the database required two permissions, and the disagreement
- * surfaced as an empty screen rather than as a refusal.
- *
- * Resolved in favour of the database's answer, per the product decision that
- * seeing the schedule entails seeing which medication it is for: the routes
- * now ask for what they read. A caregiver missing `view_medications` gets
- * `Missing permission: view_medications`, which is the true reason and is
- * actionable — the patient can grant it.
+ * The cause is that a dose is not readable on its own. Every dose list/detail
+ * query inner joins `medications` AND `medication_schedules`. Those tables' RLS
+ * policies require medicine and schedule visibility respectively. A history
+ * route that checked only view_history + view_medications therefore still
+ * returned an empty 200 when view_schedule was absent.
  *
  * The permissions are checked in the order given, so the message names the
- * route's primary permission first when both are absent.
+ * route's primary permission first when both are absent. Dependencies are
+ * checked immediately after their primary permission.
  */
 export async function requireProfileAccess(
   tx: PoolClient,
@@ -105,25 +129,30 @@ export async function requireProfileAccess(
   permission: CaregiverPermission | readonly CaregiverPermission[],
 ): Promise<ProfileAccess> {
   const access = await loadProfileAccess(tx, userId, profileId);
-  for (const p of Array.isArray(permission) ? permission : [permission as CaregiverPermission]) {
-    assertCan(access, p);
+  const requested = Array.isArray(permission)
+    ? permission as readonly CaregiverPermission[]
+    : [permission as CaregiverPermission];
+
+  const checked = new Set<CaregiverPermission>();
+  for (const p of requested) {
+    if (!checked.has(p)) {
+      assertCan(access, p);
+      checked.add(p);
+    }
+    for (const dependency of CAREGIVER_PERMISSION_DEPENDENCIES[p] ?? []) {
+      if (checked.has(dependency)) continue;
+      assertCan(access, dependency);
+      checked.add(dependency);
+    }
   }
   return access;
 }
 
-/**
- * The permission set required to read a dose row.
- *
- * `view_medications` is in every one of these because `DOSE_LIST_SELECT` and
- * the report query inner join `medications`. If those joins ever become LEFT
- * joins — showing a caregiver "a dose at 08:00" without saying which medicine,
- * which is the other coherent product answer — this constant is the one place
- * that has to change.
- */
+/** The permission sets required by compound reads. */
 export const DOSE_READ = ['view_schedule', 'view_medications'] as const;
-export const DOSE_HISTORY_READ = ['view_history', 'view_medications'] as const;
-export const DOSE_CONFIRM = ['confirm_dose', 'view_medications'] as const;
-export const REPORT_READ = ['view_reports', 'view_medications'] as const;
+export const DOSE_HISTORY_READ = ['view_history', 'view_medications', 'view_schedule'] as const;
+export const DOSE_CONFIRM = ['confirm_dose', 'view_schedule', 'view_medications'] as const;
+export const REPORT_READ = ['view_reports', 'view_medications', 'view_schedule'] as const;
 
 export async function requireProfileOwner(
   tx: PoolClient,
@@ -189,7 +218,9 @@ export async function listAccessibleProfiles(tx: PoolClient, userId: string) {
     return {
       id: r.id,
       displayName: r.display_name,
-      isSelf: r.is_self,
+      // The stored flag is relative to the profile owner, not every viewer.
+      // Clients use this caller-relative identity for bootstrap and reminders.
+      isSelf: r.is_self && isOwner,
       timezone: r.timezone,
       homeTimezone: r.home_timezone,
       travelPolicy: r.travel_policy,

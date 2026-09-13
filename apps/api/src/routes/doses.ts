@@ -341,6 +341,10 @@ export function registerDoseRoutes(app: FastifyInstance): void {
         snoozedUntil: r.snoozed_until?.toISOString() ?? null,
         notifiedAt: r.notified_at?.toISOString() ?? null,
         confirmedAt: r.confirmed_at?.toISOString() ?? null,
+        thresholds: {
+          lateAfterMinutes: Number(r.late_after_minutes),
+          missedAfterMinutes: Number(r.missed_after_minutes),
+        },
       }));
       const thresholds = {
         lateAfterMinutes: rows[0]?.late_after_minutes ?? 15,

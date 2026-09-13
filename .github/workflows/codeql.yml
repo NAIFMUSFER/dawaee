@@ -25,6 +25,27 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Generated web HTML is intentionally untracked. Rebuild the actual
+      # production artifact before extraction instead of silently dropping it
+      # from the scan when the checked-in snapshot disappears.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - name: Install workspace dependencies for the production web build
+        run: npm ci
+      - name: Build workspace packages for the production web build
+        run: npm run build
+      - name: Install mobile dependencies for the production web build
+        run: npm ci --prefix apps/mobile --legacy-peer-deps
+      - name: Build the production web artifact for analysis
+        env:
+          NODE_ENV: production
+          API_URL: ''
+        run: ./scripts/build-web.sh
+      - name: Require the generated document and CSP hash before extraction
+        run: |
+          test -s apps/api/public/index.html
+          test -s apps/api/public/index.html.script-sha256
       - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           languages: javascript-typescript
@@ -36,6 +57,9 @@ jobs:
           # proves unworkable the answer is to tune the query set here and say
           # so, never to stop failing on results.
           upload: always
+          output: codeql-results
+      - name: Record CodeQL finding locations without source snippets
+        run: node scripts/codeql-evidence.cjs
 
   # Secret scanning as a workflow rather than only as a repository setting.
   # GitHub's own push protection is a repository-level configuration this audit

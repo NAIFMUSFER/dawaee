@@ -78,8 +78,14 @@ export function isInvitationUsable(
  * the new value is medically appropriate.
  */
 export interface HighRiskCheckInput {
-  before: { doseQuantity?: number; doseUnit?: string; ruleJson?: string; name?: string; strengthValue?: number | null };
-  after: { doseQuantity?: number; doseUnit?: string; ruleJson?: string; name?: string; strengthValue?: number | null };
+  before: {
+    doseQuantity?: number; doseUnit?: string; ruleJson?: string; name?: string;
+    strengthValue?: number | null; strengthUnit?: string | null;
+  };
+  after: {
+    doseQuantity?: number; doseUnit?: string; ruleJson?: string; name?: string;
+    strengthValue?: number | null; strengthUnit?: string | null;
+  };
 }
 
 export type HighRiskChange = 'dose_quantity' | 'dose_unit' | 'schedule_timing' | 'medication_identity' | 'strength';
@@ -99,11 +105,15 @@ export function detectHighRiskChanges(input: HighRiskCheckInput): HighRiskChange
   if (after.name !== undefined && before.name !== undefined && after.name.trim() !== before.name.trim()) {
     changes.push('medication_identity');
   }
-  if (
+  const strengthValueChanged =
     after.strengthValue !== undefined &&
     before.strengthValue !== undefined &&
-    after.strengthValue !== before.strengthValue
-  ) {
+    after.strengthValue !== before.strengthValue;
+  const strengthUnitChanged =
+    after.strengthUnit !== undefined &&
+    before.strengthUnit !== undefined &&
+    after.strengthUnit !== before.strengthUnit;
+  if (strengthValueChanged || strengthUnitChanged) {
     changes.push('strength');
   }
   return changes;

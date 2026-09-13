@@ -7,8 +7,9 @@ import { runStep, type StepOutcome } from './housekeeping-step.js';
  *
  * Data that has served its purpose is deleted rather than kept "just in case" —
  * a medication app holds sensitive information, so the smallest defensible
- * footprint is the right one. Medical history is NOT touched here; only
- * transient operational rows are.
+ * footprint is the right one. Medical history is NOT touched here except when
+ * the account owner has explicitly requested full account erasure and the
+ * fourteen-day grace period has elapsed.
  */
 export async function housekeepingJob(
   ctx: WorkerContext, client: PoolClient,
@@ -35,12 +36,6 @@ export async function housekeepingJob(
    * token hashes, device names and IP hashes for every user, and DELETE would
    * have carried effective visibility of all of it. `app.cleanup_expired_sessions`
    * performs the one DELETE and returns a count.
-   *
-   * This statement is also why housekeeping had never completed. The worker was
-   * granted no DELETE on anything, so the old `DELETE FROM auth_sessions` threw
-   * "permission denied" on every run and aborted the job before any of the
-   * retention below executed — which is why notification_deliveries still held
-   * rows well past its 90-day limit.
    */
   await runStep(ctx, client, outcome, 'sessions', async () => {
     const { rows } = await client.query<{ cleanup_expired_sessions: string }>(
@@ -68,11 +63,71 @@ export async function housekeepingJob(
     `DELETE FROM job_runs WHERE started_at < now() - interval '14 days'`,
   )).rowCount ?? 0);
 
-  // Objects whose upload was requested but never completed leave a dangling
-  // row and, potentially, a partial object.
-  await runStep(ctx, client, outcome, 'uploads', async () => (await client.query(
-    `DELETE FROM stored_objects WHERE uploaded_at IS NULL AND created_at < now() - interval '24 hours'`,
-  )).rowCount ?? 0);
+  /**
+   * Upload tickets do not currently have a server callback that flips
+   * `uploaded_at`: direct S3/R2 PUTs bypass the API. Only OLD, UNREFERENCED
+   * tickets are therefore safe to classify as abandoned.
+   *
+   * P20 CI reproduced the least-privilege production boundary here: doing the
+   * reference test directly required SELECT on `prescriptions`, which the
+   * worker intentionally does not have, and `permission denied` aborted the
+   * entire housekeeping function before account erasure could run. Do not widen
+   * the worker to prescription PHI. Migration 0039 exposes only a bounded list
+   * of safe object keys through a pinned SECURITY DEFINER function.
+   *
+   * Delete the physical bytes first, then ask the narrow metadata-removal
+   * function to re-check the references at deletion time. Each object gets its
+   * own savepoint, so one provider outage does not retain all other objects.
+   */
+  const { rows: abandonedObjects } = await client.query<{ object_key: string }>(
+    'SELECT object_key FROM app.list_abandoned_object_keys(24, 100)',
+  );
+  for (const object of abandonedObjects) {
+    await runStep(ctx, client, outcome, 'uploads', async () => {
+      await ctx.providers.storage.deleteObject(object.object_key);
+      const { rows } = await client.query<{ removed: boolean }>(
+        'SELECT app.remove_abandoned_object_metadata($1) AS removed',
+        [object.object_key],
+      );
+      return rows[0]?.removed ? 1 : 0;
+    });
+  }
+
+  /**
+   * Final account erasure.
+   *
+   * The HTTP route returns a concrete `scheduledFor` fourteen days after the
+   * durable request marker. The worker now consumes that marker, but it does so
+   * without broadening its database reach: migration 0039 returns only ids that
+   * are already due and only object keys that belong to the departing user's
+   * own data. A caregiver-uploaded image attached to somebody else's profile is
+   * that patient's medical record and is deliberately not returned.
+   *
+   * The database delete independently re-checks the grace period under a row
+   * lock. Physical deletion happens first. If object storage is unavailable,
+   * the account remains scheduled and the failed step is retried rather than
+   * falsely claiming erasure while bytes remain outside PostgreSQL.
+   */
+  const { rows: dueAccounts } = await client.query<{ user_id: string }>(
+    'SELECT user_id FROM app.list_due_account_ids(14, 100)',
+  );
+  for (const account of dueAccounts) {
+    await runStep(ctx, client, outcome, 'accountDeletion', async () => {
+      const { rows: objects } = await client.query<{ object_key: string }>(
+        'SELECT object_key FROM app.list_due_account_object_keys($1, 14)',
+        [account.user_id],
+      );
+      for (const object of objects) {
+        await ctx.providers.storage.deleteObject(object.object_key);
+      }
+
+      const { rows } = await client.query<{ erased: boolean }>(
+        'SELECT app.erase_due_account($1, 14) AS erased',
+        [account.user_id],
+      );
+      return rows[0]?.erased ? 1 : 0;
+    });
+  }
 
   /**
    * ── Both statements below compare against the PATIENT'S local date, not
@@ -85,36 +140,11 @@ export async function housekeepingJob(
    * local date against a UTC date, and the error is one whole day for part of
    * every day.
    *
-   * The direction of the error depends on the sign of the offset, and only one
-   * direction is harmless:
-   *
-   *   patient AHEAD of UTC (Asia/Riyadh, +3): the UTC date lags the local date,
-   *   so a course is marked completed up to three hours LATE. Nothing is
-   *   generated in that window — `expandSchedule` already stops at the local end
-   *   of `end_date` — so this is invisible.
-   *
-   *   patient BEHIND UTC (America/Los_Angeles, -7): the UTC date runs AHEAD, so
-   *   from 17:00 local on the final day `end_date < current_date` is already
-   *   true. The medication is marked `completed` while the patient still has
-   *   doses to take that evening — and `reminders` requires `m.status='active'`,
-   *   so those reminders are silently never sent. The same applies to
-   *   `expired`. A patient in California would stop being reminded on the last
-   *   evening of every course.
-   *
-   * Saudi Arabia is UTC+3 with no DST, so today's users sit on the harmless
-   * side of this. That is a property of who happens to be using the app, not of
-   * the code, and `medication_schedules.timezone` and
-   * `patient_profiles.timezone` are per-row for exactly that reason.
-   *
    * The fix takes the instant from the worker (`ctx.now()`) rather than the
    * database, so the job is deterministic and testable, and converts it to each
    * patient's own calendar date. `$1::timestamptz AT TIME ZONE p.timezone`
    * yields that patient's wall-clock time; casting it to `date` yields their
    * calendar date. DST is handled by the zone rules rather than by arithmetic.
-   *
-   * Deliberately NOT fixed by setting the database session timezone: there is
-   * no single session timezone that is correct for two patients in different
-   * zones, so that would only move the bug.
    */
   const nowInstant = ctx.now();
 
@@ -140,8 +170,6 @@ export async function housekeepingJob(
   )).rowCount ?? 0);
 
   if (outcome.removed > 0 || outcome.failures.length > 0) {
-    // Both numbers, always, when either is non-zero: "removed 400" alone reads
-    // like success even when three retention classes silently did nothing.
     ctx.log.info(
       { removed: outcome.removed, failed: outcome.failures.length },
       'housekeeping completed',

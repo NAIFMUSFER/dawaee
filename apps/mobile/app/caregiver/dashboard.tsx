@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, SafetyNote, SectionTitle, Txt,
@@ -8,6 +8,7 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { AdherenceResponse, DoseView, ProfileSummary, TodayResponse } from '@/api/types';
 import { statusColors } from '@/theme';
@@ -44,30 +45,57 @@ function isoDate(date: Date): string {
 }
 
 export default function CaregiverDashboardScreen() {
-  const { profileId } = useLocalSearchParams<{ profileId?: string }>();
-  const { t, formatDate, formatNumber, formatTime } = useI18n();
-  const theme = useTheme();
-  const { profiles, activeProfile, offline, setOffline } = useApp();
+  const { profiles, activeProfile, user } = useApp();
 
   const followed = useMemo(() => profiles.filter((p) => p.role === 'caregiver'), [profiles]);
-
   const patient = useMemo<ProfileSummary | null>(() => {
-    if (profileId) return profiles.find((p) => p.id === profileId) ?? null;
     if (activeProfile && activeProfile.role === 'caregiver') return activeProfile;
     return followed[0] ?? null;
-  }, [activeProfile, followed, profileId, profiles]);
+  }, [activeProfile, followed]);
+
+  // Patient identity and permission changes are privacy boundaries. Remounting
+  // the patient-scoped view removes the previous patient's data on the first
+  // render rather than waiting for a passive effect or the next network reply.
+  return (
+    <CaregiverPatientDashboard
+      key={profileScopeKey(user?.id, patient)}
+      patient={patient}
+      followed={followed}
+    />
+  );
+}
+
+function CaregiverPatientDashboard({
+  patient,
+  followed,
+}: {
+  patient: ProfileSummary | null;
+  followed: ProfileSummary[];
+}) {
+  const { t, formatDate, formatNumber, formatTime } = useI18n();
+  const theme = useTheme();
+  const { offline, setOffline, setActiveProfile } = useApp();
 
   const [today, setToday] = useState<TodayResponse | null>(null);
   const [adherence, setAdherence] = useState<AdherenceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { begin: beginLoad } = useRequestScope(profileScopeKey(undefined, patient));
 
   const can = useCallback(
     (permission: CaregiverPermission): boolean =>
       patient === null ? false : patient.permissions === null || patient.permissions.includes(permission),
     [patient],
   );
+  const canSeeSchedule = can('view_schedule');
+  const canSeeMedications = can('view_medications');
+  // /v1/today joins both schedules and medication rows, and the API correctly
+  // requires both visibility grants. A schedule-only Observer must not issue a
+  // request that is guaranteed to fail and take its permitted adherence read
+  // down with the shared Promise.all.
+  const canSeeToday = canSeeSchedule && canSeeMedications;
+  const canSeeAdherence = can('view_adherence');
 
   const describe = useCallback((err: unknown): string => {
     if (!(err instanceof ApiError)) return t('error.internal_error');
@@ -77,39 +105,51 @@ export default function CaregiverDashboardScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
     if (!patient) {
       setLoading(false);
+      setRefreshing(false);
       return;
     }
-    const canSeeSchedule = patient.permissions === null || patient.permissions.includes('view_schedule');
-    const canSeeAdherence = patient.permissions === null || patient.permissions.includes('view_adherence');
     const to = new Date();
     const from = new Date(to.getTime() - (ADHERENCE_DAYS - 1) * 86_400_000);
 
     try {
       const [todayRes, adherenceRes] = await Promise.all([
-        canSeeSchedule ? api.get<TodayResponse>('/v1/today', { profileId: patient.id }) : Promise.resolve(null),
+        canSeeToday ? api.get<TodayResponse>('/v1/today', { profileId: patient.id }) : Promise.resolve(null),
         canSeeAdherence
           ? api.get<AdherenceResponse>('/v1/adherence', { profileId: patient.id, from: isoDate(from), to: isoDate(to) })
           : Promise.resolve(null),
       ]);
+      if (!isCurrent()) return;
       setToday(todayRes);
       setAdherence(adherenceRes);
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [describe, patient, setOffline]);
+  }, [beginLoad, canSeeAdherence, canSeeToday, describe, patient, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
   const doses = today?.today ?? [];
   const now = Date.now();
+  // Promise.all deliberately commits the two caregiver reads together. On a
+  // cold initial request, a transport or HTTP failure leaves both payloads null.
+  // That state is not evidence that the patient has no doses or stopped
+  // sharing adherence, so never translate it into either clinical empty state.
+  // Existing payloads from a previous successful load may remain visible next
+  // to the connectivity/error banner; only the no-data failure case is suppressed.
+  const loadFailedWithoutClinicalData = (offline || error !== null) && today === null && adherence === null;
 
   const lateDoses = useMemo(
     () => doses
@@ -173,7 +213,7 @@ export default function CaregiverDashboardScreen() {
                   label={`${p.id === patient.id ? '✓ ' : ''}${p.displayName}`}
                   tone={p.id === patient.id ? 'primary' : 'secondary'}
                   fullWidth={false}
-                  onPress={() => router.setParams({ profileId: p.id })}
+                  onPress={() => setActiveProfile(p.id)}
                 />
               ))}
             </Row>
@@ -189,7 +229,7 @@ export default function CaregiverDashboardScreen() {
           />
         ) : null}
 
-        {lateDoses.length > 0 ? (
+        {!loadFailedWithoutClinicalData && lateDoses.length > 0 ? (
           <>
             <SectionTitle>{t('caregiver.needsAttention')}</SectionTitle>
             <View style={{ gap: theme.spacing.sm }}>
@@ -222,7 +262,7 @@ export default function CaregiverDashboardScreen() {
         ) : null}
 
         <SectionTitle>{t('today.title')}</SectionTitle>
-        {!can('view_schedule') ? (
+        {loadFailedWithoutClinicalData ? null : !canSeeToday ? (
           <Banner tone="info" title={t('caregiver.notShared', { name: patient.displayName })} />
         ) : doses.length === 0 ? (
           <EmptyState title={t('caregiver.noDosesToday')} />
@@ -250,7 +290,7 @@ export default function CaregiverDashboardScreen() {
           </Card>
         )}
 
-        {can('view_schedule') && upcoming.length > 0 ? (
+        {!loadFailedWithoutClinicalData && canSeeToday && upcoming.length > 0 ? (
           <>
             <SectionTitle>{t('today.upcoming')}</SectionTitle>
             <Card>
@@ -271,12 +311,12 @@ export default function CaregiverDashboardScreen() {
           </>
         ) : null}
 
-        {can('view_schedule') && lateDoses.length === 0 && doses.length > 0 ? (
+        {!loadFailedWithoutClinicalData && canSeeToday && lateDoses.length === 0 && doses.length > 0 ? (
           <Banner tone="success" title={t('caregiver.nothingLate')} />
         ) : null}
 
         <SectionTitle>{t('caregiver.weeklyAdherence')}</SectionTitle>
-        {!can('view_adherence') || !adherence ? (
+        {loadFailedWithoutClinicalData ? null : !can('view_adherence') || !adherence ? (
           <Banner tone="info" title={t('caregiver.notShared', { name: patient.displayName })} />
         ) : (
           <Card>

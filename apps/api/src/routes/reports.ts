@@ -7,6 +7,10 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { REPORT_READ, requireProfileAccess } from '../services/access-service.js';
 import { now as serverNow } from '../lib/clock.js';
 
+type ReportRange =
+  | { kind: 'explicit'; from: string; to: string }
+  | { kind: 'weekly'; endDate?: string };
+
 /**
  * Reports.
  *
@@ -23,13 +27,18 @@ export function registerReportRoutes(app: FastifyInstance): void {
   async function buildReport(
     userId: string,
     profileId: string,
-    from: string,
-    to: string,
+    range: ReportRange,
     audience: 'family' | 'clinician',
   ) {
     return withUserReadOnly(userId, async (tx) => {
       const access = await requireProfileAccess(tx, userId, profileId, REPORT_READ);
       const now = serverNow();
+      const { from, to } = range.kind === 'weekly'
+        ? (() => {
+            const to = range.endDate ?? localDateInZone(now, access.profileTimezone);
+            return { from: addDays(to, -6), to };
+          })()
+        : range;
 
       const { rows } = await tx.query(
         `SELECT d.id, d.medication_id, d.status, d.scheduled_at, d.scheduled_local_date,
@@ -56,6 +65,10 @@ export function registerReportRoutes(app: FastifyInstance): void {
         snoozedUntil: r.snoozed_until?.toISOString() ?? null,
         notifiedAt: r.notified_at?.toISOString() ?? null,
         confirmedAt: r.confirmed_at?.toISOString() ?? null,
+        thresholds: {
+          lateAfterMinutes: Number(r.late_after_minutes),
+          missedAfterMinutes: Number(r.missed_after_minutes),
+        },
       }));
 
       const byMedication = new Map<string, { name: string; strength: string | null; form: string; rows: typeof occurrences }>();
@@ -159,11 +172,11 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const { endDate } = req.query as { endDate?: string };
     const profileId = requireUuid((req.query as { profileId?: string }).profileId, 'profileId');
     const { userId } = currentUser(req);
-    // The 7-day window is fixed, so only the anchor needs checking — but it does
-    // need checking: `addDays` on a non-date yields a NaN-shaped string that
-    // Postgres rejects, which surfaced as a 500 instead of a 400.
-    const to = endDate === undefined || endDate === '' ? localDateInZone(serverNow(), 'Asia/Riyadh') : requireDate(endDate, 'endDate');
-    return buildReport(userId, profileId, addDays(to, -6), to, 'family');
+    // An explicit anchor is validated at the edge. When it is omitted, the
+    // profile's own local date is resolved inside buildReport after access has
+    // loaded the authoritative profile timezone.
+    const parsedEndDate = endDate === undefined || endDate === '' ? undefined : requireDate(endDate, 'endDate');
+    return buildReport(userId, profileId, { kind: 'weekly', endDate: parsedEndDate }, 'family');
   });
 
   /**
@@ -181,7 +194,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, range.from, range.to, 'family');
+    return buildReport(userId, profileId, { kind: 'explicit', from: range.from, to: range.to }, 'family');
   });
 
   /**
@@ -193,7 +206,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const { userId } = currentUser(req);
-    return buildReport(userId, profileId, range.from, range.to, 'clinician');
+    return buildReport(userId, profileId, { kind: 'explicit', from: range.from, to: range.to }, 'clinician');
   });
 
   /** Full data export for the privacy screen (PDPL data-access right). */
@@ -208,21 +221,42 @@ export function registerReportRoutes(app: FastifyInstance): void {
       const tables: Record<string, unknown[]> = {};
       const queries: Array<[string, string]> = [
         ['profile', 'SELECT * FROM patient_profiles WHERE id = $1'],
+        ['consents', `SELECT id, user_id, patient_profile_id, type, granted, version,
+                             granted_at, withdrawn_at, updated_at
+                        FROM consents WHERE patient_profile_id = $1`],
         ['medications', 'SELECT * FROM medications WHERE patient_profile_id = $1'],
+        ['prescriptions', 'SELECT * FROM prescriptions WHERE patient_profile_id = $1'],
         ['schedules', 'SELECT * FROM medication_schedules WHERE patient_profile_id = $1'],
         ['doses', 'SELECT * FROM dose_occurrences WHERE patient_profile_id = $1'],
         ['doseEvents', 'SELECT * FROM dose_events WHERE patient_profile_id = $1'],
         ['stock', 'SELECT * FROM medication_stock WHERE patient_profile_id = $1'],
         ['stockTransactions', 'SELECT * FROM stock_transactions WHERE patient_profile_id = $1'],
         ['refills', 'SELECT * FROM refill_events WHERE patient_profile_id = $1'],
-        ['caregivers', `SELECT id, invited_name, role, status, permissions, escalation_priority, accepted_at
+        ['caregivers', `SELECT id, invited_phone_e164, invited_name, role, status, permissions,
+                               escalation_priority, invitation_channel, invitation_expires_at,
+                               accepted_at, declined_at, revoked_at, created_at, updated_at
                           FROM caregiver_relationships WHERE patient_profile_id = $1`],
+        ['escalationPolicies', 'SELECT * FROM escalation_policies WHERE patient_profile_id = $1'],
+        ['caregiverNotificationRules', 'SELECT * FROM caregiver_notification_rules WHERE patient_profile_id = $1'],
+        ['travelPrompts', 'SELECT * FROM travel_prompts WHERE patient_profile_id = $1 ORDER BY created_at DESC'],
+        ['storedObjects', `SELECT id, patient_profile_id, purpose, content_type, byte_size, sha256,
+                                  scan_status, reject_reason, uploaded_at, created_at
+                             FROM stored_objects WHERE patient_profile_id = $1
+                            ORDER BY created_at DESC`],
+        ['notificationDeliveries', `SELECT id, patient_profile_id, recipient_user_id, recipient_phone_e164,
+                                           relationship_id, kind, channel, dose_occurrence_id, medication_id,
+                                           escalation_stage, status, provider, error_code, attempts, max_attempts,
+                                           locale, title, body, payload, scheduled_for, sent_at, delivered_at,
+                                           created_at, updated_at
+                                      FROM notification_deliveries WHERE patient_profile_id = $1
+                                     ORDER BY created_at DESC`],
         ['notes', 'SELECT * FROM symptom_notes WHERE patient_profile_id = $1'],
         ['measurements', 'SELECT * FROM health_measurements WHERE patient_profile_id = $1'],
         ['emergencyCard', `SELECT id, blood_type, allergies, conditions_note, emergency_contacts,
-                                  include_medications, include_allergies, include_contacts, qr_enabled
+                                  include_medications, include_allergies, include_contacts, include_conditions,
+                                  qr_enabled, qr_rotated_at, qr_view_count, qr_last_viewed_at, updated_at
                              FROM emergency_cards WHERE patient_profile_id = $1`],
-        ['auditLog', 'SELECT * FROM audit_logs WHERE patient_profile_id = $1 ORDER BY at DESC LIMIT 5000'],
+        ['auditLog', 'SELECT * FROM audit_logs WHERE patient_profile_id = $1 ORDER BY at DESC'],
       ];
       for (const [name, sql] of queries) {
         const { rows } = await tx.query(sql, [profileId]);

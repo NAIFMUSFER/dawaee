@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { AdherenceResponse } from '@/api/types';
@@ -36,6 +37,12 @@ function todayIn(timezone: string): string {
 }
 
 export default function AdherenceScreen() {
+  const { user, activeProfile } = useApp();
+  const key = profileScopeKey(user?.id, activeProfile);
+  return <AdherenceProfileScreen key={key} />;
+}
+
+function AdherenceProfileScreen() {
   const { t, formatDate, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
@@ -50,17 +57,22 @@ export default function AdherenceScreen() {
     const to = todayIn(timezone);
     return { from: addDays(to, -(days - 1)), to };
   }, [days, timezone]);
+  const requestScope = useRequestScope(`${activeProfile?.id ?? 'none'}:${range.from}:${range.to}`);
 
   const load = useCallback(async () => {
     if (!activeProfile) return;
+    const isCurrent = requestScope.begin();
+    if (!isCurrent()) return;
     setError(null);
     try {
       const res = await api.get<AdherenceResponse>('/v1/adherence', {
         profileId: activeProfile.id, from: range.from, to: range.to,
       });
+      if (!isCurrent()) return;
       setData(res);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else if (err instanceof ApiError) {
@@ -70,9 +82,9 @@ export default function AdherenceScreen() {
         setError(t('error.internal_error'));
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, range.from, range.to, setOffline, t]);
+  }, [activeProfile, range.from, range.to, requestScope, setOffline, t]);
 
   useEffect(() => { setLoading(true); void load(); }, [load]);
 

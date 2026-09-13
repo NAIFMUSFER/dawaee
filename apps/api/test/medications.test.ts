@@ -41,7 +41,6 @@ describe('medication CRUD', () => {
     expect(body.medication.name).toBe('Panadol');
     expect(body.medication.strengthValue).toBe(500);
     expect(body.scheduleId).toBeTruthy();
-    // Two weeks of a three-times-daily schedule.
     expect(body.dosesCreated).toBeGreaterThan(30);
   });
 
@@ -57,7 +56,6 @@ describe('medication CRUD', () => {
   it('creates it anyway once the user acknowledges the warning', async () => {
     const res = await createMedication({ schedule: undefined, stock: undefined, acknowledgeDuplicate: true });
     expect(res.statusCode).toBe(200);
-    // Clean up so later counts stay predictable.
     await h.app.inject({
       method: 'DELETE', url: `/v1/medications/${res.json().medication.id}?force=true`, headers: authHeaders(user),
     });
@@ -78,7 +76,6 @@ describe('medication CRUD', () => {
     expect(res.statusCode).toBe(200);
     const med = res.json().medications.find((m: { id: string }) => m.id === medicationId);
     expect(med.stock.remainingQuantity).toBe(30);
-    // 30 tablets at three a day.
     expect(med.stockForecast.daysRemaining).toBe(10);
     expect(med.stockForecast.isLow).toBe(false);
   });
@@ -131,7 +128,6 @@ describe('medication CRUD', () => {
     const resumed = await h.app.inject({
       method: 'PATCH', url: `/v1/medications/${medicationId}`, headers: authHeaders(user), payload: { status: 'active' },
     });
-    // Resuming must bring the schedule back, not leave it silently dead.
     expect(resumed.json().futureDosesRevived).toBeGreaterThan(0);
     const restored = await h.app.inject({
       method: 'GET', url: `/v1/doses?profileId=${user.profileId}&from=2026-09-01&to=2027-01-01`, headers: authHeaders(user),
@@ -146,6 +142,11 @@ describe('medication CRUD', () => {
     const dose = today.json().today.find((d: { status: string }) => d.status !== 'cancelled')
       ?? today.json().prefetch[0];
     expect(dose, 'the medication should have an actionable dose').toBeTruthy();
+
+    // The 15-minute early-action invariant is part of production correctness.
+    // This test is about archival after real history, not about bypassing that
+    // invariant, so move the harness clock to the selected occurrence.
+    h.setServerNow(new Date(dose.scheduledAt));
     const confirmed = await h.app.inject({
       method: 'POST', url: `/v1/doses/${dose.id}/taken`, headers: authHeaders(user),
       payload: { clientEventId: `evt-archive-${Date.now()}`, method: 'app' },
@@ -157,7 +158,6 @@ describe('medication CRUD', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // History exists, so the destructive path is refused in favour of archival.
     expect(body.deleted).toBe(false);
     expect(body.archived).toBe(true);
     expect(body.historyCount).toBeGreaterThan(0);
@@ -223,7 +223,6 @@ describe('schedules', () => {
     });
     expect(list.statusCode).toBe(200);
     expect(list.json().medications.length).toBeGreaterThanOrEqual(50);
-    // The Today screen must stay fast with a heavy medication list.
     expect(Date.now() - started).toBeLessThan(8000);
 
     const today = await h.app.inject({
