@@ -36,8 +36,17 @@ export interface LockState {
   phase: LockPhase;
   /** Set when the app truly left the foreground; cleared by a verification. */
   pendingRelock: boolean;
-  /** When the app went to background, epoch ms; null if it has not. */
+  /**
+   * When an UNLOCKED app went to background, epoch ms; null otherwise.
+   *
+   * The distinction is security-significant. A screen that was already locked
+   * must never manufacture a grace window merely by going background → active.
+   * Null is also what makes a late verification result after a real background
+   * event fail closed instead of cancelling that re-lock.
+   */
   backgroundedAt: number | null;
+  /** True once a real background event happened and until active processes it. */
+  backgrounded: boolean;
   /** Areas verified since the last background, e.g. 'reports'. */
   verifiedAreas: readonly string[];
 }
@@ -75,6 +84,7 @@ export const INITIAL_LOCK_STATE: LockState = {
   phase: 'unlocked',
   pendingRelock: false,
   backgroundedAt: null,
+  backgrounded: false,
   verifiedAreas: [],
 };
 
@@ -97,8 +107,9 @@ export const INITIAL_LOCK_STATE: LockState = {
  * short enough that it does not meaningfully extend the window the device's own
  * screen lock already governs.
  *
- * WHAT RECEIVES GRACE. Exactly one transition: foreground → `background` →
- * foreground, where the round trip took less than this. Nothing else.
+ * WHAT RECEIVES GRACE. Exactly one transition: a VERIFIED foreground →
+ * `background` → foreground, where the round trip took less than this. A lock
+ * screen that was already locked is not verified and therefore gets no grace.
  *
  * WHAT DOES NOT.
  *  - Cold start. A launch enters through `configure`, never through
@@ -109,16 +120,19 @@ export const INITIAL_LOCK_STATE: LockState = {
  *    window to grant — see the `appStatus` branch for why arming there would
  *    make the lock impossible to open.
  *  - Anything longer than the window, however the app got there.
+ *  - A verification response that arrives after a real background event. It
+ *    belongs to the foreground attempt that was interrupted and is discarded.
  *
  * MANUAL DEVICE LOCK. Pressing the power button reaches the app as a plain
  * `background`, and neither iOS nor Android distinguishes it from an app switch
- * through React Native's `AppState`. So a device lock DOES receive the grace,
- * and this is an accepted, bounded risk rather than an oversight: returning to
- * Dawaee within those ten seconds requires getting past the phone's own lock
- * screen first, which is a stronger control than the one being waived. The
- * exposure is therefore limited to a device whose OS lock is disabled or set to
- * a delay — a device on which the medication data was already reachable by
- * anyone holding it.
+ * through React Native's `AppState`. So a device lock DOES receive the grace
+ * only when Dawaee was already verified before it left the foreground, and this
+ * is an accepted, bounded risk rather than an oversight: returning to Dawaee
+ * within those ten seconds requires getting past the phone's own lock screen
+ * first, which is a stronger control than the one being waived. The exposure is
+ * therefore limited to a device whose OS lock is disabled or set to a delay — a
+ * device on which the medication data was already reachable by anyone holding
+ * it.
  *
  * CONFIGURABLE? Not by the patient, deliberately. A visible "lock after…"
  * setting is a control people set to five minutes once and never revisit, which
@@ -138,7 +152,15 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
       // dose before the verification: deriving the phase here, rather than in
       // an effect that runs after the first paint, is what makes that true.
       if (event.enabled) {
-        return { ...state, enabled: true, phase: 'locked', pendingRelock: true, verifiedAreas: [] };
+        return {
+          ...state,
+          enabled: true,
+          phase: 'locked',
+          pendingRelock: true,
+          backgroundedAt: null,
+          backgrounded: false,
+          verifiedAreas: [],
+        };
       }
       return { ...INITIAL_LOCK_STATE };
     }
@@ -146,16 +168,17 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
     case 'appStatus': {
       if (!state.enabled) return state;
       if (event.status === 'background') {
-        // The only transition that arms a re-lock. `inactive` deliberately does
-        // not: iOS fires it for a notification banner, a control-centre pull,
-        // and — the one that matters — for the biometric prompt itself. Arming
-        // on `inactive` would re-lock the app underneath its own unlock dialog,
-        // and no sequence of taps would ever get in.
+        // Only a previously verified/unlocked foreground earns the short grace.
+        // `pendingRelock` is false in that state, including after an `inactive`
+        // biometric/camera blip. A screen that was already locked keeps null so
+        // the next active event necessarily fails closed.
+        const graceEligible = !state.pendingRelock;
         return {
           ...state,
           phase: 'covered',
           pendingRelock: true,
-          backgroundedAt: event.now,
+          backgroundedAt: graceEligible ? event.now : null,
+          backgrounded: true,
           verifiedAreas: [],
         };
       }
@@ -164,29 +187,54 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
         return state.phase === 'unlocked' ? { ...state, phase: 'covered' } : state;
       }
       // active
-      if (!state.pendingRelock) return { ...state, phase: 'unlocked' };
-      const away = state.backgroundedAt === null ? Infinity : event.now - state.backgroundedAt;
-      // The grace window is valid only for a forward-moving wall clock. If the
-      // device clock moves backwards while Dawaee is backgrounded, the elapsed
-      // duration is unknowable; fail closed rather than treating a negative
-      // duration as "less than ten seconds" and silently bypassing re-lock.
-      if (away >= 0 && away < RELOCK_GRACE_MS) {
-        return { ...state, phase: 'unlocked', pendingRelock: false, backgroundedAt: null };
+      if (!state.pendingRelock) {
+        return { ...state, phase: 'unlocked', backgroundedAt: null, backgrounded: false };
       }
-      return { ...state, phase: 'locked', backgroundedAt: null };
+      const away = state.backgroundedAt === null ? Infinity : event.now - state.backgroundedAt;
+      // The grace window is valid only for a forward-moving wall clock AND for
+      // a foreground that had already been verified before it backgrounded.
+      // If the device clock moves backwards, or no eligible timestamp exists,
+      // fail closed rather than silently bypassing re-lock.
+      if (away >= 0 && away < RELOCK_GRACE_MS) {
+        return {
+          ...state,
+          phase: 'unlocked',
+          pendingRelock: false,
+          backgroundedAt: null,
+          backgrounded: false,
+        };
+      }
+      return { ...state, phase: 'locked', backgroundedAt: null, backgrounded: false };
     }
 
     case 'verified':
       if (!state.enabled) return state;
-      return { ...state, phase: 'unlocked', pendingRelock: false, backgroundedAt: null };
+      // A real background event invalidates the foreground verification attempt.
+      // `inactive` alone (the biometric prompt itself on iOS) does not set this.
+      if (state.backgrounded) return state;
+      return {
+        ...state,
+        phase: 'unlocked',
+        pendingRelock: false,
+        backgroundedAt: null,
+        backgrounded: false,
+      };
 
     case 'areaVerified':
       if (!state.enabled) return state;
+      if (state.backgrounded) return state;
       if (state.verifiedAreas.includes(event.area)) return state;
       return { ...state, verifiedAreas: [...state.verifiedAreas, event.area] };
 
     case 'credentialVerified':
-      return { ...state, phase: 'unlocked', pendingRelock: false, backgroundedAt: null };
+      if (state.enabled && state.backgrounded) return state;
+      return {
+        ...state,
+        phase: 'unlocked',
+        pendingRelock: false,
+        backgroundedAt: null,
+        backgrounded: false,
+      };
 
     default:
       return state;
