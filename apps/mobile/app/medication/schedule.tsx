@@ -189,7 +189,10 @@ function ScheduleProfileScreen({
     [formatWeekday],
   );
 
-  const sortedTimes = useMemo(() => [...times].filter(isValidTime).sort(), [times]);
+  // A partially entered or invalid row is not permission to drop a dose time.
+  // Invalidate the whole time list until every row is corrected or explicitly
+  // removed; both preview and Save consume this same all-or-nothing value.
+  const sortedTimes = useMemo(() => times.every(isValidTime) ? [...times].sort() : [], [times]);
 
   const buildRule = useCallback((): ScheduleRule | null => {
     switch (kind) {
