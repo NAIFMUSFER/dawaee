@@ -12,20 +12,22 @@ import { z } from 'zod';
  * `true` — so every non-empty string, including the word "false", becomes true.
  * That is the opposite of what an operator writing `TRUST_PROXY=false` means,
  * and it fails in the most dangerous direction: a debug or trust flag someone
- * deliberately turned off stays on.
+ * deliberately turned off stays on. Unknown spellings are rejected rather
+ * than silently falling back: `PASSWORD_LOGIN_ENABLED=flase` must not turn a
+ * deliberately disabled authentication path back on.
  */
 const envBoolean = (defaultValue: boolean) =>
-  z
-    .string()
-    .optional()
-    .transform((raw) => {
-      if (raw === undefined) return defaultValue;
-      const v = raw.trim().toLowerCase();
-      if (v === '') return defaultValue;
-      if (['1', 'true', 'yes', 'on'].includes(v)) return true;
-      if (['0', 'false', 'no', 'off'].includes(v)) return false;
-      return defaultValue;
-    });
+  z.preprocess((raw) => {
+    if (raw === undefined) return defaultValue;
+    if (typeof raw !== 'string') return raw;
+    const v = raw.trim().toLowerCase();
+    if (v === '') return defaultValue;
+    if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+    if (['0', 'false', 'no', 'off'].includes(v)) return false;
+    // Leave unknown input as a string so z.boolean() rejects it. Falling back
+    // to a default would turn an operator typo into a silent policy change.
+    return raw;
+  }, z.boolean());
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -80,6 +82,18 @@ const schema = z.object({
 
   CORS_ORIGINS: z.string().default(''),
   /**
+   * Trust Cloudflare's edge-authenticated client address and replace any
+   * caller-supplied X-Forwarded-For chain before Fastify derives req.ip.
+   *
+   * This is deliberately OFF by default because CF-Connecting-IP is just a
+   * request header on a deployment that is not guaranteed to sit behind
+   * Cloudflare. Render guarantees that public web-service traffic passes through
+   * Cloudflare and that the edge supplies this value, so render.yaml turns it on
+   * explicitly. When enabled, TRUST_PROXY_HOPS must remain exactly 1 because the
+   * application collapses the chain to one trusted address first.
+   */
+  TRUST_CF_CONNECTING_IP: envBoolean(false),
+  /**
    * How many proxies sit in front of this app — NOT a boolean.
    *
    * It used to be `envBoolean(true)`, and Fastify's `trustProxy: true` means
@@ -91,16 +105,16 @@ const schema = z.object({
    * a single header away from being nothing, which is also what made
    * registration enumeration unbounded rather than 6-per-10-minutes.
    *
-   * A hop count fixes it. `trustProxy: 1` tells Fastify to skip one entry from
-   * the RIGHT — the address the immediate upstream proxy appended itself — so
-   * the value comes from infrastructure rather than from the request body's
-   * author. Render terminates TLS at exactly one proxy, hence the default of 1.
+   * Render production later proved that trusting its raw forwarded chain with a
+   * fixed hop count could resolve the application client address to a private
+   * infrastructure range. The Render deployment therefore binds the trusted
+   * Cloudflare client address into a one-entry forwarded chain before Fastify
+   * applies this hop count. Other deployments keep the original hop-count model.
    *
-   * Set it to the real number of trusted hops for the deployment. `0` disables
-   * `X-Forwarded-For` entirely and uses the socket address, which is correct
-   * when nothing is in front of the app; a larger number is correct behind a
-   * CDN plus a load balancer. Never make it large "to be safe" — each extra hop
-   * is one more attacker-controlled entry treated as trusted.
+   * Set it to the real number of trusted hops for deployments that do not use
+   * TRUST_CF_CONNECTING_IP. `0` disables `X-Forwarded-For` entirely. Never make
+   * it large "to be safe" — each extra hop is one more caller-controlled entry
+   * treated as trusted.
    */
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   /** Salt for hashing IPs in the audit log — we never store a raw address. */
@@ -124,7 +138,7 @@ const schema = z.object({
   STORAGE_LOCAL_DIR: z.string().default('./.storage'),
   UPLOAD_MAX_BYTES: z.coerce.number().int().default(15 * 1024 * 1024),
 
-  PUBLIC_APP_URL: z.string().default('https://dawaee.app'),
+  PUBLIC_APP_URL: z.string().url().default('https://dawaee.app'),
 });
 
 export type Config = z.infer<typeof schema> & {
@@ -150,8 +164,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (cfg.OTP_DEBUG_ECHO) throw new Error('OTP_DEBUG_ECHO must be false in production');
     if (cfg.IP_HASH_SALT === 'dawaee-dev-salt') throw new Error('IP_HASH_SALT must be set in production');
     if (cfg.JWT_SECRET.length < 48) throw new Error('JWT_SECRET must be at least 48 characters in production');
+    if (cfg.PUSH_PROVIDER !== 'expo') {
+      throw new Error('PUSH_PROVIDER must be "expo" in production');
+    }
     if (cfg.STORAGE_PROVIDER === 'local') {
       throw new Error('STORAGE_PROVIDER=local is not permitted in production; use s3 or r2');
+    }
+    if (cfg.TRUST_CF_CONNECTING_IP && cfg.TRUST_PROXY_HOPS !== 1) {
+      throw new Error('TRUST_CF_CONNECTING_IP requires TRUST_PROXY_HOPS=1');
+    }
+    // Emergency QR capabilities live in the URL fragment. The fragment is not
+    // sent to an HTTP server, but an active network attacker on an HTTP origin
+    // could replace the page that reads it and exfiltrate the capability.
+    if (new URL(cfg.PUBLIC_APP_URL).protocol !== 'https:') {
+      throw new Error('PUBLIC_APP_URL must use https in production');
     }
     // Fails the boot rather than the audit. `no-verify` accepts any
     // certificate from anyone, which leaves an active attacker between Render

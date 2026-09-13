@@ -49,8 +49,10 @@ let refreshResponder: () => { status: number; body: unknown } = () => ({
 });
 /** Resolves the in-flight refresh only when released, so the race is real. */
 let releaseRefresh: (() => void) | null = null;
+/** Only the token this fake server issued (or an explicit 409 winner) is valid. */
+let acceptedAccessToken: string | null = null;
 
-const fakeFetch = vi.fn(async (url: string, init?: { body?: string }) => {
+const fakeFetch = vi.fn(async (url: string, init?: { body?: string; headers?: HeadersInit }) => {
   const body = init?.body ? JSON.parse(init.body) : undefined;
   calls.push({ url, body });
 
@@ -59,6 +61,9 @@ const fakeFetch = vi.fn(async (url: string, init?: { body?: string }) => {
       await new Promise<void>((resolve) => { releaseRefresh = resolve; });
     }
     const { status, body: payload } = refreshResponder();
+    if (status >= 200 && status < 300) {
+      acceptedAccessToken = (payload as { accessToken: string }).accessToken;
+    }
     return {
       ok: status >= 200 && status < 300,
       status,
@@ -67,8 +72,12 @@ const fakeFetch = vi.fn(async (url: string, init?: { body?: string }) => {
     };
   }
 
-  // Every protected call answers 401 token_expired the first time, so each one
-  // independently decides it needs a refresh.
+  // Reject the expired token, not the successful rotation as well. An always-401
+  // fake also revokes the retry, which must sign out rather than model success.
+  if (acceptedAccessToken
+    && new Headers(init?.headers).get('authorization') === `Bearer ${acceptedAccessToken}`) {
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  }
   const payload = { error: { code: 'token_expired', message: 'expired' } };
   return {
     ok: false, status: 401,
@@ -84,6 +93,7 @@ beforeEach(async () => {
   secure.clear();
   async_.clear();
   releaseRefresh = null;
+  acceptedAccessToken = null;
   refreshResponder = () => ({ status: 200, body: { accessToken: 'A2', refreshToken: 'R2' } });
   fakeFetch.mockClear();
   await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
@@ -104,7 +114,8 @@ describe('twenty simultaneous callers produce one refresh', () => {
     expect(refreshCalls().length, 'more than one refresh went over the network').toBe(1);
 
     releaseRefresh!();
-    await Promise.all(inFlight);
+    const results = await Promise.all(inFlight);
+    expect(results).toEqual(Array.from({ length: 20 }, () => ({ ok: true })));
 
     expect(refreshCalls().length, 'a second refresh was issued after release').toBe(1);
   });
@@ -115,7 +126,8 @@ describe('twenty simultaneous callers produce one refresh', () => {
       client.api.get('/v1/doses').catch(() => 'failed'));
     await new Promise((r) => setTimeout(r, 50));
     releaseRefresh!();
-    await Promise.all(inFlight);
+    const results = await Promise.all(inFlight);
+    expect(results).toEqual(Array.from({ length: 20 }, () => ({ ok: true })));
 
     // One rotation happened, and the stored session is the one it produced.
     const stored = JSON.parse(secure.get('dawaee.session.v1')!);
@@ -128,7 +140,8 @@ describe('twenty simultaneous callers produce one refresh', () => {
       client.api.get('/v1/doses').catch(() => 'failed'));
     await new Promise((r) => setTimeout(r, 50));
     releaseRefresh!();
-    await Promise.all(inFlight);
+    const results = await Promise.all(inFlight);
+    expect(results).toEqual(Array.from({ length: 20 }, () => ({ ok: true })));
 
     for (const call of refreshCalls()) {
       expect((call.body as { refreshToken: string }).refreshToken).toBe('R1');
@@ -156,11 +169,14 @@ describe('twenty simultaneous callers produce one refresh', () => {
   });
 
   it('allows a later refresh once the first has settled', async () => {
-    await client.api.get('/v1/doses').catch(() => undefined);
-    const first = refreshCalls().length;
-    await client.api.get('/v1/doses').catch(() => undefined);
-    expect(refreshCalls().length, 'the in-flight promise was never cleared')
-      .toBeGreaterThan(first);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
+    expect(refreshCalls()).toHaveLength(1);
+    // A separate expiry is needed after the first rotation actually succeeds.
+    acceptedAccessToken = null;
+    refreshResponder = () => ({ status: 200, body: { accessToken: 'A3', refreshToken: 'R3' } });
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
+    expect(refreshCalls(), 'the in-flight promise was never cleared').toHaveLength(2);
+    expect(JSON.parse(secure.get('dawaee.session.v1')!).refreshToken).toBe('R3');
   });
 });
 
@@ -178,6 +194,7 @@ describe('a superseded refresh never erases the winner’s session', () => {
     await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
     // ...while the winner's R2 is what is actually persisted.
     secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+    acceptedAccessToken = 'A2';
 
     refreshResponder = () => ({
       status: 409, body: { error: { code: 'refresh_superseded', message: 'superseded' } },
@@ -185,7 +202,7 @@ describe('a superseded refresh never erases the winner’s session', () => {
     let signedOut = 0;
     client.setUnauthenticatedHandler(() => { signedOut += 1; });
 
-    await client.api.get('/v1/doses').catch(() => undefined);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
 
     const stored = secure.get('dawaee.session.v1');
     expect(stored, 'the loser wiped the stored session').toBeTruthy();
@@ -231,6 +248,7 @@ describe('a second runtime that starts holding the old token', () => {
     // Context A won and persisted R2. This runtime still holds R1.
     await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
     secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+    acceptedAccessToken = 'A2';
 
     refreshResponder = () => ({
       status: 409, body: { error: { code: 'refresh_superseded', message: 'superseded' } },
@@ -238,7 +256,7 @@ describe('a second runtime that starts holding the old token', () => {
     let signedOut = 0;
     client.setUnauthenticatedHandler(() => { signedOut += 1; });
 
-    await client.api.get('/v1/doses').catch(() => undefined);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
 
     // It presented R1 exactly once and never again.
     const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
@@ -251,16 +269,18 @@ describe('a second runtime that starts holding the old token', () => {
   it('uses the adopted token for the next call', async () => {
     await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
     secure.set('dawaee.session.v1', JSON.stringify({ accessToken: 'A2', refreshToken: 'R2' }));
+    acceptedAccessToken = 'A2';
     refreshResponder = () => ({ status: 409, body: { error: { code: 'refresh_superseded' } } });
 
-    await client.api.get('/v1/doses').catch(() => undefined);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
 
-    // A later refresh presents R2, not R1.
+    // Explicitly expire the adopted access token so the later refresh really runs.
+    acceptedAccessToken = null;
     refreshResponder = () => ({ status: 200, body: { accessToken: 'A3', refreshToken: 'R3' } });
     calls = [];
-    await client.api.get('/v1/doses').catch(() => undefined);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
     const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
-    expect(presented, 'the stale token was presented again').not.toContain('R1');
+    expect(presented, 'the adopted token was not used for the next refresh').toEqual(['R2']);
   });
 
   /**
@@ -290,7 +310,7 @@ describe('a second runtime that starts holding the old token', () => {
 
     refreshResponder = () => ({ status: 200, body: { accessToken: 'A3', refreshToken: 'R3' } });
     calls = [];
-    await client.api.get('/v1/doses').catch(() => undefined);
+    await expect(client.api.get('/v1/doses')).resolves.toEqual({ ok: true });
     const presented = refreshCalls().map((c) => (c.body as { refreshToken: string }).refreshToken);
     expect(presented, 'the restart did not pick up the persisted session').toEqual(['R2']);
   });

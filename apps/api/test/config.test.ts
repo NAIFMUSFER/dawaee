@@ -28,10 +28,12 @@ describe('boolean environment variables', () => {
     for (const off of ['false', 'FALSE', 'False', ' false ', '0', 'no', 'off']) {
       expect(load({ OTP_DEBUG_ECHO: off }).OTP_DEBUG_ECHO, off).toBe(false);
       expect(load({ PASSWORD_LOGIN_ENABLED: off }).PASSWORD_LOGIN_ENABLED, off).toBe(false);
+      expect(load({ TRUST_CF_CONNECTING_IP: off }).TRUST_CF_CONNECTING_IP, off).toBe(false);
     }
     for (const on of ['true', 'TRUE', '1', 'yes', 'on']) {
       expect(load({ OTP_DEBUG_ECHO: on }).OTP_DEBUG_ECHO, on).toBe(true);
       expect(load({ PASSWORD_LOGIN_ENABLED: on }).PASSWORD_LOGIN_ENABLED, on).toBe(true);
+      expect(load({ TRUST_CF_CONNECTING_IP: on }).TRUST_CF_CONNECTING_IP, on).toBe(true);
     }
   });
 
@@ -40,11 +42,36 @@ describe('boolean environment variables', () => {
     expect(load({ PASSWORD_LOGIN_ENABLED: '' }).PASSWORD_LOGIN_ENABLED).toBe(true);
     expect(load({}).OTP_DEBUG_ECHO).toBe(false);
     expect(load({ OTP_DEBUG_ECHO: '' }).OTP_DEBUG_ECHO).toBe(false);
+    expect(load({}).TRUST_CF_CONNECTING_IP).toBe(false);
+    expect(load({ TRUST_CF_CONNECTING_IP: '' }).TRUST_CF_CONNECTING_IP).toBe(false);
   });
 
   it('boots in production when the debug flag is the string "false"', () => {
-    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'false' })).not.toThrow();
-    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'true' })).toThrow(/OTP_DEBUG_ECHO/);
+    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'false', PUSH_PROVIDER: 'expo' })).not.toThrow();
+    expect(() => load({ NODE_ENV: 'production', OTP_DEBUG_ECHO: 'true', PUSH_PROVIDER: 'expo' })).toThrow(/OTP_DEBUG_ECHO/);
+  });
+});
+
+/**
+ * A production medication-reminder service cannot silently fall back to the
+ * recording push provider. Render deliberately keeps PUSH_PROVIDER out of the
+ * committed blueprint so a sync cannot overwrite the live provider; that also
+ * means a fresh or misconfigured environment can leave it unset. In that case
+ * the schema default is `mock`, the process currently boots, and readiness can
+ * still be green even though no remote reminder can reach a handset.
+ */
+describe('production push provider', () => {
+  it('refuses the recording mock in production', () => {
+    expect(() => load({ NODE_ENV: 'production', PUSH_PROVIDER: 'mock' }))
+      .toThrow(/PUSH_PROVIDER/i);
+  });
+
+  it('refuses an unset provider instead of defaulting production to mock', () => {
+    expect(() => load({ NODE_ENV: 'production' })).toThrow(/PUSH_PROVIDER/i);
+  });
+
+  it('keeps the mock available outside production', () => {
+    expect(load({ NODE_ENV: 'test', PUSH_PROVIDER: 'mock' }).PUSH_PROVIDER).toBe('mock');
   });
 });
 
@@ -56,7 +83,7 @@ describe('boolean environment variables', () => {
  * IP-keyed rate limit in the app depends on this value being trustworthy.
  */
 describe('TRUST_PROXY_HOPS', () => {
-  it('defaults to one hop — Render terminates TLS at exactly one proxy', () => {
+  it('defaults to one hop for deployments using one trusted proxy', () => {
     expect(load({}).TRUST_PROXY_HOPS).toBe(1);
   });
 
@@ -72,5 +99,20 @@ describe('TRUST_PROXY_HOPS', () => {
   it('refuses a negative or absurd hop count', () => {
     expect(() => load({ TRUST_PROXY_HOPS: '-1' })).toThrow();
     expect(() => load({ TRUST_PROXY_HOPS: '99' })).toThrow();
+  });
+
+  it('requires exactly one Fastify hop when the Cloudflare client-IP binding is enabled in production', () => {
+    expect(() => load({
+      NODE_ENV: 'production', PUSH_PROVIDER: 'expo',
+      TRUST_CF_CONNECTING_IP: 'true', TRUST_PROXY_HOPS: '1',
+    })).not.toThrow();
+    expect(() => load({
+      NODE_ENV: 'production', PUSH_PROVIDER: 'expo',
+      TRUST_CF_CONNECTING_IP: 'true', TRUST_PROXY_HOPS: '0',
+    })).toThrow(/TRUST_PROXY_HOPS=1/);
+    expect(() => load({
+      NODE_ENV: 'production', PUSH_PROVIDER: 'expo',
+      TRUST_CF_CONNECTING_IP: 'true', TRUST_PROXY_HOPS: '2',
+    })).toThrow(/TRUST_PROXY_HOPS=1/);
   });
 });

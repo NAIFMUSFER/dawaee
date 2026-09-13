@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView, TodayResponse } from '@/api/types';
@@ -125,6 +126,11 @@ function channelsFor(target: StageTarget): readonly NotificationChannel[] {
 }
 
 export default function EscalationScreen() {
+  const { user, activeProfile } = useApp();
+  return <EscalationProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function EscalationProfileScreen() {
   const { t, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
@@ -258,6 +264,7 @@ export default function EscalationScreen() {
     }),
     [stages],
   );
+  const patientFirst = stages[0]?.target === 'patient';
 
   const dirty = useMemo(() => {
     if (!saved) return false;
@@ -268,6 +275,10 @@ export default function EscalationScreen() {
     if (!activeProfile) return;
     if (stages.length === 0) {
       setError(t('escalation.stagesRequired'));
+      return;
+    }
+    if (!patientFirst) {
+      setError(t('error.validation_failed'));
       return;
     }
     if (stages.some((s) => s.channels.length === 0)) {
@@ -305,7 +316,7 @@ export default function EscalationScreen() {
     } finally {
       setBusy(false);
     }
-  }, [activeProfile, describe, outOfOrder, quietEnd, quietStart, setOffline, stages, t]);
+  }, [activeProfile, describe, outOfOrder, patientFirst, quietEnd, quietStart, setOffline, stages, t]);
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
 
@@ -343,7 +354,7 @@ export default function EscalationScreen() {
 
   const changeTarget = (index: number, target: StageTarget) => {
     const stage = stages[index];
-    if (!stage) return;
+    if (!stage || (index === 0 && target !== 'patient')) return;
     const allowed = channelsFor(target);
     const channels = stage.channels.filter((c) => allowed.includes(c));
     updateStage(index, { target, channels: channels.length > 0 ? channels : [...allowed].slice(0, 2) });
@@ -356,6 +367,7 @@ export default function EscalationScreen() {
   };
 
   const removeStage = (index: number) => {
+    if (index === 0) return;
     applyStages(stages.filter((_, i) => i !== index));
   };
 
@@ -368,7 +380,7 @@ export default function EscalationScreen() {
     const other = index + direction;
     const a = stages[index];
     const b = stages[other];
-    if (!a || !b) return;
+    if (!a || !b || index === 0 || other === 0) return;
     applyStages(stages.map((stage, i) => {
       if (i === index) return { ...stage, target: b.target, channels: [...b.channels] };
       if (i === other) return { ...stage, target: a.target, channels: [...a.channels] };
@@ -446,7 +458,7 @@ export default function EscalationScreen() {
                       label="↑"
                       tone="ghost"
                       fullWidth={false}
-                      disabled={!isOwner || index === 0}
+                      disabled={!isOwner || index <= 1}
                       accessibilityHint={t('escalation.moveEarlier', { number: formatNumber(index + 1) })}
                       onPress={() => swapWithNeighbour(index, -1)}
                     />
@@ -454,7 +466,7 @@ export default function EscalationScreen() {
                       label="↓"
                       tone="ghost"
                       fullWidth={false}
-                      disabled={!isOwner || index === stages.length - 1}
+                      disabled={!isOwner || index === 0 || index === stages.length - 1}
                       accessibilityHint={t('escalation.moveLater', { number: formatNumber(index + 1) })}
                       onPress={() => swapWithNeighbour(index, 1)}
                     />
@@ -487,7 +499,7 @@ export default function EscalationScreen() {
                       key={target}
                       label={`${stage.target === target ? '✓ ' : ''}${t(TARGET_LABEL[target])}`}
                       tone={stage.target === target ? 'primary' : 'secondary'}
-                      disabled={!isOwner}
+                      disabled={!isOwner || (index === 0 && target !== 'patient')}
                       onPress={() => changeTarget(index, target)}
                     />
                   ))}
@@ -556,7 +568,7 @@ export default function EscalationScreen() {
             label={t('common.save')}
             size="large"
             loading={busy}
-            disabled={!dirty || outOfOrder}
+            disabled={!dirty || outOfOrder || !patientFirst}
             onPress={() => void save()}
             testID="save-escalation"
           />

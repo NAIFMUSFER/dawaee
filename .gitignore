@@ -19,3 +19,5 @@ shot.mjs
 flow.mjs
 tour.mjs
 .storage/
+# Production and web-route tests regenerate this from current Expo source.
+apps/api/public/

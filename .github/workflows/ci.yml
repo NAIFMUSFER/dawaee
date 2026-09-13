@@ -83,7 +83,11 @@ jobs:
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
             https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
-          sudo apt-get update
+          # Refresh only PGDG: unrelated runner repositories (e.g. Chrome)
+          # must not block PostgreSQL verification. Keep their cached indexes
+          # for dependency resolution; signature/hash checks remain enabled.
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list \
+            -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update
           sudo apt-get install -y "postgresql-client-${{ matrix.postgres }}"
           psql --version
 

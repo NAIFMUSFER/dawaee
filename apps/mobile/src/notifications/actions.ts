@@ -67,14 +67,14 @@ export async function applyNotificationAction(
 
   try {
     if (action === 'taken') {
-      await api.post(`/v1/doses/${doseId}/taken`, {
-        clientEventId, method: 'push_action', deviceId, takenAt: at,
+      await api.post('/v1/dose/action', {
+        doseId, action: 'taken', clientEventId, method: 'push_action', deviceId, takenAt: at,
       });
     } else if (action === 'skipped') {
-      await api.post(`/v1/doses/${doseId}/skip`, { clientEventId, deviceId });
+      await api.post('/v1/dose/action', { doseId, action: 'skip', clientEventId, deviceId });
     } else {
-      await api.post(`/v1/doses/${doseId}/snooze`, {
-        minutes: QUICK_SNOOZE_MINUTES, clientEventId, deviceId,
+      await api.post('/v1/dose/action', {
+        doseId, action: 'snooze', minutes: QUICK_SNOOZE_MINUTES, clientEventId, deviceId,
       });
     }
     return { action, doseId, synced: true };

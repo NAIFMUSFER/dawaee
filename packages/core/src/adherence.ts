@@ -11,11 +11,26 @@ import { localDateInZone } from './time.js';
  * `adherence.disclaimer`.
  */
 
+type DerivableAdherenceOccurrence =
+  Pick<DoseOccurrence, 'status' | 'scheduledAt' | 'snoozedUntil' | 'notifiedAt'> & {
+    /** The schedule policy that governs this specific occurrence. */
+    thresholds?: DoseThresholds;
+  };
+
+export type AdherenceOccurrence = DerivableAdherenceOccurrence &
+  Pick<DoseOccurrence, 'confirmedAt'>;
+
+function thresholdsFor(
+  occurrence: DerivableAdherenceOccurrence,
+  fallback: DoseThresholds,
+): DoseThresholds {
+  return occurrence.thresholds ?? fallback;
+}
+
 export interface AdherenceInput {
-  occurrences: ReadonlyArray<
-    Pick<DoseOccurrence, 'status' | 'scheduledAt' | 'snoozedUntil' | 'notifiedAt' | 'confirmedAt'>
-  >;
+  occurrences: ReadonlyArray<AdherenceOccurrence>;
   now: Date;
+  /** Backward-compatible fallback for callers without per-occurrence policy. */
   thresholds: DoseThresholds;
   from: LocalDate;
   to: LocalDate;
@@ -28,7 +43,7 @@ export function summarizeAdherence(input: AdherenceInput): AdherenceSummary {
   };
 
   for (const occ of input.occurrences) {
-    counts[deriveStatus(occ, input.now, input.thresholds)] += 1;
+    counts[deriveStatus(occ, input.now, thresholdsFor(occ, input.thresholds))] += 1;
   }
 
   const takenOnTime = counts.taken;
@@ -64,9 +79,7 @@ export interface DailyAdherencePoint {
 }
 
 export function dailyBreakdown(
-  occurrences: ReadonlyArray<
-    Pick<DoseOccurrence, 'status' | 'scheduledAt' | 'snoozedUntil' | 'notifiedAt' | 'confirmedAt'>
-  >,
+  occurrences: ReadonlyArray<AdherenceOccurrence>,
   now: Date,
   thresholds: DoseThresholds,
   timezone: string,
@@ -76,7 +89,7 @@ export function dailyBreakdown(
   for (const occ of occurrences) {
     const date = localDateInZone(new Date(occ.scheduledAt), timezone);
     const bucket = byDate.get(date) ?? { scheduled: 0, taken: 0, missed: 0, resolved: 0 };
-    const status = deriveStatus(occ, now, thresholds);
+    const status = deriveStatus(occ, now, thresholdsFor(occ, thresholds));
     if (status === 'cancelled') continue;
     bucket.scheduled += 1;
     if (status === 'taken' || status === 'taken_late') {
@@ -107,12 +120,15 @@ export function dailyBreakdown(
  * "notify after N consecutive missed" caregiver rule.
  */
 export function consecutiveMissed(
-  occurrences: ReadonlyArray<Pick<DoseOccurrence, 'status' | 'scheduledAt' | 'snoozedUntil' | 'notifiedAt'>>,
+  occurrences: ReadonlyArray<DerivableAdherenceOccurrence>,
   now: Date,
   thresholds: DoseThresholds,
 ): number {
   const resolved = occurrences
-    .map((o) => ({ at: new Date(o.scheduledAt).getTime(), status: deriveStatus(o, now, thresholds) }))
+    .map((o) => ({
+      at: new Date(o.scheduledAt).getTime(),
+      status: deriveStatus(o, now, thresholdsFor(o, thresholds)),
+    }))
     .filter((o) => ['taken', 'taken_late', 'skipped', 'missed'].includes(o.status))
     .sort((a, b) => b.at - a.at);
 

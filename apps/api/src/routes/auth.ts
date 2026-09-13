@@ -373,8 +373,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       });
     });
 
-    // Changing a password does not end other sessions here; that is a separate
-    // deliberate action so a patient mid-dose is never logged out unexpectedly.
+    // The transaction above deliberately preserves only the session making the
+    // password change and revokes every other live session for the account.
     return { updated: true };
   });
 
@@ -414,6 +414,12 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   app.post('/v1/auth/logout-all', { preHandler: authenticate }, async (req) => {
     const { userId } = currentUser(req);
     const revoked = await withUser(userId, async (tx) => {
+      // Serialize before the account-wide UPDATE in a separate statement. A
+      // refresh that already holds the same per-user advisory lock commits its
+      // descendant first; this UPDATE then starts with a fresh READ COMMITTED
+      // snapshot and cannot miss it. If logout-all wins the lock first, refresh
+      // cannot mint a descendant until every existing session is revoked.
+      await tx.query('SELECT app.lock_current_auth_account()');
       const { rowCount } = await tx.query(
         'UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL',
         [userId],
@@ -452,16 +458,33 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   /** Push token registration. Re-registering the same device replaces its token. */
   app.post('/v1/devices/push-token', { preHandler: authenticate }, async (req) => {
     const body = registerPushTokenSchema.parse(req.body);
-    const { userId } = currentUser(req);
+    const { userId, sessionId } = currentUser(req);
     await withUser(userId, async (tx) => {
+      // Bind the provider endpoint to the device that actually owns this
+      // authenticated session. The row lock makes this atomic with session
+      // revocation: if registration wins, a following revoke waits and then
+      // deactivates the token; if revocation wins, this registration refuses.
+      const { rows } = await tx.query<{ device_id: string }>(
+        `SELECT device_id
+           FROM auth_sessions
+          WHERE id = $1 AND user_id = $2
+            AND revoked_at IS NULL AND expires_at > now()
+          FOR SHARE`,
+        [sessionId, userId],
+      );
+      if (rows[0]?.device_id !== body.deviceId) {
+        throw AppError.forbidden('Push token device does not match the authenticated session');
+      }
+
       await tx.query(
-        `INSERT INTO push_tokens (user_id, token, platform, device_id, app_version, active, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,true, now())
+        `INSERT INTO push_tokens
+           (user_id, token, platform, device_id, app_version, session_id, active, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,true, now())
          ON CONFLICT (user_id, device_id) DO UPDATE
            SET token = EXCLUDED.token, platform = EXCLUDED.platform,
-               app_version = EXCLUDED.app_version, active = true,
-               failure_count = 0, last_seen_at = now()`,
-        [userId, body.token, body.platform, body.deviceId, body.appVersion ?? null],
+               app_version = EXCLUDED.app_version, session_id = EXCLUDED.session_id,
+               active = true, failure_count = 0, last_seen_at = now()`,
+        [userId, body.token, body.platform, body.deviceId, body.appVersion ?? null, sessionId],
       );
     });
     return { ok: true };
@@ -469,9 +492,28 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   app.delete('/v1/devices/push-token/:deviceId', { preHandler: authenticate }, async (req) => {
     const { deviceId } = req.params as { deviceId: string };
-    const { userId } = currentUser(req);
+    const { userId, sessionId } = currentUser(req);
     await withUser(userId, async (tx) => {
-      await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1 AND device_id = $2', [userId, deviceId]);
+      // Deregistration is installation-local just like registration. Bind the
+      // target to the live session so one authenticated device cannot silence
+      // a sibling device's push endpoint. The shared lock serializes this with
+      // revocation for the same reason as registration above.
+      const { rows } = await tx.query<{ device_id: string }>(
+        `SELECT device_id
+           FROM auth_sessions
+          WHERE id = $1 AND user_id = $2
+            AND revoked_at IS NULL AND expires_at > now()
+          FOR SHARE`,
+        [sessionId, userId],
+      );
+      if (rows[0]?.device_id !== deviceId) {
+        throw AppError.forbidden('Push token device does not match the authenticated session');
+      }
+
+      await tx.query(
+        'UPDATE push_tokens SET active = false WHERE user_id = $1 AND device_id = $2 AND session_id = $3',
+        [userId, deviceId, sessionId],
+      );
     });
     return { ok: true };
   });

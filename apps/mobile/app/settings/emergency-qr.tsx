@@ -8,6 +8,7 @@ import {
 import { QrCode, encodeQr } from '@/components/QrCode';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { MESSAGES, type MessageKey } from '@dawaee/shared';
@@ -45,12 +46,18 @@ interface EmergencyCardState {
   includeMedications: boolean;
   includeAllergies: boolean;
   includeContacts: boolean;
+  includeConditions: boolean;
   qrEnabled: boolean;
   qrViewCount: number;
   qrLastViewedAt: string | null;
 }
 
 export default function EmergencyQrScreen() {
+  const { user, activeProfile } = useApp();
+  return <EmergencyQrView key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function EmergencyQrView() {
   const { t, formatNumber, formatDate } = useI18n();
   const theme = useTheme();
   const { activeProfile } = useApp();
@@ -58,6 +65,8 @@ export default function EmergencyQrScreen() {
 
   const [card, setCard] = useState<EmergencyCardState | null>(null);
   const [loading, setLoading] = useState(true);
+  // A successful card:null is valid; a failed/pending read is not a disabled QR.
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,12 +76,14 @@ export default function EmergencyQrScreen() {
   const load = useCallback(async () => {
     if (!activeProfile) return;
     setLoading(true);
+    setLoaded(false);
     setError(null);
     try {
       const res = await api.get<{ card: EmergencyCardState | null }>('/v1/emergency/card', {
         profileId: activeProfile.id,
       });
       setCard(res.card);
+      setLoaded(true);
       setOffline(false);
     } catch (err) {
       if (err instanceof NetworkError) setOffline(true);
@@ -86,7 +97,7 @@ export default function EmergencyQrScreen() {
   useEffect(() => { void load(); }, [load]);
 
   const enable = async () => {
-    if (!activeProfile) return;
+    if (!activeProfile || !loaded || loading || busy) return;
     setBusy(true);
     setError(null);
     setCopied(false);
@@ -106,7 +117,7 @@ export default function EmergencyQrScreen() {
   };
 
   const disable = async () => {
-    if (!activeProfile) return;
+    if (!activeProfile || !loaded || loading || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -154,17 +165,20 @@ export default function EmergencyQrScreen() {
           <Banner
             tone="warning"
             title={t('notifications.offlineBanner')}
-            action={<Button label={t('common.retry')} tone="ghost" fullWidth={false} onPress={() => void load()} />}
+            action={<Button label={t('common.retry')} tone="ghost" fullWidth={false} disabled={loading || busy} onPress={() => void load()} />}
           />
         ) : null}
         {error ? <Banner tone="danger" title={error} /> : null}
+        {!loaded && !loading && !offline ? (
+          <Button label={t('common.retry')} tone="ghost" disabled={busy} onPress={() => void load()} />
+        ) : null}
 
-        {loading && !card ? <Loading label={t('common.loading')} /> : null}
+        {loading ? <Loading label={t('common.loading')} /> : null}
 
         <SectionTitle>{t('emergency.qrWhatIsShown')}</SectionTitle>
         <Card>
           <Txt variant="body">{t('emergency.qrWhatIsShownBody')}</Txt>
-          {card ? (
+          {loaded && card ? (
             <View style={{ gap: theme.spacing.xs, marginTop: theme.spacing.sm }}>
               <Txt variant="bodySmall" color={card.includeMedications ? theme.colors.ink900 : theme.colors.ink300}>
                 {`${t('emergency.includeMedications')} — ${card.includeMedications ? t('common.on') : t('common.off')}`}
@@ -174,6 +188,9 @@ export default function EmergencyQrScreen() {
               </Txt>
               <Txt variant="bodySmall" color={card.includeContacts ? theme.colors.ink900 : theme.colors.ink300}>
                 {`${t('emergency.includeContacts')} — ${card.includeContacts ? t('common.on') : t('common.off')}`}
+              </Txt>
+              <Txt variant="bodySmall" color={card.includeConditions ? theme.colors.ink900 : theme.colors.ink300}>
+                {`${t('emergency.includeConditions')} — ${card.includeConditions ? t('common.on') : t('common.off')}`}
               </Txt>
               <Button
                 label={t('common.edit')}
@@ -185,9 +202,9 @@ export default function EmergencyQrScreen() {
           ) : null}
         </Card>
 
-        <SectionTitle>{enabled ? t('emergency.qrEnabledState') : t('emergency.qrDisabledState')}</SectionTitle>
+        {loaded ? <SectionTitle>{enabled ? t('emergency.qrEnabledState') : t('emergency.qrDisabledState')}</SectionTitle> : null}
 
-        {enabled ? (
+        {loaded && enabled ? (
           <Card>
             <Txt variant="body">
               {t('emergency.qrViews', { count: formatNumber(card?.qrViewCount ?? 0) })}
@@ -236,11 +253,11 @@ export default function EmergencyQrScreen() {
             {copied ? <Txt variant="bodySmall" color={theme.colors.success700}>{t('emergency.qrCopied')}</Txt> : null}
             <Txt variant="caption" color={theme.colors.ink500}>{t('emergency.qrTokenOnce')}</Txt>
           </Card>
-        ) : enabled ? (
+        ) : loaded && enabled ? (
           <Banner tone="info" title={t('emergency.qrTokenOnce')} body={t('emergency.qrRotateWarning')} />
         ) : null}
 
-        {enabled ? (
+        {loaded && enabled ? (
           <>
             <Button
               label={t('emergency.qrDisable')}
@@ -259,7 +276,7 @@ export default function EmergencyQrScreen() {
             />
             <Txt variant="bodySmall" color={theme.colors.ink500}>{t('emergency.qrRotateWarning')}</Txt>
           </>
-        ) : (
+        ) : loaded ? (
           <Button
             label={t('emergency.qrEnable')}
             size="large"
@@ -267,7 +284,7 @@ export default function EmergencyQrScreen() {
             onPress={() => void enable()}
             accessibilityHint={t('emergency.qrWhatIsShownBody')}
           />
-        )}
+        ) : null}
 
         <SafetyNote textKey="emergency.userProvided" />
       </Screen>

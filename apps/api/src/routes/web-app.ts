@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +14,10 @@ import type { FastifyInstance } from 'fastify';
  * removes the problem rather than negotiating with it, and removes preflight
  * round-trips on every call as a side effect.
  *
- * The bundle is a single self-contained HTML file with its JavaScript and
- * images inlined, so this is one route and one file rather than a static
- * server. Regenerate it with `scripts/build-web.sh`.
+ * The entry bundle is a single self-contained HTML file with its JavaScript and
+ * images inlined. The build also emits the SHA-256 of the exact inline script
+ * body as a tiny sidecar, so the server can construct CSP without reparsing
+ * executable HTML. Regenerate both with `scripts/build-web.sh`.
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CANDIDATES = [
@@ -37,14 +37,20 @@ async function locateBundle(): Promise<string | null> {
   return null;
 }
 
+function checkedScriptHash(raw: string): string {
+  const hash = raw.trim();
+  const decoded = Buffer.from(hash, 'base64');
+  if (decoded.length !== 32 || decoded.toString('base64') !== hash) {
+    throw new Error('invalid web bundle script SHA-256 sidecar');
+  }
+  return hash;
+}
+
 /** The Content Security Policy for the app document. */
-function buildCsp(html: string): string {
-  const hashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
-    (m) => `'sha256-${createHash('sha256').update(m[1] ?? '', 'utf8').digest('base64')}'`,
-  );
+function buildCsp(scriptHash: string): string {
   return [
     "default-src 'none'",
-    `script-src 'self' ${hashes.join(' ')}`,
+    `script-src 'self' 'sha256-${scriptHash}'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
@@ -68,7 +74,10 @@ export async function registerWebAppRoutes(app: FastifyInstance): Promise<void> 
   }
 
   bundle = await readFile(bundlePath);
-  csp = buildCsp(bundle.toString('utf8'));
+  const scriptHash = checkedScriptHash(
+    await readFile(`${bundlePath}.script-sha256`, 'utf8'),
+  );
+  csp = buildCsp(scriptHash);
 
   app.get('/', async (_req, reply) => sendWebBundle(reply));
 

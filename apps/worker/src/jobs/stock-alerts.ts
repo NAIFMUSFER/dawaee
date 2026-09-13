@@ -21,6 +21,7 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
             pp.timezone, pp.display_name AS profile_name,
             COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
             COALESCE(up.low_stock_threshold_days, 7) AS default_threshold,
+            COALESCE(up.show_medication_in_notifications, false) AS show_medication,
             COALESCE(u.locale,'ar') AS locale
        FROM medications m
        JOIN medication_stock st ON st.medication_id = m.id
@@ -47,6 +48,20 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
     if (daysRemaining > threshold) continue;
 
     const locale = (row.locale === 'en' ? 'en' : 'ar') as Locale;
+    const showMedication = row.show_medication === true;
+    const body = showMedication
+      ? t(locale, 'stock.lowBody', {
+          medication: row.name, qty: remaining, unit: row.unit, days: daysRemaining,
+        })
+      : `${t(locale, 'stock.remaining', { qty: remaining, unit: row.unit })}. ${t(locale, 'stock.runsOutIn', { days: daysRemaining })}.`;
+    const payload = {
+      medicationId: row.medication_id,
+      daysRemaining,
+      remaining,
+      unit: row.unit,
+      ...(showMedication ? { medicationName: row.name } : {}),
+    };
+
     const inserted = await client.query(
       `INSERT INTO notification_deliveries
          (patient_profile_id, recipient_user_id, kind, channel, medication_id, locale, title, body,
@@ -56,10 +71,8 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
       [
         row.patient_profile_id, row.patient_user_id, row.medication_id, locale,
         t(locale, 'stock.lowTitle'),
-        t(locale, 'stock.lowBody', {
-          medication: row.name, qty: remaining, unit: row.unit, days: daysRemaining,
-        }),
-        JSON.stringify({ medicationId: row.medication_id, medicationName: row.name, daysRemaining, remaining }),
+        body,
+        JSON.stringify(payload),
         // One alert per medication per local day, whatever the tick rate.
         `stock:${row.medication_id}:${localDateInZone(now, row.timezone)}`,
         now,
@@ -94,6 +107,7 @@ async function enqueueExpiryWarnings(client: PoolClient, now: Date): Promise<num
     `SELECT m.id, m.name, m.expiry_date, m.patient_profile_id, pp.timezone,
             COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
             COALESCE(up.expiry_warning_days, 30) AS warn_days,
+            COALESCE(up.show_medication_in_notifications, false) AS show_medication,
             COALESCE(u.locale,'ar') AS locale
        FROM medications m
        JOIN patient_profiles pp ON pp.id = m.patient_profile_id
@@ -110,6 +124,16 @@ async function enqueueExpiryWarnings(client: PoolClient, now: Date): Promise<num
   let count = 0;
   for (const row of rows) {
     const locale = (row.locale === 'en' ? 'en' : 'ar') as Locale;
+    const showMedication = row.show_medication === true;
+    const body = showMedication
+      ? t(locale, 'expiry.warningBody', { medication: row.name, date: row.expiry_date })
+      : `${t(locale, 'expiry.warningTitle')} — ${row.expiry_date}.`;
+    const payload = {
+      medicationId: row.id,
+      expiryDate: row.expiry_date,
+      ...(showMedication ? { medicationName: row.name } : {}),
+    };
+
     const inserted = await client.query(
       `INSERT INTO notification_deliveries
          (patient_profile_id, recipient_user_id, kind, channel, medication_id, locale, title, body,
@@ -119,10 +143,8 @@ async function enqueueExpiryWarnings(client: PoolClient, now: Date): Promise<num
       [
         row.patient_profile_id, row.patient_user_id, row.id, locale,
         t(locale, 'expiry.warningTitle'),
-        // States the fact and stops. It never tells anyone to take or discard
-        // an expired medication — that is a pharmacist's call.
-        t(locale, 'expiry.warningBody', { medication: row.name, date: row.expiry_date }),
-        JSON.stringify({ medicationId: row.id, expiryDate: row.expiry_date }),
+        body,
+        JSON.stringify(payload),
         `expiry:${row.id}:${row.expiry_date}`,
         now,
       ],

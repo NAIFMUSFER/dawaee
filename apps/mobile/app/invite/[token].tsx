@@ -1,19 +1,34 @@
-import { Redirect, useLocalSearchParams } from 'expo-router';
-import React from 'react';
+import React, { useEffect } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Loading } from '@/components/ui';
+import { stashPendingInvite } from '@/storage/pending-invite';
 
 /**
- * The URL a caregiver invitation actually points at.
+ * Compatibility entry for invitations issued before fragment-only transport.
  *
- * The server has always built `${PUBLIC_APP_URL}/invite/<token>` — and nothing
- * served that path. The family member who received the invitation landed on
- * "Unmatched Route", so the care circle could not be formed at all, and every
- * escalation past the patient had nobody to reach.
- *
- * The accept screen already handles the token properly, including the case
- * where the recipient has no account yet, so this only has to carry the token
- * across to it.
+ * The legacy URL already contains the bearer in `/invite/<token>`, so the first
+ * browser request cannot be made private retroactively. What we can prevent is
+ * a second exposure: do not forward the bearer as a search/query parameter to
+ * the accept screen. Stash it under the existing pending-invite policy and
+ * immediately replace the browser/app route with the fixed, token-free accept
+ * path. New invitations continue to use `/invite#...` and never hit this file.
  */
-export default function InviteLink() {
+export default function LegacyInviteLink() {
   const { token } = useLocalSearchParams<{ token?: string }>();
-  return <Redirect href={{ pathname: '/caregiver/accept', params: { token: token ?? '' } }} />;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (token) await stashPendingInvite(token);
+      if (!cancelled) router.replace('/caregiver/accept');
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  return (
+    <SafeAreaView style={{ flex: 1 }}>
+      <Loading />
+    </SafeAreaView>
+  );
 }

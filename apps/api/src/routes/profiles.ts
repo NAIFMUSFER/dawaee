@@ -5,7 +5,7 @@ import {
   requestDeletionSchema, setConsentSchema, updateMeSchema,
   updatePreferencesSchema, updateProfileSchema,
 } from '@dawaee/shared';
-import { detectTimezoneChange } from '@dawaee/core';
+import { detectTimezoneChange, isValidTimeZone } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 
 /**
@@ -46,7 +46,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       if (!u) throw AppError.notFound('Account not found');
 
       const { rows: consents } = await tx.query(
-        'SELECT type::text AS type, granted, version, granted_at FROM consents WHERE user_id = $1',
+        'SELECT type::text AS type, granted, version, patient_profile_id, granted_at FROM consents WHERE user_id = $1',
         [userId],
       );
 
@@ -74,7 +74,10 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           lowStockThresholdDays: u.low_stock_threshold_days ?? 7,
           expiryWarningDays: u.expiry_warning_days ?? 30,
         },
-        consents: consents.map((c) => ({ type: c.type, granted: c.granted, version: c.version, grantedAt: c.granted_at })),
+        consents: consents.map((c) => ({
+          type: c.type, granted: c.granted, version: c.version,
+          patientProfileId: c.patient_profile_id, grantedAt: c.granted_at,
+        })),
       };
     });
   });
@@ -135,25 +138,33 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const body = updatePreferencesSchema.parse(req.body);
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
+      // A valid account normally receives this row at registration, but legacy
+      // and recovery data can legitimately be missing it. Create the row first
+      // so the submitted PATCH is never discarded on the INSERT path.
+      await tx.query(
+        'INSERT INTO user_preferences (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+        [userId],
+      );
+
       const { rows } = await tx.query(
-        `INSERT INTO user_preferences (user_id) VALUES ($1)
-         ON CONFLICT (user_id) DO UPDATE SET
-           locale = COALESCE($2, user_preferences.locale),
-           numeral_system = COALESCE($3, user_preferences.numeral_system),
-           calendar_system = COALESCE($4, user_preferences.calendar_system),
-           elderly_mode = COALESCE($5, user_preferences.elderly_mode),
-           text_scale = COALESCE($6, user_preferences.text_scale),
-           high_contrast = COALESCE($7, user_preferences.high_contrast),
-           voice_reminders_enabled = COALESCE($8, user_preferences.voice_reminders_enabled),
-           voice_confirmation_enabled = COALESCE($9, user_preferences.voice_confirmation_enabled),
-           app_lock_enabled = COALESCE($10, user_preferences.app_lock_enabled),
-           app_lock_areas = COALESCE($11, user_preferences.app_lock_areas),
-           quiet_hours_start = COALESCE($12, user_preferences.quiet_hours_start),
-           quiet_hours_end = COALESCE($13, user_preferences.quiet_hours_end),
-           default_snooze_minutes = COALESCE($14, user_preferences.default_snooze_minutes),
-           low_stock_threshold_days = COALESCE($15, user_preferences.low_stock_threshold_days),
-           expiry_warning_days = COALESCE($16, user_preferences.expiry_warning_days),
-           show_medication_in_notifications = COALESCE($17, user_preferences.show_medication_in_notifications)
+        `UPDATE user_preferences SET
+           locale = COALESCE($2, locale),
+           numeral_system = COALESCE($3, numeral_system),
+           calendar_system = COALESCE($4, calendar_system),
+           elderly_mode = COALESCE($5, elderly_mode),
+           text_scale = COALESCE($6, text_scale),
+           high_contrast = COALESCE($7, high_contrast),
+           voice_reminders_enabled = COALESCE($8, voice_reminders_enabled),
+           voice_confirmation_enabled = COALESCE($9, voice_confirmation_enabled),
+           app_lock_enabled = COALESCE($10, app_lock_enabled),
+           app_lock_areas = COALESCE($11, app_lock_areas),
+           quiet_hours_start = CASE WHEN $18 THEN $12::time ELSE quiet_hours_start END,
+           quiet_hours_end = CASE WHEN $19 THEN $13::time ELSE quiet_hours_end END,
+           default_snooze_minutes = COALESCE($14, default_snooze_minutes),
+           low_stock_threshold_days = COALESCE($15, low_stock_threshold_days),
+           expiry_warning_days = COALESCE($16, expiry_warning_days),
+           show_medication_in_notifications = COALESCE($17, show_medication_in_notifications)
+         WHERE user_id = $1
          RETURNING *`,
         [
           userId, body.locale ?? null, body.numeralSystem ?? null, body.calendarSystem ?? null,
@@ -163,6 +174,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
           body.quietHoursStart ?? null, body.quietHoursEnd ?? null,
           body.defaultSnoozeMinutes ?? null, body.lowStockThresholdDays ?? null, body.expiryWarningDays ?? null,
           body.showMedicationInNotifications ?? null,
+          body.quietHoursStart !== undefined, body.quietHoursEnd !== undefined,
         ],
       );
       return { preferences: rows[0] };
@@ -388,7 +400,11 @@ export function registerProfileRoutes(app: FastifyInstance): void {
    */
   app.post('/v1/profiles/:profileId/timezone-check', async (req) => {
     const { profileId } = req.params as { profileId: string };
-    const { deviceTimezone } = req.body as { deviceTimezone: string };
+    const body = req.body as { deviceTimezone?: unknown } | null;
+    const deviceTimezone = body?.deviceTimezone;
+    if (typeof deviceTimezone !== 'string' || !isValidTimeZone(deviceTimezone)) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid device timezone');
+    }
     const { userId } = currentUser(req);
 
     return withUser(userId, async (tx) => {

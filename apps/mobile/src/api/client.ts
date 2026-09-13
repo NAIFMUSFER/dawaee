@@ -52,6 +52,108 @@ export const DEMO_MODE: boolean = process.env.EXPO_PUBLIC_DEMO === '1';
  * happens to the plaintext copies left on devices that upgrade.
  */
 const DEVICE_KEY = 'dawaee.deviceId';
+const PROFILE_ID_HEADER = 'x-dawaee-profile-id';
+const MEDICATION_ID_HEADER = 'x-dawaee-medication-id';
+const SCHEDULE_ID_HEADER = 'x-dawaee-schedule-id';
+const DOSE_ID_HEADER = 'x-dawaee-dose-id';
+const DEVICE_ID_HEADER = 'x-dawaee-device-id';
+const OBJECT_KEY_HEADER = 'x-dawaee-object-key';
+const UUID_PATH = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}';
+const DEVICE_ID = /^[A-Za-z0-9._~-]{1,128}$/;
+
+interface PrivatePathRouting {
+  path: string;
+  profileId: string | null;
+  medicationId: string | null;
+  scheduleId: string | null;
+  doseId: string | null;
+  deviceId: string | null;
+}
+
+/**
+ * Convert health-linked ids embedded in the app's established route strings
+ * into fixed public paths before the network sees them. The server rewrites
+ * the fixed path back to the legacy handler internally. Demo mode deliberately
+ * keeps the old path because it never makes a network request.
+ */
+export function privatizeResourcePath(path: string): PrivatePathRouting {
+  if (DEMO_MODE) {
+    return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null, deviceId: null };
+  }
+
+  const queryAt = path.indexOf('?');
+  const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
+  const suffix = queryAt === -1 ? '' : path.slice(queryAt);
+
+  const device = /^\/v1\/devices\/push-token\/([^/]+)$/.exec(pathname);
+  if (device) {
+    try {
+      const deviceId = decodeURIComponent(device[1]!);
+      if (DEVICE_ID.test(deviceId)) {
+        return {
+          path: `/v1/devices/push-token${suffix}`,
+          profileId: null,
+          medicationId: null,
+          scheduleId: null,
+          doseId: null,
+          deviceId,
+        };
+      }
+    } catch {
+      // Leave malformed legacy paths untouched; the server will reject them.
+    }
+  }
+
+  const dose = new RegExp(`^/v1/doses/(${UUID_PATH})$`, 'i').exec(pathname);
+  if (dose) {
+    return {
+      path: `/v1/dose${suffix}`,
+      profileId: null,
+      medicationId: null,
+      scheduleId: null,
+      doseId: dose[1]!,
+      deviceId: null,
+    };
+  }
+
+  const schedule = new RegExp(`^/v1/schedules/(${UUID_PATH})$`, 'i').exec(pathname);
+  if (schedule) {
+    return {
+      path: `/v1/schedule${suffix}`,
+      profileId: null,
+      medicationId: null,
+      scheduleId: schedule[1]!,
+      doseId: null,
+      deviceId: null,
+    };
+  }
+
+  const medication = new RegExp(`^/v1/medications/(${UUID_PATH})(/(?:stock|refill|schedules))?$`, 'i').exec(pathname);
+  if (medication) {
+    return {
+      path: `/v1/medication${medication[2] ?? ''}${suffix}`,
+      profileId: null,
+      medicationId: medication[1]!,
+      scheduleId: null,
+      doseId: null,
+      deviceId: null,
+    };
+  }
+
+  const profile = new RegExp(`^/v1/profiles/(${UUID_PATH})(/(?:timezone-check|timezone-decision))?$`, 'i').exec(pathname);
+  if (profile) {
+    return {
+      path: `/v1/profile${profile[2] ?? ''}${suffix}`,
+      profileId: profile[1]!,
+      medicationId: null,
+      scheduleId: null,
+      doseId: null,
+      deviceId: null,
+    };
+  }
+
+  return { path, profileId: null, medicationId: null, scheduleId: null, doseId: null, deviceId: null };
+}
 
 export class ApiError extends Error {
   constructor(
@@ -77,16 +179,45 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
-let refreshInFlight: Promise<RefreshResult> | null = null;
+let refreshInFlight: { generation: number; promise: Promise<RefreshResult> } | null = null;
+// Changes only at explicit session boundaries, not on same-session rotation.
+let sessionGeneration = 0;
+let sessionStorageTail: Promise<void> = Promise.resolve();
+
+/** A stale request must not be mistaken for an offline action to replay. */
+export class SessionChangedError extends ApiError {
+  constructor() {
+    super('session_changed', 409, 'The session changed while the request was running.');
+    this.name = 'SessionChangedError';
+  }
+}
+
+function requireSession(generation: number): void {
+  if (generation !== sessionGeneration) throw new SessionChangedError();
+}
+
+function advanceSession(): number {
+  refreshInFlight = null;
+  return ++sessionGeneration;
+}
+
+/** Order keychain reads/writes/deletes; never hold this lock over HTTP. */
+function withSessionStorage<T>(operation: () => Promise<T>): Promise<T> {
+  const result = sessionStorageTail.then(operation);
+  sessionStorageTail = result.then(() => undefined, () => undefined);
+  return result;
+}
 let onUnauthenticated: (() => void) | null = null;
 
 export async function loadStoredSession(): Promise<boolean> {
+  const generation = advanceSession();
   if (DEMO_MODE) {
     accessToken = 'demo';
     refreshToken = 'demo';
     return true;
   }
-  const stored = await readSession();
+  const stored = await withSessionStorage(readSession);
+  if (generation !== sessionGeneration) return false;
   accessToken = stored?.accessToken ?? null;
   refreshToken = stored?.refreshToken ?? null;
   return stored !== null;
@@ -101,15 +232,35 @@ export async function loadStoredSession(): Promise<boolean> {
  * throw still propagates, so a caller that wants to report it can.
  */
 export async function storeSession(tokens: { accessToken: string; refreshToken: string }): Promise<void> {
-  accessToken = tokens.accessToken;
-  refreshToken = tokens.refreshToken;
-  await writeSession(tokens);
+  const generation = advanceSession();
+  const snapshot = { ...tokens };
+  accessToken = snapshot.accessToken;
+  refreshToken = snapshot.refreshToken;
+  await withSessionStorage(async () => {
+    requireSession(generation);
+    await writeSession(snapshot);
+  });
+  requireSession(generation);
 }
 
 export async function clearSession(): Promise<void> {
+  advanceSession();
   accessToken = null;
   refreshToken = null;
-  await clearStoredSession();
+  // Run after any already-started write, so it cannot resurrect credentials.
+  await withSessionStorage(clearStoredSession);
+}
+
+async function rejectSession(generation: number): Promise<void> {
+  requireSession(generation);
+  const clearing = clearSession();
+  const clearedGeneration = sessionGeneration;
+  try {
+    await clearing;
+  } finally {
+    // A later login must not receive an earlier session's sign-out callback.
+    if (sessionGeneration === clearedGeneration) onUnauthenticated?.();
+  }
 }
 
 export function setUnauthenticatedHandler(fn: () => void): void {
@@ -120,143 +271,126 @@ export function isSignedIn(): boolean {
   return Boolean(accessToken);
 }
 
+let deviceIdInFlight: Promise<string> | null = null;
+
 /** Stable per-install device id, used for push registration and offline replay. */
-export async function getDeviceId(): Promise<string> {
-  let id = await AsyncStorage.getItem(DEVICE_KEY);
-  if (!id) {
-    id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-    await AsyncStorage.setItem(DEVICE_KEY, id);
-  }
-  return id;
+export function getDeviceId(): Promise<string> {
+  if (deviceIdInFlight) return deviceIdInFlight;
+  // Share the complete read/create/write, not just the read. Otherwise callers
+  // on a new installation can each return a different ID before one wins disk.
+  // Start in a microtask so a synchronous storage failure is retryable too.
+  const promise = Promise.resolve().then(async () => {
+    let id = await AsyncStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      await AsyncStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  }).finally(() => {
+    if (deviceIdInFlight === promise) deviceIdInFlight = null;
+  });
+  deviceIdInFlight = promise;
+  return promise;
 }
 
 /**
- * Refresh, single-flight.
+ * Single-flight within one session generation. Explicit sign-in/out detaches
+ * old work; its late result must neither replace credentials nor clear a new
+ * account's flight. Rotation itself keeps the generation, so concurrent calls
+ * for the same account continue to share one refresh.
  *
- * Every concurrent caller shares one in-flight promise, so twenty requests that
- * all discover an expired access token at the same moment produce exactly ONE
- * refresh over the network. That is not only a bandwidth nicety: two
- * client-originated refreshes carrying the same token race on the server, and
- * until recently the loser was treated as a stolen-token replay and revoked the
- * whole device. The server no longer does that within its grace window, but the
- * client's job is to not create the race in the first place.
- *
- * The promise is cleared in `finally`, so a failed refresh does not wedge every
- * later caller onto a dead result.
+ * An unavailable server is not an authentication rejection. HTTP errors remain
+ * ApiError (with their real status), while transport failures are NetworkError.
  */
-/**
- * Why an enum and not a boolean.
- *
- * `request()` used to read "refresh returned false" as "this session is dead"
- * and clear storage. Two of the three ways a refresh fails are not that:
- *
- *   `offline`    — the network never reached the server, so the tokens are
- *                  fine. Clearing here signed a user out because their train
- *                  went into a tunnel while a token happened to be expiring,
- *                  which is the exact opposite of what the offline design is
- *                  for; the comment in the catch below already claimed this
- *                  did not happen.
- *   `superseded` — this client's own parallel request already rotated. The
- *                  newer tokens are on disk; erasing them turns a harmless race
- *                  into a sign-out and undoes the server-side fix for it.
- *   `rejected`   — the server refused the token. This one really is dead.
- */
-type RefreshResult = 'ok' | 'rejected' | 'offline' | 'superseded';
+type RefreshResult = 'ok' | 'rejected' | 'offline' | { kind: 'transient'; error: ApiError };
 
-async function refreshAccessToken(): Promise<RefreshResult> {
+function apiErrorFromResponse(
+  res: Response,
+  payload: unknown,
+): ApiError {
+  const e = (payload as {
+    error?: { code?: string; message?: string; details?: Array<{ path: string; message: string }> };
+    meta?: Record<string, unknown>;
+  } | null)?.error;
+  return new ApiError(
+    e?.code ?? 'internal_error',
+    res.status,
+    e?.message ?? `Request failed with ${res.status}`,
+    (payload as { meta?: Record<string, unknown> } | null)?.meta,
+    e?.details,
+  );
+}
+
+async function refreshAccessToken(generation: number): Promise<RefreshResult> {
+  requireSession(generation);
   if (!refreshToken) return 'rejected';
-  if (refreshInFlight) return refreshInFlight;
-
-  // The exact token this attempt presents, captured before the await so the
-  // recovery below can tell "storage still holds what I sent" from "another
-  // context has already moved on".
+  if (refreshInFlight?.generation === generation) return refreshInFlight.promise;
   const presented = refreshToken;
 
-  refreshInFlight = (async () => {
+  // Start in a microtask so even a synchronously throwing fetch cannot leave
+  // a settled promise installed after its own cleanup already ran.
+  const promise = Promise.resolve().then(async (): Promise<RefreshResult> => {
     try {
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
       });
+      requireSession(generation);
       if (!res.ok) {
-        /**
-         * 409 REFRESH_SUPERSEDED: two of THIS client's own requests raced and
-         * this one lost. The other already stored a valid session.
-         *
-         * Clearing here would be the worst possible reaction — it would erase
-         * the newer tokens the winning request just wrote, turning a harmless
-         * race into a sign-out. Single-flight below means this should be
-         * unreachable in normal operation; it is handled anyway because "should
-         * be unreachable" is not a security property, and because a process
-         * restart mid-refresh can produce exactly this shape.
-         */
-        /**
-         * 409 REFRESH_SUPERSEDED — another execution context already rotated
-         * this token.
-         *
-         * The in-memory single-flight above covers concurrent callers inside
-         * ONE runtime, and that is the only concurrency this app actually has:
-         * there is no TaskManager task, no headless handler and no background
-         * fetch, so notification actions run in the app's own runtime. What it
-         * does NOT cover is a SEQUENTIAL restart — Android reclaiming the
-         * process, or a cold launch from a notification action — where a
-         * previous process rotated and this one starts holding the old token.
-         *
-         * Recovery, in order:
-         *   1. never re-present the token that was just refused, and
-         *   2. re-read what is actually persisted now.
-         *
-         * If storage has moved on, another context won and wrote the newer
-         * pair: adopt it and carry on. If storage still holds the token that
-         * was just refused, there is no winner to recover from — the rotation
-         * happened but its result was lost — so end the session cleanly.
-         *
-         * Retrying the refused token is the one thing that must not happen. It
-         * would work for a moment and then, once the server's 30-second race
-         * window closed, be classified as theft and revoke the whole device —
-         * turning a lost write into a forced sign-out with a security event
-         * attached to it.
-         */
         if (res.status === 409) {
-          const stored = await readSession().catch(() => null);
+          // Another runtime may have rotated before a sequential restart.
+          // Never re-present the refused token if its replacement was lost.
+          const stored = await withSessionStorage(readSession).catch(() => null);
+          requireSession(generation);
           if (stored && stored.refreshToken !== presented) {
             accessToken = stored.accessToken;
             refreshToken = stored.refreshToken;
             return 'ok';
           }
-          await clearSession();
-          onUnauthenticated?.();
+          await rejectSession(generation);
           return 'rejected';
         }
-
-        await clearSession();
-        onUnauthenticated?.();
-        return 'rejected';
+        if (res.status === 401) {
+          await rejectSession(generation);
+          return 'rejected';
+        }
+        const payload = await res.clone().json().catch(() => null);
+        requireSession(generation);
+        return { kind: 'transient', error: apiErrorFromResponse(res, payload) };
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
+      requireSession(generation);
+      // This is a rotation, not a new account. Preserve the shared generation.
+      accessToken = body.accessToken;
+      refreshToken = body.refreshToken;
       try {
-        await storeSession(body);
+        await withSessionStorage(async () => {
+          requireSession(generation);
+          await writeSession(body);
+        });
       } catch {
-        // The rotation succeeded on the server, so the OLD refresh token is
-        // now dead — but persisting the new pair failed, which means whatever
-        // is on disk still names the dead one. Leaving it there would produce
-        // a launch that presents an invalidated token, gets a 401, and signs
-        // the user out with no explanation days later. Clearing makes the next
-        // launch a clean sign-in instead. This run continues on the in-memory
-        // pair, which storeSession set before it threw.
-        await clearStoredSession().catch(() => undefined);
+        requireSession(generation);
+        // A failed keychain write must not leave the now-dead presented token
+        // behind. This run keeps the new memory pair. Check again inside the
+        // storage lock so cleanup can never delete a later login's tokens.
+        await withSessionStorage(async () => {
+          requireSession(generation);
+          await clearStoredSession();
+        }).catch(() => undefined);
       }
+      requireSession(generation);
       return 'ok';
-    } catch {
-      // Offline: keep the tokens, the user is not signed out.
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      requireSession(generation);
       return 'offline';
     } finally {
-      refreshInFlight = null;
+      if (refreshInFlight?.promise === promise) refreshInFlight = null;
     }
-  })();
-
-  return refreshInFlight;
+  });
+  refreshInFlight = { generation, promise };
+  return promise;
 }
 
 export interface RequestOptions {
@@ -271,9 +405,46 @@ export interface RequestOptions {
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, anonymous = false, timeoutMs = 15_000 } = options;
+  const generation = sessionGeneration;
+  const requireCurrentRequest = () => { if (!anonymous) requireSession(generation); };
+  let sentAccessToken: string | null = null;
 
-  const url = new URL(`${BASE_URL}${path}`);
+  const privatePath = privatizeResourcePath(path);
+  const profileIdValue = query?.profileId;
+  const medicationIdValue = query?.medicationId;
+  const objectKeyValue = query?.objectKey;
+  const routedProfileId = privatePath.profileId ?? (
+    profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
+      ? String(profileIdValue)
+      : null
+  );
+  const routedMedicationId = privatePath.medicationId ?? (
+    medicationIdValue !== undefined && medicationIdValue !== null && medicationIdValue !== ''
+      ? String(medicationIdValue)
+      : null
+  );
+  const routedScheduleId = privatePath.scheduleId;
+  const routedDoseId = privatePath.doseId;
+  const routedDeviceId = privatePath.deviceId;
+  // Only the signed-read route has an objectKey query contract. Keep arbitrary
+  // query fields named objectKey untouched elsewhere, but move this private
+  // storage identifier to request metadata before the platform sees the URL.
+  const routedObjectKey = !DEMO_MODE
+    && privatePath.path === '/v1/uploads/url'
+    && objectKeyValue !== undefined
+    && objectKeyValue !== null
+    && objectKeyValue !== ''
+    ? String(objectKeyValue)
+    : null;
+
+  const url = new URL(`${BASE_URL}${privatePath.path}`);
   for (const [k, v] of Object.entries(query ?? {})) {
+    // Production Render access logs persist path/query before Dawaee's logger
+    // can redact them. Keep stable patient, medication, and upload identifiers
+    // out of network URLs. Demo mode never makes a network request, so preserve
+    // its established in-memory query contract.
+    if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
+    if (routedObjectKey && k === 'objectKey') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -293,6 +464,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   const send = async (): Promise<Response> => {
+    requireCurrentRequest();
+    sentAccessToken = accessToken;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     options.signal?.addEventListener('abort', () => controller.abort());
@@ -300,8 +473,18 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       return await fetch(url.toString(), {
         method,
         headers: {
-          'content-type': 'application/json',
-          ...(anonymous || !accessToken ? {} : { authorization: `Bearer ${accessToken}` }),
+          // Fastify rejects a bodyless request advertised as JSON. This matters
+          // for DELETE routes such as caregiver revoke: the mobile client used
+          // to send Content-Type: application/json with no body and production
+          // repeatedly returned 400 before the route handler could run.
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(routedProfileId ? { [PROFILE_ID_HEADER]: routedProfileId } : {}),
+          ...(routedMedicationId ? { [MEDICATION_ID_HEADER]: routedMedicationId } : {}),
+          ...(routedScheduleId ? { [SCHEDULE_ID_HEADER]: routedScheduleId } : {}),
+          ...(routedDoseId ? { [DOSE_ID_HEADER]: routedDoseId } : {}),
+          ...(routedDeviceId ? { [DEVICE_ID_HEADER]: routedDeviceId } : {}),
+          ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
+          ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: controller.signal,
@@ -315,48 +498,64 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   try {
     res = await send();
   } catch (err) {
+    if (err instanceof ApiError) throw err;
+    requireCurrentRequest();
     throw new NetworkError(err instanceof Error ? err.message : undefined);
   }
+  requireCurrentRequest();
 
   if (res.status === 401 && !anonymous) {
     const parsed = await res.clone().json().catch(() => null) as { error?: { code?: string } } | null;
-    // Only an expired token is worth a silent refresh; a revoked session must
-    // sign the user out rather than loop.
-    if (parsed?.error?.code === 'token_expired') {
-      const outcome = await refreshAccessToken();
+    requireCurrentRequest();
+    let retried = false;
+    // A late 401 may refer to the access token another same-session caller
+    // already rotated. Reuse the new pair, but never cross a login boundary.
+    if (sentAccessToken && accessToken && sentAccessToken !== accessToken) {
+      try {
+        res = await send();
+        retried = true;
+      } catch (err) {
+        if (err instanceof ApiError) throw err;
+        requireCurrentRequest();
+        throw new NetworkError(err instanceof Error ? err.message : undefined);
+      }
+      requireCurrentRequest();
+    } else if (parsed?.error?.code === 'token_expired') {
+      const outcome = await refreshAccessToken(generation);
       if (outcome === 'ok') {
         try {
           res = await send();
+          retried = true;
         } catch (err) {
+          if (err instanceof ApiError) throw err;
+          requireCurrentRequest();
           throw new NetworkError(err instanceof Error ? err.message : undefined);
         }
+        requireCurrentRequest();
       } else if (outcome === 'offline') {
-        // The refresh never reached the server. Surface it as what it is so the
-        // UI falls back to cached data, and leave the session alone.
         throw new NetworkError('refresh unreachable');
+      } else if (typeof outcome === 'object' && outcome.kind === 'transient') {
+        throw outcome.error;
       }
-      // 'superseded': this client's own parallel request already rotated, and
-      // `refreshAccessToken` has cleared nothing. Fall through to the error
-      // below; the caller retries against the session the winner stored.
-      // 'rejected': the session is genuinely dead and has already been cleared.
+      // An explicitly rejected session has already been cleared.
     } else {
-      await clearSession();
-      onUnauthenticated?.();
+      await rejectSession(generation);
+    }
+    // The one allowed retry can itself discover revocation. Surface its 401,
+    // but also end the rejected session so local privacy cleanup runs. Never
+    // evict a newer token another same-session request has already rotated to.
+    if (retried && res.status === 401 && sentAccessToken === accessToken) {
+      await rejectSession(generation);
     }
   }
 
   if (res.status === 204) return undefined as T;
 
   const payload = await res.json().catch(() => ({}));
+  // Decoding a response is also asynchronous: do not return old-account PHI.
+  if (res.ok) requireCurrentRequest();
   if (!res.ok) {
-    const e = (payload as { error?: { code: string; message: string; details?: Array<{ path: string; message: string }> } }).error;
-    throw new ApiError(
-      e?.code ?? 'internal_error',
-      res.status,
-      e?.message ?? `Request failed with ${res.status}`,
-      (payload as { meta?: Record<string, unknown> }).meta,
-      e?.details,
-    );
+    throw apiErrorFromResponse(res, payload);
   }
   return payload as T;
 }

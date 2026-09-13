@@ -1,15 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { MultiPicker, Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationScheduleView } from '@/api/types';
+import {
+  getMedicationScheduleRouteIntent,
+  setMedicationDetailRouteIntent,
+} from '@/navigation/private-navigation';
 import {
   DOSE_UNITS, SCHEDULE_RULE_KINDS,
   type DoseUnit, type MessageKey, type ScheduleRule, type ScheduleRuleKind,
@@ -53,13 +58,33 @@ interface HighRiskPrompt {
 }
 
 export default function ScheduleScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
-  const medicationId = params.medicationId;
-  const isEdit = params.mode === 'edit';
+  const { user, activeProfile } = useApp();
+  const intent = user && activeProfile
+    ? getMedicationScheduleRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = intent?.medicationId;
+  const mode = intent?.mode ?? 'create';
+  const scheduleId = intent?.scheduleId;
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}:${scheduleId ?? 'new'}:${mode}`;
+  return <ScheduleProfileScreen key={key} medicationId={medicationId} mode={mode} selectedScheduleId={scheduleId} />;
+}
+
+function ScheduleProfileScreen({
+  medicationId,
+  mode,
+  selectedScheduleId,
+}: {
+  medicationId?: string;
+  mode: 'create' | 'edit';
+  selectedScheduleId?: string;
+}) {
+  const isEdit = mode === 'edit';
 
   const { t, formatNumber, formatWeekday, isRtl } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
+  const { capture: captureSave } = useRequestScope();
 
   const [kind, setKind] = useState<ScheduleRuleKind>('fixed_times');
   const [times, setTimes] = useState<string[]>([TIME_EXAMPLE]);
@@ -79,7 +104,8 @@ export default function ScheduleScreen() {
   const [startDate, setStartDate] = useState(() => todayLocalDate(activeProfile?.timezone));
   const [endDate, setEndDate] = useState('');
 
-  const [scheduleId, setScheduleId] = useState<string | null>(params.scheduleId ?? null);
+  // A route selection is a fetch target, not proof that its draft was loaded.
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState<string | null>(null);
@@ -89,7 +115,6 @@ export default function ScheduleScreen() {
   const separator = isRtl ? '، ' : ', ';
 
   const hydrate = useCallback((schedule: MedicationScheduleView) => {
-    setScheduleId(schedule.id);
     setDoseQuantity(String(schedule.doseQuantity));
     setDoseUnit(schedule.doseUnit);
     setStartDate(schedule.startDate);
@@ -117,6 +142,7 @@ export default function ScheduleScreen() {
       setMaxPerDay(rule.maxPerDay === undefined ? '' : String(rule.maxPerDay));
       setMinHoursBetween(rule.minHoursBetween === undefined ? '' : String(rule.minHoursBetween));
     }
+    setScheduleId(schedule.id);
   }, []);
 
   useEffect(() => {
@@ -124,8 +150,8 @@ export default function ScheduleScreen() {
     void (async () => {
       try {
         const res = await api.get<{ schedules: MedicationScheduleView[] }>(`/v1/medications/${medicationId}`);
-        const wanted = params.scheduleId
-          ? res.schedules.find((s) => s.id === params.scheduleId)
+        const wanted = selectedScheduleId
+          ? res.schedules.find((s) => s.id === selectedScheduleId)
           : res.schedules.find((s) => s.active) ?? res.schedules[0];
         if (wanted) hydrate(wanted);
       } catch (err) {
@@ -134,7 +160,7 @@ export default function ScheduleScreen() {
         setLoading(false);
       }
     })();
-  }, [hydrate, isEdit, medicationId, params.scheduleId, t]);
+  }, [hydrate, isEdit, medicationId, selectedScheduleId, t]);
 
   const kindOptions = useMemo(
     () => SCHEDULE_RULE_KINDS.map((value) => ({
@@ -163,7 +189,10 @@ export default function ScheduleScreen() {
     [formatWeekday],
   );
 
-  const sortedTimes = useMemo(() => [...times].filter(isValidTime).sort(), [times]);
+  // A partially entered or invalid row is not permission to drop a dose time.
+  // Invalidate the whole time list until every row is corrected or explicitly
+  // removed; both preview and Save consume this same all-or-nothing value.
+  const sortedTimes = useMemo(() => times.every(isValidTime) ? [...times].sort() : [], [times]);
 
   const buildRule = useCallback((): ScheduleRule | null => {
     switch (kind) {
@@ -172,13 +201,11 @@ export default function ScheduleScreen() {
       case 'interval': {
         const hours = Number(everyHours);
         if (!Number.isFinite(hours) || hours < 1 || hours > 72 || !isValidTime(anchorTime)) return null;
-        const windowSet = isValidTime(activeFrom) && isValidTime(activeUntil);
-        return {
-          kind: 'interval',
-          everyHours: hours,
-          anchorTime,
-          ...(windowSet ? { activeFrom, activeUntil } : {}),
-        };
+        const hasFrom = activeFrom.trim() !== '';
+        const hasUntil = activeUntil.trim() !== '';
+        if (!hasFrom && !hasUntil) return { kind: 'interval', everyHours: hours, anchorTime };
+        if (!hasFrom || !hasUntil || !isValidTime(activeFrom) || !isValidTime(activeUntil)) return null;
+        return { kind: 'interval', everyHours: hours, anchorTime, activeFrom, activeUntil };
       }
       case 'days_of_week': {
         const days = weekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6).sort();
@@ -195,10 +222,12 @@ export default function ScheduleScreen() {
       case 'as_needed': {
         const max = maxPerDay.trim() === '' ? undefined : Number(maxPerDay);
         const gap = minHoursBetween.trim() === '' ? undefined : Number(minHoursBetween);
+        if (max !== undefined && (!Number.isInteger(max) || max < 1 || max > 24)) return null;
+        if (gap !== undefined && (!Number.isFinite(gap) || gap < 0 || gap > 48)) return null;
         return {
           kind: 'as_needed',
-          ...(max !== undefined && Number.isInteger(max) && max >= 1 ? { maxPerDay: max } : {}),
-          ...(gap !== undefined && Number.isFinite(gap) && gap >= 0 ? { minHoursBetween: gap } : {}),
+          ...(max !== undefined ? { maxPerDay: max } : {}),
+          ...(gap !== undefined ? { minHoursBetween: gap } : {}),
         };
       }
       default:
@@ -253,7 +282,7 @@ export default function ScheduleScreen() {
   }, [t]);
 
   const save = async (confirmHighRiskChange = false) => {
-    if (!medicationId) return;
+    if (!medicationId || (isEdit && !scheduleId)) return;
     const rule = buildRule();
     if (!rule) {
       setValidation(
@@ -270,6 +299,8 @@ export default function ScheduleScreen() {
       setValidation(t('error.validation_failed'));
       return;
     }
+    const isCurrent = captureSave();
+    if (!isCurrent()) return;
     setValidation(null);
     setError(null);
     setSaving(true);
@@ -294,9 +325,17 @@ export default function ScheduleScreen() {
           timezone: activeProfile?.timezone,
         });
       }
+      if (!isCurrent()) return;
       setHighRisk(null);
-      router.replace(`/medication/${medicationId}`);
+      if (!user || !activeProfile) return;
+      setMedicationDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId,
+      });
+      router.replace('/medication/detail');
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'high_risk_confirmation_required') {
         const meta = err.meta as HighRiskPrompt | undefined;
         setHighRisk({ changes: meta?.changes ?? [], before: meta?.before ?? {} });
@@ -304,17 +343,17 @@ export default function ScheduleScreen() {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
 
-  if (!medicationId) {
+  if (!medicationId || (isEdit && !scheduleId)) {
     return (
       <SafeAreaView style={{ flex: 1 }}>
         <Screen>
-          <Banner tone="danger" title={t('error.not_found')} />
+          <Banner tone="danger" title={error ?? t('error.not_found')} />
           <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
         </Screen>
       </SafeAreaView>

@@ -33,19 +33,38 @@ export const DEFAULT_THRESHOLDS: Required<DoseThresholds> = {
 };
 
 /**
- * Statuses at which the reminder and escalation engines stop acting. `missed`
- * belongs here — nobody should be paged about it any more.
+ * A small early-action window for real life (a patient taking a dose just
+ * before leaving home), but never hours before the scheduled occurrence.
+ *
+ * Production evidence during the P20 audit found four `app` confirmations
+ * whose `confirmed_at` preceded `scheduled_at` by 474–1314 minutes. The first
+ * remediation bounded Taken, but red-team review then proved the same stale or
+ * manipulated client could still Skip or Snooze tomorrow's occurrence today:
+ * those domain functions accepted an `upcoming` dose with no lower time bound.
+ * All explicit occurrence actions therefore share this same early invariant.
  */
+export const EARLY_CONFIRMATION_WINDOW_MINUTES = 15;
+
+function assertNotTooEarly(scheduledAt: string, actionAt: Date): void {
+  const scheduled = new Date(scheduledAt).getTime();
+  if (actionAt.getTime() < scheduled - minutesToMs(EARLY_CONFIRMATION_WINDOW_MINUTES)) {
+    throw new AppError(
+      ERROR_CODES.DOSE_NOT_ACTIONABLE,
+      422,
+      'This dose is too early to act on. Wait until it is closer to the scheduled time.',
+    );
+  }
+}
+
+/** Statuses at which the reminder and escalation engines stop acting. */
 export function isTerminal(status: DoseStatus): boolean {
   return TERMINAL_DOSE_STATUSES.includes(status);
 }
 
 /**
- * Statuses the *user* authored. These are final: only these block a later
- * action. `missed` is deliberately NOT one of them — it is a derived
- * observation, and a patient who took their medication but forgot to tap must
- * still be able to record it inside the late-confirmation window. Making
- * `missed` final would push people into leaving their history wrong.
+ * Statuses the *user* authored. `missed` is deliberately not included because
+ * it is a derived observation and can still be corrected inside the late
+ * confirmation window.
  */
 const RECORDED_DOSE_STATUSES: readonly DoseStatus[] = ['taken', 'taken_late', 'skipped', 'cancelled'];
 
@@ -94,13 +113,7 @@ export interface ConfirmInput {
   voiceConfidence?: number;
 }
 
-/**
- * Validate and resolve a "taken" action.
- *
- * Throws rather than returning a soft failure: a dose being recorded twice,
- * or recorded far outside its window, is a correctness problem the caller
- * must surface, not paper over.
- */
+/** Validate and resolve a "taken" action. */
 export function confirmTaken(input: ConfirmInput): ConfirmResult {
   const { occurrence, at, now, thresholds, method } = input;
 
@@ -120,8 +133,9 @@ export function confirmTaken(input: ConfirmInput): ConfirmResult {
   const scheduled = new Date(occurrence.scheduledAt).getTime();
   // Never trust a client clock that is ahead of the server.
   const effective = Math.min(at.getTime(), now.getTime());
-  const window = thresholds.lateConfirmationWindowMinutes ?? DEFAULT_THRESHOLDS.lateConfirmationWindowMinutes;
+  assertNotTooEarly(occurrence.scheduledAt, new Date(effective));
 
+  const window = thresholds.lateConfirmationWindowMinutes ?? DEFAULT_THRESHOLDS.lateConfirmationWindowMinutes;
   if (effective > scheduled + minutesToMs(window)) {
     throw new AppError(
       ERROR_CODES.DOSE_NOT_ACTIONABLE,
@@ -155,19 +169,23 @@ export function snooze(
     throw new AppError(ERROR_CODES.DOSE_ALREADY_RESOLVED, 409, `Dose already recorded as ${occ.status}`);
   }
   if (occ.status === 'missed') {
-    // Snoozing a dose that is already past its window would only hide it.
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'This dose is already missed and cannot be snoozed');
   }
+  assertNotTooEarly(occ.scheduledAt, now);
   if (occ.snoozeCount >= MAX_SNOOZES) {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'Snooze limit reached for this dose');
   }
   return { snoozedUntil: new Date(now.getTime() + minutesToMs(minutes)), snoozeCount: occ.snoozeCount + 1 };
 }
 
-export function skip(occ: Pick<DoseOccurrence, 'status'>): { status: 'skipped' } {
+export function skip(
+  occ: Pick<DoseOccurrence, 'status' | 'scheduledAt'>,
+  now: Date,
+): { status: 'skipped' } {
   if (isRecorded(occ.status)) {
     throw new AppError(ERROR_CODES.DOSE_ALREADY_RESOLVED, 409, `Dose already recorded as ${occ.status}`);
   }
+  assertNotTooEarly(occ.scheduledAt, now);
   return { status: 'skipped' };
 }
 

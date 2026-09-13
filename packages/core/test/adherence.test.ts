@@ -9,6 +9,18 @@ function o(status: DoseStatus, scheduledAt: string, confirmedAt: string | null =
   return { status, scheduledAt, confirmedAt, snoozedUntil: null, notifiedAt: null } as DoseOccurrence;
 }
 
+function thresholded(
+  status: DoseStatus,
+  scheduledAt: string,
+  missedAfterMinutes: number,
+  confirmedAt: string | null = null,
+) {
+  return {
+    ...o(status, scheduledAt, confirmedAt),
+    thresholds: { lateAfterMinutes: 15, missedAfterMinutes },
+  };
+}
+
 describe('summarizeAdherence', () => {
   it('reproduces the brief’s 7-day example', () => {
     // 28 scheduled: 23 on time, 2 late, 3 missed.
@@ -71,6 +83,19 @@ describe('summarizeAdherence', () => {
     expect(s.adherencePercent).toBe(0);
   });
 
+  it('uses each occurrence schedule threshold when derived states differ', () => {
+    const s = summarizeAdherence({
+      occurrences: [
+        thresholded('upcoming', '2026-09-09T09:00:00.000Z', 30),
+        thresholded('upcoming', '2026-09-09T09:00:00.000Z', 240),
+      ],
+      now: NOW, thresholds: th, from: '2026-09-09', to: '2026-09-09',
+    });
+    expect(s.scheduled).toBe(2);
+    expect(s.missed).toBe(1);
+    expect(s.pending).toBe(1);
+  });
+
   it('counts a skipped dose as resolved but not taken', () => {
     const s = summarizeAdherence({
       occurrences: [o('taken', '2026-09-01T05:00:00.000Z', '2026-09-01T05:01:00.000Z'), o('skipped', '2026-09-01T19:00:00.000Z')],
@@ -103,6 +128,18 @@ describe('dailyBreakdown', () => {
     );
     expect(rows[0]!.adherencePercent).toBe(50);
   });
+
+  it('uses per-occurrence thresholds in daily missed counts', () => {
+    const rows = dailyBreakdown(
+      [
+        thresholded('upcoming', '2026-09-09T09:00:00.000Z', 30),
+        thresholded('upcoming', '2026-09-09T09:00:00.000Z', 240),
+      ],
+      NOW, th, 'UTC',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ scheduled: 2, missed: 1 });
+  });
 });
 
 describe('consecutiveMissed', () => {
@@ -125,6 +162,14 @@ describe('consecutiveMissed', () => {
 
   it('ignores doses that have not resolved yet', () => {
     const rows = [o('missed', '2026-09-01T05:00:00.000Z'), o('upcoming', '2026-09-09T19:00:00.000Z')];
+    expect(consecutiveMissed(rows, NOW, th)).toBe(1);
+  });
+
+  it('uses each occurrence threshold before building the missed streak', () => {
+    const rows = [
+      thresholded('upcoming', '2026-09-09T08:00:00.000Z', 30),
+      thresholded('upcoming', '2026-09-09T09:30:00.000Z', 300),
+    ];
     expect(consecutiveMissed(rows, NOW, th)).toBe(1);
   });
 });

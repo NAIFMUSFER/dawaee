@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { resetDatabase, startHarness, type Harness } from './harness.js';
 
@@ -13,13 +17,25 @@ import { resetDatabase, startHarness, type Harness } from './harness.js';
  * is silent: an API path that starts answering with HTML would hand a JSON
  * client an unparseable body, and an app path that stops answering with HTML
  * would make every refresh on /today a 404.
+ *
+ * The document is generated before the harness starts. Production uses this
+ * same build script in Docker; testing a checked-in generated snapshot instead
+ * can make a green test prove code that production never executes.
  */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+const PUBLIC = join(ROOT, 'apps/api/public');
 let h: Harness;
 
 beforeAll(async () => {
+  execFileSync('bash', [join(ROOT, 'scripts/build-web.sh')], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: 'pipe',
+    timeout: 240_000,
+  });
   resetDatabase();
   h = await startHarness();
-});
+}, 250_000);
 
 afterAll(async () => {
   await h.close();
@@ -85,6 +101,14 @@ describe('serving the web app', () => {
   it('asks browsers to revalidate, so a deploy is not stuck behind a cached build', async () => {
     const res = await h.app.inject({ method: 'GET', url: '/' });
     expect(String(res.headers['cache-control'])).toContain('no-cache');
+  });
+
+  it('uses the build-emitted hash for the exact inline script CSP', async () => {
+    const res = await h.app.inject({ method: 'GET', url: '/' });
+    const hash = readFileSync(join(PUBLIC, 'index.html.script-sha256'), 'utf8').trim();
+    const csp = String(res.headers['content-security-policy'] ?? '');
+    expect(csp).toContain(`script-src 'self' 'sha256-${hash}'`);
+    expect(csp).not.toContain("'unsafe-eval'");
   });
 
   it('ships a build that talks to its own origin rather than a baked-in host', async () => {

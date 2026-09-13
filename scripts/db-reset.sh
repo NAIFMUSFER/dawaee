@@ -17,7 +17,11 @@
 # that role. Tests exercise the same privilege model production runs on.
 #
 # The privileged connection ($PGUSER, normally `postgres`) is used only to
-# create roles and to create/drop databases.
+# create roles/databases and to perform the narrow managed-database maintenance
+# that cannot be performed by the application migration owner. In particular,
+# trusted extension member objects can retain bootstrap-superuser ownership, so
+# moving pg_trgm/btree_gist out of public is performed after normal migrations
+# by db/maintenance/relocate_extensions.sql.
 set -euo pipefail
 DB="${1:-dawaee_dev}"
 PGHOST="${PGHOST:-127.0.0.1}"
@@ -37,14 +41,18 @@ MIGRATOR_URL="postgres://${MIGRATOR}:${MIGRATOR_PW}@${PGHOST}:${PGPORT}"
 
 # ------------------------------------------------------------- template
 #
-# Nineteen test files rebuild this database, and applying thirty migrations each
-# time is thirty psql round trips each time. A template database is built once
-# per distinct migration set and copied per reset, which is one operation.
+# Nineteen test files rebuild this database, and applying the migration set each
+# time is many psql round trips. A template database is built once per distinct
+# migration/maintenance set and copied per reset, which is one operation.
 #
-# The fingerprint covers every migration AND the definer-policy sweep, so a
-# change to either invalidates the template rather than leaving suites running
-# against a schema that no longer matches the tree.
-FINGERPRINT="$(cat "$ROOT"/db/migrations/*.sql "$ROOT"/db/maintenance/definer_policies.sql | md5sum | cut -d' ' -f1)"
+# The fingerprint covers every migration AND privileged maintenance that affects
+# the test schema, so a change to either invalidates the template rather than
+# leaving suites running against a schema that no longer matches the tree.
+FINGERPRINT="$(cat \
+  "$ROOT"/db/migrations/*.sql \
+  "$ROOT"/db/maintenance/definer_policies.sql \
+  "$ROOT"/db/maintenance/relocate_extensions.sql \
+  | md5sum | cut -d' ' -f1)"
 TEMPLATE="${DB}_tmpl"
 
 template_ok() {
@@ -56,7 +64,12 @@ if ! template_ok; then
   psql -q -c "DROP DATABASE IF EXISTS \"$TEMPLATE\" WITH (FORCE)" -d postgres > /dev/null
   psql -q -c "CREATE DATABASE \"$TEMPLATE\" OWNER $MIGRATOR" -d postgres > /dev/null
   DATABASE_URL="$MIGRATOR_URL/$TEMPLATE" "$ROOT/scripts/migrate.sh" > /dev/null
-  # Stamped only after a clean apply, so a failed build is never reused.
+  # Extension relocation is deliberately outside the application migration
+  # plane: PostgreSQL may keep trusted extension members owned by the bootstrap
+  # superuser, which makes ALTER EXTENSION fail correctly for the migrator.
+  psql -q -d "$TEMPLATE" -f "$ROOT/db/maintenance/relocate_extensions.sql" > /dev/null
+  # Stamped only after both the application migration and privileged maintenance
+  # complete cleanly, so a failed build is never reused.
   psql -q -d postgres -c "COMMENT ON DATABASE \"$TEMPLATE\" IS '$FINGERPRINT'" > /dev/null
   echo "  built template $TEMPLATE"
 fi

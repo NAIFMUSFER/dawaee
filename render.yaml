@@ -29,13 +29,24 @@ services:
     name: dawaee-api
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free               # free web services sleep after 15 min idle
+    # Medication reminders and dose actions must not depend on an idle cold
+    # start. Production evidence showed repeated 503s while the API was on the
+    # Free web-service plan, which Render spins down after 15 minutes idle.
+    plan: starter
     region: frankfurt        # closest Render region to Saudi Arabia
-    healthCheckPath: /health
+    # Readiness is the traffic gate. `/health` proves only that the process is
+    # alive; it deliberately does not check the database schema, worker build,
+    # or external providers. P20 proved API/worker release drift in production,
+    # and the 2026-09-10 audit proved production could report READY with OCR
+    # mocked and storage unconfigured. Render must therefore withhold a new
+    # instance until the same `/health/ready` contract the release audit uses is
+    # green. The old live API remains available while a replacement is starting.
+    healthCheckPath: /health/ready
     autoDeployTrigger: commit
     # Migrations do NOT run here: Render only allows preDeployCommand on paid
-    # instances. They run on the worker instead (see below), and this service
-    # fails its health check until the schema it needs exists.
+    # instances. They run on the worker instead (see below). API startup itself
+    # also refuses to bind a port until the required schema is present, and the
+    # readiness health check additionally refuses worker/provider drift.
     envVars:
       - key: APP
         value: api
@@ -80,15 +91,16 @@ services:
         sync: false
       - key: IP_HASH_SALT
         sync: false
-      # Declared, not defaulted. This decides which address the rate limiter and
-      # the IP hash treat as the client: too low and Render's own proxy is what
-      # every per-IP control sees, too high and a caller can forge the value in
-      # X-Forwarded-For and defeat them. It was not in this file at all, so a
-      # security-sensitive topology assumption lived only as a default in
-      # config.ts. `1` is the assumption for a Render web service behind Render's
-      # single proxy hop; it is NOT a measurement, and P17 could not take one
-      # because production has no external traffic to observe. Verify against a
-      # real request before the service takes real traffic.
+      # Render public web traffic crosses Cloudflare before the service. Current
+      # production evidence showed the previous raw X-Forwarded-For hop model
+      # resolving Dawaee's client address to a private infrastructure range,
+      # collapsing users into one rate-limit/audit bucket. Cloudflare supplies
+      # CF-Connecting-IP from the actual edge connection; Dawaee replaces any
+      # caller-supplied forwarded chain with that one address before Fastify
+      # derives req.ip. If the trusted header is absent or malformed the app
+      # deletes X-Forwarded-For and fails closed to the socket address instead.
+      - key: TRUST_CF_CONNECTING_IP
+        value: "true"
       - key: TRUST_PROXY_HOPS
         value: "1"
       - key: PUBLIC_APP_URL
