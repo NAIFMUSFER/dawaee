@@ -7,10 +7,12 @@ const RECEIPT_DELAY_MS = 15 * 60 * 1000;
 const RECEIPT_EXPIRY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 100;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TOKEN_FINGERPRINT = /^[0-9a-f]{64}$/;
 
 interface StoredTicket {
   providerMessageId: string;
   pushTokenId: string;
+  tokenFingerprint: string | null;
 }
 
 interface DeliveryReceiptRow {
@@ -31,12 +33,18 @@ function tickets(value: unknown): StoredTicket[] {
     if (!entry || typeof entry !== 'object') return [];
     const providerMessageId = Reflect.get(entry, 'providerMessageId');
     const pushTokenId = Reflect.get(entry, 'pushTokenId');
+    const tokenFingerprint = Reflect.get(entry, 'tokenFingerprint');
     return typeof providerMessageId === 'string'
       && providerMessageId.length > 0
       && providerMessageId.length <= 256
       && typeof pushTokenId === 'string'
       && UUID.test(pushTokenId)
-      ? [{ providerMessageId, pushTokenId }]
+      ? [{
+          providerMessageId,
+          pushTokenId,
+          tokenFingerprint: typeof tokenFingerprint === 'string' && TOKEN_FINGERPRINT.test(tokenFingerprint)
+            ? tokenFingerprint : null,
+        }]
       : [];
   });
 }
@@ -96,10 +104,18 @@ export async function pushReceiptJob(ctx: WorkerContext, client: PoolClient): Pr
       .filter((entry): entry is { ticket: StoredTicket; receipt: PushReceiptResult } => entry.receipt !== undefined);
 
     for (const { ticket, receipt } of resolved) {
-      if (receipt.status === 'error' && receipt.errorCode === 'DeviceNotRegistered') {
+      if (
+        receipt.status === 'error'
+        && receipt.errorCode === 'DeviceNotRegistered'
+        && ticket.tokenFingerprint
+      ) {
+        // The push_tokens row id is stable when the app re-registers a rotated
+        // provider token for the same device. A delayed receipt for the old
+        // provider token must therefore prove it still refers to the current
+        // token value before it can deactivate the row.
         await client.query(
-          'SELECT app.deactivate_push_endpoint($1, $2)',
-          [row.recipient_user_id, ticket.pushTokenId],
+          'SELECT app.deactivate_push_endpoint($1, $2, $3)',
+          [row.recipient_user_id, ticket.pushTokenId, ticket.tokenFingerprint],
         );
       }
     }
