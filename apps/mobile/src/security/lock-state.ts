@@ -222,10 +222,11 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
     }
 
     case 'verificationStarted':
-      if (!state.enabled) return state;
+      if (!state.enabled || state.phase === 'covered') return state;
       // This event is emitted synchronously immediately before asking the OS.
       // It distinguishes a fresh post-resume prompt from a promise that began
-      // before the real background event and only resolved afterwards.
+      // before the real background event and only resolved afterwards. Never
+      // clear the invalidation marker while the background/inactive cover is up.
       return { ...state, backgrounded: false };
 
     case 'verified':
