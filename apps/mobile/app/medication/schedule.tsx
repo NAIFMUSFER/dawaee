@@ -1,15 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { MultiPicker, Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationScheduleView } from '@/api/types';
+import {
+  getMedicationScheduleRouteIntent,
+  setMedicationDetailRouteIntent,
+} from '@/navigation/private-navigation';
 import {
   DOSE_UNITS, SCHEDULE_RULE_KINDS,
   type DoseUnit, type MessageKey, type ScheduleRule, type ScheduleRuleKind,
@@ -53,13 +58,33 @@ interface HighRiskPrompt {
 }
 
 export default function ScheduleScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string; mode?: string; scheduleId?: string }>();
-  const medicationId = params.medicationId;
-  const isEdit = params.mode === 'edit';
+  const { user, activeProfile } = useApp();
+  const intent = user && activeProfile
+    ? getMedicationScheduleRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = intent?.medicationId;
+  const mode = intent?.mode ?? 'create';
+  const scheduleId = intent?.scheduleId;
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}:${scheduleId ?? 'new'}:${mode}`;
+  return <ScheduleProfileScreen key={key} medicationId={medicationId} mode={mode} selectedScheduleId={scheduleId} />;
+}
+
+function ScheduleProfileScreen({
+  medicationId,
+  mode,
+  selectedScheduleId,
+}: {
+  medicationId?: string;
+  mode: 'create' | 'edit';
+  selectedScheduleId?: string;
+}) {
+  const isEdit = mode === 'edit';
 
   const { t, formatNumber, formatWeekday, isRtl } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
+  const { capture: captureSave } = useRequestScope();
 
   const [kind, setKind] = useState<ScheduleRuleKind>('fixed_times');
   const [times, setTimes] = useState<string[]>([TIME_EXAMPLE]);
@@ -79,7 +104,7 @@ export default function ScheduleScreen() {
   const [startDate, setStartDate] = useState(() => todayLocalDate(activeProfile?.timezone));
   const [endDate, setEndDate] = useState('');
 
-  const [scheduleId, setScheduleId] = useState<string | null>(params.scheduleId ?? null);
+  const [scheduleId, setScheduleId] = useState<string | null>(selectedScheduleId ?? null);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState<string | null>(null);
@@ -124,8 +149,8 @@ export default function ScheduleScreen() {
     void (async () => {
       try {
         const res = await api.get<{ schedules: MedicationScheduleView[] }>(`/v1/medications/${medicationId}`);
-        const wanted = params.scheduleId
-          ? res.schedules.find((s) => s.id === params.scheduleId)
+        const wanted = selectedScheduleId
+          ? res.schedules.find((s) => s.id === selectedScheduleId)
           : res.schedules.find((s) => s.active) ?? res.schedules[0];
         if (wanted) hydrate(wanted);
       } catch (err) {
@@ -134,7 +159,7 @@ export default function ScheduleScreen() {
         setLoading(false);
       }
     })();
-  }, [hydrate, isEdit, medicationId, params.scheduleId, t]);
+  }, [hydrate, isEdit, medicationId, selectedScheduleId, t]);
 
   const kindOptions = useMemo(
     () => SCHEDULE_RULE_KINDS.map((value) => ({
@@ -270,6 +295,8 @@ export default function ScheduleScreen() {
       setValidation(t('error.validation_failed'));
       return;
     }
+    const isCurrent = captureSave();
+    if (!isCurrent()) return;
     setValidation(null);
     setError(null);
     setSaving(true);
@@ -294,9 +321,17 @@ export default function ScheduleScreen() {
           timezone: activeProfile?.timezone,
         });
       }
+      if (!isCurrent()) return;
       setHighRisk(null);
-      router.replace(`/medication/${medicationId}`);
+      if (!user || !activeProfile) return;
+      setMedicationDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId,
+      });
+      router.replace('/medication/detail');
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'high_risk_confirmation_required') {
         const meta = err.meta as HighRiskPrompt | undefined;
         setHighRisk({ changes: meta?.changes ?? [], before: meta?.before ?? {} });
@@ -304,7 +339,7 @@ export default function ScheduleScreen() {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 

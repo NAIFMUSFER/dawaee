@@ -9,10 +9,12 @@ import { DoseCard } from '@/components/DoseCard';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView } from '@/api/types';
 import { DOSE_STATUS_COLORS, errorMessageKey, type DoseStatus, type MessageKey } from '@dawaee/shared';
 import { addDays, eachDate, weekdayOf } from '@dawaee/core';
+import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
 /**
  * Dose history.
@@ -115,9 +117,14 @@ function todayIn(timezone: string): string {
 }
 
 export default function HistoryScreen() {
+  const { user, activeProfile } = useApp();
+  return <HistoryProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function HistoryProfileScreen() {
   const { t, formatDate, formatWeekday, formatNumber } = useI18n();
   const theme = useTheme();
-  const { activeProfile, offline, setOffline } = useApp();
+  const { activeProfile, offline, setOffline, user } = useApp();
   const timezone = activeProfile?.timezone ?? 'UTC';
 
   const [mode, setMode] = useState<ViewMode>('week');
@@ -132,6 +139,16 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const openMedication = (selectedMedicationId: string) => {
+    if (!user || !activeProfile) return;
+    setMedicationDetailRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      medicationId: selectedMedicationId,
+    });
+    router.push('/medication/detail');
+  };
+
   const range = useMemo(() => {
     if (mode === 'day') return { from: anchor, to: anchor };
     if (mode === 'week') {
@@ -141,8 +158,12 @@ export default function HistoryScreen() {
     return { from: startOfMonth(anchor), to: endOfMonth(anchor) };
   }, [mode, anchor]);
 
+  const { begin: beginLoad } = useRequestScope(JSON.stringify([range.from, range.to, medicationId]));
+
   const load = useCallback(async () => {
-    if (!activeProfile) return;
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
+    if (!activeProfile) { setLoading(false); setRefreshing(false); return; }
     setError(null);
     try {
       // The medication filter goes to the server so the calendar marks describe
@@ -157,10 +178,12 @@ export default function HistoryScreen() {
         }),
         api.get<{ medications: MedicationView[] }>('/v1/medications', { profileId: activeProfile.id }),
       ]);
+      if (!isCurrent()) return;
       setDoses(doseRes.doses);
       setMedications(medRes.medications);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else if (err instanceof ApiError) {
@@ -170,10 +193,12 @@ export default function HistoryScreen() {
         setError(t('error.internal_error'));
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeProfile, range.from, range.to, medicationId, setOffline, t]);
+  }, [beginLoad, activeProfile, range.from, range.to, medicationId, setOffline, t]);
 
   useEffect(() => { setLoading(true); void load(); }, [load]);
 
@@ -389,7 +414,7 @@ export default function HistoryScreen() {
                 <DoseCard
                   key={dose.id}
                   dose={dose}
-                  onPress={() => router.push(`/medication/${dose.medicationId}`)}
+                  onPress={() => openMedication(dose.medicationId)}
                 />
               ))}
               <Divider />

@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
@@ -41,6 +42,11 @@ function deviceTimezone(): string {
 }
 
 export default function TravelScreen() {
+  const { user, activeProfile } = useApp();
+  return <TravelProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function TravelProfileScreen() {
   const { t, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, refreshProfiles } = useApp();

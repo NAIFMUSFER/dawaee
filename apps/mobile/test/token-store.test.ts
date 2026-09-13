@@ -40,6 +40,9 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 vi.mock('react-native', () => ({ Platform: { get OS() { return platform; } } }));
+vi.mock('expo-constants', () => ({
+  default: { expoConfig: { extra: { apiBaseUrl: 'http://api.test' } } },
+}));
 
 /** Every option object the store passed, so the accessibility policy is checkable. */
 const optionsSeen: Array<{ op: string; options: unknown }> = [];
@@ -244,11 +247,25 @@ describe('the pair is written and read as one value', () => {
     expect(JSON.parse(raw)).toEqual({ accessToken: 'A2', refreshToken: 'R2' });
   });
 
-  it('makes the client persist through the store, never through AsyncStorage', () => {
-    const client = readFileSync(join(ROOT, 'apps/mobile/src/api/client.ts'), 'utf8');
-    expect(client).toContain('await writeSession(tokens)');
-    expect(client).toContain('await readSession()');
-    expect(client).toContain('await clearStoredSession()');
+  it('makes the client persist through the store, never through AsyncStorage', async () => {
+    // Exercise the client and real token-store module. Variable names and
+    // direct-vs-serialized invocation are not the security property.
+    const client = await import('../src/api/client.js');
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    expect(await store.readSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1' });
+    expect([...secure.keys()]).toEqual([SECURE_KEY]);
+    expect([...async_.keys()]).toEqual([]);
+
+    await client.clearSession();
+    expect(client.isSignedIn()).toBe(false);
+    expect(await store.readSession()).toBeNull();
+
+    await store.writeSession({ accessToken: 'A2', refreshToken: 'R2' });
+    expect(await client.loadStoredSession()).toBe(true);
+    expect(client.isSignedIn()).toBe(true);
+    expect([...async_.keys()]).toEqual([]);
+    await client.clearSession();
+    expect(secure.size).toBe(0);
   });
 
   /**
@@ -257,12 +274,37 @@ describe('the pair is written and read as one value', () => {
    * days later that 401s and signs the user out for no visible reason; the
    * client clears instead, so the next launch is a clean sign-in.
    */
-  it('clears storage when a rotated pair cannot be persisted', () => {
-    const client = readFileSync(join(ROOT, 'apps/mobile/src/api/client.ts'), 'utf8');
-    const refresh = client.slice(client.indexOf('async function refreshAccessToken'));
-    const attempt = refresh.indexOf('await storeSession(body)');
-    expect(attempt).toBeGreaterThan(-1);
-    expect(refresh.slice(attempt, attempt + 900)).toContain('clearStoredSession');
+  it('clears storage when a rotated pair cannot be persisted', async () => {
+    const client = await import('../src/api/client.js');
+    await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
+    secureFails = 'write';
+    const sentAuthorizations: Array<string | null> = [];
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+      const refresh = String(url).endsWith('/v1/auth/refresh');
+      const authorization = new Headers(init.headers).get('authorization');
+      if (!refresh) sentAuthorizations.push(authorization);
+      const expired = !refresh && authorization === 'Bearer A1';
+      return new Response(JSON.stringify(refresh
+        ? { accessToken: 'A2', refreshToken: 'R2' }
+        : expired ? { error: { code: 'token_expired' } } : { ok: true }), {
+        status: expired ? 401 : 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    try {
+      await expect(client.api.get('/v1/me')).resolves.toEqual({ ok: true });
+      expect(sentAuthorizations).toEqual(['Bearer A1', 'Bearer A2']);
+      // Actual client recovery must remove R1, not merely contain a call with
+      // a particular spelling. The successful rotation still works in memory.
+      expect(client.isSignedIn()).toBe(true);
+      expect(secure.size).toBe(0);
+      expect([...async_.keys()]).toEqual([]);
+      expect(await store.readSession()).toBeNull();
+    } finally {
+      secureFails = 'no';
+      await client.clearSession();
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -576,10 +618,23 @@ describe('nothing new writes plaintext to AsyncStorage', () => {
         if (statSync(join(ROOT, rel)).isDirectory()) { walk(rel); continue; }
         if (!/\.(ts|tsx)$/.test(entry)) continue;
         const src = readFileSync(join(ROOT, rel), 'utf8');
+        const encryptedOnlyDeclarations = [...src.matchAll(
+          /plaintextKey:\s*'(dawaee\.[A-Za-z0-9_.]+)'\s*,[\s\S]{0,240}?migratePlaintext:\s*false/g,
+        )].map((m) => ({ key: m[1]!, start: m.index!, end: m.index! + m[0].length }));
         for (const m of src.matchAll(/'(dawaee\.[A-Za-z0-9_.]+)'/g)) {
           const key = m[1]!;
           // SecureStore namespaces are not AsyncStorage keys.
           if (key.startsWith('dawaee.cacheKey.') || key === 'dawaee.session.v1') continue;
+          // A new encrypted-only CacheSlot still has a logical plaintextKey
+          // name because secure-cache derives the ciphertext namespace from it.
+          // Ignore only the literal INSIDE a declaration that explicitly says
+          // no plaintext migration. Any second occurrence — including a direct
+          // AsyncStorage write elsewhere in this file or another one — remains
+          // visible to this inventory gate.
+          const declarationOnly = encryptedOnlyDeclarations.some((d) =>
+            d.key === key && m.index! >= d.start && m.index! < d.end,
+          );
+          if (declarationOnly) continue;
           if (!found.has(key)) found.set(key, rel);
         }
       }
@@ -597,11 +652,13 @@ describe('nothing new writes plaintext to AsyncStorage', () => {
     expect(missing, 'the allow-list names keys that no longer exist').toEqual([]);
   });
 
-  it('and every encrypted slot still declares a plaintext predecessor, not a live key', () => {
+  it('and encrypted slots do not write their logical plaintext names directly', () => {
     const queue = readFileSync(join(ROOT, 'apps/mobile/src/storage/offline-queue.ts'), 'utf8');
     const snooze = readFileSync(join(ROOT, 'apps/mobile/src/storage/low-stock-snooze.ts'), 'utf8');
-    for (const [label, src] of [['offline-queue', queue], ['low-stock-snooze', snooze]]) {
-      expect(src, `${label} writes AsyncStorage directly`).not.toMatch(/AsyncStorage\.setItem\(\s*(QUEUE_SLOT|CACHE_SLOT|SLOT)\.plaintextKey/);
+    const bootstrap = readFileSync(join(ROOT, 'apps/mobile/src/storage/offline-bootstrap.ts'), 'utf8');
+    for (const [label, src] of [['offline-queue', queue], ['low-stock-snooze', snooze], ['offline-bootstrap', bootstrap]]) {
+      expect(src, `${label} writes AsyncStorage directly`).not.toMatch(/AsyncStorage\.(setItem|multiSet)\(/);
     }
+    expect(bootstrap).toMatch(/plaintextKey:\s*'dawaee\.offlineBootstrap'[\s\S]{0,240}?migratePlaintext:\s*false/);
   });
 });

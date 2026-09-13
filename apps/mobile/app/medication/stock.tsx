@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { todayLocalDate } from '@/components/DateField';
 import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
+import { getMedicationStockRouteIntent } from '@/navigation/private-navigation';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { DOSE_UNITS, type DoseUnit, type MessageKey, type StockForecast } from '@dawaee/shared';
@@ -72,8 +74,17 @@ function nextDay(date: string): string {
 }
 
 export default function StockScreen() {
-  const params = useLocalSearchParams<{ medicationId?: string }>();
-  const medicationId = params.medicationId;
+  const { user, activeProfile } = useApp();
+  const intent = user && activeProfile
+    ? getMedicationStockRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = intent?.medicationId;
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
+  return <StockProfileScreen key={key} medicationId={medicationId} />;
+}
+
+function StockProfileScreen({ medicationId }: { medicationId?: string }) {
 
   const { t, formatDate, formatNumber } = useI18n();
   const theme = useTheme();
@@ -81,7 +92,7 @@ export default function StockScreen() {
 
   const [data, setData] = useState<StockResponse | null>(null);
   const [medicationName, setMedicationName] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(medicationId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snoozedUntil, setSnoozedUntil] = useState<string | null>(null);

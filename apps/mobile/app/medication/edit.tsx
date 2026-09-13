@@ -1,15 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { MedicationView } from '@/api/types';
+import {
+  getMedicationEditRouteIntent,
+  setMedicationDetailRouteIntent,
+  setMedicationScheduleRouteIntent,
+} from '@/navigation/private-navigation';
 import {
   FOOD_INSTRUCTIONS, MEDICATION_FORMS, STRENGTH_UNITS,
   type FoodInstruction, type MedicationForm, type MessageKey, type StrengthUnit,
@@ -62,30 +68,6 @@ function emptyDraft(timezone: string | undefined): Draft {
   };
 }
 
-function applyPrefill(draft: Draft, raw: string | undefined): Draft {
-  if (!raw) return draft;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return draft;
-    const source = parsed as Record<string, unknown>;
-    const text = (key: string): string | null => (typeof source[key] === 'string' ? source[key] : null);
-    return {
-      ...draft,
-      name: text('name') ?? draft.name,
-      brandName: text('brandName') ?? draft.brandName,
-      genericName: text('genericName') ?? draft.genericName,
-      form: MEDICATION_FORMS.find((f) => f === source.form) ?? draft.form,
-      strengthValue: typeof source.strengthValue === 'number' ? String(source.strengthValue) : draft.strengthValue,
-      strengthUnit: STRENGTH_UNITS.find((u) => u === source.strengthUnit) ?? draft.strengthUnit,
-      manufacturer: text('manufacturer') ?? draft.manufacturer,
-      barcode: text('barcode') ?? draft.barcode,
-      instructions: text('instructions') ?? draft.instructions,
-    };
-  } catch {
-    return draft;
-  }
-}
-
 function fromMedication(medication: MedicationView, timezone: string | undefined): Draft {
   return {
     ...emptyDraft(timezone),
@@ -106,16 +88,25 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 }
 
 export default function EditMedicationScreen() {
-  const params = useLocalSearchParams<{ mode?: string; id?: string; prefill?: string }>();
-  const isEdit = params.mode === 'edit' && Boolean(params.id);
-  const medicationId = params.id;
+  const { user, activeProfile } = useApp();
+  const intent = user && activeProfile
+    ? getMedicationEditRouteIntent(user.id, activeProfile.id)
+    : null;
+  const medicationId = intent?.medicationId;
+
+  const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'new'}`;
+  return <EditMedicationProfileScreen key={key} medicationId={medicationId} />;
+}
+
+function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }) {
+  const isEdit = Boolean(medicationId);
 
   const { t, formatNumber, formatMeasure } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { activeProfile, user } = useApp();
+  const { capture: captureSave } = useRequestScope();
 
-  const [draft, setDraft] = useState<Draft>(() =>
-    applyPrefill(emptyDraft(activeProfile?.timezone), params.prefill));
+  const [draft, setDraft] = useState<Draft>(() => emptyDraft(activeProfile?.timezone));
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -194,6 +185,8 @@ export default function EditMedicationScreen() {
       setNameError(t('medication.nameRequired'));
       return;
     }
+    const isCurrent = captureSave();
+    if (!isCurrent()) return;
     setNameError(null);
     setError(null);
     setSaving(true);
@@ -204,8 +197,15 @@ export default function EditMedicationScreen() {
           ...body(),
           ...(options.confirmHighRiskChange ? { confirmHighRiskChange: true } : {}),
         });
+        if (!isCurrent()) return;
         setHighRisk(null);
-        router.replace(`/medication/${medicationId}`);
+        if (!user) return;
+        setMedicationDetailRouteIntent({
+          userId: user.id,
+          patientProfileId: activeProfile.id,
+          medicationId,
+        });
+        router.replace('/medication/detail');
         return;
       }
 
@@ -215,10 +215,19 @@ export default function EditMedicationScreen() {
         identitySource: 'user',
         ...(options.acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       });
+      if (!isCurrent()) return;
       // A medication with no schedule never reminds anyone, so creating one
       // hands straight over to the schedule builder rather than to the detail.
-      router.replace(`/medication/schedule?medicationId=${created.medication.id}&mode=create`);
+      if (!user) return;
+      setMedicationScheduleRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        medicationId: created.medication.id,
+        mode: 'create',
+      });
+      router.replace('/medication/schedule');
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof ApiError && err.code === 'duplicate_medication') {
         const meta = err.meta as { duplicates?: DuplicateMatch[] } | undefined;
         setDuplicates(meta?.duplicates ?? []);
@@ -229,7 +238,7 @@ export default function EditMedicationScreen() {
         setError(describeError(err));
       }
     } finally {
-      setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 
@@ -275,7 +284,15 @@ export default function EditMedicationScreen() {
                     key={duplicate.medicationId}
                     label={`${t('medication.viewExisting')} · ${duplicate.medicationName}`}
                     tone="secondary"
-                    onPress={() => router.replace(`/medication/${duplicate.medicationId}`)}
+                    onPress={() => {
+                      if (!user || !activeProfile) return;
+                      setMedicationDetailRouteIntent({
+                        userId: user.id,
+                        patientProfileId: activeProfile.id,
+                        medicationId: duplicate.medicationId,
+                      });
+                      router.replace('/medication/detail');
+                    }}
                   />
                 ))}
                 <Button

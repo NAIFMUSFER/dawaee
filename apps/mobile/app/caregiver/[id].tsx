@@ -8,10 +8,15 @@ import {
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
 import {
-  CAREGIVER_NOTIFY_MODES, CAREGIVER_PERMISSIONS,
+  getCaregiverDetailRouteIntent,
+  setCaregiverDetailRouteIntent,
+} from '@/navigation/private-navigation';
+import {
+  CAREGIVER_NOTIFY_MODES, CAREGIVER_PERMISSIONS, toggleCaregiverPermission,
   type CaregiverNotifyMode, type CaregiverPermission,
 } from '@dawaee/shared';
 
@@ -87,7 +92,35 @@ function timeOrNull(value: string): string | null {
 }
 
 export default function CaregiverDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id?: string }>();
+  const { user, activeProfile } = useApp();
+  const legacyRelationshipId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const intent = user && activeProfile
+    ? getCaregiverDetailRouteIntent(user.id, activeProfile.id)
+    : null;
+  const relationshipId = legacyRelationshipId ?? intent?.relationshipId;
+
+  useEffect(() => {
+    if (!legacyRelationshipId) return;
+    if (user && activeProfile) {
+      setCaregiverDetailRouteIntent({
+        userId: user.id,
+        patientProfileId: activeProfile.id,
+        relationshipId: legacyRelationshipId,
+      });
+    }
+    router.replace('/caregiver/detail');
+  }, [activeProfile, legacyRelationshipId, user]);
+
+  return (
+    <CaregiverDetailProfileScreen
+      key={`${profileScopeKey(user?.id, activeProfile)}:${relationshipId ?? 'none'}`}
+      relationshipId={relationshipId}
+    />
+  );
+}
+
+function CaregiverDetailProfileScreen({ relationshipId }: { relationshipId?: string }) {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
@@ -103,6 +136,7 @@ export default function CaregiverDetailScreen() {
   const [rules, setRules] = useState<Record<RuleChannel, RuleState>>({ push: EMPTY_RULE });
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [savingChannel, setSavingChannel] = useState<RuleChannel | null>(null);
+  const { begin: beginLoad, capture: captureMutation } = useRequestScope();
   /** Set when the server answered 428: the rule waiting for a consent grant. */
 
   const describe = useCallback((err: unknown): string => {
@@ -113,13 +147,16 @@ export default function CaregiverDetailScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
-    if (!activeProfile) {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
+    if (!activeProfile || !relationshipId) {
       setLoading(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
-      const found = res.caregivers.find((c) => c.id === id) ?? null;
+      if (!isCurrent()) return;
+      const found = res.caregivers.find((c) => c.id === relationshipId) ?? null;
       setViewerRole(res.viewerRole);
       setCaregiver(found);
       if (found) {
@@ -130,12 +167,13 @@ export default function CaregiverDetailScreen() {
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [activeProfile, describe, id, setOffline]);
+  }, [activeProfile, beginLoad, describe, relationshipId, setOffline]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -144,22 +182,27 @@ export default function CaregiverDetailScreen() {
 
   const savePermissions = useCallback(async () => {
     if (!caregiver) return;
+    const isCurrent = captureMutation();
+    if (!isCurrent()) return;
     setSavingPermissions(true);
     setError(null);
     try {
-      await api.patch(`/v1/caregivers/${caregiver.id}/permissions`, {
+      await api.patch('/v1/caregivers/permissions', {
+        relationshipId: caregiver.id,
         permissions,
         escalationPriority: priority,
       });
+      if (!isCurrent()) return;
       setNotice(t('caregiver.permissionsSaved'));
       await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setSavingPermissions(false);
+      if (isCurrent()) setSavingPermissions(false);
     }
-  }, [caregiver, describe, load, permissions, priority, setOffline, t]);
+  }, [captureMutation, caregiver, describe, load, permissions, priority, setOffline, t]);
 
   const saveRule = useCallback(async (channel: RuleChannel, rule: RuleState): Promise<void> => {
     if (!caregiver) return;
@@ -174,10 +217,13 @@ export default function CaregiverDetailScreen() {
       }
     }
 
+    const isCurrent = captureMutation();
+    if (!isCurrent()) return;
     setSavingChannel(channel);
     setError(null);
     try {
-      await api.put(`/v1/caregivers/${caregiver.id}/notification-rules`, {
+      await api.put('/v1/caregivers/notification-rules', {
+        relationshipId: caregiver.id,
         channel,
         mode: rule.mode,
         consecutiveMissedThreshold: rule.consecutiveMissedThreshold,
@@ -186,15 +232,17 @@ export default function CaregiverDetailScreen() {
         quietHoursEnd: timeOrNull(rule.quietHoursEnd),
         enabled: rule.enabled,
       });
+      if (!isCurrent()) return;
       setNotice(t('notify.saved'));
       await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setSavingChannel(null);
+      if (isCurrent()) setSavingChannel(null);
     }
-  }, [caregiver, describe, load, setOffline, t]);
+  }, [captureMutation, caregiver, describe, load, setOffline, t]);
 
   const revoke = useCallback(() => {
     if (!caregiver) return;
@@ -205,10 +253,14 @@ export default function CaregiverDetailScreen() {
         style: 'destructive',
         onPress: () => {
           void (async () => {
+            const isCurrent = captureMutation();
+            if (!isCurrent()) return;
             try {
-              await api.delete(`/v1/caregivers/${caregiver.id}`);
+              await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
+              if (!isCurrent()) return;
               router.replace('/(tabs)/family');
             } catch (err) {
+              if (!isCurrent()) return;
               if (err instanceof NetworkError) setOffline(true);
               else setError(describe(err));
             }
@@ -216,7 +268,7 @@ export default function CaregiverDetailScreen() {
         },
       },
     ]);
-  }, [caregiver, describe, name, setOffline, t]);
+  }, [captureMutation, caregiver, describe, name, setOffline, t]);
 
   const dirtyPermissions = useMemo(() => {
     if (!caregiver) return false;
@@ -243,9 +295,10 @@ export default function CaregiverDetailScreen() {
   }
 
   const togglePermission = (permission: CaregiverPermission) => {
-    setPermissions((current) =>
-      current.includes(permission) ? current.filter((p) => p !== permission) : [...current, permission],
-    );
+    // The switches describe a usable grant, not independent database flags.
+    // Adding a capability turns on what it must read; turning a dependency off
+    // also turns off capabilities that would otherwise be rejected by the API.
+    setPermissions((current) => toggleCaregiverPermission(current, permission));
   };
 
   const setRule = (channel: RuleChannel, patch: Partial<RuleState>) => {

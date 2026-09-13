@@ -53,12 +53,14 @@ afterAll(async () => { await owner.end(); await alpha.close(); await beta.close(
 // ══════════════════════════════════════ multi-instance
 
 describe('two API instances share one authentication budget', () => {
-  it('a sign-in budget is not doubled by running a second replica', async () => {
+  it('two replicas spend the same database-backed fixed windows', async () => {
     const phone = newPhone();
     const max = BUDGETS['login:identifier'].max;
 
     // Split the attempts across the two instances. With per-process counters
-    // each would allow `max` on its own and the attacker would get 2×.
+    // each would spend an independent budget. The authoritative control here is
+    // the shared Postgres fixed-window counter, so prove all requests landed in
+    // it and that the HTTP decisions match each actual window.
     let allowed = 0;
     for (let i = 0; i < max * 2; i++) {
       const app = i % 2 === 0 ? alpha : beta;
@@ -67,7 +69,23 @@ describe('two API instances share one authentication budget', () => {
       const r = await login(app, phone, `198.51.100.${i + 1}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, `${allowed} attempts allowed against a budget of ${max}`).toBe(max);
+
+    const { rows: windows } = await owner.query<{ count: number }>(
+      `SELECT count
+         FROM auth_rate_buckets
+        WHERE scope = 'login:identifier'
+        ORDER BY window_start`,
+    );
+    const counts = windows.map((row) => Number(row.count));
+    expect(counts.reduce((sum, count) => sum + count, 0), 'some attempts bypassed the shared store').toBe(max * 2);
+    expect(windows.length, 'twenty quick requests crossed more than one fixed-window seam').toBeLessThanOrEqual(2);
+
+    // The implementation deliberately uses absolute fixed windows. If this
+    // test starts just before the ten-minute seam, both adjacent windows may
+    // legitimately admit up to `max`; expecting exactly `max` across the seam
+    // is a flaky sliding-window assertion and contradicts migration 0029.
+    const expectedAllowed = counts.reduce((sum, count) => sum + Math.min(count, max), 0);
+    expect(allowed, `${allowed} allowed; window counts were ${counts.join(',')}`).toBe(expectedAllowed);
   });
 
   it('a registration budget for one identifier is shared too', async () => {
@@ -185,6 +203,7 @@ describe('what counts as one client', () => {
 
   it('rotating the host part of a /64 does not buy extra attempts', async () => {
     const max = BUDGETS['login:ip'].max;
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='login:ip'");
     let allowed = 0;
     for (let i = 0; i < max + 6; i++) {
       // A DIFFERENT identifier each time, so the identifier budget cannot be
@@ -193,7 +212,25 @@ describe('what counts as one client', () => {
       const r = await login(alpha, newPhone(), `2001:db8:aaaa:bbbb::${(i + 1).toString(16)}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, 'an attacker walked a /64 past the address budget').toBeLessThanOrEqual(max);
+
+    const { rows: windows } = await owner.query<{ key_hash: string; count: number }>(
+      `SELECT key_hash, count
+         FROM auth_rate_buckets
+        WHERE scope = 'login:ip'
+        ORDER BY window_start`,
+    );
+    const counts = windows.map((row) => Number(row.count));
+    expect(new Set(windows.map((row) => row.key_hash)).size,
+      'rotating the host part created a second address key').toBe(1);
+    expect(counts.reduce((sum, count) => sum + count, 0),
+      'some rotated-address attempts bypassed the shared store').toBe(max + 6);
+    expect(windows.length, 'the requests crossed more than one fixed-window seam').toBeLessThanOrEqual(2);
+
+    // Fixed windows can legitimately admit another budget after the absolute
+    // ten-minute seam. Assert the limit independently for every observed window
+    // instead of treating the two windows as one sliding window.
+    const expectedAllowed = counts.reduce((sum, count) => sum + Math.min(count, max), 0);
+    expect(allowed, `${allowed} allowed; window counts were ${counts.join(',')}`).toBe(expectedAllowed);
   });
 });
 
@@ -232,15 +269,31 @@ describe('the limiter stores nothing that identifies anyone', () => {
 // ══════════════════════════════════════ retention and failure
 
 describe('bounded growth and a stated failure mode', () => {
-  it('old windows are purged', async () => {
-    await consumeBudget('login:ip', `retention-${Date.now()}`);
-    await owner.query("UPDATE auth_rate_buckets SET window_start = now() - interval '48 hours'");
+  it('old windows are purged without rewriting unrelated live buckets', async () => {
+    const { createHash } = await import('node:crypto');
+    const marker = Date.now().toString();
+    const staleKey = createHash('sha256').update(`retention-stale-${marker}`).digest('hex');
+    const freshKey = createHash('sha256').update(`retention-fresh-${marker}`).digest('hex');
+
+    // Own only this fixture. The previous test globally rewrote window_start on
+    // every bucket, which can collapse two legitimate windows for one key onto
+    // the table's (scope,key_hash,window_start) primary key and fail before it
+    // ever tests purge_rate_buckets.
+    await owner.query(
+      `INSERT INTO auth_rate_buckets (scope, key_hash, window_start, count)
+       VALUES ('login:ip', $1, now() - interval '48 hours', 1),
+              ('login:ip', $2, now(), 1)`,
+      [staleKey, freshKey],
+    );
+
     const { rows } = await owner.query<{ purge_rate_buckets: number }>('SELECT app.purge_rate_buckets(24)');
     expect(rows[0]!.purge_rate_buckets).toBeGreaterThan(0);
-    const { rows: left } = await owner.query<{ n: string }>(
-      "SELECT count(*) AS n FROM auth_rate_buckets WHERE window_start < now() - interval '24 hours'",
+
+    const { rows: markers } = await owner.query<{ key_hash: string }>(
+      'SELECT key_hash FROM auth_rate_buckets WHERE key_hash = ANY($1::text[]) ORDER BY key_hash',
+      [[staleKey, freshKey]],
     );
-    expect(Number(left[0]!.n)).toBe(0);
+    expect(markers.map((row) => row.key_hash)).toEqual([freshKey]);
   });
 
   /**

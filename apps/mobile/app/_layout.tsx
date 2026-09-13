@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Stack } from 'expo-router';
+import React, { useEffect, useRef } from 'react';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Alert, Platform, View } from 'react-native';
@@ -10,6 +10,8 @@ import { PALETTE } from '@dawaee/shared';
 import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
+import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
+import { clearMedicationDrafts } from '@/storage/medication-draft';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -44,7 +46,26 @@ function useWebAlertAdapter() {
  * right language and direction — no flash of English in an Arabic app.
  */
 function Shell() {
-  const { ready, preferences, signedIn, deviceId, syncNow: refreshAfterAction } = useApp();
+  const {
+    ready, preferences, signedIn, user, activeProfile, deviceId,
+    syncNow: refreshAfterAction,
+  } = useApp();
+  const router = useRouter();
+  const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
+  const previousClinicalRouteScope = useRef<string | null>(null);
+
+  // This fence is deliberately synchronous. Clearing in useEffect is too late:
+  // fixed-route children can read stale process-local ids or OCR medication
+  // drafts before passive effects run. A speculative render may discard a
+  // short-lived navigation selection/draft, which is the fail-closed outcome
+  // for this privacy boundary; it never discards server data or persisted
+  // clinical state.
+  if (previousClinicalRouteScope.current !== clinicalRouteScope) {
+    clearClinicalRouteIntents();
+    clearMedicationDrafts();
+    previousClinicalRouteScope.current = clinicalRouteScope;
+  }
+
   useWebAlertAdapter();
 
   useEffect(() => {
@@ -68,6 +89,45 @@ function Shell() {
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
   }, [signedIn, refreshAfterAction]);
+
+  /**
+   * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
+   * action. Its only safe action is to open the list of doses that are due.
+   *
+   * Before this listener existed, tapping "3 medications are due" while the
+   * app was already open on History/Settings launched Dawaee but left the user
+   * on that screen. The notification payload has `doseIds`, not `doseId`, so
+   * the single-dose action listener correctly ignored it — and nothing routed
+   * the patient to the doses they were being asked to review.
+   */
+  useEffect(() => {
+    if (!signedIn || Platform.OS === 'web') return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+
+    void import('expo-notifications').then(async (N) => {
+      const handle = async (response: {
+        notification?: { request?: { content?: { data?: Record<string, unknown> } } };
+      } | null) => {
+        const data = response?.notification?.request?.content?.data ?? {};
+        if (data.kind !== 'dose_group_reminder') return;
+        router.replace('/(tabs)/today');
+        // A cold-start response remains available until it is cleared. If it
+        // stayed there, a later remount could route the patient back to Today
+        // for an old reminder they already reviewed.
+        await N.clearLastNotificationResponseAsync?.();
+      };
+
+      await handle(await N.getLastNotificationResponseAsync());
+      if (cancelled) return;
+      const sub = N.addNotificationResponseReceivedListener((response) => {
+        void handle(response as Parameters<typeof handle>[0]);
+      });
+      stop = () => sub.remove();
+    }).catch(() => undefined);
+
+    return () => { cancelled = true; stop?.(); };
+  }, [signedIn, router]);
 
   return (
     <I18nProvider

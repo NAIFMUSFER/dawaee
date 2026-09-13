@@ -241,7 +241,7 @@ describe('P13-3 capabilities in a URL never reach the request log', () => {
   it('rewrites the emergency scan token out of the path', () => {
     expect(redactUrl('/v1/emergency/scan/abc123def456')).toBe('/v1/emergency/scan/[redacted]');
     expect(redactUrl('/e/abc123def456')).toBe('/e/[redacted]');
-    expect(redactUrl('/v1/uploads/local/key.png?expires=1&sig=deadbeef')).toBe('/v1/uploads/local/key.png?[redacted]');
+    expect(redactUrl('/v1/uploads/local/key.png?expires=1&sig=deadbeef')).toBe('/v1/uploads/local/[redacted]?[redacted]');
   });
 
   it('leaves an ordinary path alone', () => {

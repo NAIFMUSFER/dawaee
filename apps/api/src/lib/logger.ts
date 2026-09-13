@@ -18,33 +18,36 @@ import { loadConfig } from '../config.js';
  */
 
 /**
- * Capabilities carried in a URL PATH, which the request log records in full.
+ * Stable record identifiers are health-related identifiers once they occur in
+ * a Dawaee request URL. Production request logs proved this was not theoretical:
+ * `/v1/today`, `/v1/medications` and `/v1/doses` were persisted with full
+ * patient profile UUIDs next to caller network metadata. Route parameters can
+ * similarly carry dose or medication UUIDs.
+ *
+ * Keep the route shape for operations, but remove the stable identifier that
+ * lets an aggregator correlate one patient's medication/adherence activity.
+ */
+const URL_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
+/**
+ * Capabilities and opaque object identifiers carried in a URL, which the
+ * request log records in full.
  *
  * `redact` cannot reach these: it matches object paths like `req.body.token`,
- * and this secret is a path segment inside the `req.url` string. Fastify's
- * default request serializer writes that string verbatim — verified, not
- * assumed:
- *
- *   {"req":{"method":"GET","url":"/v1/emergency/scan/SECRET-TOKEN-VALUE…"}}
- *
- * The emergency scan token is a 192-bit bearer capability that returns a
- * patient's blood type, allergies, conditions, medications and their emergency
- * contacts' phone numbers, to anyone holding it, with no authentication. Every
- * scan was writing that token into the application log in plaintext — logs that
- * leave the process for an aggregator and are kept far longer than the token
- * lives. Anyone who could read logs could replay any card that had been
- * scanned.
- *
- * Rewritten rather than dropped: the path is worth having in the log, and
- * knowing that an emergency card was read is exactly the kind of event an
- * operator should be able to see. Only the secret goes.
+ * and these values live inside the `req.url` string. Fastify's request
+ * serializer therefore has to rewrite them before the log line leaves the
+ * process.
  */
 const PATH_SECRETS: Array<{ pattern: RegExp; replace: string }> = [
   { pattern: /^\/v1\/emergency\/scan\/[^/?]+/, replace: '/v1/emergency/scan/[redacted]' },
   { pattern: /^\/e\/[^/?]+/, replace: '/e/[redacted]' },
-  // The local development storage sink signs the object key into the query
-  // string; the signature is a capability for that object.
-  { pattern: /^(\/v1\/uploads\/local\/[^?]*)\?.*$/, replace: '$1?[redacted]' },
+  /**
+   * Local development object keys contain a patient-profile prefix plus a
+   * random object UUID, while the query string carries a signed capability.
+   * Neither has diagnostic value. Redact the whole key, not just the signature.
+   */
+  { pattern: /^(\/v1\/uploads\/local)\/[^?]+\?.*$/, replace: '$1/[redacted]?[redacted]' },
+  { pattern: /^(\/v1\/uploads\/local)\/[^?]+$/, replace: '$1/[redacted]' },
   /**
    * `?objectKey=` on the signed-read endpoint.
    *
@@ -59,10 +62,14 @@ const PATH_SECRETS: Array<{ pattern: RegExp; replace: string }> = [
 ];
 
 export function redactUrl(url: string): string {
+  let redacted = url;
   for (const { pattern, replace } of PATH_SECRETS) {
-    if (pattern.test(url)) return url.replace(pattern, replace);
+    if (pattern.test(redacted)) {
+      redacted = redacted.replace(pattern, replace);
+      break;
+    }
   }
-  return url;
+  return redacted.replace(URL_UUID, '[id]');
 }
 
 // Typed as FastifyBaseLogger so passing the instance to Fastify does not

@@ -14,6 +14,8 @@ export default defineConfig({
     ],
     exclude: ['**/node_modules/**', '**/dist/**'],
     setupFiles: ['./vitest.setup.ts'],
+    // Build ignored web artifacts before any server/route inventory starts.
+    globalSetup: ['./vitest.global-setup.ts'],
     // Integration suites share one Postgres database, so they run serially.
     fileParallelism: false,
     testTimeout: 30_000,

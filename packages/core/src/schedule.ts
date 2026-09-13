@@ -200,6 +200,54 @@ function minDate(a: LocalDate, b: LocalDate): LocalDate {
   return compareDates(a, b) <= 0 ? a : b;
 }
 
+/**
+ * Nominal long-run daily rate for an interval rule with a local active window.
+ *
+ * The concrete interval engine advances from the anchor in real-time steps and
+ * then tests each resulting local clock time against the active window. Stock
+ * forecasting must therefore respect the anchor phase too. A proportional
+ * `window / interval` estimate is wrong whenever the finite set of clock phases
+ * does not sample the window uniformly (for example every 8h from 08:00 inside
+ * 08:00-20:00 produces 08:00 and 16:00: two doses/day, not 1.5).
+ *
+ * For minute-aligned intervals, the local clock phases form a finite cycle of at
+ * most 1440 entries. Count that exact nominal cycle. Sub-minute intervals are
+ * allowed by the schema; without timezone/DST context here, retain the bounded
+ * proportional approximation for those uncommon values rather than pretending
+ * to model a potentially enormous fractional-minute phase cycle.
+ */
+function intervalDosesPerDay(rule: Extract<ScheduleRule, { kind: 'interval' }>): number {
+  const raw = 24 / rule.everyHours;
+  if (!rule.activeFrom || !rule.activeUntil) return raw;
+
+  const from = timeToMinutes(rule.activeFrom);
+  const until = timeToMinutes(rule.activeUntil);
+  if (from === until) return raw;
+
+  const stepMinutes = rule.everyHours * 60;
+  const minuteStep = Math.round(stepMinutes);
+  if (Math.abs(stepMinutes - minuteStep) > 1e-9) {
+    const windowMinutes = from < until ? until - from : 1440 - from + until;
+    return Math.min(raw, windowMinutes / stepMinutes);
+  }
+
+  const anchor = timeToMinutes(rule.anchorTime);
+  const seen = new Set<number>();
+  let phase = anchor;
+  let admitted = 0;
+
+  while (!seen.has(phase)) {
+    seen.add(phase);
+    if (from < until ? phase >= from && phase < until : phase >= from || phase < until) {
+      admitted++;
+    }
+    phase = (phase + minuteStep) % 1440;
+  }
+
+  const cycleDays = (seen.size * minuteStep) / 1440;
+  return cycleDays > 0 ? admitted / cycleDays : 0;
+}
+
 /** Average number of doses per day a rule produces — drives stock forecasting. */
 export function dosesPerDay(rule: ScheduleRule): number {
   switch (rule.kind) {
@@ -211,14 +259,8 @@ export function dosesPerDay(rule: ScheduleRule): number {
       const period = rule.daysOn + rule.daysOff;
       return period > 0 ? (new Set(rule.times).size * rule.daysOn) / period : 0;
     }
-    case 'interval': {
-      const raw = 24 / rule.everyHours;
-      if (!rule.activeFrom || !rule.activeUntil) return raw;
-      const f = timeToMinutes(rule.activeFrom);
-      const u = timeToMinutes(rule.activeUntil);
-      const windowMinutes = f < u ? u - f : 1440 - f + u;
-      return Math.min(raw, windowMinutes / (rule.everyHours * 60));
-    }
+    case 'interval':
+      return intervalDosesPerDay(rule);
     case 'as_needed':
       return 0;
     default: {

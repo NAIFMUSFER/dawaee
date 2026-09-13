@@ -6,8 +6,10 @@ import { Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, Section
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView } from '@/api/types';
+import { setCaregiverDetailRouteIntent } from '@/navigation/private-navigation';
 import type { CaregiverPermission } from '@dawaee/shared';
 
 /**
@@ -43,6 +45,11 @@ function isChange(permission: CaregiverPermission): boolean {
 }
 
 export default function FamilyScreen() {
+  const { user, activeProfile } = useApp();
+  return <FamilyProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function FamilyProfileScreen() {
   const { t, bidi } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
@@ -52,6 +59,7 @@ export default function FamilyScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<UiError | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const { begin: beginLoad, capture: captureAction } = useRequestScope();
 
   // The server's error codes are the primary source; its message is the
   // fallback for a code this build does not yet have a translation for.
@@ -63,26 +71,33 @@ export default function FamilyScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
+    const isCurrent = beginLoad();
+    if (!isCurrent()) return;
     if (!activeProfile) {
       setLoading(false);
+      setRefreshing(false);
       return;
     }
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       setData(res);
       setError(null);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else {
         setError({ title: t('family.loadError'), body: describe(err), retryLoad: true });
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isCurrent()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeProfile, describe, setOffline, t]);
+  }, [activeProfile, beginLoad, describe, setOffline, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -120,14 +135,19 @@ export default function FamilyScreen() {
           text: selfRemoval ? t('family.leaveCircle') : t('family.revokeAccess'),
           style: 'destructive',
           onPress: () => {
+            const isCurrent = captureAction();
             void (async () => {
               setBusyId(caregiver.id);
               setError(null);
               try {
-                await api.delete(`/v1/caregivers/${caregiver.id}`);
+                // The revoke itself must complete even if the user switches profile.
+                // Only UI/global side effects belong to this mounted profile scope.
+                await api.post('/v1/caregivers/revoke', { relationshipId: caregiver.id });
+                if (!isCurrent()) return;
                 setOffline(false);
                 await load();
               } catch (err) {
+                if (!isCurrent()) return;
                 const actionTitle = selfRemoval ? t('family.leaveCircle') : t('family.revokeAccess');
                 if (err instanceof NetworkError) {
                   setOffline(true);
@@ -136,14 +156,14 @@ export default function FamilyScreen() {
                   setError({ title: actionTitle, body: describe(err), retryLoad: false });
                 }
               } finally {
-                setBusyId(null);
+                if (isCurrent()) setBusyId(null);
               }
             })();
           },
         },
       ],
     );
-  }, [activeProfile?.displayName, bidi, describe, load, setOffline, t]);
+  }, [activeProfile?.displayName, bidi, captureAction, describe, load, setOffline, t]);
 
   if (loading) {
     return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
@@ -280,6 +300,17 @@ function CaregiverCard({
 }: { caregiver: CaregiverView; isPrimary: boolean; busy: boolean; onRevoke: () => void }) {
   const { t, formatDate, formatNumber, bidi } = useI18n();
   const theme = useTheme();
+  const { user, activeProfile } = useApp();
+
+  const openCaregiver = () => {
+    if (!user || !activeProfile) return;
+    setCaregiverDetailRouteIntent({
+      userId: user.id,
+      patientProfileId: activeProfile.id,
+      relationshipId: caregiver.id,
+    });
+    router.push('/caregiver/detail');
+  };
 
   const statusStyle = {
     active: { label: t('family.active'), fg: theme.colors.success700, bg: theme.colors.success100 },
@@ -347,7 +378,7 @@ function CaregiverCard({
             </View>
           ) : null}
           {changed.length > 0 ? (
-            <View style={{ gap: 2 }}>
+            <View style={{ gap: theme.spacing.xs }}>
               <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canChange')}</Txt>
               <Txt variant="bodySmall" color={theme.colors.ink500}>{summary(changed)}</Txt>
             </View>
@@ -360,23 +391,30 @@ function CaregiverCard({
           <Button
             label={t('family.manageCaregiver')}
             tone="secondary"
-            onPress={() => router.push(`/caregiver/${caregiver.id}`)}
+            onPress={openCaregiver}
           />
         </View>
-        {!theme.elderlyMode ? (
-          <View style={{ flex: 1 }}>
-            <Button label={t('family.revokeAccess')} tone="ghost" loading={busy} onPress={onRevoke} />
-          </View>
-        ) : null}
+        <View style={{ flex: 1 }}>
+          <Button
+            label={busy ? t('common.loading') : t('family.revokeAccess')}
+            tone="danger"
+            disabled={busy}
+            onPress={onRevoke}
+          />
+        </View>
       </Row>
     </Card>
   );
 }
 
-/** What a caregiver sees when they open the care circle of the patient they follow. */
 function CaregiverSelfView({
   you, patientName, busy, onLeave,
-}: { you: CaregiverView | null; patientName: string; busy: boolean; onLeave: (() => void) | null }) {
+}: {
+  you: CaregiverView | null;
+  patientName: string;
+  busy: boolean;
+  onLeave: (() => void) | null;
+}) {
   const { t } = useI18n();
   const theme = useTheme();
 
@@ -384,43 +422,41 @@ function CaregiverSelfView({
     return <EmptyState title={t('family.yourAccess')} body={t('caregiver.notShared', { name: patientName })} />;
   }
 
-  const seen = you.permissions.filter((p) => !isChange(p));
-  const changed = you.permissions.filter(isChange);
+  const visiblePermissions = you.permissions.filter((p) => !isChange(p));
+  const changePermissions = you.permissions.filter(isChange);
 
   return (
     <>
-      <SectionTitle>{t('family.yourAccess')}</SectionTitle>
       <Card>
-        <Txt variant="bodyLarge" weight="bold">{t('family.youFollow', { name: patientName })}</Txt>
-        <Txt variant="bodySmall" color={theme.colors.ink500}>{t('family.permissionsSetByPatient')}</Txt>
-        <Divider />
-        {you.permissions.length === 0 ? (
-          <Txt variant="bodySmall" color={theme.colors.ink500}>{t('family.seesNothing')}</Txt>
-        ) : (
-          <View style={{ gap: theme.spacing.md }}>
-            {seen.length > 0 ? (
-              <View style={{ gap: theme.spacing.xs }}>
-                <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canSee')}</Txt>
-                {seen.map((p) => (
-                  <Txt key={p} variant="bodySmall" color={theme.colors.ink700}>{`• ${t(`permission.${p}`)}`}</Txt>
-                ))}
-              </View>
-            ) : null}
-            {changed.length > 0 ? (
-              <View style={{ gap: theme.spacing.xs }}>
-                <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canChange')}</Txt>
-                {changed.map((p) => (
-                  <Txt key={p} variant="bodySmall" color={theme.colors.ink700}>{`• ${t(`permission.${p}`)}`}</Txt>
-                ))}
-              </View>
-            ) : null}
-          </View>
-        )}
+        <Txt variant="bodyLarge" weight="bold">{patientName}</Txt>
+        <Txt variant="bodySmall" color={theme.colors.ink500}>{t(`relationship.${you.role}` as 'relationship.other')}</Txt>
       </Card>
 
-      <Button label={t('caregiver.dashboard')} onPress={() => router.push('/caregiver/dashboard')} />
+      <SectionTitle>{t('family.permissions')}</SectionTitle>
+      <Card>
+        {visiblePermissions.length > 0 ? (
+          <View style={{ gap: theme.spacing.xs }}>
+            <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canSee')}</Txt>
+            {visiblePermissions.map((p) => <Txt key={p} variant="bodySmall">• {t(`permission.${p}`)}</Txt>)}
+          </View>
+        ) : null}
+        {visiblePermissions.length > 0 && changePermissions.length > 0 ? <Divider /> : null}
+        {changePermissions.length > 0 ? (
+          <View style={{ gap: theme.spacing.xs }}>
+            <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('family.canChange')}</Txt>
+            {changePermissions.map((p) => <Txt key={p} variant="bodySmall">• {t(`permission.${p}`)}</Txt>)}
+          </View>
+        ) : null}
+        {you.permissions.length === 0 ? <Txt variant="bodySmall" color={theme.colors.ink500}>{t('family.seesNothing')}</Txt> : null}
+      </Card>
+
       {onLeave ? (
-        <Button label={t('family.leaveCircle')} tone="danger" loading={busy} onPress={onLeave} />
+        <Button
+          label={busy ? t('common.loading') : t('family.leaveCircle')}
+          tone="danger"
+          disabled={busy}
+          onPress={onLeave}
+        />
       ) : null}
     </>
   );

@@ -5,11 +5,13 @@ import {
 } from '@dawaee/shared';
 import { DEFAULT_ESCALATION_STAGES } from '@dawaee/core';
 import { loadConfig } from '../config.js';
-import { requireUuid } from '../lib/params.js';
+import { optionalUuid, requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { maskPhone, normalizePhone, randomToken, sha256 } from '../lib/crypto.js';
 import { authenticate, currentUser } from '../middleware/context.js';
-import { loadProfileAccess, requireProfileAccess, requireProfileOwner } from '../services/access-service.js';
+import {
+  loadProfileAccess, profileIdForMedication, requireProfileAccess, requireProfileOwner,
+} from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
 
 /**
@@ -111,11 +113,15 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       );
       const relationship = rows[0]!;
 
-      // Default notification rules so a new caregiver is useful immediately —
-      // missed-only, which is the least intrusive setting that still works.
+      // Push is the only caregiver delivery channel currently backed by a live
+      // provider. The database enum retains WhatsApp/SMS for history and future
+      // activation, but creating an enabled rule for an unavailable provider is
+      // a false promise. Production audit P20 found three such WhatsApp rules,
+      // all enabled despite WhatsApp being intentionally absent from the public
+      // channel contract.
       await tx.query(
         `INSERT INTO caregiver_notification_rules (relationship_id, patient_profile_id, channel, mode)
-         VALUES ($1,$2,'push','missed_only'), ($1,$2,'whatsapp','missed_only')
+         VALUES ($1,$2,'push','missed_only')
          ON CONFLICT (relationship_id, channel) DO NOTHING`,
         [relationship.id, body.patientProfileId],
       );
@@ -129,7 +135,11 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       return { relationshipId: relationship.id, token, expiresAt: relationship.invitation_expires_at, patientName: access.profileDisplayName };
     });
 
-    const link = `${cfg.PUBLIC_APP_URL}/invite/${result.token}`;
+    // The invitation token is a bearer capability. Keep it in the fragment so
+    // it never reaches the app origin, CDN, Render request path or referrer.
+    // The fragment uses a hash-route shape so legacy QA helpers can extract the
+    // token without reintroducing it into HTTP path/query transport.
+    const link = `${cfg.PUBLIC_APP_URL}/invite#/invite/${result.token}`;
     const locale = 'ar' as const;
     const message = t(locale, 'family.inviteBody', {
       patient: result.patientName, hours: body.expiresInHours, link,
@@ -142,10 +152,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
     return {
       relationshipId: result.relationshipId,
       expiresAt: result.expiresAt,
-      // The patient shares these themselves; there is no delivery to report.
       invitationLink: link,
-      // The ready-written message, so the app can offer a share sheet rather
-      // than making the patient compose an explanation of what the link is.
       invitationMessage: message,
     };
   });
@@ -283,8 +290,6 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
           WHERE id = $1`,
         [relationshipId, userId],
       );
-      // Any queued notification to this caregiver is dropped rather than sent
-      // after their access ended.
       await tx.query(
         `UPDATE notification_deliveries SET status = 'skipped'
           WHERE relationship_id = $1 AND status IN ('queued','sending')`,
@@ -303,7 +308,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
   // ------------------------------------------------------ escalation policy
 
   app.get('/v1/escalation-policy', async (req) => {
-    const { medicationId } = req.query as { medicationId?: string };
+    const medicationId = optionalUuid((req.query as { medicationId?: string }).medicationId, 'medicationId');
     const profileId = requireUuid((req.query as { profileId?: string }).profileId, 'profileId');
     const { userId } = currentUser(req);
 
@@ -315,7 +320,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
           WHERE patient_profile_id = $1
             AND (medication_id IS NOT DISTINCT FROM $2::uuid OR medication_id IS NULL)
           ORDER BY medication_id NULLS LAST`,
-        [profileId, medicationId ?? null],
+        [profileId, medicationId],
       );
       const policy = rows[0];
       return {
@@ -339,23 +344,42 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       await requireProfileOwner(tx, userId, profileId);
-      const { rows } = await tx.query(
-        `INSERT INTO escalation_policies
-           (patient_profile_id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end)
-         VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (patient_profile_id) WHERE medication_id IS NULL DO UPDATE
-           SET enabled = EXCLUDED.enabled, stages = EXCLUDED.stages,
-               quiet_hours_start = EXCLUDED.quiet_hours_start, quiet_hours_end = EXCLUDED.quiet_hours_end
-         RETURNING id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end`,
-        [
-          profileId, body.medicationId ?? null, body.enabled, JSON.stringify(body.stages),
-          body.quietHoursStart ?? null, body.quietHoursEnd ?? null,
-        ],
-      );
+
+      if (body.medicationId) {
+        // A user may legitimately own several patient profiles. A medication id
+        // that is visible to this user is therefore not proof that it belongs to
+        // the profile whose escalation ladder is being edited. Without this
+        // binding the worker can join profile A's policy to profile B's medicine.
+        const medicationProfileId = await profileIdForMedication(tx, body.medicationId);
+        if (medicationProfileId !== profileId) {
+          throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Medication does not belong to this patient profile');
+        }
+      }
+
+      const sql = body.medicationId
+        ? `INSERT INTO escalation_policies
+             (patient_profile_id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (patient_profile_id, medication_id) WHERE medication_id IS NOT NULL DO UPDATE
+             SET enabled = EXCLUDED.enabled, stages = EXCLUDED.stages,
+                 quiet_hours_start = EXCLUDED.quiet_hours_start, quiet_hours_end = EXCLUDED.quiet_hours_end
+           RETURNING id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end`
+        : `INSERT INTO escalation_policies
+             (patient_profile_id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (patient_profile_id) WHERE medication_id IS NULL DO UPDATE
+             SET enabled = EXCLUDED.enabled, stages = EXCLUDED.stages,
+                 quiet_hours_start = EXCLUDED.quiet_hours_start, quiet_hours_end = EXCLUDED.quiet_hours_end
+           RETURNING id, medication_id, enabled, stages, quiet_hours_start, quiet_hours_end`;
+
+      const { rows } = await tx.query(sql, [
+        profileId, body.medicationId ?? null, body.enabled, JSON.stringify(body.stages),
+        body.quietHoursStart ?? null, body.quietHoursEnd ?? null,
+      ]);
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'caregiver.notify_rules_changed',
         entityType: 'escalation_policy', entityId: rows[0]!.id, requestId: req.id, ipHash: req.ipHash,
-        newValue: { enabled: body.enabled, stages: body.stages },
+        newValue: { enabled: body.enabled, medicationId: body.medicationId ?? null, stages: body.stages },
       });
       return { policy: rows[0] };
     });

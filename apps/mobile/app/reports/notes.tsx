@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { SYMPTOM_TAGS, errorMessageKey, type MessageKey, type SymptomTag } from '@dawaee/shared';
@@ -60,6 +61,11 @@ function parseNumber(raw: string): number | null {
 }
 
 export default function NotesScreen() {
+  const { user, activeProfile } = useApp();
+  return <NotesProfileScreen key={profileScopeKey(user?.id, activeProfile)} />;
+}
+
+function NotesProfileScreen() {
   const { t, formatDate, formatTime, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
@@ -249,7 +255,7 @@ export default function NotesScreen() {
             value={noteText}
             onChangeText={(value) => { setNoteText(value); setNoteError(null); }}
             hint={t('common.optional')}
-            maxLength={1000}
+            maxLength={2000}
             multiline
             error={noteError}
           />

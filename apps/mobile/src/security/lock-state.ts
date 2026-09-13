@@ -166,7 +166,11 @@ export function lockReducer(state: LockState, event: LockEvent): LockState {
       // active
       if (!state.pendingRelock) return { ...state, phase: 'unlocked' };
       const away = state.backgroundedAt === null ? Infinity : event.now - state.backgroundedAt;
-      if (away < RELOCK_GRACE_MS) {
+      // The grace window is valid only for a forward-moving wall clock. If the
+      // device clock moves backwards while Dawaee is backgrounded, the elapsed
+      // duration is unknowable; fail closed rather than treating a negative
+      // duration as "less than ten seconds" and silently bypassing re-lock.
+      if (away >= 0 && away < RELOCK_GRACE_MS) {
         return { ...state, phase: 'unlocked', pendingRelock: false, backgroundedAt: null };
       }
       return { ...state, phase: 'locked', backgroundedAt: null };

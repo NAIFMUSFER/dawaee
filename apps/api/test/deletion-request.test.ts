@@ -76,11 +76,13 @@ describe('requesting account deletion', () => {
    * erased is the most visible possible way to ignore the request.
    */
   it('silences every device the account had registered', async () => {
-    const other = await signIn(h, '0577000002');
-    await h.app.inject({
+    const deviceId = 'erase-device-1';
+    const other = await signIn(h, '0577000002', deviceId);
+    const registration = await h.app.inject({
       method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(other),
-      payload: { token: 'ExponentPushToken[to-be-erased]', platform: 'ios', deviceId: 'erase-device-1' },
+      payload: { token: 'ExponentPushToken[to-be-erased]', platform: 'ios', deviceId },
     });
+    expect(registration.statusCode, registration.body).toBe(200);
 
     await request({ confirm: true }, other);
 
