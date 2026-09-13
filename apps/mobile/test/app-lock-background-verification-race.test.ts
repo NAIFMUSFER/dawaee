@@ -116,4 +116,34 @@ describe('app-lock background verification races', () => {
     state = lockReducer(state, { type: 'credentialVerified' });
     expect(state.phase).toBe('locked');
   });
+
+  it('allows a new biometric prompt started after resume to unlock', () => {
+    let state = locked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 9_000 });
+    state = lockReducer(state, {
+      type: 'appStatus',
+      status: 'active',
+      now: 9_000 + RELOCK_GRACE_MS + 1,
+    });
+    expect(state.phase).toBe('locked');
+
+    state = lockReducer(state, { type: 'verificationStarted' });
+    state = lockReducer(state, { type: 'verified' });
+    expect(state.phase).toBe('unlocked');
+  });
+
+  it('allows a new area prompt after resume while rejecting the pre-background one', () => {
+    let state = unlocked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 10_000 });
+    state = lockReducer(state, {
+      type: 'appStatus',
+      status: 'active',
+      now: 10_000 + RELOCK_GRACE_MS - 1,
+    });
+    expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(true);
+
+    state = lockReducer(state, { type: 'verificationStarted' });
+    state = lockReducer(state, { type: 'areaVerified', area: 'reports' });
+    expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(false);
+  });
 });
