@@ -18,6 +18,18 @@ export class ExpoPushProvider implements PushProvider {
     };
   }
 
+  private async post(url: string, body: unknown): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      return await fetch(url, {
+        method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async send(messages: PushMessage[]): Promise<PushSendResult[]> {
     if (messages.length === 0) return [];
     const results: PushSendResult[] = [];
@@ -39,25 +51,33 @@ export class ExpoPushProvider implements PushProvider {
       }));
 
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15_000);
-        const res = await fetch('https://exp.host/--/api/v2/push/send', {
-          method: 'POST', headers: this.headers(), body: JSON.stringify(body), signal: controller.signal,
-        });
-        clearTimeout(timer);
-
+        const res = await this.post('https://exp.host/--/api/v2/push/send', body);
         const json = (await res.json().catch(() => ({}))) as {
-          data?: Array<{ status: string; id?: string; message?: string; details?: { error?: string } }>;
+          data?: Array<{ status?: string; id?: string; message?: string; details?: { error?: string } }>;
         };
-        if (!res.ok || !json.data) {
-          for (const _ of batch) results.push({ ok: false, errorCode: `http_${res.status}`, retryable: res.status >= 500 });
+        if (!res.ok || !Array.isArray(json.data)) {
+          const errorCode = res.ok ? 'malformed_provider_response' : `http_${res.status}`;
+          for (const _ of batch) {
+            results.push({ ok: false, errorCode, retryable: res.ok || res.status >= 500 });
+          }
           continue;
         }
 
-        json.data.forEach((ticket, idx) => {
+        for (let idx = 0; idx < batch.length; idx += 1) {
+          const ticket = json.data[idx];
+          if (!ticket) {
+            results.push({ ok: false, errorCode: 'malformed_provider_response', retryable: true });
+            continue;
+          }
           if (ticket.status === 'ok') {
-            results.push({ ok: true, providerMessageId: ticket.id });
-          } else {
+            if (typeof ticket.id === 'string' && ticket.id.length > 0) {
+              results.push({ ok: true, providerMessageId: ticket.id });
+            } else {
+              results.push({ ok: false, errorCode: 'malformed_provider_response', retryable: true });
+            }
+            continue;
+          }
+          if (ticket.status === 'error') {
             const error = ticket.details?.error;
             results.push({
               ok: false,
@@ -66,8 +86,10 @@ export class ExpoPushProvider implements PushProvider {
               invalidTokens: error === 'DeviceNotRegistered' ? [batch[idx]!.token] : undefined,
               retryable: error === 'MessageRateExceeded',
             });
+            continue;
           }
-        });
+          results.push({ ok: false, errorCode: 'malformed_provider_response', retryable: true });
+        }
       } catch (err) {
         for (const _ of batch) {
           results.push({
@@ -88,31 +110,23 @@ export class ExpoPushProvider implements PushProvider {
 
     for (let i = 0; i < providerMessageIds.length; i += 500) {
       const ids = providerMessageIds.slice(i, i + 500);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15_000);
-      try {
-        const res = await fetch('https://exp.host/--/api/v2/push/getReceipts', {
-          method: 'POST', headers: this.headers(), body: JSON.stringify({ ids }), signal: controller.signal,
-        });
-        const json = (await res.json().catch(() => ({}))) as {
-          data?: Record<string, { status?: string; message?: string; details?: { error?: string } }>;
-        };
-        if (!res.ok || !json.data) throw new Error(`Expo push receipt request failed with HTTP ${res.status}`);
+      const res = await this.post('https://exp.host/--/api/v2/push/getReceipts', { ids });
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: Record<string, { status?: string; message?: string; details?: { error?: string } }>;
+      };
+      if (!res.ok || !json.data) throw new Error(`Expo push receipt request failed with HTTP ${res.status}`);
 
-        for (const [id, receipt] of Object.entries(json.data)) {
-          if (receipt.status === 'ok') {
-            results.push({ providerMessageId: id, status: 'ok' });
-          } else if (receipt.status === 'error') {
-            results.push({
-              providerMessageId: id,
-              status: 'error',
-              errorCode: receipt.details?.error ?? 'push_receipt_error',
-              errorDetail: receipt.message,
-            });
-          }
+      for (const [id, receipt] of Object.entries(json.data)) {
+        if (receipt.status === 'ok') {
+          results.push({ providerMessageId: id, status: 'ok' });
+        } else if (receipt.status === 'error') {
+          results.push({
+            providerMessageId: id,
+            status: 'error',
+            errorCode: receipt.details?.error ?? 'push_receipt_error',
+            errorDetail: receipt.message,
+          });
         }
-      } finally {
-        clearTimeout(timer);
       }
     }
     return results;
