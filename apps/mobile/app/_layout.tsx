@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -50,19 +50,20 @@ function Shell() {
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
-  useWebAlertAdapter();
+  const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
+  const previousClinicalRouteScope = useRef<string | null>(null);
 
-  /**
-   * Clinical route handoffs deliberately live only in process memory. They are
-   * scoped by account/profile, but a logout followed by a fast re-login as the
-   * same person would otherwise leave the previous medication/caregiver id in
-   * memory until its TTL elapsed. Authentication and patient-profile changes
-   * are privacy boundaries: discard every pending selection before a stale
-   * fixed detail route can revive it under the new context.
-   */
-  useEffect(() => {
+  // This fence is deliberately synchronous. Clearing in useEffect is too late:
+  // a fixed detail child renders first and can capture a stale process-local id
+  // before passive effects run. A speculative render may discard a short-lived
+  // navigation selection, which is the fail-closed outcome for this privacy
+  // boundary; it never discards server data or persisted clinical state.
+  if (previousClinicalRouteScope.current !== clinicalRouteScope) {
     clearClinicalRouteIntents();
-  }, [signedIn, user?.id, activeProfile?.id]);
+    previousClinicalRouteScope.current = clinicalRouteScope;
+  }
+
+  useWebAlertAdapter();
 
   useEffect(() => {
     void configureChannels();
