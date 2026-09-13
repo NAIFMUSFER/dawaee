@@ -86,8 +86,6 @@ export class ExpoPushProvider implements PushProvider {
     if (providerMessageIds.length === 0) return [];
     const results: PushReceiptResult[] = [];
 
-    // Expo accepts up to 1,000 receipt IDs per request; smaller batches bound a
-    // single worker tick's response and retry cost.
     for (let i = 0; i < providerMessageIds.length; i += 500) {
       const ids = providerMessageIds.slice(i, i + 500);
       const controller = new AbortController();
@@ -112,8 +110,6 @@ export class ExpoPushProvider implements PushProvider {
               errorDetail: receipt.message,
             });
           }
-          // Missing IDs are intentionally omitted. The worker keeps them
-          // pending instead of inventing a provider result.
         }
       } finally {
         clearTimeout(timer);
@@ -141,13 +137,17 @@ export class MockPushProvider implements PushProvider {
   }
 
   async getReceipts(providerMessageIds: string[]): Promise<PushReceiptResult[]> {
-    return providerMessageIds.flatMap((id) => {
-      if (this.pendingReceipts.has(id)) return [];
+    const results: PushReceiptResult[] = [];
+    for (const id of providerMessageIds) {
+      if (this.pendingReceipts.has(id)) continue;
       const errorCode = this.receiptErrors.get(id);
-      return errorCode
-        ? [{ providerMessageId: id, status: 'error' as const, errorCode, errorDetail: `mock receipt: ${errorCode}` }]
-        : [{ providerMessageId: id, status: 'ok' as const }];
-    });
+      if (errorCode) {
+        results.push({ providerMessageId: id, status: 'error', errorCode, errorDetail: `mock receipt: ${errorCode}` });
+      } else {
+        results.push({ providerMessageId: id, status: 'ok' });
+      }
+    }
+    return results;
   }
 
   reset(): void {
