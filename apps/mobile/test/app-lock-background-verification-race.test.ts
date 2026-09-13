@@ -69,4 +69,51 @@ describe('app-lock background verification races', () => {
 
     expect(state.phase).not.toBe('unlocked');
   });
+
+  it('keeps a stale biometric result invalid after background has already returned active', () => {
+    let state = locked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 6_000 });
+    state = lockReducer(state, {
+      type: 'appStatus',
+      status: 'active',
+      now: 6_000 + RELOCK_GRACE_MS + 1,
+    });
+    expect(state.phase).toBe('locked');
+
+    // This result belongs to the prompt that was interrupted before the real
+    // background event. Returning active must not make that old promise valid.
+    state = lockReducer(state, { type: 'verified' });
+    expect(state.phase).toBe('locked');
+  });
+
+  it('does not restore a stale area verification after an eligible grace return', () => {
+    let state = unlocked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 7_000 });
+    state = lockReducer(state, {
+      type: 'appStatus',
+      status: 'active',
+      now: 7_000 + RELOCK_GRACE_MS - 1,
+    });
+    expect(state.phase).toBe('unlocked');
+    expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(true);
+
+    // Area verification that started before the background is stale even when
+    // the whole app itself legitimately receives the short grace window.
+    state = lockReducer(state, { type: 'areaVerified', area: 'reports' });
+    expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(true);
+  });
+
+  it('keeps a stale password result invalid after background has returned active', () => {
+    let state = locked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 8_000 });
+    state = lockReducer(state, {
+      type: 'appStatus',
+      status: 'active',
+      now: 8_000 + RELOCK_GRACE_MS + 1,
+    });
+    expect(state.phase).toBe('locked');
+
+    state = lockReducer(state, { type: 'credentialVerified' });
+    expect(state.phase).toBe('locked');
+  });
 });
