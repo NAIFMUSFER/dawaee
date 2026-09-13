@@ -138,7 +138,7 @@ const schema = z.object({
   STORAGE_LOCAL_DIR: z.string().default('./.storage'),
   UPLOAD_MAX_BYTES: z.coerce.number().int().default(15 * 1024 * 1024),
 
-  PUBLIC_APP_URL: z.string().default('https://dawaee.app'),
+  PUBLIC_APP_URL: z.string().url().default('https://dawaee.app'),
 });
 
 export type Config = z.infer<typeof schema> & {
@@ -172,6 +172,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     if (cfg.TRUST_CF_CONNECTING_IP && cfg.TRUST_PROXY_HOPS !== 1) {
       throw new Error('TRUST_CF_CONNECTING_IP requires TRUST_PROXY_HOPS=1');
+    }
+    // Emergency QR capabilities live in the URL fragment. The fragment is not
+    // sent to an HTTP server, but an active network attacker on an HTTP origin
+    // could replace the page that reads it and exfiltrate the capability.
+    if (new URL(cfg.PUBLIC_APP_URL).protocol !== 'https:') {
+      throw new Error('PUBLIC_APP_URL must use https in production');
     }
     // Fails the boot rather than the audit. `no-verify` accepts any
     // certificate from anyone, which leaves an active attacker between Render
