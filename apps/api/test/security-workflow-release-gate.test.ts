@@ -20,9 +20,10 @@ describe('security workflow release gate', () => {
   it('keeps the required CodeQL check fail-closed behind secret and container scanning', () => {
     const block = jobBlock(securityWorkflow(), 'codeql');
 
-    expect(block).toMatch(/\n    needs:\s*secret-and-container-scan\b/);
+    expect(block).toMatch(/\n    needs:\s*\[\s*secrets\s*,\s*container\s*\]/);
     expect(block).toMatch(/\n    if:\s*\$\{\{\s*always\(\)\s*\}\}/);
-    expect(block).toMatch(/needs\.secret-and-container-scan\.result\s*!=\s*['"]success['"]/);
+    expect(block).toMatch(/needs\.secrets\.result\s*!=\s*['"]success['"]/);
+    expect(block).toMatch(/needs\.container\.result\s*!=\s*['"]success['"]/);
     expect(block).toMatch(/exit\s+1\b/);
   });
 });
