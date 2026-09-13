@@ -15,7 +15,7 @@ const source = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 describe('caregiver permission editors cannot create unusable grants', () => {
   for (const [name, path] of [
     ['invite', 'apps/mobile/app/caregiver/invite.tsx'],
-    ['existing caregiver', 'apps/mobile/app/caregiver/[id].tsx'],
+    ['existing caregiver', 'apps/mobile/app/caregiver/detail.tsx'],
   ] as const) {
     it(`${name} uses the shared dependency-aware toggle`, () => {
       const src = source(path);
