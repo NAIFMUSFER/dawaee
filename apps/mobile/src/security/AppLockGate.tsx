@@ -172,6 +172,12 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
    */
   const area = exempt || phase !== 'unlocked' ? null : areaForPath(pathname ?? '');
   const areaLocked = area !== null && api.needsArea(area);
+  // An opaque overlay is only a visual boundary. Without removing the mounted
+  // route tree from accessibility, TalkBack/VoiceOver (and web AT via aria)
+  // can still discover PHI underneath the lock. Keep the screen mounted to
+  // preserve drafts, but make it non-existent to assistive technology while
+  // either the whole-app or per-area gate is active.
+  const contentHiddenFromAccessibility = phase !== 'unlocked' || areaLocked;
 
   const verifyCurrentArea = useCallback(async () => {
     if (area === null) return;
@@ -194,7 +200,14 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   return (
     <AppLockContext.Provider value={api}>
       <View style={{ flex: 1 }}>
-        {children}
+        <View
+          style={{ flex: 1 }}
+          aria-hidden={contentHiddenFromAccessibility}
+          accessibilityElementsHidden={contentHiddenFromAccessibility}
+          importantForAccessibility={contentHiddenFromAccessibility ? 'no-hide-descendants' : 'auto'}
+        >
+          {children}
+        </View>
 
         {/*
           Area gate. Drawn over the screen the same way, so the protected
