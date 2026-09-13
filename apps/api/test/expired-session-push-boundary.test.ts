@@ -66,7 +66,8 @@ describe('remote push eligibility follows current device authentication', () => 
     ]);
 
     // The real non-bypass worker receives only provider routing strings and no
-    // auth-session data. This is the exact DB contract used by dispatcher.ts.
+    // auth-session data. This legacy bounded helper remains a compatibility
+    // control for the same exact-session eligibility contract.
     const eligible = await worker.query<{ token: string }>(
       'SELECT token FROM app.list_live_push_tokens($1, 5)',
       [expired.userId],
@@ -94,9 +95,9 @@ describe('remote push eligibility follows current device authentication', () => 
     }]);
   });
 
-  it('pins the dispatcher to the live-session function instead of active=true alone', () => {
+  it('pins the dispatcher to the receipt-aware live-session function instead of active=true alone', () => {
     const src = fs.readFileSync(new URL('../../worker/src/jobs/dispatcher.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/SELECT token FROM app\.list_live_push_tokens\(\$1, 5\)/);
-    expect(src).not.toMatch(/SELECT\s+token\s+FROM\s+push_tokens\s+WHERE\s+user_id/i);
+    expect(src).toMatch(/SELECT push_token_id, token FROM app\.list_live_push_endpoints\(\$1, 5\)/);
+    expect(src).not.toMatch(/SELECT\s+(?:push_token_id,\s*)?token\s+FROM\s+push_tokens\s+WHERE\s+user_id/i);
   });
 });
