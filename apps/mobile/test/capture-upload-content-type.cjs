@@ -75,7 +75,11 @@ for (const mime of ['image/png', 'image/webp', 'image/heic']) {
       await chooseAndFlush(ctx);
       assert.equal(ctx.requests.length, 1);
       assert.equal(ctx.requests[0].route, '/v1/uploads/request');
-      assert.deepEqual(ctx.requests[0].body, {
+      // The screen runs in the VM harness, so its object prototype belongs to a
+      // different realm. Normalize through JSON before structural comparison;
+      // this keeps the regression about the request payload rather than realm
+      // identity while still pinning every serialized field and value.
+      assert.deepEqual(JSON.parse(JSON.stringify(ctx.requests[0].body)), {
         purpose: 'medication_image',
         contentType: mime,
         byteSize: 321,
