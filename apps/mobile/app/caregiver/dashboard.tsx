@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, SafetyNote, SectionTitle, Txt,
@@ -45,15 +45,13 @@ function isoDate(date: Date): string {
 }
 
 export default function CaregiverDashboardScreen() {
-  const { profileId } = useLocalSearchParams<{ profileId?: string }>();
   const { profiles, activeProfile, user } = useApp();
 
   const followed = useMemo(() => profiles.filter((p) => p.role === 'caregiver'), [profiles]);
   const patient = useMemo<ProfileSummary | null>(() => {
-    if (profileId) return profiles.find((p) => p.id === profileId) ?? null;
     if (activeProfile && activeProfile.role === 'caregiver') return activeProfile;
     return followed[0] ?? null;
-  }, [activeProfile, followed, profileId, profiles]);
+  }, [activeProfile, followed]);
 
   // Patient identity and permission changes are privacy boundaries. Remounting
   // the patient-scoped view removes the previous patient's data on the first
@@ -76,7 +74,7 @@ function CaregiverPatientDashboard({
 }) {
   const { t, formatDate, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
-  const { offline, setOffline } = useApp();
+  const { offline, setOffline, setActiveProfile } = useApp();
 
   const [today, setToday] = useState<TodayResponse | null>(null);
   const [adherence, setAdherence] = useState<AdherenceResponse | null>(null);
@@ -215,7 +213,7 @@ function CaregiverPatientDashboard({
                   label={`${p.id === patient.id ? '✓ ' : ''}${p.displayName}`}
                   tone={p.id === patient.id ? 'primary' : 'secondary'}
                   fullWidth={false}
-                  onPress={() => router.setParams({ profileId: p.id })}
+                  onPress={() => setActiveProfile(p.id)}
                 />
               ))}
             </Row>
