@@ -11,6 +11,7 @@ import { configureCategories, configureChannels, startNotificationActionListener
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
+import { clearMedicationDrafts } from '@/storage/medication-draft';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -54,12 +55,14 @@ function Shell() {
   const previousClinicalRouteScope = useRef<string | null>(null);
 
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
-  // a fixed detail child renders first and can capture a stale process-local id
-  // before passive effects run. A speculative render may discard a short-lived
-  // navigation selection, which is the fail-closed outcome for this privacy
-  // boundary; it never discards server data or persisted clinical state.
+  // fixed-route children can read stale process-local ids or OCR medication
+  // drafts before passive effects run. A speculative render may discard a
+  // short-lived navigation selection/draft, which is the fail-closed outcome
+  // for this privacy boundary; it never discards server data or persisted
+  // clinical state.
   if (previousClinicalRouteScope.current !== clinicalRouteScope) {
     clearClinicalRouteIntents();
+    clearMedicationDrafts();
     previousClinicalRouteScope.current = clinicalRouteScope;
   }
 
