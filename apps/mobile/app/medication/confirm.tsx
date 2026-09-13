@@ -20,6 +20,7 @@ import {
 } from '@dawaee/shared';
 
 const CONFIDENCE_FLOOR = 0.75;
+const MAX_STRENGTH_VALUE = 100_000;
 
 function asEnum<T extends string>(allowed: readonly T[], value: string | undefined): T | null {
   if (!value) return null;
@@ -57,6 +58,7 @@ function ConfirmMedicationProfileScreen() {
   const [barcode, setBarcode] = useState(reading('barcode'));
   const [instructions, setInstructions] = useState(reading('instructions'));
   const [nameError, setNameError] = useState<string | null>(null);
+  const [strengthError, setStrengthError] = useState<string | null>(null);
 
   const formOptions = useMemo(
     () => MEDICATION_FORMS.map((value) => ({ value, label: t(`form.${value}` as MessageKey) })),
@@ -75,13 +77,19 @@ function ConfirmMedicationProfileScreen() {
       setNameError(t('medication.nameRequired'));
       return;
     }
-    const strength = strengthValue.trim() === '' ? null : Number(strengthValue.replace(',', '.'));
+    const rawStrength = strengthValue.trim();
+    const strength = rawStrength === '' ? null : Number(rawStrength.replace(',', '.'));
+    if (strength !== null && (!Number.isFinite(strength) || strength <= 0 || strength > MAX_STRENGTH_VALUE)) {
+      setStrengthError(t('error.validation_failed'));
+      return;
+    }
+    setStrengthError(null);
     setMedicationPrefillDraft({
       patientProfileId: payload.patientProfileId,
       name: trimmed,
       form,
-      strengthValue: strength !== null && Number.isFinite(strength) ? strength : null,
-      strengthUnit: strength !== null && Number.isFinite(strength) ? strengthUnit : null,
+      strengthValue: strength,
+      strengthUnit: strength !== null ? strengthUnit : null,
       brandName: brandName.trim() || null,
       genericName: genericName.trim() || null,
       manufacturer: manufacturer.trim() || null,
@@ -133,7 +141,16 @@ function ConfirmMedicationProfileScreen() {
           <Picker label={t('medication.form')} options={formOptions} value={form} onChange={setForm} />
           <Divider />
           <Provenance source={detected.strengthValue} />
-          <Field label={t('medication.strengthValue')} value={strengthValue} onChangeText={setStrengthValue} keyboardType="decimal-pad" />
+          <Field
+            label={t('medication.strengthValue')}
+            value={strengthValue}
+            onChangeText={(value) => {
+              setStrengthValue(value);
+              setStrengthError(null);
+            }}
+            keyboardType="decimal-pad"
+            error={strengthError}
+          />
           <Provenance source={detected.strengthUnit} />
           <Picker label={t('medication.strengthUnit')} options={strengthUnitOptions} value={strengthUnit} onChange={setStrengthUnit} />
         </Card>
