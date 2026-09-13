@@ -30,18 +30,23 @@ function schedule(label: string) {
 }
 
 describe('schedule save mutation profile isolation', () => {
-  it('late patient A schedule save cannot navigate the already-switched patient B UI', async () => {
+  it('late patient A schedule save cannot navigate after profile switch drops the A-bound route intent', async () => {
     const patchGate = deferred();
     const replacements: string[] = [];
     let getCount = 0;
     const h = createHarness(screen, hook, {}, {
       'expo-router': {
-        useLocalSearchParams: () => ({ medicationId, mode: 'edit', scheduleId }),
         router: {
           back: () => undefined,
           push: () => undefined,
           replace: (route: string) => { replacements.push(route); },
         },
+      },
+      '@/navigation/private-navigation': {
+        getMedicationScheduleRouteIntent: (_userId: string, patientProfileId: string) => patientProfileId === 'A'
+          ? { userId: 'synthetic-account', patientProfileId: 'A', medicationId, mode: 'edit', scheduleId }
+          : null,
+        setMedicationDetailRouteIntent: () => undefined,
       },
       '@/components/DateField': {
         DateField: 'DateField',
@@ -75,7 +80,10 @@ describe('schedule save mutation profile isolation', () => {
       h.switchProfile('B');
       await h.flush();
       expect(h.app.activeProfile.id).toBe('B');
-      expect(h.text()).toContain('19:47');
+      expect(h.text()).not.toContain('06:13');
+      expect(h.text()).not.toContain('19:47');
+      expect(h.text()).toContain('error.not_found');
+      expect(getCount).toBe(1);
 
       patchGate.resolve({});
       await h.flush();

@@ -41,18 +41,24 @@ function sharedOverride() {
 }
 
 describe('medication editor save mutation profile isolation', () => {
-  it('late patient A edit completion cannot navigate patient B into patient A medication', async () => {
+  it('late patient A edit completion cannot navigate after profile switch drops the A-bound route intent', async () => {
     const patchGate = deferred();
     const navigations: string[] = [];
     let getCount = 0;
     const h = createHarness(screen, hook, {}, {
       'expo-router': {
-        useLocalSearchParams: () => ({ mode: 'edit', id: medicationId }),
         router: {
           back: () => undefined,
           push: () => undefined,
           replace: (route: string) => { navigations.push(route); },
         },
+      },
+      '@/navigation/private-navigation': {
+        getMedicationEditRouteIntent: (_userId: string, patientProfileId: string) => patientProfileId === 'A'
+          ? { userId: 'synthetic-account', patientProfileId: 'A', medicationId }
+          : null,
+        setMedicationDetailRouteIntent: () => undefined,
+        setMedicationScheduleRouteIntent: () => undefined,
       },
       '@/components/DateField': {
         DateField: 'DateField',
@@ -83,7 +89,10 @@ describe('medication editor save mutation profile isolation', () => {
       h.switchProfile('B');
       await h.flush();
       expect(h.app.activeProfile.id).toBe('B');
-      expect(h.text()).toContain('SYNTHETIC-B-ONLY');
+      expect(h.text()).not.toContain('SYNTHETIC-A-ONLY');
+      expect(h.text()).not.toContain('SYNTHETIC-B-ONLY');
+      expect(h.text()).toContain('medication.createTitle');
+      expect(getCount).toBe(1);
 
       patchGate.resolve({});
       await h.flush();
