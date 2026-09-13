@@ -42,7 +42,7 @@ services:
     # instance until the same `/health/ready` contract the release audit uses is
     # green. The old live API remains available while a replacement is starting.
     healthCheckPath: /health/ready
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     # Migrations do NOT run here: Render only allows preDeployCommand on paid
     # instances. They run on the worker instead (see below). API startup itself
     # also refuses to bind a port until the required schema is present, and the
@@ -140,7 +140,7 @@ services:
     dockerfilePath: ./Dockerfile
     plan: starter            # background workers have no free plan on Render
     region: frankfurt
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     # Schema migrations for the whole system run here, before this deploy goes
     # live. Keep them on a paid instance — free instances cannot run them.
     preDeployCommand: ./scripts/migrate.sh
