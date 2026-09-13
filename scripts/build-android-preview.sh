@@ -88,7 +88,7 @@ if "package: name='app.dawaee.mobile.preview'" not in badging:
     raise SystemExit('Unexpected APK application id')
 with zipfile.ZipFile(apk) as archive:
     names = set(archive.namelist())
-    for name in ('AndroidManifest.xml', 'classes.dex', 'assets/index.android.bundle', 'lib/arm64-v8a/libhermes.so'):
+    for name in ('AndroidManifest.xml', 'classes.dex', 'assets/index.android.bundle', 'lib/arm64-v8a/libhermesvm.so'):
         if name not in names:
             raise SystemExit('Missing native artifact: ' + name)
     if archive.testzip() is not None:
