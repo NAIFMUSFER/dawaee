@@ -8,7 +8,7 @@ const { createHarness, deferred, NetworkError, ApiError } = require('./profile-s
   ApiError: new (code: string) => Error;
 };
 
-const screen = path.resolve(process.cwd(), 'apps/mobile/app/caregiver/[id].tsx');
+const screen = path.resolve(process.cwd(), 'apps/mobile/app/caregiver/detail.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 const relationshipId = 'relationship-under-test';
 
@@ -25,14 +25,12 @@ function sharedOverride() {
 function overrides() {
   return {
     'expo-router': {
-      useLocalSearchParams: () => ({}),
       router: { back: () => undefined, push: () => undefined, replace: () => undefined },
     },
     '@/navigation/private-navigation': {
       getCaregiverDetailRouteIntent: (userId: string, patientProfileId: string) => ({
         userId, patientProfileId, relationshipId,
       }),
-      setCaregiverDetailRouteIntent: () => undefined,
     },
     '@dawaee/shared': sharedOverride(),
   };
@@ -89,12 +87,16 @@ function mutationHarness() {
       View: 'View',
     },
     'expo-router': {
-      useLocalSearchParams: () => ({ id: relationshipId }),
       router: {
         back: () => undefined,
         push: () => undefined,
         replace: (route: string) => { replacements.push(route); },
       },
+    },
+    '@/navigation/private-navigation': {
+      getCaregiverDetailRouteIntent: (userId: string, patientProfileId: string) => ({
+        userId, patientProfileId, relationshipId,
+      }),
     },
     '@/api/client': {
       NetworkError,
@@ -185,8 +187,6 @@ describe('caregiver detail profile/request isolation', () => {
       const b = h.batch().filter((request: any) => !a.includes(request));
       expect(b).toHaveLength(1);
 
-      // The selection has already changed. Old-patient data must disappear in
-      // that render, before B's asynchronous response has any chance to arrive.
       expect(h.app.activeProfile.id).toBe('B');
       expect(h.text()).not.toContain('SYNTHETIC-A-ONLY');
     } finally {
