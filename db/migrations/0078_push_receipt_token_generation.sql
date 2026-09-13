@@ -1,4 +1,4 @@
--- 0077_push_receipt_token_generation.sql
+-- 0078_push_receipt_token_generation.sql
 -- A push_tokens row is stable across same-device re-registration, while the
 -- provider token stored in that row can rotate. Receipt reconciliation must
 -- therefore bind DeviceNotRegistered to the exact provider-token generation

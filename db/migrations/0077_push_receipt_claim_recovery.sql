@@ -1,4 +1,4 @@
--- 0078_push_receipt_claim_recovery.sql
+-- 0077_push_receipt_claim_recovery.sql
 -- Receipt claims are intentionally short-lived. If a worker process dies after
 -- claiming a batch but before completing it, the row must become claimable
 -- again rather than remaining in receipt_state='checking' forever.
