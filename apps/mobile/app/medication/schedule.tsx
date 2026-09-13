@@ -104,7 +104,8 @@ function ScheduleProfileScreen({
   const [startDate, setStartDate] = useState(() => todayLocalDate(activeProfile?.timezone));
   const [endDate, setEndDate] = useState('');
 
-  const [scheduleId, setScheduleId] = useState<string | null>(selectedScheduleId ?? null);
+  // A route selection is a fetch target, not proof that its draft was loaded.
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
   const [validation, setValidation] = useState<string | null>(null);
@@ -114,7 +115,6 @@ function ScheduleProfileScreen({
   const separator = isRtl ? '، ' : ', ';
 
   const hydrate = useCallback((schedule: MedicationScheduleView) => {
-    setScheduleId(schedule.id);
     setDoseQuantity(String(schedule.doseQuantity));
     setDoseUnit(schedule.doseUnit);
     setStartDate(schedule.startDate);
@@ -142,6 +142,7 @@ function ScheduleProfileScreen({
       setMaxPerDay(rule.maxPerDay === undefined ? '' : String(rule.maxPerDay));
       setMinHoursBetween(rule.minHoursBetween === undefined ? '' : String(rule.minHoursBetween));
     }
+    setScheduleId(schedule.id);
   }, []);
 
   useEffect(() => {
@@ -278,7 +279,7 @@ function ScheduleProfileScreen({
   }, [t]);
 
   const save = async (confirmHighRiskChange = false) => {
-    if (!medicationId) return;
+    if (!medicationId || (isEdit && !scheduleId)) return;
     const rule = buildRule();
     if (!rule) {
       setValidation(
@@ -345,11 +346,11 @@ function ScheduleProfileScreen({
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
 
-  if (!medicationId) {
+  if (!medicationId || (isEdit && !scheduleId)) {
     return (
       <SafeAreaView style={{ flex: 1 }}>
         <Screen>
-          <Banner tone="danger" title={t('error.not_found')} />
+          <Banner tone="danger" title={error ?? t('error.not_found')} />
           <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
         </Screen>
       </SafeAreaView>
