@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '../../..');
 const listScreen = readFileSync(resolve(ROOT, 'apps/mobile/app/(tabs)/medications.tsx'), 'utf8');
 const detailScreen = readFileSync(resolve(ROOT, 'apps/mobile/app/medication/detail.tsx'), 'utf8');
+const legacyScreen = readFileSync(resolve(ROOT, 'apps/mobile/app/medication/[id].tsx'), 'utf8');
 const handoff = readFileSync(resolve(ROOT, 'apps/mobile/src/navigation/private-navigation.ts'), 'utf8');
 
 describe('medication detail browser URL privacy', () => {
@@ -18,6 +19,12 @@ describe('medication detail browser URL privacy', () => {
     expect(detailScreen).not.toContain('useLocalSearchParams');
     expect(detailScreen).toContain('getMedicationDetailRouteIntent');
     expect(detailScreen).toContain("medicationId={medicationId}");
+  });
+
+  it('fails closed on the legacy dynamic route instead of ingesting its id', () => {
+    expect(legacyScreen).not.toContain('useLocalSearchParams');
+    expect(legacyScreen).not.toContain('setMedicationDetailRouteIntent');
+    expect(legacyScreen).toContain('<Redirect href="/(tabs)/medications" />');
   });
 
   it('binds the process-local handoff to the active patient profile and expires it', () => {
