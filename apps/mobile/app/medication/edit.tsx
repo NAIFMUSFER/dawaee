@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, View } from 'react-native';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
@@ -91,6 +91,10 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 
 export default function EditMedicationScreen() {
   const { user, activeProfile } = useApp();
+  // A web reload intentionally drops its in-memory session. Ask for sign-in
+  // before accepting a clinical draft whose Save would otherwise do nothing.
+  if (!user) return <Redirect href="/sign-in" />;
+
   const intent = user && activeProfile
     ? getMedicationEditRouteIntent(user.id, activeProfile.id)
     : null;
