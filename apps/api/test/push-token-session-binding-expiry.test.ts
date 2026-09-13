@@ -1,81 +1,102 @@
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resetDatabase, signIn, startHarness, type Harness } from './harness.js';
+import { authHeaders, resetDatabase, signIn, startHarness, type Harness } from './harness.js';
 
 let h: Harness;
-let owner: pg.Pool;
+let db: pg.Pool;
 
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
-  owner = new pg.Pool({
-    connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test',
-    max: 2,
-  });
+  db = new pg.Pool({ connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test' });
 });
 
 afterAll(async () => {
-  await owner.end();
+  await db.end();
   await h.close();
 });
 
-describe('remote push eligibility follows the exact authenticated session', () => {
-  it('does not keep an expired session endpoint eligible through an unrelated live session with the same client device id', async () => {
-    const phone = '+966500096862';
-    const sharedDeviceId = 'device-expiry-endpoint-collision-0001';
-    const current = await signIn(h, phone, sharedDeviceId);
-    const compromised = await signIn(h, phone, sharedDeviceId);
-    expect(compromised.userId).toBe(current.userId);
+describe('push token session binding', () => {
+  it('does not route to a token after its exact bound session expires, even if a new same-device session exists', async () => {
+    const phone = '+966500009301';
+    const deviceId = 'push-expiry-device';
+    const user = await signIn(h, phone, deviceId);
+    const pushToken = 'ExponentPushToken[expiry-binding]';
 
-    const compromisedSessions = await h.app.inject({
-      method: 'GET',
-      url: '/v1/auth/sessions',
-      headers: { authorization: `Bearer ${compromised.token}` },
-    });
-    expect(compromisedSessions.statusCode, compromisedSessions.body).toBe(200);
-    const compromisedSessionId = compromisedSessions
-      .json<{ sessions: Array<{ id: string; current: boolean }> }>()
-      .sessions.find((session) => session.current)?.id;
-    expect(compromisedSessionId).toBeTruthy();
-
-    const attackerEndpoint = 'ExponentPushToken[expired-session-collision-endpoint]';
-    const registration = await h.app.inject({
+    const registered = await h.app.inject({
       method: 'POST',
       url: '/v1/devices/push-token',
-      headers: { authorization: `Bearer ${compromised.token}` },
-      payload: {
-        token: attackerEndpoint,
-        platform: 'android',
-        deviceId: sharedDeviceId,
-        appVersion: '1.0.0',
-      },
+      headers: authHeaders(user),
+      payload: { token: pushToken, platform: 'ios', deviceId },
     });
-    expect(registration.statusCode, registration.body).toBe(200);
+    expect(registered.statusCode, registered.body).toBe(200);
 
-    // Natural expiry does not execute the session-revocation trigger. The
-    // endpoint must therefore be authorized by the exact session that bound it,
-    // not by any other live session that happens to reuse the same client label.
-    await owner.query(
+    const bound = await db.query<{ session_id: string | null }>(
+      'SELECT session_id FROM push_tokens WHERE user_id = $1 AND token = $2',
+      [user.userId, pushToken],
+    );
+    expect(bound.rows[0]?.session_id).toBeTruthy();
+    const originalSessionId = bound.rows[0]!.session_id!;
+
+    const beforeExpiry = await db.query<{ token: string }>(
+      'SELECT token FROM app.list_live_push_tokens($1, 5)',
+      [user.userId],
+    );
+    expect(beforeExpiry.rows.map((row) => row.token)).toContain(pushToken);
+
+    const receiptAwareBeforeExpiry = await db.query<{ push_token_id: string; token: string }>(
+      'SELECT push_token_id, token FROM app.list_live_push_endpoints($1, 5)',
+      [user.userId],
+    );
+    expect(receiptAwareBeforeExpiry.rows.map((row) => row.token)).toContain(pushToken);
+
+    await db.query(
       `UPDATE auth_sessions
           SET expires_at = now() - interval '1 second'
         WHERE id = $1`,
-      [compromisedSessionId],
+      [originalSessionId],
     );
 
-    const currentStillAuthenticated = await h.app.inject({
-      method: 'GET',
-      url: '/v1/me',
-      headers: { authorization: `Bearer ${current.token}` },
+    const afterExpiry = await db.query<{ token: string }>(
+      'SELECT token FROM app.list_live_push_tokens($1, 5)',
+      [user.userId],
+    );
+    expect(afterExpiry.rows).toEqual([]);
+
+    const receiptAwareAfterExpiry = await db.query<{ push_token_id: string; token: string }>(
+      'SELECT push_token_id, token FROM app.list_live_push_endpoints($1, 5)',
+      [user.userId],
+    );
+    expect(receiptAwareAfterExpiry.rows).toEqual([]);
+
+    // Logging in again on the same device creates a fresh live session. The
+    // old token must remain unroutable until that new session explicitly
+    // re-registers it; matching only user_id + device_id would fail here.
+    const relogged = await signIn(h, phone, deviceId);
+    const stillBoundToOldSession = await db.query<{ session_id: string | null }>(
+      'SELECT session_id FROM push_tokens WHERE user_id = $1 AND token = $2',
+      [user.userId, pushToken],
+    );
+    expect(stillBoundToOldSession.rows[0]?.session_id).toBe(originalSessionId);
+
+    const afterSameDeviceRelogin = await db.query<{ token: string }>(
+      'SELECT token FROM app.list_live_push_endpoints($1, 5)',
+      [user.userId],
+    );
+    expect(afterSameDeviceRelogin.rows).toEqual([]);
+
+    const rebound = await h.app.inject({
+      method: 'POST',
+      url: '/v1/devices/push-token',
+      headers: authHeaders(relogged),
+      payload: { token: pushToken, platform: 'ios', deviceId },
     });
-    expect(currentStillAuthenticated.statusCode, currentStillAuthenticated.body).toBe(200);
+    expect(rebound.statusCode, rebound.body).toBe(200);
 
-    const routed = await h.worker.pool.query<{ token: string }>(
-      'SELECT token FROM app.list_live_push_tokens($1,$2)',
-      [current.userId, 20],
+    const afterRebind = await db.query<{ token: string }>(
+      'SELECT token FROM app.list_live_push_endpoints($1, 5)',
+      [user.userId],
     );
-    expect(
-      routed.rows,
-      'an endpoint bound by the expired session remained remotely routable because an unrelated live session reused its client-supplied device id',
-    ).toEqual([]);
+    expect(afterRebind.rows.map((row) => row.token)).toContain(pushToken);
   });
 });
