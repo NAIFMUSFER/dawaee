@@ -151,6 +151,18 @@ describe('app-lock background verification races', () => {
     expect(areaNeedsVerification(state, ['reports'], 'reports')).toBe(false);
   });
 
+  it('does not accept a verification attempt started while the background cover is active', () => {
+    let state = locked();
+    state = lockReducer(state, { type: 'appStatus', status: 'background', now: 11_000 });
+    expect(state.phase).toBe('covered');
+
+    state = lockReducer(state, { type: 'verificationStarted' });
+    state = lockReducer(state, { type: 'verified' });
+
+    expect(state.phase).toBe('covered');
+    expect(state.pendingRelock).toBe(true);
+  });
+
   it('marks both local-auth prompts as fresh before asking the operating system', () => {
     const gate = readFileSync(resolve(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
     expect([...gate.matchAll(/dispatch\(\{ type: 'verificationStarted' \}\)/g)]).toHaveLength(2);
