@@ -69,12 +69,24 @@ describe('clinical browser-route URL privacy', () => {
     expect(argumentsText).not.toMatch(/\b(?:profileId|medicationId|scheduleId)\s*:/);
   });
 
-  it('serves fixed detail paths while retaining scrub-only compatibility entries', () => {
-    expect(source('app/medication/detail.tsx')).toContain('getMedicationDetailRouteIntent');
-    expect(source('app/medication/detail.tsx')).not.toContain('useLocalSearchParams');
-    expect(source('app/caregiver/detail.tsx')).toContain("export { default } from './[id]';");
-    expect(routerArguments('app/medication/[id].tsx')).toContain("'/medication/detail'");
-    expect(routerArguments('app/caregiver/[id].tsx')).toContain("'/caregiver/detail'");
+  it('serves fixed detail paths and makes legacy dynamic routes fail closed', () => {
+    const medicationDetail = source('app/medication/detail.tsx');
+    const caregiverDetail = source('app/caregiver/detail.tsx');
+    const legacyMedication = source('app/medication/[id].tsx');
+    const legacyCaregiver = source('app/caregiver/[id].tsx');
+
+    expect(medicationDetail).toContain('getMedicationDetailRouteIntent');
+    expect(medicationDetail).not.toContain('useLocalSearchParams');
+    expect(caregiverDetail).toContain('getCaregiverDetailRouteIntent');
+    expect(caregiverDetail).not.toContain('useLocalSearchParams');
+
+    expect(legacyMedication).not.toContain('useLocalSearchParams');
+    expect(legacyMedication).not.toContain('setMedicationDetailRouteIntent');
+    expect(legacyMedication).toContain('<Redirect href="/(tabs)/medications" />');
+
+    expect(legacyCaregiver).not.toContain('useLocalSearchParams');
+    expect(legacyCaregiver).not.toContain('setCaregiverDetailRouteIntent');
+    expect(legacyCaregiver).toContain('<Redirect href="/(tabs)/family" />');
   });
 
   it.each(HANDOFFS)('%s sets %s before navigating to fixed path %s', (relative, setter, fixedPath) => {
