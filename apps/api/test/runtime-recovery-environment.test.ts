@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseDockerLoopbackPort,
+  parseRecoveryLoopbackPort,
   validateRuntimeRecoveryEnvironment,
 } from '../../../scripts/release-runtime-harness.mjs';
 
@@ -21,9 +21,9 @@ describe('runtime recovery execution boundary', () => {
   });
 });
 
-describe('runtime recovery Docker port boundary', () => {
-  it('accepts the GitHub runner loopback mapping returned by docker port', () => {
-    expect(parseDockerLoopbackPort('127.0.0.1:5433\n')).toBe('5433');
+describe('runtime recovery loopback port boundary', () => {
+  it('accepts the owned forwarder loopback binding', () => {
+    expect(parseRecoveryLoopbackPort('127.0.0.1:5433\n')).toBe('5433');
   });
 
   it.each([
@@ -34,7 +34,7 @@ describe('runtime recovery Docker port boundary', () => {
     '127.0.0.1:not-a-port\n',
     '127.0.0.1:0\n',
     '127.0.0.1:70000\n',
-  ])('fails closed for an unsafe or ambiguous published mapping: %j', output => {
-    expect(() => parseDockerLoopbackPort(output)).toThrow();
+  ])('fails closed for an unsafe or ambiguous binding: %j', output => {
+    expect(() => parseRecoveryLoopbackPort(output)).toThrow();
   });
 });

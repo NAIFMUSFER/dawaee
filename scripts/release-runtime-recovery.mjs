@@ -56,7 +56,7 @@ async function exerciseRecovery() {
     };
     const tick = async (database, name, compatible = true) => {
       const before = (await sql(database, 'SELECT COALESCE(max(id),0)::text AS id FROM job_runs')).rows[0].id;
-      const worker = runtime.start(name, database, 'worker');
+      const worker = await runtime.start(name, database, 'worker');
       const rows = await until('complete worker tick including housekeeping', async () => {
         assert.equal(runtime.inspect(worker.id).State.Running, true, 'worker exited before its tick');
         const result = await sql(database, `SELECT job_name,succeeded,items_processed,metadata
@@ -82,7 +82,7 @@ async function exerciseRecovery() {
       return { jobs: rows.length, failedJobs: failed.map(row => row.job_name) };
     };
     const api = async (database, name) => {
-      const instance = runtime.start(name, database, 'api');
+      const instance = await runtime.start(name, database, 'api');
       await waitForApi(runtime, instance);
       return instance;
     };
@@ -176,7 +176,7 @@ async function exerciseRecovery() {
     const restore = await db.restore(recovered);
     assert.deepEqual(await db.snapshot(recovered), baseline, 'recovery differs before any runtime starts');
     // A candidate migration hook must not be run on this recovered database.
-    const refused = runtime.start('candidate', recovered, 'api');
+    const refused = await runtime.start('candidate', recovered, 'api');
     await until('candidate refuses restored old ledger', () => !runtime.inspect(refused.id).State.Running);
     assert.equal(runtime.inspect(refused.id).State.ExitCode, 1);
     assert.match(runtime.logs(refused), /schema is incompatible/);

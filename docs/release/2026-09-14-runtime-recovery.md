@@ -28,21 +28,22 @@ Only the two fixed old commits are fetched. Detached temporary worktrees keep
 all three build contexts clean. Docker builds run normally with registry access;
 the resulting **application containers** run on a fresh internal bridge network
 with no external provider credentials and with explicit mock push/OCR and local
-storage configuration. Published API/PostgreSQL ports bind only to loopback.
+storage configuration. Fixed-target TCP forwarders bind API/PostgreSQL access
+only to host loopback. They run in child processes so the controller's synchronous
+PostgreSQL commands cannot block forwarding; Docker publishes no container ports.
 Application root filesystems are read-only, runtime users are non-root, and each
 container connects as its ordinary app or worker database role. No application
 source or entrypoint is patched to make the test pass.
 
-Docker documents the [internal network boundary](https://docs.docker.com/reference/cli/docker/network/create/#network-internal-mode---internal)
-and [loopback port publishing](https://docs.docker.com/engine/network/port-publishing/).
+Docker documents the [internal network boundary and host access](https://docs.docker.com/reference/cli/docker/network/create/#network-internal-mode---internal).
 Internal networks still permit host/gateway communication; this test is an
 isolated application integration environment, not a hostile-code sandbox.
 
-The harness creates its own PostgreSQL 17 container, verifies its published
-binding, and only then bootstraps ordinary CI roles. The shared archive harness
+The harness creates its own PostgreSQL 17 container, verifies its sole network
+and loopback forwarder, and only then bootstraps ordinary CI roles. The shared archive harness
 creates fresh database names and rejects overwriting the source or a populated
 target. Cleanup tracks successful creations, drains runtime processes, drops
-owned databases, removes owned containers/anonymous volumes/network, and removes
+owned databases, stops forwarders, removes owned containers/anonymous volumes/network, and removes
 temporary worktrees. Built images disappear with the disposable runner.
 
 ## Acceptance sequence

@@ -1,6 +1,6 @@
 // Rebuilt, pinned runtimes on an owned CI-only Docker network. No live targets.
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, fork, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,13 +26,13 @@ export function validateRuntimeRecoveryEnvironment(env, head) {
   assert.equal(env.RECOVERY_CANDIDATE_SHA, head, 'checkout must be the selected candidate, not a merge ref');
 }
 
-export function parseDockerLoopbackPort(output) {
+export function parseRecoveryLoopbackPort(output) {
   const lines = String(output).trim().split(/\r?\n/).filter(Boolean);
-  assert.equal(lines.length, 1, 'published port must have exactly one host binding');
+  assert.equal(lines.length, 1, 'recovery port must have exactly one host binding');
   const match = /^127\.0\.0\.1:(\d+)$/.exec(lines[0]);
-  assert.ok(match, 'published port must bind only to IPv4 loopback');
+  assert.ok(match, 'recovery port must bind only to IPv4 loopback');
   const port = Number(match[1]);
-  assert.ok(Number.isInteger(port) && port >= 1 && port <= 65535, 'published host port is invalid');
+  assert.ok(Number.isInteger(port) && port >= 1 && port <= 65535, 'recovery host port is invalid');
   return String(port);
 }
 
@@ -65,14 +65,12 @@ export async function createRuntimeHarness(env = process.env) {
   const worktrees = [];
   const containers = new Set();
   const runtimes = new Set();
+  const forwarders = new Set();
   const images = {};
   let networkCreated = false;
   let postgres;
 
   const inspect = (id) => JSON.parse(run('docker', ['inspect', id]))[0];
-  const publishedLoopbackPort = (id, containerPort) => parseDockerLoopbackPort(
-    run('docker', ['port', id, `${containerPort}/tcp`]),
-  );
   const create = (args) => {
     const id = run('docker', ['create', '--label', label, '--network', network, ...args]).trim();
     assert.match(id, /^[0-9a-f]{64}$/);
@@ -80,8 +78,48 @@ export async function createRuntimeHarness(env = process.env) {
     run('docker', ['start', id]);
     return id;
   };
+  const forward = async (id, targetPort, localPort = 0) => {
+    assert.ok(containers.has(id), 'cannot forward an unowned container');
+    const attached = inspect(id).NetworkSettings.Networks;
+    assert.deepEqual(Object.keys(attached), [network]);
+    const target = attached[network].IPAddress;
+    // Docker internal networks do not publish ports. The host may reach their
+    // private IPs directly; this loopback-only, fixed-target child is the bridge.
+    const child = fork(join(ROOT, 'scripts/release-runtime-forwarder.mjs'),
+      [target, String(targetPort), String(localPort)], {
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [],
+        env: { NODE_ENV: 'test', DAWAEE_RUNTIME_FORWARDER: 'owned-ci-fixture' },
+      });
+    forwarders.add(child);
+    let errors = '';
+    child.stderr.on('data', chunk => { errors = (errors + chunk).slice(-1000); });
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('loopback forwarder did not start')), 10_000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`forwarder exited (${code}): ${errors}`)); });
+      child.once('message', address => {
+        clearTimeout(timer);
+        try {
+          assert.ok(Number.isInteger(address.port));
+          const port = Number(parseRecoveryLoopbackPort(`${address.host}:${address.port}`));
+          if (localPort) assert.equal(address.port, localPort);
+          resolve(port);
+        } catch (error) { reject(error); }
+      });
+    });
+  };
   const cleanup = async () => {
     const failures = [];
+    for (const child of forwarders) {
+      if (child.exitCode !== null || child.signalCode !== null) continue;
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('forwarder did not stop')); }, 5000);
+          child.once('exit', () => { clearTimeout(timer); resolve(); });
+          child.kill('SIGTERM');
+        });
+      } catch (error) { failures.push(error); }
+    }
     for (const id of [...containers].reverse()) {
       try { run('docker', ['rm', '--force', '--volumes', id]); }
       catch (error) { failures.push(error); }
@@ -121,8 +159,8 @@ export async function createRuntimeHarness(env = process.env) {
     networkCreated = true;
     assert.equal(JSON.parse(run('docker', ['network', 'inspect', network]))[0].Internal, true);
     postgres = create(['--name', `${network}_postgres`, '--network-alias', 'db',
-      '--publish', '127.0.0.1:5433:5432', '--env', 'POSTGRES_PASSWORD=postgres', 'postgres:17']);
-    assert.equal(publishedLoopbackPort(postgres, 5432), '5433');
+      '--env', 'POSTGRES_PASSWORD=postgres', 'postgres:17']);
+    await forward(postgres, 5432, 5433);
     await until('owned PostgreSQL startup', () => {
       assert.equal(inspect(postgres).State.Running, true, 'owned PostgreSQL exited');
       try { run('docker', ['exec', postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres']); return true; }
@@ -141,7 +179,7 @@ export async function createRuntimeHarness(env = process.env) {
     return {
       images, databaseEnv, inspect, cleanup,
       allowDatabases(names) { Object.values(names).forEach(name => allowedDatabases.add(name)); },
-      start(name, database, app) {
+      async start(name, database, app) {
         assert.ok(Object.hasOwn(images, name), 'unbuilt runtime refused');
         assert.ok(allowedDatabases.has(database), 'unowned runtime database');
         assert.ok(['api', 'worker'].includes(app));
@@ -160,7 +198,6 @@ export async function createRuntimeHarness(env = process.env) {
         };
         const args = ['--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
           '--tmpfs', '/tmp:rw,nosuid,noexec,size=32m', '--memory', '512m', '--pids-limit', '128'];
-        if (app === 'api') args.push('--publish', '127.0.0.1::8080');
         for (const [key, value] of Object.entries(config)) args.push('--env', `${key}=${value}`);
         const id = create([...args, images[name].imageId]);
         runtimes.add(id);
@@ -169,8 +206,7 @@ export async function createRuntimeHarness(env = process.env) {
         assert.deepEqual(Object.keys(state.NetworkSettings.Networks), [network]);
         let base;
         if (app === 'api') {
-          const hostPort = publishedLoopbackPort(id, 8080);
-          base = `http://127.0.0.1:${hostPort}`;
+          base = `http://127.0.0.1:${await forward(id, 8080)}`;
         }
         return { id, base, name };
       },
