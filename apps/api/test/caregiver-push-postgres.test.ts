@@ -179,7 +179,8 @@ describe('caregiver push on real PostgreSQL and least-privileged worker', () => 
       expect(await dispatch(async () => {
         await db.query(
           `UPDATE dose_occurrences SET status = $2::dose_status,
-                  confirmed_at = CASE WHEN $2 IN ('taken','taken_late') THEN $3::timestamptz ELSE NULL END
+                  confirmed_at = CASE WHEN $2 IN ('taken','taken_late') THEN $3::timestamptz ELSE NULL END,
+                  confirmation_method = CASE WHEN $2 IN ('taken','taken_late') THEN 'app'::confirmation_method ELSE NULL END
             WHERE id = $1`,
           [doseId, terminal, NOW],
         );
@@ -213,6 +214,21 @@ describe('caregiver push on real PostgreSQL and least-privileged worker', () => 
     expect(h.push.sent).toHaveLength(1);
     expect(await status(id)).toBe('sent');
   });
+
+  for (const offsetMs of [1, 0]) {
+    it(`checks the snooze boundary at worker time plus ${offsetMs}ms`, async () => {
+      const id = await enqueue();
+      const eligible = offsetMs === 0;
+      expect(await dispatch(async () => {
+        await db.query(
+          `UPDATE dose_occurrences SET status = 'snoozed', snoozed_until = $2 WHERE id = $1`,
+          [doseId, new Date(NOW.getTime() + offsetMs)],
+        );
+      })).toEqual({ itemsProcessed: eligible ? 1 : 0 });
+      expect(h.push.sent).toHaveLength(eligible ? 1 : 0);
+      expect(await status(id)).toBe(eligible ? 'sent' : 'skipped');
+    });
+  }
 
   it('does not trust a payload dose identifier when the authoritative dose link is missing', async () => {
     const id = await enqueue();

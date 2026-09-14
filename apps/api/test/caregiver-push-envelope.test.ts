@@ -53,11 +53,12 @@ function harness(options: {
       return { rows: [{ can_view_medication: true }], rowCount: 1 };
     }
     if (sql.includes('AS still_pending')) {
-      expect(params).toEqual([DELIVERY, LEASE]);
+      expect(params).toEqual([DELIVERY, LEASE, new Date('2026-09-14T05:30:00Z')]);
       expect(sql).toContain('JOIN dose_occurrences');
       expect(sql).toContain("nd.status = 'sending'");
       expect(sql).toContain('nd.lease_token = $2');
       expect(sql).toContain("'taken','taken_late','skipped','cancelled'");
+      expect(sql).toContain('d.snoozed_until IS NULL OR d.snoozed_until <= $3::timestamptz');
       return { rows: [{ still_pending: stillPending }], rowCount: 1 };
     }
     if (sql.includes('UPDATE notification_deliveries')) {
