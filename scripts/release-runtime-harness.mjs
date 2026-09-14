@@ -179,7 +179,7 @@ export async function createRuntimeHarness(env = process.env) {
     return {
       images, databaseEnv, inspect, cleanup,
       allowDatabases(names) { Object.values(names).forEach(name => allowedDatabases.add(name)); },
-      async start(name, database, app) {
+      async start(name, database, app, { connectHttp = true } = {}) {
         assert.ok(Object.hasOwn(images, name), 'unbuilt runtime refused');
         assert.ok(allowedDatabases.has(database), 'unowned runtime database');
         assert.ok(['api', 'worker'].includes(app));
@@ -205,7 +205,7 @@ export async function createRuntimeHarness(env = process.env) {
         assert.equal(state.Image, images[name].imageId);
         assert.deepEqual(Object.keys(state.NetworkSettings.Networks), [network]);
         let base;
-        if (app === 'api') {
+        if (app === 'api' && connectHttp) {
           base = `http://127.0.0.1:${await forward(id, 8080)}`;
         }
         return { id, base, name };

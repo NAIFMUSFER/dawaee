@@ -304,6 +304,11 @@ sources and runs their unchanged entrypoints through a real HTTP/worker recovery
 sequence. See [rebuilt-runtime evidence](release/2026-09-14-runtime-recovery.md).
 It tests synthetic data and test provider configuration; original Render image
 identity and production-derived recovery remain required before release.
+The recorded baseline itself has an upload-retention RLS no-op and a missing
+stock movement on re-take. The runtime rehearsal records these defects before
+or after restore; it must not be read as approval of a fully healthy old build.
+Resolve the acceptable recovery build and its limitations before approving a
+production fallback.
 
 If any result differs, stop. Do not adjust the expected count by hand merely to
 make the rehearsal pass.

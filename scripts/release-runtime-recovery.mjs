@@ -54,7 +54,16 @@ async function exerciseRecovery() {
       await sql(database, 'DELETE FROM dose_occurrences WHERE schedule_id=$1 AND scheduled_at>now()+interval \'1 day\'', [schedule]);
       await sql(database, 'UPDATE medication_schedules SET materialized_through=NULL WHERE id=$1', [schedule]);
     };
-    const tick = async (database, name, compatible = true) => {
+    const tick = async (database, name, expectJobSuccess = true) => {
+      // Prove an actual supported retention deletion separately from uploads.
+      // The old worker's upload DELETE is a known FORCE-RLS no-op even before
+      // 0039 revokes its table grant; restoring that baseline does not fix it.
+      const expired = (await sql(database, `INSERT INTO job_runs
+        (job_name,started_at,finished_at,succeeded) VALUES
+        ('runtime-expired-fixture',now()-interval '15 days',now()-interval '15 days',true)
+        RETURNING id::text AS id`)).rows[0].id;
+      const uploadsBefore = (await sql(database, 'SELECT count(*)::int AS n FROM stored_objects')).rows[0].n;
+      assert.ok(uploadsBefore > 0, 'upload cleanup has no fixture to inspect');
       const before = (await sql(database, 'SELECT COALESCE(max(id),0)::text AS id FROM job_runs')).rows[0].id;
       const worker = await runtime.start(name, database, 'worker');
       const rows = await until('complete worker tick including housekeeping', async () => {
@@ -66,8 +75,8 @@ async function exerciseRecovery() {
       const expected = name === 'candidate' ? [...JOBS, 'push-receipts'] : JOBS;
       assert.deepEqual(rows.map(row => row.job_name).sort(), [...expected].sort(), 'worker did not record every job');
       const failed = rows.filter(row => !row.succeeded);
-      if (compatible) {
-        assert.deepEqual(failed, [], 'compatible worker tick failed');
+      if (expectJobSuccess) {
+        assert.deepEqual(failed, [], 'worker tick reported an unexpected failure');
         assert.ok(rows.find(row => row.job_name === 'materialize').items_processed > 0, 'worker did no materialization');
         assert.ok(rows.find(row => row.job_name === 'housekeeping').items_processed > 0, 'worker did no cleanup');
       } else {
@@ -78,8 +87,15 @@ async function exerciseRecovery() {
       if (name === 'candidate') {
         assert.ok(rows.every(row => row.metadata.buildCommit === runtime.images.candidate.sha), 'worker identity differs from candidate');
       }
+      assert.equal((await sql(database, 'SELECT count(*)::int AS n FROM job_runs WHERE id=$1', [expired])).rows[0].n, 0,
+        'worker did not remove the expired operational fixture');
+      const uploadsAfter = (await sql(database, 'SELECT count(*)::int AS n FROM stored_objects')).rows[0].n;
+      assert.equal(uploadsAfter, name === 'candidate' ? 0 : uploadsBefore,
+        'upload outcome differs from the selected runtime/ledger contract');
       runtime.stop(worker);
-      return { jobs: rows.length, failedJobs: failed.map(row => row.job_name) };
+      return { jobs: rows.length, failedJobs: failed.map(row => row.job_name), expiredOperationalRowRemoved: true,
+        uploadsBefore, uploadsAfter,
+        uploadOutcome: name === 'candidate' ? 'removed' : expectJobSuccess ? 'legacy-rls-no-op' : 'legacy-permission-denied' };
     };
     const api = async (database, name) => {
       const instance = await runtime.start(name, database, 'api');
@@ -176,7 +192,7 @@ async function exerciseRecovery() {
     const restore = await db.restore(recovered);
     assert.deepEqual(await db.snapshot(recovered), baseline, 'recovery differs before any runtime starts');
     // A candidate migration hook must not be run on this recovered database.
-    const refused = await runtime.start('candidate', recovered, 'api');
+    const refused = await runtime.start('candidate', recovered, 'api', { connectHttp: false });
     await until('candidate refuses restored old ledger', () => !runtime.inspect(refused.id).State.Running);
     assert.equal(runtime.inspect(refused.id).State.ExitCode, 1);
     assert.match(runtime.logs(refused), /schema is incompatible/);
@@ -185,8 +201,12 @@ async function exerciseRecovery() {
     await stock(server, token, medication, 30);
     await gap(recovered, schedule);
     const recoveredWorker = await tick(recovered, 'oldWorker');
-    assert.equal((await sql(recovered, 'SELECT count(*)::int AS n FROM stored_objects')).rows[0].n, 0);
+    assert.equal(recoveredWorker.uploadsAfter, 2, 'restoration must preserve the known old upload-cleanup limitation');
     assert.equal((await taken(server, token, dose, 'recovered-runtime-take')).stock.remainingQuantity, 29);
+    const legacyRetakeLedger = (await sql(recovered, `SELECT count(*)::int AS rows,sum(delta)::int AS balance
+      FROM stock_transactions WHERE medication_id=$1`, [medication])).rows[0];
+    assert.deepEqual(legacyRetakeLedger, { rows: 3, balance: 30 },
+      'recorded old API re-take ledger behavior changed');
     await undo(server, token, dose);
     await stock(server, token, medication, 30);
     runtime.stop(server);
@@ -194,6 +214,7 @@ async function exerciseRecovery() {
     return { images: runtime.images, postgresVersion, baselineMigrations: 34, upgradedMigrations: expectedLedger.length,
       backup, restore, baselineWorker, candidateWorker, incompatibleWorker, recoveredWorker,
       legacyOnUpgradeHttpStatus: 500, restoredCandidateExitCode: 1,
+      legacyRetake: { liveBalance: 29, ledgerBalance: legacyRetakeLedger.balance, missingMovement: true },
       limits: { syntheticData: true, rebuiltImages: true, originalRenderImages: false,
         testConfiguration: true, productionBackup: false, realPush: false, installedDevices: false } };
   } finally {
