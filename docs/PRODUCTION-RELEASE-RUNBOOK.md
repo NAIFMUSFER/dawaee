@@ -299,6 +299,12 @@ and constraints. See the [recovery procedure and evidence limits](release/2026-0
 These tests cannot replace the restored production copy, exact binary tests,
 object-store recovery or a release-window measurement at production scale.
 
+The separate `runtime-recovery` CI job now rebuilds the recorded API/worker
+sources and runs their unchanged entrypoints through a real HTTP/worker recovery
+sequence. See [rebuilt-runtime evidence](release/2026-09-14-runtime-recovery.md).
+It tests synthetic data and test provider configuration; original Render image
+identity and production-derived recovery remain required before release.
+
 If any result differs, stop. Do not adjust the expected count by hand merely to
 make the rehearsal pass.
 

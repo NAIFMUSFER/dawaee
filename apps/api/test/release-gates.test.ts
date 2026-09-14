@@ -93,6 +93,7 @@ const REQUIRED_SUITES: Array<[phase: string, file: string]> = [
   ['P18-R schema startup contract', 'apps/api/test/schema-contract.test.ts'],
   ['P25 synthetic backup and recovery', 'apps/api/test/production-recovery-rehearsal.test.ts'],
   ['P25 recovery target containment', 'apps/api/test/release-recovery-environment.test.ts'],
+  ['P25 runtime recovery containment', 'apps/api/test/runtime-recovery-environment.test.ts'],
   ['P4 database TLS', 'apps/api/test/db-tls.test.ts'],
   ['P1-P3 mobile token store', 'apps/mobile/test/token-store.test.ts'],
   ['P1-P3 mobile secure cache', 'apps/mobile/test/secure-cache.test.ts'],
@@ -445,7 +446,7 @@ describe('P16-6 the CI configuration keeps its security properties', () => {
   it('the blocking gates are actually invoked', () => {
     const ci = yaml['.github/workflows/ci.yml'];
     for (const gate of ['npm ci', 'npx eslint .', 'npm run typecheck', 'npm test', 'rls_probe.sql',
-      'scripts/migrate.sh', 'audit-gate.mjs', 'container-checks.sh']) {
+      'scripts/migrate.sh', 'audit-gate.mjs', 'container-checks.sh', 'scripts/release-runtime-recovery.mjs']) {
       expect(ci, `CI no longer runs ${gate}`).toContain(gate);
     }
   });

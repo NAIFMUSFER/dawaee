@@ -5,6 +5,11 @@ of the pre-upgrade database with its matching API/worker as the fallback for the
 recorded baseline. It does not authorize production restore or establish a
 zero-loss recovery point.
 
+A subsequent [rebuilt-runtime CI rehearsal](2026-09-14-runtime-recovery.md)
+executes the complete pinned API/worker processes through real HTTP and their
+normal worker loop. Its image IDs and final job result are separate evidence;
+the SQL-only experiment below remains useful on both PostgreSQL majors.
+
 The recorded API is `4cf23531dfaa5cc7c3790b473f8b4ff9f88d9f72`; the recorded
 worker is `0338ddefc475d23cccecf13d5ede0f32d2007fb0`. Migration 0037 removes the
 unique conflict target used by their old stock SQL. Migration 0039 removes the
