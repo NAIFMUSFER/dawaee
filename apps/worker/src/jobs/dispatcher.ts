@@ -315,7 +315,7 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
   }));
 
   if (row.kind === 'escalation') {
-    // A confirmation/cancellation can arrive after the outbox claim and while
+    // A confirmation/cancellation/snooze can arrive after the outbox claim while
     // resolving devices/privacy. Re-read the authoritative occurrence and our
     // exact live lease immediately before the external send. This prevents
     // known-stale alerts; it cannot retract a push already accepted by Expo.
@@ -326,8 +326,9 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
           WHERE nd.id = $1 AND nd.lease_token = $2 AND nd.status = 'sending'
             AND d.patient_profile_id = nd.patient_profile_id
             AND d.status NOT IN ('taken','taken_late','skipped','cancelled')
+            AND (d.snoozed_until IS NULL OR d.snoozed_until <= $3::timestamptz)
        ) AS still_pending`,
-      [row.id, row.lease_token],
+      [row.id, row.lease_token, ctx.now()],
     );
     if (pending[0]?.still_pending !== true) {
       return { ok: false, skipped: true, provider: ctx.providers.push.name };
