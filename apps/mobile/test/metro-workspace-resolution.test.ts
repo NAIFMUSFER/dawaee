@@ -15,12 +15,12 @@ const config = require('../metro.config.js') as {
 
 const origin = fileURLToPath(new URL('../app/(auth)/_layout.tsx', import.meta.url));
 
-function resolveWorkspacePackage(moduleName: '@dawaee/shared' | '@dawaee/core') {
+function resolveDirect(moduleName: string) {
   return config.resolver.resolveRequest(
     {
       originModulePath: origin,
       resolveRequest: () => {
-        throw new Error(`workspace package ${moduleName} fell through to package.json/main resolution`);
+        throw new Error(`direct source alias ${moduleName} fell through to package/node_modules resolution`);
       },
     },
     moduleName,
@@ -28,16 +28,28 @@ function resolveWorkspacePackage(moduleName: '@dawaee/shared' | '@dawaee/core') 
   );
 }
 
-describe('Metro workspace package resolution', () => {
+describe('Metro release source resolution', () => {
   it('pins @dawaee/shared to TypeScript source before hierarchical package resolution', () => {
-    const result = resolveWorkspacePackage('@dawaee/shared');
+    const result = resolveDirect('@dawaee/shared');
     expect(result.type).toBe('sourceFile');
     expect(result.filePath?.replaceAll('\\', '/')).toMatch(/\/packages\/shared\/src\/index\.ts$/);
   });
 
   it('pins @dawaee/core to TypeScript source before hierarchical package resolution', () => {
-    const result = resolveWorkspacePackage('@dawaee/core');
+    const result = resolveDirect('@dawaee/core');
     expect(result.type).toBe('sourceFile');
     expect(result.filePath?.replaceAll('\\', '/')).toMatch(/\/packages\/core\/src\/index\.ts$/);
+  });
+
+  it('resolves the @/ alias used by app screens to the mobile source tree', () => {
+    const result = resolveDirect('@/components/ui');
+    expect(result.type).toBe('sourceFile');
+    expect(result.filePath?.replaceAll('\\', '/')).toMatch(/\/apps\/mobile\/src\/components\/ui\.tsx$/);
+  });
+
+  it('resolves @/ aliases with a .js specifier to their TypeScript sibling', () => {
+    const result = resolveDirect('@/notifications/actions.js');
+    expect(result.type).toBe('sourceFile');
+    expect(result.filePath?.replaceAll('\\', '/')).toMatch(/\/apps\/mobile\/src\/notifications\/actions\.ts$/);
   });
 });
