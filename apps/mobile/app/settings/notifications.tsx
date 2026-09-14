@@ -1,12 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, Pressable, Switch, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, Linking, Platform, Pressable, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { inspectCapability, requestPermission, type NotificationCapability } from '@/notifications';
+import {
+  inspectCapability,
+  rebuildRemindersFromCache,
+  requestPermission,
+  type NotificationCapability,
+} from '@/notifications';
+import { planExactAlarmGrantRecovery } from '@/notifications/exact-alarm-recovery';
 import { openExactAlarmSettings } from '../../modules/exact-alarm-access';
 
 /**
@@ -48,7 +54,7 @@ function localTimeToMinutes(value: string | null, fallback: number): number {
 export default function NotificationSettingsScreen() {
   const { t, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
-  const { preferences, updatePreferences } = useApp();
+  const { preferences, profiles, signedIn, updatePreferences, user } = useApp();
 
   const [capability, setCapability] = useState<NotificationCapability | null>(null);
   const [checking, setChecking] = useState(true);
@@ -59,16 +65,94 @@ export default function NotificationSettingsScreen() {
   const [customDays, setCustomDays] = useState(String(preferences.lowStockThresholdDays));
   const [customError, setCustomError] = useState<string | null>(null);
 
+  const capabilityRef = useRef<NotificationCapability | null>(null);
+  const selfOwnerProfileId = profiles.find((profile) => profile.isSelf && profile.role === 'owner')?.id ?? null;
+  const exactAlarmRecoveryScope = signedIn && user?.id
+    ? `${user.id}:${selfOwnerProfileId ?? 'none'}`
+    : 'signed-out';
+  const exactAlarmRecoveryScopeRef = useRef(exactAlarmRecoveryScope);
+  exactAlarmRecoveryScopeRef.current = exactAlarmRecoveryScope;
+  const exactAlarmRecoveryContextRef = useRef({
+    signedIn,
+    profiles,
+    locale: preferences.locale,
+    voiceEnabled: preferences.voiceRemindersEnabled,
+    showMedication: preferences.showMedicationInNotifications,
+  });
+  exactAlarmRecoveryContextRef.current = {
+    signedIn,
+    profiles,
+    locale: preferences.locale,
+    voiceEnabled: preferences.voiceRemindersEnabled,
+    showMedication: preferences.showMedicationInNotifications,
+  };
+
   const inspect = useCallback(async () => {
     setChecking(true);
     try {
-      setCapability(await inspectCapability());
+      const next = await inspectCapability();
+      capabilityRef.current = next;
+      setCapability(next);
+      return next;
     } finally {
       setChecking(false);
     }
   }, []);
 
   useEffect(() => { void inspect(); }, [inspect]);
+
+  // Android cancels future exact alarms when SCHEDULE_EXACT_ALARM is revoked.
+  // Returning from the app-scoped Alarms & reminders screen therefore needs
+  // more than a status refresh: after an observed denied -> granted transition,
+  // rebuild this account's own cached reminders using the current disclosure
+  // choices. The account/profile scope is re-read after the async OS check so a
+  // logout or account switch cannot schedule a stale patient's reminders.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    let cancelled = false;
+    let recheckInFlight = false;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || recheckInFlight) return;
+
+      const previous = capabilityRef.current;
+      const scopeAtStart = exactAlarmRecoveryScopeRef.current;
+      recheckInFlight = true;
+      setChecking(true);
+
+      void inspectCapability()
+        .then(async (current) => {
+          if (cancelled || scopeAtStart !== exactAlarmRecoveryScopeRef.current) return;
+
+          capabilityRef.current = current;
+          setCapability(current);
+          const context = exactAlarmRecoveryContextRef.current;
+          const plan = planExactAlarmGrantRecovery({
+            platform: Platform.OS,
+            previous,
+            current,
+            signedIn: context.signedIn,
+            profiles: context.profiles,
+            locale: context.locale,
+            voiceEnabled: context.voiceEnabled,
+            showMedication: context.showMedication,
+          });
+          if (!plan) return;
+
+          await rebuildRemindersFromCache(plan.profileId, plan.locale, plan.options);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          recheckInFlight = false;
+          if (!cancelled) setChecking(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, []);
 
   const askPermission = async () => {
     setRequesting(true);
