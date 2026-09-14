@@ -14,6 +14,7 @@ import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
 import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
 import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
+import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -56,6 +57,7 @@ function Shell() {
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
   const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
+  bindCaregiverNotificationAccount(caregiverOwner);
   const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
   if (caregiverSession.current.owner !== caregiverOwner) {
     caregiverSession.current = {
@@ -89,9 +91,8 @@ function Shell() {
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
 
-  /** Private caregiver taps have no patient/dose id; use a neutral selection
-   * screen so an old active profile cannot be mistaken for the alerted person.
-   * Exact delivery-to-patient lookup is not implied by the minimized payload. */
+  /** Keep the delivery selection in account-bound memory. The landing resolves
+   * its patient through the authenticated API, after the app lock permits it. */
   useEffect(() => {
     if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
     const generation = caregiverSession.current.generation;
@@ -102,7 +103,11 @@ function Shell() {
       if (!isCurrent()) return;
       stop = startCaregiverNotificationListener(
         native,
-        () => router.replace('/caregiver/notification'),
+        (selection) => {
+          if (!isCurrent()) return;
+          setCaregiverNotificationIntent(user.id, selection);
+          router.replace('/caregiver/notification');
+        },
         isCurrent,
       );
     }).catch(() => undefined);

@@ -14,11 +14,16 @@ function record(value: unknown): value is Record<string, unknown> {
 const DELIVERY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type CaregiverPushKind = 'escalation' | 'daily_summary' | 'weekly_summary';
 
+export interface CaregiverNotificationSelection {
+  deliveryId: string;
+  kind: CaregiverPushKind;
+}
+
 function caregiverPushKind(value: unknown): value is CaregiverPushKind {
   return value === 'escalation' || value === 'daily_summary' || value === 'weekly_summary';
 }
 
-function caregiverRequestId(response: unknown, defaultAction: string): string | null {
+function caregiverResponse(response: unknown, defaultAction: string): (CaregiverNotificationSelection & { key: string }) | null {
   if (!record(response) || response.actionIdentifier !== defaultAction) return null;
   const notification = response.notification;
   if (!record(notification) || !record(notification.request)) return null;
@@ -27,12 +32,14 @@ function caregiverRequestId(response: unknown, defaultAction: string): string | 
   if (!record(content) || !record(content.data)) return null;
   const data = content.data;
   if (!caregiverPushKind(data.kind) || typeof data.deliveryId !== 'string' || !DELIVERY_ID.test(data.deliveryId)) return null;
-  return identifier;
+  const date = notification.date;
+  if (date !== undefined && (typeof date !== 'number' || !Number.isFinite(date))) return null;
+  return { deliveryId: data.deliveryId, kind: data.kind, key: JSON.stringify([identifier, date ?? null, data.deliveryId]) };
 }
 
 /**
  * Private caregiver pushes carry deliveryId + kind, not a patient/dose id.
- * Their default tap opens a fixed, authenticated neutral selection surface.
+ * Their default tap hands only the delivery selection to a fixed route.
  * Never guess the active/first patient or turn payload fields into a URL.
  * Resolving an exact delivery to its currently-authorized patient is a separate
  * concern and must stay behind authenticated server authorization.
@@ -42,7 +49,7 @@ function caregiverRequestId(response: unknown, defaultAction: string): string | 
  */
 export function startCaregiverNotificationListener(
   native: CaregiverNotificationApi,
-  onOpen: () => void,
+  onOpen: (selection: CaregiverNotificationSelection) => void,
   isCurrent: () => boolean,
 ): () => void {
   let active = true;
@@ -51,11 +58,12 @@ export function startCaregiverNotificationListener(
   const seen = new Set<string>();
   const current = () => active && isCurrent();
 
-  const consume = async (requestId: string, observedRevision: number): Promise<void> => {
+  const consume = async (key: string, observedRevision: number): Promise<void> => {
+    if (!current() || observedRevision !== revision) return;
     try {
       const latest = await native.getLastNotificationResponseAsync();
       if (!current() || observedRevision !== revision) return;
-      if (caregiverRequestId(latest, native.DEFAULT_ACTION_IDENTIFIER) !== requestId) return;
+      if (caregiverResponse(latest, native.DEFAULT_ACTION_IDENTIFIER)?.key !== key) return;
       // Do not knowingly clear a newer or unrelated dose-action response.
       // Expo does not offer an atomic compare-and-clear operation.
       await native.clearLastNotificationResponseAsync();
@@ -67,15 +75,15 @@ export function startCaregiverNotificationListener(
 
   const handle = (response: unknown): void => {
     if (!current()) return;
-    const requestId = caregiverRequestId(response, native.DEFAULT_ACTION_IDENTIFIER);
-    if (requestId === null) return;
-    if (!seen.has(requestId)) {
-      try { onOpen(); } catch { return; }
-      seen.add(requestId);
+    const selection = caregiverResponse(response, native.DEFAULT_ACTION_IDENTIFIER);
+    if (selection === null) return;
+    if (!seen.has(selection.key)) {
+      try { onOpen({ deliveryId: selection.deliveryId, kind: selection.kind }); } catch { return; }
+      seen.add(selection.key);
       // Bound native-response bookkeeping during a long-running session.
       if (seen.size > 128) seen.delete(seen.values().next().value!);
     }
-    void consume(requestId, revision);
+    void consume(selection.key, revision);
   };
 
   // Register BEFORE awaiting native startup state: a tap during that lookup

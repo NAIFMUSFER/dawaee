@@ -79,6 +79,7 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
     },
   };
   const noop = () => undefined;
+  let intentModule: Record<string, unknown> | undefined;
   const requireMock = (id: string): unknown => {
     switch (id) {
       case 'react': return react;
@@ -103,6 +104,8 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
         return executeSource('apps/mobile/src/notifications/caregiver-navigation.ts', requireMock);
       case '@/notifications/grouped-navigation':
         return executeSource('apps/mobile/src/notifications/grouped-navigation.ts', requireMock);
+      case '@/notifications/caregiver-intent':
+        return intentModule ??= executeSource('apps/mobile/src/notifications/caregiver-intent.ts', requireMock);
       case 'expo-notifications': nativeImports += 1; return native;
       default: throw new Error(`Unexpected test dependency: ${id}`);
     }
@@ -113,6 +116,7 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
     routes, listeners,
     get clears() { return clearCount; },
     get imports() { return nativeImports; },
+    get intent() { return (intentModule?.getCaregiverNotificationIntent as () => unknown)?.(); },
     setReadLast: (read: () => Promise<unknown>) => { readLast = read; },
     render(overrides: Record<string, unknown> = {}, commitEffects = true) {
       Object.assign(state, overrides);
@@ -128,12 +132,15 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
 async function flush() { for (let i = 0; i < 30; i += 1) await Promise.resolve(); }
 
 // Only fixed, non-clinical routing is permitted with the minimized payload.
-// The caregiver notification landing is a safe selection surface, not proof
-// that a particular patient/notification was resolved. Never guess the current
-// or first followed patient from a privacy-minimized push.
+// Delivery selection is handed off in memory; only the authenticated landing
+// can resolve identity. Never guess the active or first followed patient.
 describe('caregiver push navigation from the shipped Shell', () => {
   it('opens the neutral landing for a live Android escalation without a doseId', async () => {
     const h = harness(); h.render(); await flush(); h.emit(response()); await flush();
+    const selected = h.intent as Record<string, unknown>;
+    assert.equal(selected.userId, 'caregiver-A');
+    assert.equal(selected.deliveryId, DELIVERY_ID);
+    assert.equal(selected.kind, 'escalation');
     assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   it('handles a cold-start iOS escalation and consumes it', async () => {

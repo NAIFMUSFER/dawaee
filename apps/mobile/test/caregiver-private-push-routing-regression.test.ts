@@ -62,12 +62,14 @@ describe('private caregiver push routing regression', () => {
     expect(shell).not.toContain("router.replace('/(tabs)/family')");
   });
 
-  it('the notification landing asks for a followed profile before opening clinical dashboard data', () => {
+  it('resolves the delivery through the authenticated fixed path before opening clinical data', () => {
     const landing = source('apps/mobile/app/caregiver/notification.tsx');
-    expect(landing).toContain("profiles.filter((profile) => profile.role === 'caregiver')");
-    expect(landing).toContain('setActiveProfile(profile.id)');
+    expect(landing).toContain("'/v1/caregivers/notification/resolve', { deliveryId: intent.deliveryId }");
+    expect(landing).toContain('isCaregiverNotificationIntentCurrent(intent)');
+    expect(landing).toContain('setActiveProfile(patient.id)');
     expect(landing).toContain("router.replace('/caregiver/dashboard')");
-    expect(landing).not.toMatch(/\bapi\./);
+    expect(landing).not.toContain('useLocalSearchParams');
+    expect(landing).not.toContain('followed[0]');
     expect(landing).not.toMatch(/profileId=.*\$\{/);
   });
 

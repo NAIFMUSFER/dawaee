@@ -22,7 +22,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 const addDays = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 
 function createHarness(file, hookFile, profile = {}, overrides = {}) {
-  const h = { requests: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
+  const h = { requests: [], routes: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
   h.app = {
     user: { id: 'synthetic-account', displayName: 'Caregiver' },
     activeProfile: { id: 'A', displayName: 'Patient A', timezone: 'Asia/Riyadh', isSelf: false, permissions: ['view_medications', 'view_schedule', 'view_adherence', 'confirm_dose'], ...profile },
@@ -34,6 +34,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   const i18n = Object.fromEntries(['t', 'formatTime', 'formatDate', 'formatMeasure', 'formatWeekday', 'formatNumber'].map((k) => [k, (value) => String(value)]));
   const theme = { colors: new Proxy({}, { get: () => '#000' }), spacing: new Proxy({}, { get: () => 4 }) };
   let frame;
+  const focusCleanups = new Set();
   const slot = () => { const i = frame.cursor++; return [frame, i]; };
   const memo = (fn, deps) => {
     const [f, i] = slot();
@@ -71,6 +72,11 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     useCallback: (fn, deps) => memo(() => fn, deps),
     useEffect: effect,
     useLayoutEffect: effect,
+    useSyncExternalStore: (subscribe, getSnapshot) => {
+      const [f] = slot();
+      effect(() => subscribe(() => { if (f.alive) h.dirty = true; }), [subscribe]);
+      return getSnapshot();
+    },
   };
   const request = (method, route, payload) => {
     const gate = deferred();
@@ -82,7 +88,15 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     react: { __esModule: true, default: React, ...React },
     'react-native': hosts,
     'react-native-safe-area-context': hosts,
-    'expo-router': { router: { push: () => undefined } },
+    'expo-router': { router: {
+      push: (route) => { h.routes.push(route); },
+      replace: (route) => { h.routes.push(route); },
+      back: () => { h.routes.push('back'); },
+    }, useFocusEffect: (fn) => effect(() => {
+      const cleanup = fn();
+      if (cleanup) focusCleanups.add(cleanup);
+      return () => { if (focusCleanups.delete(cleanup)) cleanup?.(); };
+    }, [fn]) },
     '@/components/ui': hosts,
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
@@ -182,6 +196,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     h.render(commitEffects);
   };
   h.unmount = () => { h.disposed = true; disposeFrom(0); h.effects = []; h.dirty = false; };
+  h.blur = () => { for (const cleanup of focusCleanups) cleanup(); focusCleanups.clear(); };
   h.text = () => JSON.stringify(h.tree, (_key, value) => typeof value === 'function' ? value.name : value);
   h.find = (type, predicate = () => true) => {
     const walk = (value) => {

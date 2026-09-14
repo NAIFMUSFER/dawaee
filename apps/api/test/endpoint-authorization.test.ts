@@ -239,6 +239,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/caregivers/permissions': 'authenticated',
   'PUT /v1/caregivers/notification-rules': 'authenticated',
   'POST /v1/caregivers/revoke': 'authenticated',
+  'POST /v1/caregivers/notification/resolve': 'authenticated',
 
   'GET /v1/escalation-policy': 'authenticated',
   'PUT /v1/escalation-policy': 'authenticated',
