@@ -101,6 +101,8 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
       };
       case '@/notifications/caregiver-navigation':
         return executeSource('apps/mobile/src/notifications/caregiver-navigation.ts', requireMock);
+      case '@/notifications/grouped-navigation':
+        return executeSource('apps/mobile/src/notifications/grouped-navigation.ts', requireMock);
       case 'expo-notifications': nativeImports += 1; return native;
       default: throw new Error(`Unexpected test dependency: ${id}`);
     }
@@ -216,4 +218,28 @@ it('cleans up its subscription even when the native startup read throws synchron
   const h = harness(); h.setReadLast(() => { throw new Error('native bridge unavailable'); });
   h.render(); await flush(); h.dispose();
   assert.equal(h.listeners.size, 0);
+});
+
+it('loads both real default-tap listeners and keeps their routing and consumption separate', async () => {
+  const h = harness(); h.render(); await flush();
+  assert.equal(h.listeners.size, 2, 'both production navigation helpers must be exercised');
+  for (const kind of ['dose_group_reminder', 'daily_summary', 'weekly_summary']) {
+    h.emit(response(kind, `integration-${kind}`)); await flush();
+  }
+  assert.deepEqual(h.routes, ['/(tabs)/today', '/caregiver/notification', '/caregiver/notification']);
+  assert.equal(h.clears, 3, 'each matching response is consumed by exactly one listener');
+  h.dispose();
+  assert.equal(h.listeners.size, 0);
+});
+
+it('fences both real default-tap listeners before passive cleanup on account change', async () => {
+  const h = harness(); h.render(); await flush();
+  assert.equal(h.listeners.size, 2);
+  h.render({ user: { id: 'account-B' } }, false);
+  h.emit(response('dose_group_reminder', 'old-group'));
+  h.emit(response('escalation', 'old-caregiver'));
+  await flush();
+  assert.deepEqual(h.routes, []);
+  assert.equal(h.clears, 0);
+  h.dispose();
 });
