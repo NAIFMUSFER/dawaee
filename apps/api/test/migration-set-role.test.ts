@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -10,13 +10,15 @@ afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function fakePsql(canSet = true): string {
+function fakePsql(canSet = true, failInspection = false): string {
   const dir = mkdtempSync(join(tmpdir(), 'dawaee-migrate-role-'));
   temps.push(dir);
   const p = join(dir, 'psql');
   writeFileSync(p, `#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
+printf '%s | %s | %s\\n' "${'$'}{PGOPTIONS:-}" "${'$'}{PSQLRC:-}" "$args" >> "$(dirname "$0")/calls"
+if [[ "$args" == *"preflight_checks.sql"* ]]; then exit ${failInspection ? '3' : '0'}; fi
 role_set=false
 if [[ -n "${'$'}{PSQLRC:-}" && -f "${'$'}PSQLRC" ]] && grep -q '^SET ROLE dawaee_owner;$' "${'$'}PSQLRC"; then
   role_set=true
@@ -36,8 +38,8 @@ exit 0
   return dir;
 }
 
-function run(extraEnv: Record<string, string>, pathDir: string) {
-  return spawnSync('bash', ['scripts/migrate.sh', '--preflight-only'], {
+function run(extraEnv: Record<string, string>, pathDir: string, args = ['--preflight-only']) {
+  return spawnSync('bash', ['scripts/migrate.sh', ...args], {
     cwd: ROOT,
     encoding: 'utf8',
     env: {
@@ -46,6 +48,7 @@ function run(extraEnv: Record<string, string>, pathDir: string) {
       DATABASE_URL: 'postgresql://example.invalid/postgres',
       DAWAEE_APP_PASSWORD: '',
       DAWAEE_WORKER_PASSWORD: '',
+      MIGRATION_SET_ROLE: '',
       ...extraEnv,
     },
   });
@@ -70,5 +73,38 @@ describe('migration effective role handoff', () => {
     const result = run({ MIGRATION_SET_ROLE: 'dawaee_owner; RESET ROLE' }, fakePsql(true));
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('must be a lowercase unquoted Postgres identifier');
+  });
+
+  it('keeps every inspection connection read-only and never invokes policy maintenance', () => {
+    const dir = fakePsql();
+    const result = run({ PGOPTIONS: '-c client_min_messages=warning', PSQLRC: '/unrelated/startup' }, dir);
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n');
+    expect(calls.length).toBeGreaterThan(1);
+    for (const call of calls) {
+      expect(call).toContain('default_transaction_read_only=on');
+      expect(call).toContain('| /dev/null |');
+    }
+    expect(calls.join('\n')).toContain('preflight_checks.sql');
+    expect(calls.join('\n')).not.toContain('definer_policies.sql');
+    expect(result.stdout).toContain('no database changes were made');
+  });
+
+  it.each([['--prefligth-only'], ['--preflight-only', 'unexpected']])(
+    'rejects unrecognized arguments before any database connection: %j', (...args) => {
+      const dir = fakePsql();
+      const result = run({}, dir, args);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('usage:');
+      expect(() => readFileSync(join(dir, 'calls'))).toThrow();
+    },
+  );
+
+  it('propagates a failed catalogue inspection without attempting a repair', () => {
+    const dir = fakePsql(true, true);
+    const result = run({}, dir);
+    expect(result.status).toBe(3);
+    expect(result.stdout).not.toContain('preflight complete');
+    expect(readFileSync(join(dir, 'calls'), 'utf8')).not.toContain('definer_policies.sql');
   });
 });

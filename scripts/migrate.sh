@@ -7,6 +7,14 @@
 # stored so an edit to a migration that has already shipped is caught here
 # instead of becoming a silent difference between two environments.
 set -euo pipefail
+# Reject misspelled/extra options before connecting. A preflight typo must never
+# fall through to the mutating deployment path.
+PREFLIGHT_ONLY=0
+case "$#:${1:-}" in
+  0:) ;;
+  1:--preflight-only) PREFLIGHT_ONLY=1 ;;
+  *) echo 'usage: scripts/migrate.sh [--preflight-only]' >&2; exit 2 ;;
+esac
 : "${DATABASE_URL:?DATABASE_URL is required}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -16,7 +24,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # and have trained more than one reader to scroll past a real error. Warnings
 # and above still print.
 BASE_PGOPTIONS="${PGOPTIONS:--c client_min_messages=warning}"
+if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
+  BASE_PGOPTIONS="$BASE_PGOPTIONS -c default_transaction_read_only=on"
+fi
 export PGOPTIONS="$BASE_PGOPTIONS"
+# Only the explicit role handoff below may supply a startup file. Do not run an
+# operator's unrelated psql startup commands during a read-only inspection.
+export PSQLRC=/dev/null
 
 # Managed Postgres can require authenticating as a platform/admin role while
 # the application schema is deliberately owned by a separate NOSUPERUSER /
@@ -68,14 +82,11 @@ fi
 # Everything here runs BEFORE the first migration is applied, because the
 # alternative was measured and is worse: a deploy that applies 0020 through 0024,
 # then discovers at 0025 that it cannot do what it needs, and leaves production
-# on a schema no commit corresponds to. Nothing below writes a row of patient
-# data; each check either passes or stops the deploy with the schema untouched.
+# on a schema no commit corresponds to. Inspection is read-only; the normal
+# deploy path explicitly maintains definer policies before applying migrations.
 #
 # `--preflight-only` runs these and exits, so an operator can answer "would this
 # deploy get off the ground?" without starting it. See docs/RUNBOOK-migrate-preflight.md.
-PREFLIGHT_ONLY=0
-[ "${1:-}" = "--preflight-only" ] && PREFLIGHT_ONLY=1
-
 echo "preflight: connection"
 psql "$DATABASE_URL" -tAc 'SELECT 1' > /dev/null
 
@@ -109,11 +120,12 @@ if [ -n "${DAWAEE_APP_PASSWORD:-}" ] && [ -n "${DAWAEE_WORKER_PASSWORD:-}" ]; th
       FROM pg_roles r
      WHERE r.rolname IN ('dawaee_app', 'dawaee_worker')
        AND NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
-       AND NOT EXISTS (
+       AND (NOT (SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user)
+         OR NOT EXISTS (
          SELECT 1 FROM pg_auth_members m
           WHERE m.roleid = r.oid
             AND m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user)
-            AND m.admin_option)")"
+            AND m.admin_option))")"
   if [ -n "$BLOCKED" ]; then
     cat >&2 <<EOF
 ERROR: '$MIGRATION_ROLE' cannot set the password of: $BLOCKED
@@ -137,18 +149,22 @@ EOF
   echo "preflight: role administration OK"
 fi
 
-# 3. The definer privilege path.
+# 3. Inspect without invoking the mutating maintenance file. Missing owner
+# policies are planned maintenance, not permission to create them during a check.
+if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
+  echo "preflight: definer policies (read-only inspection)"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/db/maintenance/preflight_checks.sql"
+  echo "preflight complete — no migration was applied; no database changes were made"
+  exit 0
+fi
+
+# 4. The definer privilege path (mutating deployment mode only).
 #
 # Must run before the migration loop: 0025's dedup DELETE on `dose_events`
 # depends on it, and a numbered migration cannot fix one that sorts earlier.
 # Idempotent, and re-run after the loop for tables this run creates.
 echo "preflight: definer policies"
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/db/maintenance/definer_policies.sql"
-
-if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
-  echo "preflight complete — no migration was applied"
-  exit 0
-fi
 
 # ---------------------------------------------------------------- adoption
 #

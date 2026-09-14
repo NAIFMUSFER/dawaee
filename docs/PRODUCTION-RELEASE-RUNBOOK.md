@@ -15,7 +15,9 @@ surfaces and pass them only through the process environment.
 
 ## 0. Current audit evidence and open blockers
 
-As of the 2026-09-11 audit:
+The following 2026-09-11 findings are historical starting points. The
+release-specific [14 September review](release/2026-09-14-readiness.md) records
+newer observations and the remaining proof; re-check both at the release window.
 
 - GitHub CI and Security gates have executed successfully on the current audit
   branch head for PostgreSQL 16 and 17, RLS, migrations, managed-Postgres smoke,
@@ -26,7 +28,7 @@ As of the 2026-09-11 audit:
   audit branch. Record the exact candidate SHA, resulting post-merge release SHA,
   and exact pre-release Render deploy IDs immediately before release; never use
   a SHA copied from this document.
-- Fresh production worker evidence shows the `materialize` job failing with
+- The 2026-09-11 production worker evidence showed the `materialize` job failing with
   SQLSTATE `42501` / `permission denied for table dose_occurrences`. The audit
   branch contains the least-privilege remediation. Its disappearance after the
   worker release is a required production verification.
@@ -37,7 +39,8 @@ As of the 2026-09-11 audit:
   cutover prove the identifiers are absent**.
 - The canonical API is currently on a configuration that has produced cold-start
   HTTP 503s. The release candidate expects paid/non-sleeping service behaviour
-  and `/health/ready` as the traffic gate. Verify the Render service after the
+  and `/health` as Render's continuous liveness check. `/health/ready` remains
+  the operator's release gate after worker/API identities agree. Verify Render after the
   deploy; repository configuration alone is not production proof.
 - Four duplicate Dawaee Render services are fail-closed and have no working
   application instance. Do not delete or suspend them as part of this release;
@@ -58,11 +61,19 @@ Do not begin until every line is true.
       checks; verify the ruleset still exists before relying on it.
 - [ ] Canonical `dawaee-api` and `dawaee-worker` auto-deploy are off. Verify in
       Render even if they were already off during the audit.
+- [ ] The canonical API uses `/health` for Render's continuous health check.
+      Do not attach strict worker/API version readiness to the old serving
+      instance while intentionally replacing the worker first.
 - [ ] A named operator has Render, Supabase and `psql` access.
 - [ ] A second operator is available for rollback authorization.
 - [ ] The release window is chosen to minimize scheduled-dose impact.
 - [ ] A production database backup/restore point from the last hour exists and
       its identifier and timestamp are recorded.
+- [ ] Recovery is compatible with the exact pending schema. The 14 September
+      review found that migration 0037 removes the conflict index used by the
+      recorded old API's stock writes. Its deploy ID alone is **not a usable
+      post-upgrade rollback**. Prove a compatible recovery build or rehearse an
+      approved maintenance/restore plan before any production migration.
 - [ ] The production `DATABASE_URL` host has been confirmed to be the intended
       production database before taking or trusting the backup.
 - [ ] The intended push/OCR/storage provider state has been decided. `/health/ready`
@@ -88,7 +99,8 @@ PRE_RELEASE_WORKER_SHA=<reported commit>
 ```
 
 These recorded deploy IDs, not historical SHAs in documentation, are the only
-approved R1/R2 rollback targets.
+candidate R1/R2 rollback targets. They become usable only after the upgraded-copy
+compatibility rehearsal; recording an identity does not approve its use.
 
 If the API and worker do not report the same expected pre-release release line,
 stop and investigate release drift before proceeding.
@@ -160,8 +172,11 @@ Required checks before proceeding:
 
 - `unexpected-production-migrations.txt` is empty. If production contains a
   migration filename the release artefact does not know, **stop**.
-- Every live migration is an ordered prefix/subset consistent with the release
-  artefact. Gaps or divergent history are a blocker.
+- Every live migration is consistent with the release artefact. An unexplained
+  gap or divergent checksum is a blocker. An explicitly reviewed out-of-order
+  hotfix requires an exact-baseline upgrade rehearsal, such as
+  `scripts/upgrade-rehearsal-hotfix-0047.sh`; never fill its gaps by inserting
+  ledger rows without executing the corresponding migrations.
 - `pending-migrations.txt` is the exact list to review, rehearse and later apply.
 - Keep `pre-release-ledger-checksums.txt` with the release record. The migration
   runner also refuses an already-applied migration whose checksum changed.
@@ -231,7 +246,10 @@ DAWAEE_WORKER_PASSWORD='…' \
 ./scripts/migrate.sh --preflight-only
 ```
 
-Expected: exit 0 and `preflight complete — no migration was applied`.
+Expected: exit 0 and `preflight complete — no migration was applied; no database changes were made`.
+Use the corrected candidate: older `--preflight-only` implementations invoked
+mutating definer-policy maintenance. A nonzero missing-policy count describes
+maintenance for the actual deploy; inspection leaves those policies absent.
 
 Any non-zero exit is a release stop. Do not apply migrations first and diagnose
 permissions later. See `docs/RUNBOOK-migrate-preflight.md`.
@@ -263,6 +281,11 @@ Verify:
 - The second run prints `no pending migrations`.
 - The RLS probe has no `FAIL`.
 - No migration or integrity assertion fails.
+- Both recorded rollback builds have been exercised against the upgraded copy.
+  Check startup schema validation, authentication, stock event conflict targets,
+  push-session binding and worker housekeeping. A Render deploy ID alone does
+  not prove an old binary remains compatible with the new schema. If either
+  old build fails, resolve the recovery plan before applying production DDL.
 
 The repository CI also carries a production-shaped upgrade rehearsal from its
 known test baseline to current head. That is regression evidence; the restored
@@ -344,9 +367,11 @@ stop. Do not move the API forward.
 Deploy canonical `dawaee-api` manually at the **same** `RELEASE_SHA`.
 
 Before declaring it live, verify the Render service itself reflects the intended
-release configuration. In particular, the release candidate expects the
-readiness endpoint to be the traffic gate and must not rely on a sleeping free
-service for medication actions/reminders.
+release configuration: `/health` for the platform's continuous liveness checks,
+and `/health/ready` as the explicit operator acceptance gate after the new API
+joins the already-verified worker. The old API's strict readiness can fail during
+intentional version skew; that must not make Render withdraw the serving process.
+The service must not sleep for medication actions/reminders.
 
 Probe:
 
@@ -475,6 +500,11 @@ Confirm it reaches live and resumes its pre-release observable behaviour.
 
 Rollback the canonical API to the recorded `PRE_RELEASE_API_DEPLOY`. Confirm
 `/health` and the pre-release supported user flow recover.
+
+This is conditional on the compatibility proof in step 6. If the recorded build
+still uses an index/column/privilege removed by the release, it is not an R2
+recovery option. In particular, a healthy `/health` response cannot establish
+that stock-linked dose confirmations work after migration 0037.
 
 ## R3 — Schema restore, only when code rollback is insufficient
 
