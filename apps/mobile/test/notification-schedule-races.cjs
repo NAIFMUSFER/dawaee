@@ -162,8 +162,9 @@ function scenarios(file) {
     state.exactAlarmsAllowed = false;
     const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
     assert.equal(result.scheduled, 1);
+    assert.equal(result.exactAlarmsUnavailable, true);
     assert.equal((await api.inspectCapability()).canScheduleExact, false);
-    assert.equal(state.exactAlarmChecks, 1);
+    assert.equal(state.exactAlarmChecks, 2);
   }, 'android');
   add('a scheduling error cannot permanently override a later Android permission check', async (api, state) => {
     state.schedule = () => { throw new Error('exact alarm permission denied'); };
@@ -172,7 +173,7 @@ function scenarios(file) {
     assert.equal(result.exactAlarmsUnavailable, true);
     state.exactAlarmsAllowed = true;
     assert.equal((await api.inspectCapability()).canScheduleExact, true);
-    assert.equal(state.exactAlarmChecks, 1);
+    assert.equal(state.exactAlarmChecks, 2);
   }, 'android');
   add('notification denial cannot be outranked by Android exact-alarm access', async (api, state) => {
     state.notificationGranted = false;
