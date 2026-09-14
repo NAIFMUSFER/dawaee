@@ -4,6 +4,7 @@ import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
+import { canScheduleExactAlarms as canScheduleExactAlarmsOnDevice } from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
@@ -56,15 +57,13 @@ export interface NotificationCapability {
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
 }
 
-let exactAlarmsObservedUnavailable = false;
-
 export async function inspectCapability(): Promise<NotificationCapability> {
   const N = await load();
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
   const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
-  const canScheduleExact = Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
+  const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
     permissionGranted: granted,
@@ -280,11 +279,6 @@ async function scheduleCurrentNotifications(
       failed += 1;
       if (String(err).includes('exact')) exactAlarmsUnavailable = true;
     }
-  }
-
-  if (isCurrent()) {
-    if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
-    else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
   }
 
   return { scheduled, failed, exactAlarmsUnavailable };

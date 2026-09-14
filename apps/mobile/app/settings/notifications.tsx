@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { inspectCapability, requestPermission, type NotificationCapability } from '@/notifications';
+import { openExactAlarmSettings } from '../../modules/exact-alarm-access';
 
 /**
  * Notification settings, and an honest diagnosis of what this device will
@@ -184,7 +185,9 @@ export default function NotificationSettingsScreen() {
                     <Button
                       label={t('notifications.openSettings')}
                       tone="secondary"
-                      onPress={() => { void Linking.openSettings(); }}
+                      onPress={() => {
+                        if (!openExactAlarmSettings()) void Linking.openSettings();
+                      }}
                     />
                   </View>
                 }
