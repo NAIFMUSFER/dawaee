@@ -106,7 +106,35 @@ case "$MIGRATION_ROLE" in
     exit 1 ;;
 esac
 
-# 2. Role administration, checked before it is needed rather than after.
+# 2. A release backup schema is a historical copy, not part of the live
+# application graph. Keeping one attached to the same database can preserve
+# credentials, sessions and clinical rows beyond the lifecycle of the live
+# account-erasure path. Never auto-drop it here: retention/recovery evidence may
+# still be needed. Refuse the release until an operator explicitly resolves it.
+# Require two Dawaee marker tables as well as the strict timestamped name so an
+# unrelated schema whose name happens to start with release_backup_ is ignored.
+RELEASE_BACKUP_SCHEMAS="$(psql "$DATABASE_URL" -tAc "
+  SELECT string_agg(n.nspname, ', ' ORDER BY n.nspname)
+    FROM pg_namespace n
+   WHERE n.nspname ~ '^release_backup_[0-9]{8}_[0-9]{4}$'
+     AND EXISTS (
+       SELECT 1 FROM pg_class c
+        WHERE c.relnamespace = n.oid
+          AND c.relkind IN ('r','p')
+          AND c.relname = 'users')
+     AND EXISTS (
+       SELECT 1 FROM pg_class c
+        WHERE c.relnamespace = n.oid
+          AND c.relkind IN ('r','p')
+          AND c.relname = 'patient_profiles')")"
+if [ -n "$RELEASE_BACKUP_SCHEMAS" ]; then
+  echo "ERROR: release backup schema residue remains attached: $RELEASE_BACKUP_SCHEMAS" >&2
+  echo "       Dawaee release backups are outside the live account-erasure scope." >&2
+  echo "       Verify retention/recovery requirements, then explicitly remove or archive the residue before migration." >&2
+  exit 1
+fi
+
+# 3. Role administration, checked before it is needed rather than after.
 #
 # Since PostgreSQL 16 a CREATEROLE role may only alter roles it created, or ones
 # it holds ADMIN OPTION on. If `dawaee_app` and `dawaee_worker` were created by
@@ -149,7 +177,7 @@ EOF
   echo "preflight: role administration OK"
 fi
 
-# 3. Inspect without invoking the mutating maintenance file. Missing owner
+# 4. Inspect without invoking the mutating maintenance file. Missing owner
 # policies are planned maintenance, not permission to create them during a check.
 if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
   echo "preflight: definer policies (read-only inspection)"
@@ -158,7 +186,7 @@ if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
   exit 0
 fi
 
-# 4. The definer privilege path (mutating deployment mode only).
+# 5. The definer privilege path (mutating deployment mode only).
 #
 # Must run before the migration loop: 0025's dedup DELETE on `dose_events`
 # depends on it, and a numbered migration cannot fix one that sorts earlier.
