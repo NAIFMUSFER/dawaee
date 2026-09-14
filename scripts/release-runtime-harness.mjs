@@ -26,6 +26,16 @@ export function validateRuntimeRecoveryEnvironment(env, head) {
   assert.equal(env.RECOVERY_CANDIDATE_SHA, head, 'checkout must be the selected candidate, not a merge ref');
 }
 
+export function parseDockerLoopbackPort(output) {
+  const lines = String(output).trim().split(/\r?\n/).filter(Boolean);
+  assert.equal(lines.length, 1, 'published port must have exactly one host binding');
+  const match = /^127\.0\.0\.1:(\d+)$/.exec(lines[0]);
+  assert.ok(match, 'published port must bind only to IPv4 loopback');
+  const port = Number(match[1]);
+  assert.ok(Number.isInteger(port) && port >= 1 && port <= 65535, 'published host port is invalid');
+  return String(port);
+}
+
 export async function until(label, probe, milliseconds = 30_000) {
   const deadline = Date.now() + milliseconds;
   do {
@@ -60,6 +70,9 @@ export async function createRuntimeHarness(env = process.env) {
   let postgres;
 
   const inspect = (id) => JSON.parse(run('docker', ['inspect', id]))[0];
+  const publishedLoopbackPort = (id, containerPort) => parseDockerLoopbackPort(
+    run('docker', ['port', id, `${containerPort}/tcp`]),
+  );
   const create = (args) => {
     const id = run('docker', ['create', '--label', label, '--network', network, ...args]).trim();
     assert.match(id, /^[0-9a-f]{64}$/);
@@ -109,8 +122,7 @@ export async function createRuntimeHarness(env = process.env) {
     assert.equal(JSON.parse(run('docker', ['network', 'inspect', network]))[0].Internal, true);
     postgres = create(['--name', `${network}_postgres`, '--network-alias', 'db',
       '--publish', '127.0.0.1:5433:5432', '--env', 'POSTGRES_PASSWORD=postgres', 'postgres:17']);
-    const ports = inspect(postgres).NetworkSettings.Ports['5432/tcp'];
-    assert.deepEqual(ports, [{ HostIp: '127.0.0.1', HostPort: '5433' }]);
+    assert.equal(publishedLoopbackPort(postgres, 5432), '5433');
     await until('owned PostgreSQL startup', () => {
       assert.equal(inspect(postgres).State.Running, true, 'owned PostgreSQL exited');
       try { run('docker', ['exec', postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres']); return true; }
@@ -157,11 +169,8 @@ export async function createRuntimeHarness(env = process.env) {
         assert.deepEqual(Object.keys(state.NetworkSettings.Networks), [network]);
         let base;
         if (app === 'api') {
-          const binding = state.NetworkSettings.Ports['8080/tcp'];
-          assert.equal(binding.length, 1);
-          assert.equal(binding[0].HostIp, '127.0.0.1');
-          assert.match(binding[0].HostPort, /^\d+$/);
-          base = `http://127.0.0.1:${binding[0].HostPort}`;
+          const hostPort = publishedLoopbackPort(id, 8080);
+          base = `http://127.0.0.1:${hostPort}`;
         }
         return { id, base, name };
       },
