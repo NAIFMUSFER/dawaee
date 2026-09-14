@@ -31,7 +31,11 @@
     },
     "production": {
       "autoIncrement": true,
-      "android": { "buildType": "app-bundle" },
+      "android": {
+        "buildType": "app-bundle",
+        "image": "sdk-55",
+        "node": "22.22.2"
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://dawaee-api.onrender.com",
         "EXPO_PUBLIC_DEMO": "0"

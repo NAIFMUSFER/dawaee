@@ -17,7 +17,7 @@ function fakePsql(canSet = true, failInspection = false): string {
   writeFileSync(p, `#!/usr/bin/env bash
 set -euo pipefail
 args="$*"
-printf '%s | %s | %s\\n' "${'$'}{PGOPTIONS:-}" "${'$'}{PSQLRC:-}" "$args" >> "$(dirname "$0")/calls"
+printf '%s | %s | %s\\0' "${'$'}{PGOPTIONS:-}" "${'$'}{PSQLRC:-}" "$args" >> "$(dirname "$0")/calls"
 if [[ "$args" == *"preflight_checks.sql"* ]]; then exit ${failInspection ? '3' : '0'}; fi
 role_set=false
 if [[ -n "${'$'}{PSQLRC:-}" && -f "${'$'}PSQLRC" ]] && grep -q '^SET ROLE dawaee_owner;$' "${'$'}PSQLRC"; then
@@ -79,7 +79,8 @@ describe('migration effective role handoff', () => {
     const dir = fakePsql();
     const result = run({ PGOPTIONS: '-c client_min_messages=warning', PSQLRC: '/unrelated/startup' }, dir);
     expect(result.status, result.stderr).toBe(0);
-    const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n');
+    // A psql invocation can contain multiline SQL; NUL separates whole calls.
+    const calls = readFileSync(join(dir, 'calls'), 'utf8').split('\0').filter(Boolean);
     expect(calls.length).toBeGreaterThan(1);
     for (const call of calls) {
       expect(call).toContain('default_transaction_read_only=on');
