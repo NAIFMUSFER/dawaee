@@ -19,11 +19,14 @@ function dose(id, minutes = 30) {
   return { id, medicationId: `med-${id}`, status: 'upcoming', scheduledAt: new Date(Date.now() + minutes * 60000).toISOString(), scheduledLocalTime: '09:00', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${id}`, foodInstruction: 'none' } };
 }
 function loadModule(file, platform = 'ios') {
-  const state = { active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null };
+  const state = {
+    active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
+    notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0,
+  };
   const native = {
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
-    getPermissionsAsync: async () => ({ granted: true }),
+    getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
       if (state.cancel) await state.cancel(state.cancellations);
@@ -42,6 +45,11 @@ function loadModule(file, platform = 'ios') {
   const imports = {
     'react-native': { Platform: { OS: platform } },
     'expo-constants': { default: {} },
+    // Mock native I/O, not inspectCapability or the scheduler under test.
+    // This source of truth is deliberately independent of scheduling failures.
+    '../../modules/exact-alarm-access': {
+      canScheduleExactAlarms: () => { state.exactAlarmChecks++; return state.exactAlarmsAllowed; },
+    },
     '../api/client.js': { api: {} },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
     './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
@@ -128,11 +136,59 @@ function scenarios(file) {
     assert.equal(state.active.length, 1); assert.equal(state.active[0].content.data.doseId, 'B');
   });
   add('native scheduling rejection still reports exact-alarm degradation', async (api, state) => {
+    state.exactAlarmsAllowed = false; // The OS denies access independently of the scheduling exception.
     state.schedule = () => { throw new Error('exact alarm permission denied'); };
     const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
     assert.equal(result.failed, 1); assert.equal(result.exactAlarmsUnavailable, true);
     assert.equal((await api.inspectCapability()).canScheduleExact, false);
   }, 'android');
+  add('fresh Android denial is reported before any scheduling attempt', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, true);
+    assert.equal(capability.canScheduleExact, false);
+    assert.equal(state.exactAlarmChecks, 1);
+    assert.equal(state.scheduledCalls.length, 0);
+  }, 'android');
+  add('Android recheck observes grants and revocations in the same process', async (api, state) => {
+    for (const allowed of [false, true, false]) {
+      state.exactAlarmsAllowed = allowed;
+      assert.equal((await api.inspectCapability()).canScheduleExact, allowed);
+    }
+    assert.equal(state.exactAlarmChecks, 3);
+    assert.equal(state.scheduledCalls.length, 0);
+  }, 'android');
+  add('a successful scheduling call cannot substitute for Android special access', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
+    assert.equal(result.scheduled, 1);
+    assert.equal((await api.inspectCapability()).canScheduleExact, false);
+    assert.equal(state.exactAlarmChecks, 1);
+  }, 'android');
+  add('a scheduling error cannot permanently override a later Android permission check', async (api, state) => {
+    state.schedule = () => { throw new Error('exact alarm permission denied'); };
+    const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
+    assert.equal(result.failed, 1);
+    assert.equal(result.exactAlarmsUnavailable, true);
+    state.exactAlarmsAllowed = true;
+    assert.equal((await api.inspectCapability()).canScheduleExact, true);
+    assert.equal(state.exactAlarmChecks, 1);
+  }, 'android');
+  add('notification denial cannot be outranked by Android exact-alarm access', async (api, state) => {
+    state.notificationGranted = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, false);
+    assert.equal(capability.canScheduleExact, false);
+    assert.equal(capability.warningKey, 'notifications.disabledTitle');
+    assert.equal(state.exactAlarmChecks, 0);
+  }, 'android');
+  add('iOS capability never calls the Android-only bridge', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, true);
+    assert.equal(capability.canScheduleExact, true);
+    assert.equal(state.exactAlarmChecks, 0);
+  }, 'ios');
   return cases;
 }
 module.exports = { scenarios, loadModule, deferred, until, dose, flush };

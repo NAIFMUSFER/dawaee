@@ -8,6 +8,9 @@ const io = vi.hoisted(() => ({
 
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 vi.mock('expo-constants', () => ({ default: {} }));
+// Keep the native boundary out of Node; the real scheduler/cache code still runs.
+// Android capability changes are exercised in notification-schedule-races.cjs.
+vi.mock('../modules/exact-alarm-access', () => ({ canScheduleExactAlarms: vi.fn(() => false) }));
 vi.mock('../src/api/client.js', () => ({ api: { post: vi.fn() } }));
 vi.mock('../src/notifications/actions.js', () => ({
   ACTION_SKIP: 'SKIP',
