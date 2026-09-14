@@ -126,21 +126,22 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
 async function flush() { for (let i = 0; i < 30; i += 1) await Promise.resolve(); }
 
 // Only fixed, non-clinical routing is permitted with the minimized payload.
-// The Family screen is a safe selection surface, not proof that a particular
-// patient/notification was resolved. Never guess the current/first patient.
+// The caregiver notification landing is a safe selection surface, not proof
+// that a particular patient/notification was resolved. Never guess the current
+// or first followed patient from a privacy-minimized push.
 describe('caregiver push navigation from the shipped Shell', () => {
-  it('opens Family for a live Android escalation without a doseId', async () => {
+  it('opens the neutral landing for a live Android escalation without a doseId', async () => {
     const h = harness(); h.render(); await flush(); h.emit(response()); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   it('handles a cold-start iOS escalation and consumes it', async () => {
     const h = harness({ platform: 'ios', last: response() }); h.render(); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); assert.equal(h.clears, 1); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); assert.equal(h.clears, 1); h.dispose();
   });
   it('does not route the same native response twice', async () => {
     const h = harness({ last: response() }); h.render(); await flush();
     h.emit(response()); h.emit(response()); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   for (const options of [{ signedIn: false }, { ready: false }, { platform: 'web' }]) {
     it(`does not navigate outside the signed-in native ready boundary: ${JSON.stringify(options)}`, async () => {
@@ -163,7 +164,7 @@ describe('caregiver push navigation from the shipped Shell', () => {
       url: 'https://untrusted.example/clinical?patient=secret', patientId: 'secret', patientName: 'not-a-route',
     });
     const h = harness({ last: value }); h.render(); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   it('ignores malformed notification data', async () => {
     const h = harness(); h.render(); await flush();
@@ -188,14 +189,14 @@ describe('caregiver push navigation from the shipped Shell', () => {
     const pending = new Promise<unknown>((resolve) => { finish = resolve; });
     const h = harness(); h.setReadLast(() => pending); h.render(); await flush();
     h.emit(response('escalation', 'newer-live')); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']);
+    assert.deepEqual(h.routes, ['/caregiver/notification']);
     finish(response('escalation', 'older-cold')); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   it('keeps live handling usable when reading the cold response fails', async () => {
     const h = harness(); h.setReadLast(async () => { throw new Error('native read failed'); });
     h.render(); await flush(); h.emit(response()); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/family']); h.dispose();
+    assert.deepEqual(h.routes, ['/caregiver/notification']); h.dispose();
   });
   it('does not act on callbacks or cold results after unmount', async () => {
     let finish!: (value: unknown) => void;

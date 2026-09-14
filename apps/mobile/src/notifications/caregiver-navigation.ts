@@ -12,8 +12,13 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 const DELIVERY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type CaregiverPushKind = 'escalation' | 'daily_summary' | 'weekly_summary';
 
-function escalationRequestId(response: unknown, defaultAction: string): string | null {
+function caregiverPushKind(value: unknown): value is CaregiverPushKind {
+  return value === 'escalation' || value === 'daily_summary' || value === 'weekly_summary';
+}
+
+function caregiverRequestId(response: unknown, defaultAction: string): string | null {
   if (!record(response) || response.actionIdentifier !== defaultAction) return null;
   const notification = response.notification;
   if (!record(notification) || !record(notification.request)) return null;
@@ -21,15 +26,16 @@ function escalationRequestId(response: unknown, defaultAction: string): string |
   if (typeof identifier !== 'string' || identifier.length === 0 || identifier.length > 1024) return null;
   if (!record(content) || !record(content.data)) return null;
   const data = content.data;
-  if (data.kind !== 'escalation' || typeof data.deliveryId !== 'string' || !DELIVERY_ID.test(data.deliveryId)) return null;
+  if (!caregiverPushKind(data.kind) || typeof data.deliveryId !== 'string' || !DELIVERY_ID.test(data.deliveryId)) return null;
   return identifier;
 }
 
 /**
- * A private escalation carries deliveryId + kind, not a patient/dose id. Its
- * default tap opens a fixed, authenticated Family selection surface. Never
- * guess the active/first patient or turn payload fields into a URL. Resolving
- * an exact delivery to its currently-authorized patient is a separate concern.
+ * Private caregiver pushes carry deliveryId + kind, not a patient/dose id.
+ * Their default tap opens a fixed, authenticated neutral selection surface.
+ * Never guess the active/first patient or turn payload fields into a URL.
+ * Resolving an exact delivery to its currently-authorized patient is a separate
+ * concern and must stay behind authenticated server authorization.
  *
  * The caller supplies a synchronous account-generation fence, invalidated on
  * logout/account change even before React's passive effect cleanup can run.
@@ -49,7 +55,7 @@ export function startCaregiverNotificationListener(
     try {
       const latest = await native.getLastNotificationResponseAsync();
       if (!current() || observedRevision !== revision) return;
-      if (escalationRequestId(latest, native.DEFAULT_ACTION_IDENTIFIER) !== requestId) return;
+      if (caregiverRequestId(latest, native.DEFAULT_ACTION_IDENTIFIER) !== requestId) return;
       // Do not knowingly clear a newer or unrelated dose-action response.
       // Expo does not offer an atomic compare-and-clear operation.
       await native.clearLastNotificationResponseAsync();
@@ -61,7 +67,7 @@ export function startCaregiverNotificationListener(
 
   const handle = (response: unknown): void => {
     if (!current()) return;
-    const requestId = escalationRequestId(response, native.DEFAULT_ACTION_IDENTIFIER);
+    const requestId = caregiverRequestId(response, native.DEFAULT_ACTION_IDENTIFIER);
     if (requestId === null) return;
     if (!seen.has(requestId)) {
       try { onOpen(); } catch { return; }

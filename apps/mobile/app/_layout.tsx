@@ -63,7 +63,6 @@ function Shell() {
     };
   }
 
-
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
   // fixed-route children can read stale process-local ids or OCR medication
   // drafts before passive effects run. A speculative render may discard a
@@ -89,9 +88,9 @@ function Shell() {
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
 
-  /** Private caregiver taps have no doseId; they need their own safe route.
-   * Family asks the user to choose a followed person rather than guessing from
-   * a minimized push payload. Exact delivery-to-patient lookup is not implied. */
+  /** Private caregiver taps have no patient/dose id; use a neutral selection
+   * screen so an old active profile cannot be mistaken for the alerted person.
+   * Exact delivery-to-patient lookup is not implied by the minimized payload. */
   useEffect(() => {
     if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
     const generation = caregiverSession.current.generation;
@@ -102,7 +101,7 @@ function Shell() {
       if (!isCurrent()) return;
       stop = startCaregiverNotificationListener(
         native,
-        () => router.replace('/(tabs)/family'),
+        () => router.replace('/caregiver/notification'),
         isCurrent,
       );
     }).catch(() => undefined);
