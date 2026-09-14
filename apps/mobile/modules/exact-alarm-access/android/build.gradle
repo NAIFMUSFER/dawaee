@@ -20,5 +20,7 @@ android {
 dependencies {
   // Reuse Expo's persisted-notification restore path (also used after reboot)
   // so the permission-grant receiver can repair alarms without launching JS.
-  implementation project(':expo-notifications')
+  // Expo SDK 55 exposes native modules from their packaged local Maven repo;
+  // the regression test keeps this coordinate aligned with package-lock.json.
+  implementation 'host.exp.exponent:expo.modules.notifications:55.0.27'
 }

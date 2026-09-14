@@ -15,6 +15,10 @@ const receiverSource = optionalSource(
 );
 const moduleGradle = optionalSource('../modules/exact-alarm-access/android/build.gradle');
 const nativeWorkflow = optionalSource('../../../.github/workflows/android-native.yml');
+const mobileLock = JSON.parse(optionalSource('../package-lock.json')) as {
+  packages: Record<string, { version?: string }>;
+};
+const expoNotificationsVersion = mobileLock.packages['node_modules/expo-notifications']?.version;
 
 describe('Android exact-alarm permission broadcast recovery', () => {
   it('registers a non-exported receiver for the system grant broadcast', () => {
@@ -40,7 +44,10 @@ describe('Android exact-alarm permission broadcast recovery', () => {
   });
 
   it('compiles and inspects the receiver in the release APK gate', () => {
-    expect(moduleGradle).toContain("implementation project(':expo-notifications')");
+    expect(expoNotificationsVersion).toBeTruthy();
+    expect(moduleGradle).toContain(
+      `implementation 'host.exp.exponent:expo.modules.notifications:${expoNotificationsVersion}'`,
+    );
     expect(nativeWorkflow).toContain(
       'dex code --class app.dawaee.exactalarm.ExactAlarmPermissionReceiver',
     );
