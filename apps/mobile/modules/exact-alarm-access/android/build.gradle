@@ -16,3 +16,9 @@ android {
     versionName "0.1.0"
   }
 }
+
+dependencies {
+  // Reuse Expo's persisted-notification restore path (also used after reboot)
+  // so the permission-grant receiver can repair alarms without launching JS.
+  implementation project(':expo-notifications')
+}
