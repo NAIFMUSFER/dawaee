@@ -39,19 +39,20 @@ class ExactAlarmAccessModule : Module() {
         context.startActivity(intent)
         true
       } catch (_: ActivityNotFoundException) {
-        openApplicationSettings(context, packageUri)
-        false
+        return@Function openApplicationSettings(context, packageUri)
       } catch (_: SecurityException) {
-        openApplicationSettings(context, packageUri)
-        false
+        return@Function openApplicationSettings(context, packageUri)
       }
     }
   }
 
-  private fun openApplicationSettings(context: Context, packageUri: Uri) {
+  private fun openApplicationSettings(context: Context, packageUri: Uri): Boolean {
     val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri).apply {
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    runCatching { context.startActivity(fallback) }
+    return runCatching {
+      context.startActivity(fallback)
+      true
+    }.getOrDefault(false)
   }
 }
