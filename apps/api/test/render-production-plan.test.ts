@@ -23,9 +23,13 @@ describe('Render production availability contract', () => {
     expect(apiBlock).not.toMatch(/\n\s*plan:\s*free\s*(?:#.*)?$/m);
   });
 
-  it('uses full readiness — not process-only liveness — as the Render traffic gate', () => {
-    expect(apiBlock).toMatch(/\n\s*healthCheckPath:\s*\/health\/ready\s*(?:#.*)?$/m);
-    expect(apiBlock).not.toMatch(/\n\s*healthCheckPath:\s*\/health\s*(?:#.*)?$/m);
+  it('keeps continuous Render probes on liveness during the controlled worker-first cutover', () => {
+    // Readiness still verifies release coherence explicitly after API/worker
+    // convergence. Using it for continuous probes would evict the old API
+    // during the intentional worker-first SHA mismatch.
+    expect(apiBlock).toMatch(/\n\s*healthCheckPath:\s*\/health\s*(?:#.*)?$/m);
+    expect(apiBlock).not.toMatch(/\n\s*healthCheckPath:\s*\/health\/ready\s*(?:#.*)?$/m);
+    expect(apiBlock).toMatch(/\n\s*autoDeployTrigger:\s*off\s*(?:#.*)?$/m);
   });
 
   it('pins Render client-IP trust to Cloudflare metadata instead of a caller-controlled forwarded chain', () => {
