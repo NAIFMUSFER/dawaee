@@ -45,4 +45,12 @@ describe('Android exact-alarm release policy', () => {
     expect(settingsSource).toContain('openExactAlarmSettings()');
     expect(settingsSource).toContain('void Linking.openSettings()');
   });
+
+  it('reports a successful native fallback so JavaScript does not launch application settings twice', () => {
+    expect(kotlinSource).toContain('return@Function openApplicationSettings(context, packageUri)');
+    expect(kotlinSource).toContain('private fun openApplicationSettings(context: Context, packageUri: Uri): Boolean');
+    expect(kotlinSource).toContain('return runCatching');
+    expect(kotlinSource).toContain('context.startActivity(fallback)\n      true');
+    expect(kotlinSource).toContain('.getOrDefault(false)');
+  });
 });
