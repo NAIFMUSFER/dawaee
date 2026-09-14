@@ -166,6 +166,12 @@ remain separate release gates.
 
 ## Installed-device test preparation
 
+The table below records the initial inspection. The subsequent
+[isolated preview preparation](2026-09-14-audit-preview.md) adds a supervised
+API/worker pair and a separate installed audit identity. Exact deployment and
+CI evidence belong to the current PR/checkpoint; preparation alone is not a
+signed build or real push result.
+
 | Item | Verified configuration / gap |
 | --- | --- |
 | App identity | Expo owner `naif789`, project `a7d1638b-045d-4fa3-957f-22d818c51abd`, Android/iOS ID `app.dawaee.mobile`, version 0.1.0 / build 2 |

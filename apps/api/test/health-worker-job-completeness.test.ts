@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const COMMIT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const h = vi.hoisted(() => ({ query: vi.fn() }));
+const h = vi.hoisted(() => ({ query: vi.fn(), env: 'production', workerRequired: false }));
 
 vi.mock('../src/lib/db.js', () => ({
   getPool: () => ({ query: h.query }),
@@ -19,7 +19,7 @@ vi.mock('../src/lib/schema-contract.js', () => ({
 }));
 
 vi.mock('../src/config.js', () => ({
-  loadConfig: () => ({ NODE_ENV: 'production' }),
+  loadConfig: () => ({ NODE_ENV: h.env, WORKER_READINESS_REQUIRED: h.workerRequired }),
 }));
 
 import { registerHealthRoutes } from '../src/routes/health.js';
@@ -52,6 +52,8 @@ describe('production readiness covers every per-tick safety-critical worker prer
   });
 
   beforeEach(() => {
+    h.env = 'production';
+    h.workerRequired = false;
     workerRows = [
       { job_name: 'materialize', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'reminders', started_at: new Date(), succeeded: true, build_commit: COMMIT },
@@ -120,5 +122,34 @@ describe('production readiness covers every per-tick safety-critical worker prer
     const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
     expect(body.checks.worker?.ok).toBe(false);
     expect(body.checks.worker?.detail).toMatch(/digests/i);
+  });
+
+  it('requires current successful worker jobs in an opted-in test preview', async () => {
+    h.env = 'test';
+    h.workerRequired = true;
+    const ready = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json().checks.worker.ok).toBe(true);
+    workerRows = [];
+    const missing = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(missing.statusCode).toBe(503);
+    expect(missing.json().checks.worker.ok).toBe(false);
+  });
+
+  it('rejects a preview worker from a different commit', async () => {
+    h.env = 'test';
+    h.workerRequired = true;
+    workerRows = workerRows.map(row => ({ ...row, build_commit: 'b'.repeat(40) }));
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().checks.worker.detail).toContain('commit mismatch');
+  });
+
+  it('does not require a worker for ordinary unit-test or development servers', async () => {
+    h.env = 'test';
+    workerRows = [];
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().checks.worker).toBeUndefined();
   });
 });

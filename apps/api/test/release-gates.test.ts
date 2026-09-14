@@ -94,6 +94,8 @@ const REQUIRED_SUITES: Array<[phase: string, file: string]> = [
   ['P25 synthetic backup and recovery', 'apps/api/test/production-recovery-rehearsal.test.ts'],
   ['P25 recovery target containment', 'apps/api/test/release-recovery-environment.test.ts'],
   ['P25 runtime recovery containment', 'apps/api/test/runtime-recovery-environment.test.ts'],
+  ['P25 preview runtime isolation', 'apps/api/test/audit-preview-runtime.test.ts'],
+  ['P25 installed audit identity', 'apps/mobile/test/audit-build-profile.test.ts'],
   ['P4 database TLS', 'apps/api/test/db-tls.test.ts'],
   ['P1-P3 mobile token store', 'apps/mobile/test/token-store.test.ts'],
   ['P1-P3 mobile secure cache', 'apps/mobile/test/secure-cache.test.ts'],
