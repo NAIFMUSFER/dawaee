@@ -1,10 +1,11 @@
 # PR #25 release readiness — 14 September 2026
 
-**BLOCKED for production.** This is a read-only release review, not a backup,
-device test, migration execution or deployment authorization. The migration set
+**BLOCKED for production.** Production inspection remains read-only; the new
+backup/restore rehearsal uses disposable synthetic data. No production backup,
+device test, production migration or deployment is claimed. The migration set
 reviewed is the 80 files in candidate `80208bffab2e09b72ed932f392e6a505f900e85e`.
-The accompanying change corrects migration preflight and this runbook; it does
-not change a numbered migration. Record CI for the resulting commit separately.
+The preflight correction and subsequent recovery rehearsal do not change a
+numbered migration. Record CI for the resulting commit separately.
 
 ## Current baseline and rollback blocker
 
@@ -16,7 +17,7 @@ The separate Supabase migration registry is not the application ledger.
 | Component | Recorded live identity | Recovery status |
 | --- | --- | --- |
 | API | `4cf23531dfaa5cc7c3790b473f8b4ff9f88d9f72`, deploy `dep-dajgcue7bikc73bvq9j0` | **Incompatible stock conflict target after 0037**, by source inspection |
-| Worker | `0338ddefc475d23cccecf13d5ede0f32d2007fb0`, deploy `dep-dai8atfqj5pc739j2vu0` | Upgraded-schema compatibility not rehearsed |
+| Worker | `0338ddefc475d23cccecf13d5ede0f32d2007fb0`, deploy `dep-dai8atfqj5pc739j2vu0` | **Direct cleanup of stored_objects loses access after 0039**, by source inspection |
 
 In that exact API source, `apps/api/src/services/dose-service.ts` inserts stock
 movements with `ON CONFLICT (dose_occurrence_id, reason) WHERE
@@ -135,8 +136,8 @@ at migration time. Rows marked “trigger” take effect on subsequent writes.
 
 ## Backup, restore and recovery evidence still required
 
-No backup identifier, timestamp, downloadable backup or successful restoration
-was available in this session. A historical migration name containing “backup”
+No production backup identifier, timestamp, downloadable backup or successful
+production-backup restoration was available in this session. A historical migration name containing “backup”
 is not backup evidence. No Supabase development branches currently exist for
 this project; an empty branch would not itself constitute a restored copy.
 
@@ -154,6 +155,14 @@ the exact upgrade logs, second-run no-op, RLS probe, old/new binary behavior and
 the measured data-loss window. Runtime roles must remain NOSUPERUSER/NOBYPASSRLS.
 Follow the main release runbook for the second operator's restore authorization.
 Do not export patient backups into Git, test logs or this report.
+
+The [synthetic recovery rehearsal](2026-09-14-recovery-rehearsal.md) now covers
+real `pg_dump` / `pg_restore`, the 34-to-80 ledger path, current stock and cleanup
+behavior and recovery of the original SQL contracts. It deliberately demonstrates
+that post-backup writes and deleted object bytes do not return with a database
+restore. Its success marker and exact candidate CI are required before calling
+that regression verified; production-scale recovery and full old-binary tests
+remain separate release gates.
 
 ## Installed-device test preparation
 

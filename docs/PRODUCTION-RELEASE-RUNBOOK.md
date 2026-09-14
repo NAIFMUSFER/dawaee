@@ -71,8 +71,9 @@ Do not begin until every line is true.
       its identifier and timestamp are recorded.
 - [ ] Recovery is compatible with the exact pending schema. The 14 September
       review found that migration 0037 removes the conflict index used by the
-      recorded old API's stock writes. Its deploy ID alone is **not a usable
-      post-upgrade rollback**. Prove a compatible recovery build or rehearse an
+      recorded old API's stock writes; 0039 also removes direct object-table
+      access used by the old worker's cleanup. Their deploy IDs alone are
+      **not a usable post-upgrade rollback**. Prove a compatible recovery build or rehearse an
       approved maintenance/restore plan before any production migration.
 - [ ] The production `DATABASE_URL` host has been confirmed to be the intended
       production database before taking or trusting the backup.
@@ -287,10 +288,16 @@ Verify:
   not prove an old binary remains compatible with the new schema. If either
   old build fails, resolve the recovery plan before applying production DDL.
 
-The repository CI also carries a production-shaped upgrade rehearsal from its
-known test baseline to current head. That is regression evidence; the restored
-production copy above is still the release authority because the live ledger may
-have moved since the CI baseline was created.
+The repository CI also carries upgrade rehearsals from 0033 and 0033 + the
+out-of-order 0047 hotfix. The separate
+[`production-recovery-rehearsal.test.ts`](../apps/api/test/production-recovery-rehearsal.test.ts)
+takes a real custom-format backup of a populated **synthetic** 0033 + 0047
+database, restores and upgrades a new database, exercises current dose services
+and worker housekeeping, then restores the original archive into another fresh
+database. It compares data, ledger, sequences, ACLs, policies, functions, indexes
+and constraints. See the [recovery procedure and evidence limits](release/2026-09-14-recovery-rehearsal.md).
+These tests cannot replace the restored production copy, exact binary tests,
+object-store recovery or a release-window measurement at production scale.
 
 If any result differs, stop. Do not adjust the expected count by hand merely to
 make the rehearsal pass.
@@ -496,6 +503,11 @@ cleanup remains governed by `docs/RENDER-CLEANUP-RUNBOOK.md`.
 Rollback the canonical worker to the recorded `PRE_RELEASE_WORKER_DEPLOY`.
 Confirm it reaches live and resumes its pre-release observable behaviour.
 
+This requires the compatibility proof in step 6. The worker recorded on
+14 September directly deletes from `stored_objects`; migration 0039 revokes its
+raw access in favor of bounded functions. Do not use that worker as R1 on the
+upgraded schema or restore broad privileges as a workaround.
+
 ## R2 — API
 
 Rollback the canonical API to the recorded `PRE_RELEASE_API_DEPLOY`. Confirm
@@ -519,6 +531,13 @@ Require:
 - a written incident/recovery record.
 
 Do not restore merely to make schema and code versions look cosmetically equal.
+
+For the recorded 0033 + 0047 baseline, the proposed fallback is a coordinated
+database restore with the matching pre-release API and worker. Follow the
+[maintenance and recovery sequence](release/2026-09-14-recovery-rehearsal.md#production-maintenance-and-recovery-sequence).
+Freeze all writers, account for offline client queues and object deletions, and
+prevent a migration pre-deploy hook from immediately upgrading the restored
+database. A successful synthetic test does not authorize this production action.
 
 ---
 

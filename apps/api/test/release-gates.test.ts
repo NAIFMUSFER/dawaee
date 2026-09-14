@@ -91,6 +91,8 @@ const REQUIRED_SUITES: Array<[phase: string, file: string]> = [
   ['P13 audit privacy', 'apps/api/test/audit-privacy.test.ts'],
   ['P18-R definer privilege model', 'apps/api/test/definer-privilege-model.test.ts'],
   ['P18-R schema startup contract', 'apps/api/test/schema-contract.test.ts'],
+  ['P25 synthetic backup and recovery', 'apps/api/test/production-recovery-rehearsal.test.ts'],
+  ['P25 recovery target containment', 'apps/api/test/release-recovery-environment.test.ts'],
   ['P4 database TLS', 'apps/api/test/db-tls.test.ts'],
   ['P1-P3 mobile token store', 'apps/mobile/test/token-store.test.ts'],
   ['P1-P3 mobile secure cache', 'apps/mobile/test/secure-cache.test.ts'],
