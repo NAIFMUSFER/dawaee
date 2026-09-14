@@ -12,6 +12,7 @@ import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
+import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -53,6 +54,15 @@ function Shell() {
   const router = useRouter();
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
+  const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
+  const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
+  if (caregiverSession.current.owner !== caregiverOwner) {
+    caregiverSession.current = {
+      owner: caregiverOwner,
+      generation: caregiverSession.current.generation + 1,
+    };
+  }
+
 
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
   // fixed-route children can read stale process-local ids or OCR medication
@@ -78,6 +88,26 @@ function Shell() {
     if (!signedIn || !deviceId) return;
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
+
+  /** Private caregiver taps have no doseId; they need their own safe route.
+   * Family asks the user to choose a followed person rather than guessing from
+   * a minimized push payload. Exact delivery-to-patient lookup is not implied. */
+  useEffect(() => {
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startCaregiverNotificationListener(
+        native,
+        () => router.replace('/(tabs)/family'),
+        isCurrent,
+      );
+    }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [ready, signedIn, user?.id, router]);
 
   /** Act on the reminder's own buttons. */
   useEffect(() => {
