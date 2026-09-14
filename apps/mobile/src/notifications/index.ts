@@ -226,7 +226,11 @@ async function scheduleCurrentNotifications(
 
   let scheduled = 0;
   let failed = 0;
-  let exactAlarmsUnavailable = false;
+  // Expo Android intentionally falls back to an inexact alarm when the special
+  // access is absent. A successful schedule call therefore does not prove exact
+  // delivery. Read the OS source of truth up front so callers can disclose the
+  // degradation even when Expo accepts the fallback without throwing.
+  let exactAlarmsUnavailable = Platform.OS === 'android' && !canScheduleExactAlarmsOnDevice();
   const now = Date.now();
 
   for (const group of groupSchedulableDoses(doses, now)) {
