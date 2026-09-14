@@ -13,6 +13,7 @@ import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
 import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
+import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -130,33 +131,22 @@ function Shell() {
    * the patient to the doses they were being asked to review.
    */
   useEffect(() => {
-    if (!signedIn || Platform.OS === 'web') return;
-    let stop: (() => void) | undefined;
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
     let cancelled = false;
-
-    void import('expo-notifications').then(async (N) => {
-      const handle = async (response: {
-        notification?: { request?: { content?: { data?: Record<string, unknown> } } };
-      } | null) => {
-        const data = response?.notification?.request?.content?.data ?? {};
-        if (data.kind !== 'dose_group_reminder') return;
-        router.replace('/(tabs)/today');
-        // A cold-start response remains available until it is cleared. If it
-        // stayed there, a later remount could route the patient back to Today
-        // for an old reminder they already reviewed.
-        await N.clearLastNotificationResponseAsync?.();
-      };
-
-      await handle(await N.getLastNotificationResponseAsync());
-      if (cancelled) return;
-      const sub = N.addNotificationResponseReceivedListener((response) => {
-        void handle(response as Parameters<typeof handle>[0]);
-      });
-      stop = () => sub.remove();
+    let stop: (() => void) | undefined;
+    // Both default-tap listeners share the synchronous account-change fence.
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startGroupedNotificationListener(
+        native,
+        () => router.replace('/(tabs)/today'),
+        isCurrent,
+      );
     }).catch(() => undefined);
-
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, router]);
+  }, [ready, signedIn, user?.id, router]);
 
   return (
     <I18nProvider
