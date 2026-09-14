@@ -14,6 +14,10 @@ const fs = require('node:fs');
 const projectRoot = __dirname;
 const workspaceRoot = path.resolve(projectRoot, '../..');
 const sharedSrc = path.resolve(workspaceRoot, 'packages');
+const workspaceEntries = {
+  '@dawaee/shared': path.resolve(sharedSrc, 'shared/src/index.ts'),
+  '@dawaee/core': path.resolve(sharedSrc, 'core/src/index.ts'),
+};
 // The app's own `src` is authored the same way, so it gets the same treatment.
 const rewriteRoots = [sharedSrc, path.resolve(projectRoot, 'src')];
 
@@ -24,18 +28,25 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-// Do not disable hierarchical lookup. SDK 54+ dependency graphs may keep a
-// package's declared dependency nested below that package (for example
-// simple-swizzle -> is-arrayish). Blocking hierarchical resolution made Metro
-// reject a dependency that npm had correctly installed and `npm ls` could see.
+// Keep these aliases for Metro's normal dependency traversal, but also pin the
+// two package entry points in resolveRequest below. Hierarchical lookup can see
+// the root workspace symlinks first during a Gradle release bundle and then
+// follow package.json -> dist/index.js before the source alias is considered.
+// Pinning the exact package specifier makes `expo export` and Gradle release
+// bundling obey the same source-of-truth rule.
 config.resolver.extraNodeModules = {
-  '@dawaee/shared': path.resolve(sharedSrc, 'shared/src'),
-  '@dawaee/core': path.resolve(sharedSrc, 'core/src'),
+  '@dawaee/shared': path.dirname(workspaceEntries['@dawaee/shared']),
+  '@dawaee/core': path.dirname(workspaceEntries['@dawaee/core']),
 };
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  const workspaceEntry = workspaceEntries[moduleName];
+  if (workspaceEntry) {
+    return { type: 'sourceFile', filePath: workspaceEntry };
+  }
+
   // Only rewrite relative `.js` specifiers that originate inside our own
   // TypeScript sources, and only when the `.ts` sibling actually exists.
   if (moduleName.endsWith('.js') && moduleName.startsWith('.')) {
