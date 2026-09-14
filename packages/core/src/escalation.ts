@@ -27,6 +27,8 @@ export interface EscalationRecipient {
   relationshipId: UUID | null;
   channels: NotificationChannel[];
   displayName: string | null;
+  /** Recipient UI locale when known. Caregivers may differ from the patient. */
+  locale?: 'ar' | 'en' | null;
 }
 
 export interface EscalationDecision {
@@ -52,6 +54,8 @@ export interface CaregiverContext {
     CaregiverRelationship,
     'id' | 'caregiverUserId' | 'invitedPhoneE164' | 'invitedName' | 'status' | 'permissions' | 'escalationPriority'
   >;
+  /** Locale of the linked caregiver account, if one exists. */
+  locale?: 'ar' | 'en' | null;
   /** Per-channel delivery rules the caregiver (or patient) configured. */
   rules: Array<{
     channel: NotificationChannel;
@@ -185,6 +189,7 @@ function resolveRecipients(
       relationshipId: c.relationship.id,
       channels,
       displayName: c.relationship.invitedName,
+      locale: c.locale ?? null,
     });
   }
   return out;
