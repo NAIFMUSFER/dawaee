@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 40
     env:
       CI: '1'
+      NODE_ENV: production
       EXPO_NO_TELEMETRY: '1'
       EXPO_PUBLIC_DEMO: '0'
       EXPO_PUBLIC_API_URL: https://example.invalid
@@ -56,12 +57,13 @@ jobs:
       - name: Generate the native Android project
         working-directory: apps/mobile
         run: npx --no-install expo prebuild --platform android --no-install --skip-dependency-update react-native,react
-      - name: Compile and package the debug APK
+      - name: Compile and package the release APK and app bundle
         working-directory: apps/mobile/android
-        # Debug signing uses the generated development key, never store keys.
-        # This is a compile/package gate: no device install, server or upload.
-        run: ./gradlew :app:assembleDebug --no-daemon --console=plain --max-workers=2 -PreactNativeArchitectures=arm64-v8a '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g'
-      - name: Verify generated registration and packaged native code
+        # This is a production-variant compile/package gate only. The generated
+        # local signing material is never uploaded and no store/provider is used.
+        # EAS/Play signing and installed-device behavior remain separate gates.
+        run: ./gradlew :app:assembleRelease :app:bundleRelease --no-daemon --console=plain --max-workers=2 -PreactNativeArchitectures=arm64-v8a '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g'
+      - name: Verify generated registration and release artifacts
         working-directory: apps/mobile
         run: |
           set -euo pipefail
@@ -84,21 +86,24 @@ jobs:
           if (matches.length === 0) throw new Error('Built Expo module registration omits the exact-alarm class');
           console.log('Generated registration verified:', matches.join(', '));
           NODE
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
           test -s "$APK"
+          test -s "$AAB"
           ANALYZER="$(command -v apkanalyzer || true)"
           if [ -z "$ANALYZER" ]; then
             ANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer -print -quit)"
           fi
           test -n "$ANALYZER" && test -x "$ANALYZER"
-          "$ANALYZER" dex code --class app.dawaee.exactalarm.ExactAlarmAccessModule "$APK" > "$RUNNER_TEMP/exact-alarm-dex.txt"
-          test -s "$RUNNER_TEMP/exact-alarm-dex.txt"
-          "$ANALYZER" manifest permissions "$APK" > "$RUNNER_TEMP/android-permissions.txt"
-          grep -Fxq 'android.permission.SCHEDULE_EXACT_ALARM' "$RUNNER_TEMP/android-permissions.txt"
-          if grep -Fxq 'android.permission.USE_EXACT_ALARM' "$RUNNER_TEMP/android-permissions.txt"; then
-            echo '::error::Restricted USE_EXACT_ALARM permission reappeared in the packaged APK'
+          "$ANALYZER" dex code --class app.dawaee.exactalarm.ExactAlarmAccessModule "$APK" > "$RUNNER_TEMP/exact-alarm-release-dex.txt"
+          test -s "$RUNNER_TEMP/exact-alarm-release-dex.txt"
+          "$ANALYZER" manifest permissions "$APK" > "$RUNNER_TEMP/android-release-permissions.txt"
+          grep -Fxq 'android.permission.SCHEDULE_EXACT_ALARM' "$RUNNER_TEMP/android-release-permissions.txt"
+          if grep -Fxq 'android.permission.USE_EXACT_ALARM' "$RUNNER_TEMP/android-release-permissions.txt"; then
+            echo '::error::Restricted USE_EXACT_ALARM permission reappeared in the release APK'
             exit 1
           fi
-          echo "Verified candidate $(git rev-parse HEAD)"
-          sha256sum "$APK"
-          echo 'Native compilation/packaging passed; device behavior and real push delivery are NOT proven by this job.'
+          unzip -l "$AAB" | grep -Eq 'base/dex/classes([0-9]+)?\.dex'
+          echo "Verified release candidate $(git rev-parse HEAD)"
+          sha256sum "$APK" "$AAB"
+          echo 'Release-variant native compilation/packaging passed; installed-device behavior, EAS/Play signing and real push delivery are NOT proven by this job.'
