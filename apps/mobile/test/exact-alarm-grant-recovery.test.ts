@@ -11,6 +11,13 @@ const receiverSource = readFileSync(
   ),
   'utf8',
 );
+const recoveryJobSource = readFileSync(
+  new URL(
+    '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmRecoveryJobService.kt',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 const denied = { supported: true, permissionGranted: true, canScheduleExact: false } as const;
 const granted = { supported: true, permissionGranted: true, canScheduleExact: true } as const;
@@ -32,17 +39,20 @@ function plan(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Android exact-alarm grant recovery ownership', () => {
-  it('keeps the native grant receiver as the sole schedule-repair path', () => {
+  it('keeps native grant handling as the sole schedule-repair path', () => {
     expect(receiverSource).toContain(
       'AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED',
     );
     expect(receiverSource).toContain('alarmManager.canScheduleExactAlarms()');
-    expect(receiverSource).toContain('delegate.getAllScheduledNotifications().forEach { request ->');
-    expect(receiverSource).toContain('delegate.scheduleNotification(request)');
+    expect(receiverSource).toContain(
+      'ExactAlarmRecoveryJobService.schedule(context.applicationContext)',
+    );
+    expect(recoveryJobSource).toContain('delegate.getAllScheduledNotifications()');
+    expect(recoveryJobSource).toContain('delegate.scheduleNotification(request)');
 
     // A denied -> granted transition is already repaired by the native
-    // BroadcastReceiver. Returning a JS rebuild plan here would create a second
-    // competing schedule mutation that can replay stale/duplicate payloads.
+    // receiver + JobService path. Returning a JS rebuild plan here would create
+    // a second competing schedule mutation that can replay stale payloads.
     expect(plan()).toBeNull();
   });
 
