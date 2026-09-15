@@ -96,6 +96,7 @@ function TodayProfileScreen() {
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
   const [serviceUnavailable, setServiceUnavailable] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { begin: beginLoad, capture: captureScope } = useRequestScope();
 
@@ -226,6 +227,7 @@ function TodayProfileScreen() {
     setLocalOverrides({});
     setSnoozeFor(null);
     setServiceUnavailable(false);
+    setActionError(null);
     setLoading(true);
     void load();
   }, [activeProfile?.id, canViewToday]);
@@ -264,9 +266,18 @@ function TodayProfileScreen() {
       const isCurrent = captureScope();
       if (!canConfirmDose || !isCurrent()) return;
       setBusyDoseId(dose.id);
+      setActionError(null);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
       setLocalOverrides((o) => ({ ...o, [dose.id]: action === 'taken' ? 'taken' : 'skipped' }));
+
+      const rollbackOptimisticStatus = () => {
+        setLocalOverrides((o) => {
+          const next = { ...o };
+          delete next[dose.id];
+          return next;
+        });
+      };
 
       try {
         if (action === 'taken') {
@@ -277,24 +288,31 @@ function TodayProfileScreen() {
         if (isCurrent()) await load();
       } catch (err) {
         if (err instanceof NetworkError) {
-          await enqueue(
-            action === 'taken'
-              ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
-              : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
-          );
-          if (isCurrent()) setOffline(true);
+          try {
+            await enqueue(
+              action === 'taken'
+                ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
+                : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
+            );
+            if (isCurrent()) setOffline(true);
+          } catch {
+            // A network failure is only safe to present as accepted when the
+            // encrypted offline queue actually persisted it. Otherwise roll the
+            // optimistic state back so the patient is never shown a confirmation
+            // that neither the server nor this device retained.
+            if (isCurrent()) {
+              rollbackOptimisticStatus();
+              setActionError(t('error.internal_error'));
+            }
+          }
         } else if (isCurrent()) {
-          setLocalOverrides((o) => {
-            const next = { ...o };
-            delete next[dose.id];
-            return next;
-          });
+          rollbackOptimisticStatus();
         }
       } finally {
         if (isCurrent()) setBusyDoseId(null);
       }
     },
-    [captureScope, canConfirmDose, deviceId, load, setOffline],
+    [captureScope, canConfirmDose, deviceId, load, setOffline, t],
   );
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
@@ -302,19 +320,24 @@ function TodayProfileScreen() {
     if (!canConfirmDose || !isCurrent()) return;
     setSnoozeFor(null);
     setBusyDoseId(dose.id);
+    setActionError(null);
     const clientEventId = newClientEventId();
     try {
       await api.post('/v1/dose/action', { doseId: dose.id, action: 'snooze', minutes, clientEventId, deviceId });
       if (isCurrent()) await load();
     } catch (err) {
       if (err instanceof NetworkError) {
-        await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
-        if (isCurrent()) setOffline(true);
+        try {
+          await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
+          if (isCurrent()) setOffline(true);
+        } catch {
+          if (isCurrent()) setActionError(t('error.internal_error'));
+        }
       }
     } finally {
       if (isCurrent()) setBusyDoseId(null);
     }
-  }, [captureScope, canConfirmDose, deviceId, load, setOffline]);
+  }, [captureScope, canConfirmDose, deviceId, load, setOffline, t]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -378,6 +401,7 @@ function TodayProfileScreen() {
           />
         ) : null}
 
+        {actionError ? <Banner tone="danger" title={actionError} /> : null}
         {notificationWarning ? <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} /> : null}
         {exactAlarmsUnavailable ? (
           <Banner tone="warning" title={t('notifications.exactAlarmsOff')} body={t('notifications.exactAlarmsOffBody')} />
