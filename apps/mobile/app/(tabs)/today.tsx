@@ -185,6 +185,26 @@ function TodayProfileScreen() {
             prefetch: views.filter((d) => d.scheduledLocalDate > localDate),
             prefetchDays: 7,
           });
+
+          // Exact-alarm access can be revoked while the process is dead; Android
+          // then removes future alarms. If the next launch is offline, the secure
+          // schedule is still authoritative enough to render and to restore the
+          // signed-in patient's own local reminders. Use the queue-adjusted view
+          // above so taken/skipped/snoozed offline actions are not resurrected.
+          if (activeProfile.isSelf) {
+            if (!remindersAreCurrent()) return;
+            const schedule = await rescheduleLocalNotifications(
+              views,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            );
+            if (isCurrent()) setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+          } else {
+            setExactAlarmsUnavailable(false);
+          }
         }
       } else if (err instanceof ApiError && err.status === 503) {
         // Render can return an HTTP 503 while a sleeping instance wakes. Since
