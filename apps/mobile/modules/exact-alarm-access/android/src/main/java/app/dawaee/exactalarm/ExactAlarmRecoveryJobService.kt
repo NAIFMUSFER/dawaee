@@ -36,7 +36,7 @@ class ExactAlarmRecoveryJobService : JobService() {
           // this job is queued behind a JavaScript mutation. Re-check at the
           // protected boundary before touching persisted notification state.
           if (!canScheduleExactAlarms(this)) return@withInterruptibleLease
-          replayPersistedNotifications(applicationContext)
+          reschedule = !replayPersistedNotifications(applicationContext)
         }
       } catch (_: InterruptedException) {
         reschedule = true
@@ -44,6 +44,7 @@ class ExactAlarmRecoveryJobService : JobService() {
       } catch (_: Exception) {
         // Never log notification request identifiers, content or exception text.
         Log.e(TAG, "Exact-alarm grant recovery failed")
+        reschedule = true
       } finally {
         // onStopJob owns rescheduling after it clears/interupts the active task;
         // only a task that still owns this slot may report completion itself.
@@ -63,7 +64,7 @@ class ExactAlarmRecoveryJobService : JobService() {
     return true
   }
 
-  private fun replayPersistedNotifications(context: Context) {
+  private fun replayPersistedNotifications(context: Context): Boolean {
     val delegate = ExpoSchedulingDelegate(context)
     var restoreFailed = false
 
@@ -92,6 +93,7 @@ class ExactAlarmRecoveryJobService : JobService() {
     if (restoreFailed) {
       Log.e(TAG, "Exact-alarm grant recovery failed")
     }
+    return !restoreFailed
   }
 
   companion object {
