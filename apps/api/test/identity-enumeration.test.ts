@@ -100,9 +100,10 @@ describe('sign-in tells nobody which accounts exist', () => {
     await makeAccount(phone);
     for (let i = 0; i < 9; i++) await login(phone, `wrong-guess-${i}`);
     const holder = probe(await login(phone, PW));
-    const wrong = probe(await login(phone, 'still the wrong password'));
     const unknown = probe(await login(newPhone(), 'still the wrong password'));
-    expect(holder).toEqual(wrong);
+    // The previous case establishes locked-wrong == unknown. This case uses the
+    // tenth identifier attempt only once so the separate distributed auth budget
+    // cannot mask the lock-state response on an eleventh request.
     expect(holder).toEqual(unknown);
     expect(holder.status).toBe(401);
     expect(holder.code).toBe('invalid_credentials');
