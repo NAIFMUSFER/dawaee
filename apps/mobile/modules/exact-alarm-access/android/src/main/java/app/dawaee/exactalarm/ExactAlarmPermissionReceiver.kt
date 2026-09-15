@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
+import expo.modules.notifications.notifications.interfaces.SchedulableNotificationTrigger
 import expo.modules.notifications.service.delegates.ExpoSchedulingDelegate
 import kotlin.concurrent.thread
 
@@ -23,6 +24,8 @@ import kotlin.concurrent.thread
  * pinned Expo implementation its per-request failure path logs the notification
  * request identifier and exception stack. This receiver replays the same store
  * one request at a time and emits only one generic Dawaee failure message.
+ * Expired schedulable requests are removed before Expo's scheduler sees them,
+ * because its stale-request cleanup path also logs the request identifier.
  */
 class ExactAlarmPermissionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
@@ -40,6 +43,11 @@ class ExactAlarmPermissionReceiver : BroadcastReceiver() {
         try {
           delegate.getAllScheduledNotifications().forEach { request ->
             try {
+              val trigger = request.trigger
+              if (trigger is SchedulableNotificationTrigger && trigger.nextTriggerDate() == null) {
+                delegate.removeScheduledNotifications(listOf(request.identifier))
+                return@forEach
+              }
               delegate.scheduleNotification(request)
             } catch (_: Exception) {
               restoreFailed = true
