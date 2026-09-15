@@ -7,6 +7,19 @@ function optionalSource(relativePath: string): string {
   return existsSync(url) ? readFileSync(url, 'utf8') : '';
 }
 
+function executableKotlinLines(source: string): string[] {
+  return source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => (
+      line.length > 0
+      && !line.startsWith('//')
+      && !line.startsWith('*')
+      && !line.startsWith('/**')
+      && !line.startsWith('*/')
+    ));
+}
+
 const receiverSource = optionalSource(
   '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmPermissionReceiver.kt',
 );
@@ -50,9 +63,12 @@ describe('Android exact-alarm recovery schedule serialization', () => {
   });
 
   it('does not hold an asynchronous broadcast open while waiting on the schedule-mutation lease', () => {
-    expect(receiverSource).not.toContain('goAsync()');
-    expect(receiverSource).not.toContain('thread(');
-    expect(receiverSource).toContain('ExactAlarmRecoveryJobService.schedule(context.applicationContext)');
+    const executableReceiverSource = executableKotlinLines(receiverSource).join('\n');
+    expect(executableReceiverSource).not.toContain('goAsync()');
+    expect(executableReceiverSource).not.toContain('thread(');
+    expect(executableReceiverSource).toContain(
+      'ExactAlarmRecoveryJobService.schedule(context.applicationContext)',
+    );
 
     expect(recoveryJobSource).toContain('class ExactAlarmRecoveryJobService : JobService()');
     expect(recoveryJobSource).toContain('NotificationScheduleMutationCoordinator.withInterruptibleLease');
