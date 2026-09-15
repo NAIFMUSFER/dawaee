@@ -47,7 +47,6 @@ export async function until(label, probe, milliseconds = 30_000) {
 }
 
 export async function createRuntimeHarness(env = process.env) {
-  // Validate external inputs before invoking Docker or creating files.
   validateRuntimeRecoveryEnvironment(env, env.RECOVERY_CANDIDATE_SHA);
   const run = (command, args, options = {}) => execFileSync(command, args, {
     cwd: ROOT, encoding: 'utf8', timeout: 120_000, maxBuffer: 32 * 1024 * 1024,
@@ -74,7 +73,7 @@ export async function createRuntimeHarness(env = process.env) {
   const create = (args) => {
     const id = run('docker', ['create', '--label', label, '--network', network, ...args]).trim();
     assert.match(id, /^[0-9a-f]{64}$/);
-    containers.add(id); // remember creation even if start/port binding fails
+    containers.add(id);
     run('docker', ['start', id]);
     return id;
   };
@@ -83,8 +82,6 @@ export async function createRuntimeHarness(env = process.env) {
     const attached = inspect(id).NetworkSettings.Networks;
     assert.deepEqual(Object.keys(attached), [network]);
     const target = attached[network].IPAddress;
-    // Docker internal networks do not publish ports. The host may reach their
-    // private IPs directly; this loopback-only, fixed-target child is the bridge.
     const child = fork(join(ROOT, 'scripts/release-runtime-forwarder.mjs'),
       [target, String(targetPort), String(localPort)], {
         stdio: ['ignore', 'ignore', 'pipe', 'ipc'], execArgv: [],
@@ -136,8 +133,6 @@ export async function createRuntimeHarness(env = process.env) {
     if (failures.length) throw new AggregateError(failures, 'runtime rehearsal cleanup failed');
   };
   try {
-    // Fetch only the two fixed, reviewed sources from this repository. Build
-    // each unmodified Dockerfile and lockfile in a detached, temporary worktree.
     run('git', ['fetch', '--no-tags', 'origin', ...Object.values(RECORDED_RUNTIME_SHAS)]);
     for (const [name, sha] of Object.entries({ ...RECORDED_RUNTIME_SHAS, candidate: head })) {
       const path = join(temporary, name);
@@ -172,8 +167,6 @@ export async function createRuntimeHarness(env = process.env) {
       DAWAEE_MIGRATOR_ROLE: 'dawaee_migrator', DAWAEE_MIGRATOR_PASSWORD: 'migratorpw',
       DAWAEE_APP_PASSWORD: 'devpass', DAWAEE_WORKER_PASSWORD: 'devpass',
     };
-    // The listener has just been created and its binding verified. Bootstrap
-    // touches only this new container; never an already-running database.
     run('bash', [join(ROOT, 'scripts/db-bootstrap-roles.sh'), 'postgres'], { env: databaseEnv });
     const allowedDatabases = new Set();
     return {
@@ -188,8 +181,6 @@ export async function createRuntimeHarness(env = process.env) {
           DATABASE_URL: `postgres://dawaee_app:devpass@db:5432/${database}`,
           WORKER_DATABASE_URL: `postgres://dawaee_worker:devpass@db:5432/${database}`,
           DATABASE_SSL: 'false', WORKER_ENABLED: app === 'worker' ? 'true' : 'false',
-          // Run the real initial tick AND hourly housekeeping immediately.
-          // The unchanged main loop then waits an hour, allowing a clean stop.
           WORKER_TICK_SECONDS: '3600',
           JWT_SECRET: 'runtime_recovery_synthetic_only_secret_0123456789abcdef',
           IP_HASH_SALT: 'runtime-recovery-synthetic-salt', TRUST_PROXY_HOPS: '0',
@@ -205,9 +196,7 @@ export async function createRuntimeHarness(env = process.env) {
         assert.equal(state.Image, images[name].imageId);
         assert.deepEqual(Object.keys(state.NetworkSettings.Networks), [network]);
         let base;
-        if (app === 'api' && connectHttp) {
-          base = `http://127.0.0.1:${await forward(id, 8080)}`;
-        }
+        if (app === 'api' && connectHttp) base = `http://127.0.0.1:${await forward(id, 8080)}`;
         return { id, base, name };
       },
       stop(runtime) {
@@ -216,9 +205,7 @@ export async function createRuntimeHarness(env = process.env) {
         assert.equal(inspect(runtime.id).State.ExitCode, 0, 'runtime failed to drain on SIGTERM');
       },
       async stopAll() {
-        for (const id of runtimes) {
-          if (inspect(id).State.Running) run('docker', ['stop', '--time', '10', id]);
-        }
+        for (const id of runtimes) if (inspect(id).State.Running) run('docker', ['stop', '--time', '10', id]);
       },
       logs(runtime) {
         assert.ok(runtimes.has(runtime.id));
@@ -255,9 +242,4 @@ export async function waitForApi(h, runtime) {
   });
   const version = await apiRequest(runtime, '/version');
   assert.equal(version.commit, h.images[runtime.name].sha);
-  assert.equal(version.schema, h.images[runtime.name].requiredSchema);
-  const ready = await apiRequest(runtime, '/health/ready');
-  assert.equal(ready.checks.schema.ok, true);
-  assert.equal(ready.integrations.push, 'mock');
-  return version;
-}
+  assert.equal(version.schema, h.images[runtime.name
