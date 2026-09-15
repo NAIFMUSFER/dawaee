@@ -32,6 +32,25 @@ let workerRows: Array<{
   build_commit: string;
 }> = [];
 
+function expectPublicReady(bodyText: string): void {
+  const body = JSON.parse(bodyText) as Record<string, unknown>;
+  expect(body.status).toBe('ready');
+  expect(typeof body.time).toBe('string');
+  expect(Object.keys(body).sort()).toEqual(['status', 'time']);
+}
+
+function expectPublicWorkerFailure(bodyText: string): void {
+  const body = JSON.parse(bodyText) as Record<string, unknown>;
+  expect(body.status).toBe('degraded');
+  expect(body.failedChecks).toEqual(['worker']);
+  expect(typeof body.time).toBe('string');
+  expect(Object.keys(body).sort()).toEqual(['failedChecks', 'status', 'time']);
+  // Job names, commit identities and worker diagnostics are deliberately private.
+  for (const marker of ['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', COMMIT, 'commit mismatch']) {
+    expect(bodyText).not.toContain(marker);
+  }
+}
+
 describe('production readiness covers every per-tick safety-critical worker prerequisite', () => {
   beforeAll(async () => {
     vi.stubEnv('RENDER_GIT_COMMIT', COMMIT);
@@ -69,59 +88,17 @@ describe('production readiness covers every per-tick safety-critical worker prer
     await app.close();
   });
 
-  it('returns 503 when materialize failed even though reminders is fresh and successful', async () => {
-    workerRows = workerRows.map((row) => row.job_name === 'materialize' ? { ...row, succeeded: false } : row);
-
+  it.each([
+    ['materialize', 'materialize failed even though reminders is fresh and successful'],
+    ['dispatch', 'dispatch failed even though materialize and reminders are healthy'],
+    ['mark-missed', 'mark-missed failed even though the delivery pipeline is healthy'],
+    ['stock-alerts', 'stock alerts failed even though dose reminders and dispatch are healthy'],
+    ['digests', 'caregiver digests fail while the rest of the tick stays healthy'],
+  ])('returns 503 when %s is the only failed prerequisite (%s)', async (jobName) => {
+    workerRows = workerRows.map((row) => row.job_name === jobName ? { ...row, succeeded: false } : row);
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
     expect(response.statusCode, response.body).toBe(503);
-    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
-    expect(body.checks.worker?.ok).toBe(false);
-    expect(body.checks.worker?.detail).toMatch(/materialize/i);
-  });
-
-  it('returns 503 when dispatch failed even though materialize and reminders are healthy', async () => {
-    workerRows = workerRows.map((row) => row.job_name === 'dispatch' ? { ...row, succeeded: false } : row);
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode, response.body).toBe(503);
-    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
-    expect(body.checks.worker?.ok).toBe(false);
-    expect(body.checks.worker?.detail).toMatch(/dispatch/i);
-  });
-
-  it('returns 503 when mark-missed failed even though the delivery pipeline is healthy', async () => {
-    workerRows = workerRows.map((row) => row.job_name === 'mark-missed' ? { ...row, succeeded: false } : row);
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode, response.body).toBe(503);
-    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
-    expect(body.checks.worker?.ok).toBe(false);
-    expect(body.checks.worker?.detail).toMatch(/mark-missed/i);
-  });
-
-  it('returns 503 when stock alerts failed even though dose reminders and dispatch are healthy', async () => {
-    workerRows = workerRows.map((row) => row.job_name === 'stock-alerts' ? { ...row, succeeded: false } : row);
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode, response.body).toBe(503);
-    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
-    expect(body.checks.worker?.ok).toBe(false);
-    expect(body.checks.worker?.detail).toMatch(/stock-alerts/i);
-  });
-
-  it('returns 503 when caregiver digests fail while the rest of the tick stays healthy', async () => {
-    workerRows = workerRows.map((row) => row.job_name === 'digests' ? { ...row, succeeded: false } : row);
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode, response.body).toBe(503);
-    const body = response.json<{ checks: Record<string, { ok: boolean; detail?: string }> }>();
-    expect(body.checks.worker?.ok).toBe(false);
-    expect(body.checks.worker?.detail).toMatch(/digests/i);
+    expectPublicWorkerFailure(response.body);
   });
 
   it('requires current successful worker jobs in an opted-in test preview', async () => {
@@ -129,20 +106,22 @@ describe('production readiness covers every per-tick safety-critical worker prer
     h.workerRequired = true;
     const ready = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(ready.statusCode).toBe(200);
-    expect(ready.json().checks.worker.ok).toBe(true);
+    expectPublicReady(ready.body);
+
     workerRows = [];
     const missing = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(missing.statusCode).toBe(503);
-    expect(missing.json().checks.worker.ok).toBe(false);
+    expectPublicWorkerFailure(missing.body);
   });
 
-  it('rejects a preview worker from a different commit', async () => {
+  it('rejects a preview worker from a different commit without disclosing the commit', async () => {
     h.env = 'test';
     h.workerRequired = true;
     workerRows = workerRows.map(row => ({ ...row, build_commit: 'b'.repeat(40) }));
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(503);
-    expect(response.json().checks.worker.detail).toContain('commit mismatch');
+    expectPublicWorkerFailure(response.body);
+    expect(response.body).not.toContain('b'.repeat(40));
   });
 
   it('does not require a worker for ordinary unit-test or development servers', async () => {
@@ -150,6 +129,6 @@ describe('production readiness covers every per-tick safety-critical worker prer
     workerRows = [];
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
-    expect(response.json().checks.worker).toBeUndefined();
+    expectPublicReady(response.body);
   });
 });
