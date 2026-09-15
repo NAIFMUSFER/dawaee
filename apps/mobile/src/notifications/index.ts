@@ -366,16 +366,22 @@ export async function rebuildRemindersFromCache(
   // suppress a newer privacy choice. Storage must stay outside scheduleTail so
   // cancellation never waits on a stalled cache read.
   const expectedGeneration = ++scheduleGeneration;
-  const { readCachedSchedule } = await import('../storage/offline-queue.js');
+  const { applyQueuedToCache, readCachedSchedule, readQueue } = await import('../storage/offline-queue.js');
   const cache = await readCachedSchedule(profileId);
   if (!cache || expectedGeneration !== scheduleGeneration) return empty;
+  const queue = await readQueue();
+  if (expectedGeneration !== scheduleGeneration) return empty;
+  const merged = applyQueuedToCache(cache, queue);
 
   return rescheduleLocalNotifications(
-    cache.doses.map((d) => ({
+    merged.doses.map((d) => ({
       id: d.id,
       scheduledAt: d.scheduledAt,
+      scheduledLocalDate: d.scheduledLocalDate,
       scheduledLocalTime: d.scheduledLocalTime,
+      scheduledTimezone: d.scheduledTimezone ?? merged.timezone,
       status: d.status,
+      snoozedUntil: d.snoozedUntil ?? null,
       doseQuantity: d.doseQuantity,
       doseUnit: d.doseUnit,
       medicationId: '',
