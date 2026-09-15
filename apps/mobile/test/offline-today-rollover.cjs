@@ -126,6 +126,22 @@ function scenarios(screenFile, hookFile) {
     );
     assert.match(h.text(), /error\.internal_error/, 'the patient was not told that the action failed to save');
   }, { now: '2026-09-10T05:00:00.000Z' });
+  add('a failed secure queue write reports an unsaved snooze instead of silently dismissing it', [today], async h => {
+    h.enqueueWriter = async () => { throw new Error('controlled secure persistence failure'); };
+    assert.equal(hero(h)?.dose.id, 'TODAY');
+    hero(h).onSnooze();
+    await h.flush();
+    const sheet = h.find('SnoozeSheet');
+    assert.ok(sheet, 'snooze sheet did not open');
+    sheet.onSelect(15);
+    const request = h.batch();
+    assert.equal(request.length, 1);
+    assert.equal(request[0].payload.action, 'snooze');
+    h.fail(request);
+    await h.flush();
+    assert.equal(h.queued.length, 0, 'failed secure persistence unexpectedly created a snooze action');
+    assert.match(h.text(), /error\.internal_error/, 'the patient was not told that the snooze failed to save');
+  }, { now: '2026-09-10T05:00:00.000Z' });
   add('control: future-only cache does not offer premature confirmation today', [tomorrow], async h => {
     assert.equal(hero(h), null);
     assert.equal(cards(h.tree).length, 0);
