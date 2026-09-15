@@ -22,6 +22,11 @@ function loadModule(file, platform = 'ios') {
   const state = {
     active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
     notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0,
+    readQueue: async () => [],
+    applyQueuedToCache: (cache, queue) => {
+      assert.equal(queue.length, 0, 'nonempty queue requires an explicit test overlay');
+      return cache;
+    },
   };
   const native = {
     SchedulableTriggerInputTypes: { DATE: 'date' },
@@ -55,7 +60,11 @@ function loadModule(file, platform = 'ios') {
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
     './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
     'expo-notifications': native,
-    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id) },
+    '../storage/offline-queue.js': {
+      readCachedSchedule: (id) => state.readCache(id),
+      readQueue: () => state.readQueue(),
+      applyQueuedToCache: (cache, queue) => state.applyQueuedToCache(cache, queue),
+    },
   };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     fileName: file, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
