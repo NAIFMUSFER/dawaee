@@ -111,6 +111,7 @@ export async function configureCategories(locale: Locale): Promise<void> {
 
 export async function startNotificationActionListener(
   onHandled?: (outcome: ActionOutcome) => void,
+  onPersistenceFailure?: () => void,
 ): Promise<() => void> {
   const N = await load();
   if (!N) return () => undefined;
@@ -119,20 +120,33 @@ export async function startNotificationActionListener(
     actionIdentifier: string;
     notification: { request: { content: { data: Record<string, unknown> } } };
   }): Promise<void> => {
-    const outcome = await applyNotificationAction(
-      response.actionIdentifier,
-      response.notification.request.content.data ?? {},
-    );
+    let outcome: ActionOutcome | null;
+    try {
+      outcome = await applyNotificationAction(
+        response.actionIdentifier,
+        response.notification.request.content.data ?? {},
+      );
+    } catch {
+      // Neither a server result nor durable local intent is known. Keep the
+      // response available, never call the success path, and expose only a
+      // generic signal: storage errors can contain private data. Even a broken
+      // UI callback must not abort cold-start setup or escape the live listener.
+      try { onPersistenceFailure?.(); } catch { /* Preserve listener availability. */ }
+      return;
+    }
     if (outcome) {
-      onHandled?.(outcome);
+      // Post-save refresh/UI failures are distinct from persistence failures.
+      try { onHandled?.(outcome); } catch { /* The action result is already known. */ }
       // Expo keeps the cold-start response available until explicitly cleared.
       // Without consuming it, reopening the app can replay the same Snooze with
       // a brand-new clientEventId and move the reminder again.
-      await N.clearLastNotificationResponseAsync?.();
+      try { await N.clearLastNotificationResponseAsync?.(); } catch { /* Native cleanup is best effort. */ }
     }
   };
 
-  const last = await N.getLastNotificationResponseAsync();
+  // A native read failure must not disable subsequent live interactions.
+  let last: Awaited<ReturnType<NotificationsModule['getLastNotificationResponseAsync']>> = null;
+  try { last = await N.getLastNotificationResponseAsync(); } catch { /* Keep installing the listener. */ }
   if (last) await handle(last as Parameters<typeof handle>[0]);
 
   const sub = N.addNotificationResponseReceivedListener((response) => {

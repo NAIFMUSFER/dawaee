@@ -120,9 +120,11 @@ function Shell() {
   /** Act on the reminder's own buttons. */
   useEffect(() => {
     if (!signedIn) return;
+    const generation = caregiverSession.current.generation;
     let stop: (() => void) | undefined;
     let cancelled = false;
     void startNotificationActionListener((outcome) => {
+      if (cancelled || caregiverSession.current.generation !== generation) return;
       void (async () => {
         // A snooze queued while offline must recreate its local future alarm
         // before sync gets another chance to remove the queue entry. The cache
@@ -142,7 +144,15 @@ function Shell() {
           }
         }
         await refreshAfterAction();
-      })();
+      })().catch(() => undefined);
+    }, () => {
+      if (cancelled || caregiverSession.current.generation !== generation) return;
+      Alert.alert(
+        preferences.locale === 'en' ? 'Action could not be confirmed' : 'تعذر تأكيد الإجراء',
+        preferences.locale === 'en'
+          ? 'Open Dawaee and review the dose status before trying again.'
+          : 'افتح دوائي وراجع حالة الجرعة قبل المحاولة مجددًا.',
+      );
     })
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
