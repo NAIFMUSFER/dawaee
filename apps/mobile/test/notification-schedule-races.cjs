@@ -49,6 +49,7 @@ function loadModule(file, platform = 'ios') {
     // This source of truth is deliberately independent of scheduling failures.
     '../../modules/exact-alarm-access': {
       canScheduleExactAlarms: () => { state.exactAlarmChecks++; return state.exactAlarmsAllowed; },
+      withExactAlarmScheduleMutation: (operation) => operation(),
     },
     '../api/client.js': { api: {} },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
