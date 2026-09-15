@@ -15,9 +15,14 @@ import kotlin.concurrent.thread
  *
  * Revocation stops the process and deletes its exact alarms, so a screen resume
  * listener cannot cover this lifecycle. Expo already persists each scheduled
- * request and uses the same delegate to restore it after reboot/package replace;
- * replaying that store here repairs the alarms without starting JavaScript or
- * reading Dawaee's encrypted clinical caches from a broadcast receiver.
+ * request and uses the same scheduling delegate to restore it after reboot or
+ * package replace; replaying that store here repairs the alarms without starting
+ * JavaScript or reading Dawaee's encrypted clinical caches from a receiver.
+ *
+ * Do not use ExpoSchedulingDelegate.setupScheduledNotifications() here. In the
+ * pinned Expo implementation its per-request failure path logs the notification
+ * request identifier and exception stack. This receiver replays the same store
+ * one request at a time and emits only one generic Dawaee failure message.
  */
 class ExactAlarmPermissionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
@@ -30,10 +35,24 @@ class ExactAlarmPermissionReceiver : BroadcastReceiver() {
     val pendingResult = goAsync()
     thread(name = "dawaee-exact-alarm-recovery") {
       try {
-        ExpoSchedulingDelegate(context.applicationContext).setupScheduledNotifications()
-      } catch (_: Exception) {
-        // Do not attach request identifiers or notification content to logs.
-        Log.e(TAG, "Exact-alarm grant recovery failed")
+        val delegate = ExpoSchedulingDelegate(context.applicationContext)
+        var restoreFailed = false
+        try {
+          delegate.getAllScheduledNotifications().forEach { request ->
+            try {
+              delegate.scheduleNotification(request)
+            } catch (_: Exception) {
+              restoreFailed = true
+            }
+          }
+        } catch (_: Exception) {
+          restoreFailed = true
+        }
+
+        if (restoreFailed) {
+          // Never log notification request identifiers, content, or exception text.
+          Log.e(TAG, "Exact-alarm grant recovery failed")
+        }
       } finally {
         pendingResult.finish()
       }
