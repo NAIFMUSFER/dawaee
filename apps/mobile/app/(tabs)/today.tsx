@@ -13,7 +13,7 @@ import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
-import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
+import { captureLocalReminderContext, inspectCapability, rebuildRemindersFromCache, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
@@ -27,7 +27,7 @@ function localDateIn(timeZone: string): string {
   }
 }
 
-function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
+function cachedDoseToView(d: CachedSchedule['doses'][number], fallbackTimezone: string): DoseView {
   return {
     id: d.id,
     medicationId: '',
@@ -35,12 +35,12 @@ function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
     scheduledAt: d.scheduledAt,
     scheduledLocalDate: d.scheduledLocalDate,
     scheduledLocalTime: d.scheduledLocalTime,
-    scheduledTimezone: '',
+    scheduledTimezone: d.scheduledTimezone ?? fallbackTimezone,
     doseQuantity: d.doseQuantity,
     doseUnit: d.doseUnit as DoseView['doseUnit'],
     status: d.status as DoseView['status'],
     minutesLate: null,
-    snoozedUntil: null,
+    snoozedUntil: d.snoozedUntil ?? null,
     snoozeCount: 0,
     confirmedAt: null,
     escalationStage: 0,
@@ -96,6 +96,7 @@ function TodayProfileScreen() {
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
   const [serviceUnavailable, setServiceUnavailable] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { begin: beginLoad, capture: captureScope } = useRequestScope();
 
@@ -130,7 +131,8 @@ function TodayProfileScreen() {
         timezone: res.timezone,
         doses: [...res.today, ...res.prefetch].map((d) => ({
           id: d.id, scheduledAt: d.scheduledAt, scheduledLocalTime: d.scheduledLocalTime,
-          scheduledLocalDate: d.scheduledLocalDate, medicationName: d.medication.name,
+          scheduledLocalDate: d.scheduledLocalDate, scheduledTimezone: d.scheduledTimezone,
+          snoozedUntil: d.snoozedUntil, medicationName: d.medication.name,
           doseQuantity: d.doseQuantity, doseUnit: d.doseUnit,
           foodInstruction: d.medication.foodInstruction, status: d.status,
         })),
@@ -170,7 +172,7 @@ function TodayProfileScreen() {
           // Today and prefetch overlap, and this snapshot can outlive its
           // original local day. Keep occurrence identity unique and select in
           // chronological order rather than letting yesterday hide today's actions.
-          const views = [...new Map(merged.doses.map((d) => [d.id, cachedDoseToView(d)])).values()]
+          const views = [...new Map(merged.doses.map((d) => [d.id, cachedDoseToView(d, merged.timezone)])).values()]
             .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
           setData({
             profileId: merged.profileId,
@@ -185,6 +187,26 @@ function TodayProfileScreen() {
             prefetch: views.filter((d) => d.scheduledLocalDate > localDate),
             prefetchDays: 7,
           });
+
+          // Exact-alarm access can be revoked while the process is dead; Android
+          // then removes future alarms. If the next launch is offline, the secure
+          // schedule is still authoritative enough to render and to restore the
+          // signed-in patient's own local reminders. Use the queue-adjusted view
+          // above so taken/skipped/snoozed offline actions are not resurrected.
+          if (activeProfile.isSelf) {
+            if (!remindersAreCurrent()) return;
+            const schedule = await rescheduleLocalNotifications(
+              views,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            );
+            if (isCurrent()) setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+          } else {
+            setExactAlarmsUnavailable(false);
+          }
         }
       } else if (err instanceof ApiError && err.status === 503) {
         // Render can return an HTTP 503 while a sleeping instance wakes. Since
@@ -206,6 +228,7 @@ function TodayProfileScreen() {
     setLocalOverrides({});
     setSnoozeFor(null);
     setServiceUnavailable(false);
+    setActionError(null);
     setLoading(true);
     void load();
   }, [activeProfile?.id, canViewToday]);
@@ -244,9 +267,18 @@ function TodayProfileScreen() {
       const isCurrent = captureScope();
       if (!canConfirmDose || !isCurrent()) return;
       setBusyDoseId(dose.id);
+      setActionError(null);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
       setLocalOverrides((o) => ({ ...o, [dose.id]: action === 'taken' ? 'taken' : 'skipped' }));
+
+      const rollbackOptimisticStatus = () => {
+        setLocalOverrides((o) => {
+          const next = { ...o };
+          delete next[dose.id];
+          return next;
+        });
+      };
 
       try {
         if (action === 'taken') {
@@ -257,24 +289,31 @@ function TodayProfileScreen() {
         if (isCurrent()) await load();
       } catch (err) {
         if (err instanceof NetworkError) {
-          await enqueue(
-            action === 'taken'
-              ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
-              : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
-          );
-          if (isCurrent()) setOffline(true);
+          try {
+            await enqueue(
+              action === 'taken'
+                ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
+                : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
+            );
+            if (isCurrent()) setOffline(true);
+          } catch {
+            // A network failure is only safe to present as accepted when the
+            // encrypted offline queue actually persisted it. Otherwise roll the
+            // optimistic state back so the patient is never shown a confirmation
+            // that neither the server nor this device retained.
+            if (isCurrent()) {
+              rollbackOptimisticStatus();
+              setActionError(t('error.internal_error'));
+            }
+          }
         } else if (isCurrent()) {
-          setLocalOverrides((o) => {
-            const next = { ...o };
-            delete next[dose.id];
-            return next;
-          });
+          rollbackOptimisticStatus();
         }
       } finally {
         if (isCurrent()) setBusyDoseId(null);
       }
     },
-    [captureScope, canConfirmDose, deviceId, load, setOffline],
+    [captureScope, canConfirmDose, deviceId, load, setOffline, t],
   );
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
@@ -282,19 +321,40 @@ function TodayProfileScreen() {
     if (!canConfirmDose || !isCurrent()) return;
     setSnoozeFor(null);
     setBusyDoseId(dose.id);
+    setActionError(null);
     const clientEventId = newClientEventId();
     try {
       await api.post('/v1/dose/action', { doseId: dose.id, action: 'snooze', minutes, clientEventId, deviceId });
       if (isCurrent()) await load();
     } catch (err) {
       if (err instanceof NetworkError) {
-        await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
-        if (isCurrent()) setOffline(true);
+        try {
+          const at = new Date().toISOString();
+          await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at, clientEventId, minutes });
+          if (isCurrent()) setOffline(true);
+          // Once the encrypted queue has durably accepted the snooze, make its
+          // future local reminder real immediately. This rebuild reads the same
+          // queue and cache, so a process restart cannot turn the snooze back
+          // into the already-past original reminder time.
+          if (isCurrent() && activeProfile?.isSelf) {
+            const schedule = await rebuildRemindersFromCache(
+              activeProfile.id,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            ).catch(() => null);
+            if (schedule && isCurrent()) setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+          }
+        } catch {
+          if (isCurrent()) setActionError(t('error.internal_error'));
+        }
       }
     } finally {
       if (isCurrent()) setBusyDoseId(null);
     }
-  }, [captureScope, canConfirmDose, deviceId, load, setOffline]);
+  }, [activeProfile, captureScope, canConfirmDose, deviceId, load, preferences.locale, preferences.showMedicationInNotifications, preferences.voiceRemindersEnabled, setOffline, t]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -358,6 +418,7 @@ function TodayProfileScreen() {
           />
         ) : null}
 
+        {actionError ? <Banner tone="danger" title={actionError} /> : null}
         {notificationWarning ? <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} /> : null}
         {exactAlarmsUnavailable ? (
           <Banner tone="warning" title={t('notifications.exactAlarmsOff')} body={t('notifications.exactAlarmsOffBody')} />

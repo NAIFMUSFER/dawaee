@@ -7,11 +7,17 @@ import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
+import {
+  configureCategories, configureChannels, rebuildRemindersFromCache,
+  startNotificationActionListener, syncPushRegistration,
+} from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
+import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
+import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
+import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -47,12 +53,21 @@ function useWebAlertAdapter() {
  */
 function Shell() {
   const {
-    ready, preferences, signedIn, user, activeProfile, deviceId,
+    ready, preferences, profiles, signedIn, user, activeProfile, deviceId,
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
+  const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
+  bindCaregiverNotificationAccount(caregiverOwner);
+  const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
+  if (caregiverSession.current.owner !== caregiverOwner) {
+    caregiverSession.current = {
+      owner: caregiverOwner,
+      generation: caregiverSession.current.generation + 1,
+    };
+  }
 
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
   // fixed-route children can read stale process-local ids or OCR medication
@@ -79,16 +94,70 @@ function Shell() {
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
 
+  /** Keep the delivery selection in account-bound memory. The landing resolves
+   * its patient through the authenticated API, after the app lock permits it. */
+  useEffect(() => {
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startCaregiverNotificationListener(
+        native,
+        (selection) => {
+          if (!isCurrent()) return;
+          setCaregiverNotificationIntent(user.id, selection);
+          router.replace('/caregiver/notification');
+        },
+        isCurrent,
+      );
+    }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [ready, signedIn, user?.id, router]);
+
   /** Act on the reminder's own buttons. */
   useEffect(() => {
     if (!signedIn) return;
+    const generation = caregiverSession.current.generation;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void startNotificationActionListener(() => { void refreshAfterAction(); })
+    void startNotificationActionListener((outcome) => {
+      if (cancelled || caregiverSession.current.generation !== generation) return;
+      void (async () => {
+        // A snooze queued while offline must recreate its local future alarm
+        // before sync gets another chance to remove the queue entry. The cache
+        // rebuild is account-scoped and only targets the owned self profile;
+        // caregiver-view schedules never become reminders on this device.
+        if (outcome.action === 'snoozed' && !outcome.synced) {
+          const selfProfileId = profiles.find((profile) => profile.isSelf && profile.role === 'owner')?.id ?? null;
+          if (selfProfileId) {
+            await rebuildRemindersFromCache(
+              selfProfileId,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            ).catch(() => undefined);
+          }
+        }
+        await refreshAfterAction();
+      })().catch(() => undefined);
+    }, () => {
+      if (cancelled || caregiverSession.current.generation !== generation) return;
+      Alert.alert(
+        preferences.locale === 'en' ? 'Action could not be confirmed' : 'تعذر تأكيد الإجراء',
+        preferences.locale === 'en'
+          ? 'Open Dawaee and review the dose status before trying again.'
+          : 'افتح دوائي وراجع حالة الجرعة قبل المحاولة مجددًا.',
+      );
+    })
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, refreshAfterAction]);
+  }, [signedIn, profiles, preferences.locale, preferences.showMedicationInNotifications, preferences.voiceRemindersEnabled, refreshAfterAction]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
@@ -101,33 +170,22 @@ function Shell() {
    * the patient to the doses they were being asked to review.
    */
   useEffect(() => {
-    if (!signedIn || Platform.OS === 'web') return;
-    let stop: (() => void) | undefined;
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
     let cancelled = false;
-
-    void import('expo-notifications').then(async (N) => {
-      const handle = async (response: {
-        notification?: { request?: { content?: { data?: Record<string, unknown> } } };
-      } | null) => {
-        const data = response?.notification?.request?.content?.data ?? {};
-        if (data.kind !== 'dose_group_reminder') return;
-        router.replace('/(tabs)/today');
-        // A cold-start response remains available until it is cleared. If it
-        // stayed there, a later remount could route the patient back to Today
-        // for an old reminder they already reviewed.
-        await N.clearLastNotificationResponseAsync?.();
-      };
-
-      await handle(await N.getLastNotificationResponseAsync());
-      if (cancelled) return;
-      const sub = N.addNotificationResponseReceivedListener((response) => {
-        void handle(response as Parameters<typeof handle>[0]);
-      });
-      stop = () => sub.remove();
+    let stop: (() => void) | undefined;
+    // Both default-tap listeners share the synchronous account-change fence.
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startGroupedNotificationListener(
+        native,
+        () => router.replace('/(tabs)/today'),
+        isCurrent,
+      );
     }).catch(() => undefined);
-
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, router]);
+  }, [ready, signedIn, user?.id, router]);
 
   return (
     <I18nProvider

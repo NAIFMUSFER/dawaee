@@ -54,6 +54,11 @@ function scenarios(screenFile, hookFile) {
   add('control: one current-day cached dose is actionable offline', [today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY');
     assert.equal(typeof hero(h).onTaken, 'function');
+    assert.deepEqual(
+      h.notifications.map(doses => Array.from(doses, dose => dose.id)),
+      [['TODAY']],
+      'offline cold start rendered cache but did not restore its local reminder schedule',
+    );
   });
   add('an unresolved prior-day cached dose cannot hide the current-day action card', [yesterday, today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY', 'prior local day stole the next-dose selection');
@@ -104,6 +109,38 @@ function scenarios(screenFile, hookFile) {
     assert.equal(h.queued[0].doseOccurrenceId, 'TODAY');
     assert.equal(h.queued[0].type, 'taken');
     assert.equal(cards(h.tree).find(p => !p.prominent && p.dose.id === 'TODAY').dose.status, 'taken');
+  }, { now: '2026-09-10T05:00:00.000Z' });
+  add('a failed secure queue write cannot leave an unpersisted dose looking taken', [today], async h => {
+    h.enqueueWriter = async () => { throw new Error('controlled secure persistence failure'); };
+    assert.equal(hero(h)?.dose.id, 'TODAY');
+    hero(h).onTaken();
+    const request = h.batch();
+    assert.equal(request.length, 1);
+    h.fail(request);
+    await h.flush();
+    assert.equal(h.queued.length, 0, 'failed secure persistence unexpectedly created a queued action');
+    assert.equal(
+      cards(h.tree).find(p => !p.prominent && p.dose.id === 'TODAY').dose.status,
+      'upcoming',
+      'optimistic Taken state survived even though neither server nor secure queue stored the action',
+    );
+    assert.match(h.text(), /error\.internal_error/, 'the patient was not told that the action failed to save');
+  }, { now: '2026-09-10T05:00:00.000Z' });
+  add('a failed secure queue write reports an unsaved snooze instead of silently dismissing it', [today], async h => {
+    h.enqueueWriter = async () => { throw new Error('controlled secure persistence failure'); };
+    assert.equal(hero(h)?.dose.id, 'TODAY');
+    hero(h).onSnooze();
+    await h.flush();
+    const sheet = h.find('SnoozeSheet');
+    assert.ok(sheet, 'snooze sheet did not open');
+    sheet.onSelect(15);
+    const request = h.batch();
+    assert.equal(request.length, 1);
+    assert.equal(request[0].payload.action, 'snooze');
+    h.fail(request);
+    await h.flush();
+    assert.equal(h.queued.length, 0, 'failed secure persistence unexpectedly created a snooze action');
+    assert.match(h.text(), /error\.internal_error/, 'the patient was not told that the snooze failed to save');
   }, { now: '2026-09-10T05:00:00.000Z' });
   add('control: future-only cache does not offer premature confirmation today', [tomorrow], async h => {
     assert.equal(hero(h), null);

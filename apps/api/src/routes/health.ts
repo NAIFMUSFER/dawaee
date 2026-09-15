@@ -151,7 +151,7 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
      * still fails closed as "identity unavailable" instead of being mistaken
      * for the current release.
      */
-    if (checks.database.ok && cfg.NODE_ENV === 'production') {
+    if (checks.database.ok && (cfg.NODE_ENV === 'production' || cfg.WORKER_READINESS_REQUIRED)) {
       try {
         const { rows } = await getPool().query<{
           job_name: string;
