@@ -6,7 +6,12 @@ import { describe, expect, it } from 'vitest';
 
 const componentFile = fileURLToPath(new URL('../src/components/DoseCard.tsx', import.meta.url));
 
-function renderDoseCard(medicationId: string, onPress: () => void) {
+function renderDoseCard(
+  medicationId: string,
+  onPress: () => void,
+  scheduledTimezone = 'Asia/Riyadh',
+  scheduledLocalTime = '08:00',
+) {
   const React = {
     createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => ({
       type,
@@ -27,7 +32,10 @@ function renderDoseCard(medicationId: string, onPress: () => void) {
     '../i18n/index.js': {
       useI18n: () => ({
         t: (key: string) => key,
-        formatTime: () => '08:00',
+        formatTime: (_iso: string, timezone?: string) => {
+          if (!timezone) throw new RangeError('Invalid time zone specified');
+          return '08:00';
+        },
         formatMeasure: () => '1 tablet',
       }),
     },
@@ -64,8 +72,8 @@ function renderDoseCard(medicationId: string, onPress: () => void) {
     scheduleId: 'schedule-1',
     scheduledAt: '2026-09-15T05:00:00.000Z',
     scheduledLocalDate: '2026-09-15',
-    scheduledLocalTime: '08:00',
-    scheduledTimezone: 'Asia/Riyadh',
+    scheduledLocalTime,
+    scheduledTimezone,
     doseQuantity: 1,
     doseUnit: 'tablet',
     status: 'due',
@@ -99,5 +107,11 @@ describe('DoseCard offline medication navigation', () => {
     const onPress = () => undefined;
     const tree = renderDoseCard('medication-1', onPress);
     expect(tree.props.onPress).toBe(onPress);
+  });
+
+  it('renders the cached patient-local time when timezone metadata is unavailable', () => {
+    const onPress = () => undefined;
+    const tree = renderDoseCard('', onPress, '', '07:35');
+    expect(JSON.stringify(tree)).toContain('07:35');
   });
 });
