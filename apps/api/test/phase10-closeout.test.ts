@@ -20,7 +20,7 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     const app = JSON.parse(read('app.json')) as {
       expo: {
         plugins: Array<string | [string, Record<string, unknown>]>;
-        android: { permissions?: string[] };
+        android: { permissions?: string[]; blockedPermissions?: string[] };
         ios: { infoPlist?: { UIBackgroundModes?: string[] } };
       };
     };
@@ -34,10 +34,11 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     expect(app.expo.android.permissions).toEqual(expect.arrayContaining([
       'POST_NOTIFICATIONS',
       'SCHEDULE_EXACT_ALARM',
-      'USE_EXACT_ALARM',
       'RECEIVE_BOOT_COMPLETED',
       'VIBRATE',
     ]));
+    expect(app.expo.android.permissions).not.toContain('USE_EXACT_ALARM');
+    expect(app.expo.android.blockedPermissions).toContain('android.permission.USE_EXACT_ALARM');
     expect(app.expo.ios.infoPlist?.UIBackgroundModes).toContain('remote-notification');
   });
 

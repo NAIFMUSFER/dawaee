@@ -213,6 +213,46 @@ jobs:
       - name: Container security properties
         run: ./scripts/container-checks.sh dawaee:ci
 
+  # Rebuild and execute the exact recorded runtime sources across a restored
+  # synthetic database. This job owns its PostgreSQL container and internal
+  # network; it has no production connection, providers or deploy credentials.
+  runtime-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      NODE_ENV: test
+      RECOVERY_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PGHOST: 127.0.0.1
+      PGPORT: '5433'
+      PGUSER: postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install PostgreSQL 17 client for owned recovery targets
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list \
+            -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Rebuilt runtime backup, upgrade and recovery
+        run: node scripts/release-runtime-recovery.mjs
+
   dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 15

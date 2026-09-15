@@ -36,9 +36,11 @@
         "VIBRATE",
         "RECEIVE_BOOT_COMPLETED",
         "SCHEDULE_EXACT_ALARM",
-        "USE_EXACT_ALARM",
         "POST_NOTIFICATIONS",
         "USE_BIOMETRIC"
+      ],
+      "blockedPermissions": [
+        "android.permission.USE_EXACT_ALARM"
       ],
       "versionCode": 2
     },

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import pino from 'pino';
 import type { FastifyBaseLogger } from 'fastify';
 import { LOG_REDACTION, serializeLoggedError } from '@dawaee/shared';
@@ -72,6 +73,34 @@ export function redactUrl(url: string): string {
   return redacted.replace(URL_UUID, '[id]');
 }
 
+type LoggedRequest = {
+  method?: string;
+  url?: string;
+  headers?: Record<string, unknown>;
+  ip?: string;
+};
+
+/**
+ * Keep enough request metadata to correlate operational failures without
+ * duplicating the caller's raw network address into the application log.
+ *
+ * Render already keeps its own platform request log. Dawaee's application log
+ * only needs a stable-within-environment pseudonym so repeated requests can be
+ * correlated during an incident. The environment-specific IP_HASH_SALT prevents
+ * that pseudonym from becoming a portable cross-environment identifier.
+ */
+export function serializeRequest(req: LoggedRequest, ipHashSalt: string) {
+  const remoteAddress = req.ip
+    ? createHash('sha256').update(`${ipHashSalt}:${req.ip}`).digest('hex').slice(0, 32)
+    : undefined;
+  return {
+    method: req.method,
+    url: redactUrl(req.url ?? ''),
+    host: req.headers?.host,
+    remoteAddress,
+  };
+}
+
 // Typed as FastifyBaseLogger so passing the instance to Fastify does not
 // specialise its logger type parameter and break route-module assignability.
 export function createLogger(): FastifyBaseLogger {
@@ -85,16 +114,10 @@ export function createLogger(): FastifyBaseLogger {
       // Replaces pino's default, which copies every property of the thrown
       // object — including the ones a DatabaseError uses to quote row values.
       err: serializeLoggedError,
-      // Replaces Fastify's default request serializer. Same fields, minus the
-      // secret. Anything added here must keep `url` going through redactUrl.
-      req(req: { method?: string; url?: string; headers?: Record<string, unknown>; ip?: string }) {
-        return {
-          method: req.method,
-          url: redactUrl(req.url ?? ''),
-          host: req.headers?.host,
-          remoteAddress: req.ip,
-        };
-      },
+      // Replaces Fastify's default request serializer. Same operational fields,
+      // but URL capabilities/ids are redacted and the client address is a
+      // salted pseudonym rather than the raw address.
+      req: (req: LoggedRequest) => serializeRequest(req, cfg.IP_HASH_SALT),
     },
   });
 }
