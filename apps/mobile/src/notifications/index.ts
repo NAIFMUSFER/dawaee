@@ -182,6 +182,25 @@ export interface ScheduleResult {
   exactAlarmsUnavailable: boolean;
 }
 
+function notificationAt(dose: DoseView): string {
+  return dose.status === 'snoozed' && dose.snoozedUntil ? dose.snoozedUntil : dose.scheduledAt;
+}
+
+function notificationLocalTime(dose: DoseView): string {
+  const at = notificationAt(dose);
+  if (at === dose.scheduledAt || !dose.scheduledTimezone) return dose.scheduledLocalTime;
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: dose.scheduledTimezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(at));
+  } catch {
+    return dose.scheduledLocalTime;
+  }
+}
+
 function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
   const groups = new Map<string, DoseView[]>();
   const seenDoseIds = new Set<string>();
@@ -194,14 +213,15 @@ function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
     if (seenDoseIds.has(dose.id)) continue;
     seenDoseIds.add(dose.id);
 
-    const at = new Date(dose.scheduledAt).getTime();
+    const triggerAt = notificationAt(dose);
+    const at = new Date(triggerAt).getTime();
     if (at <= now) continue;
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
-    const bucket = groups.get(dose.scheduledAt);
+    const bucket = groups.get(triggerAt);
     if (bucket) bucket.push(dose);
-    else groups.set(dose.scheduledAt, [dose]);
+    else groups.set(triggerAt, [dose]);
   }
-  return [...groups.values()].sort((a, b) => a[0]!.scheduledAt.localeCompare(b[0]!.scheduledAt));
+  return [...groups.values()].sort((a, b) => notificationAt(a[0]!).localeCompare(notificationAt(b[0]!)));
 }
 
 /**
@@ -245,11 +265,12 @@ async function scheduleCurrentNotifications(
     if (!isCurrent()) break;
     const first = group[0]!;
     const grouped = group.length > 1;
+    const displayTime = notificationLocalTime(first);
     const text = grouped
       ? groupedReminderText({
           locale,
           showMedication: opts.showMedication,
-          time: first.scheduledLocalTime,
+          time: displayTime,
           medications: group.map((dose) => ({
             name: dose.medication.name,
             doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
@@ -260,7 +281,7 @@ async function scheduleCurrentNotifications(
           showMedication: opts.showMedication,
           medicationName: first.medication.name,
           doseText: `${first.doseQuantity} ${first.doseUnit}`,
-          time: first.scheduledLocalTime,
+          time: displayTime,
           food: t(locale, `food.${first.medication.foodInstruction}` as never),
         });
 
@@ -282,7 +303,7 @@ async function scheduleCurrentNotifications(
         },
         trigger: {
           type: N.SchedulableTriggerInputTypes.DATE,
-          date: new Date(first.scheduledAt),
+          date: new Date(notificationAt(first)),
           channelId: MEDICATION_CHANNEL_ID,
         },
       });
