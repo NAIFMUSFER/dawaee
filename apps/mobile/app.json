@@ -10,16 +10,25 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.dawaee.mobile",
+      "buildNumber": "2",
       "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
         "NSCameraUsageDescription": "يحتاج تداوي إلى الكاميرا لتصوير علبة الدواء ومسح الرمز الشريطي.",
         "NSPhotoLibraryUsageDescription": "يحتاج تداوي إلى الصور لاختيار صورة علبة الدواء.",
         "NSFaceIDUsageDescription": "يستخدم تداوي Face ID لقفل التطبيق وحماية بياناتك الصحية على هذا الجهاز.",
-        "NSMicrophoneUsageDescription": "يحتاج تداوي إلى الميكروفون عندما تختار استخدام التأكيد الصوتي للجرعة."
+        "NSMicrophoneUsageDescription": "يحتاج تداوي إلى الميكروفون عندما تختار استخدام التأكيد الصوتي للجرعة.",
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
       "package": "app.dawaee.mobile",
+      "versionCode": 2,
+      "allowBackup": false,
       "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0E7A6E"
+      },
       "permissions": [
         "CAMERA",
         "POST_NOTIFICATIONS",
@@ -29,13 +38,33 @@
         "VIBRATE"
       ]
     },
-    "web": { "bundler": "metro", "output": "static" },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
     "plugins": [
       "expo-router",
       "expo-localization",
       "expo-secure-store",
+      "expo-sharing",
       "@react-native-firebase/app/app.plugin.js",
-      ["expo-notifications", { "sounds": [] }],
+      [
+        "expo-notifications",
+        {
+          "sounds": [],
+          "color": "#0E7A6E",
+          "defaultChannel": "medication-critical"
+        }
+      ],
+      [
+        "expo-camera",
+        { "cameraPermission": "يحتاج تداوي إلى الكاميرا لتصوير علبة الدواء ومسح الرمز الشريطي." }
+      ],
+      [
+        "expo-local-authentication",
+        { "faceIDPermission": "يستخدم تداوي Face ID لقفل التطبيق وحماية بياناتك الصحية على هذا الجهاز." }
+      ],
       [
         "expo-image-picker",
         {
@@ -48,6 +77,12 @@
     "extra": {
       "apiBaseUrl": "https://api.dawaee.app",
       "eas": { "projectId": "7792b6a0-9656-46a7-8e60-f8e67b94d048" }
+    },
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F2F6F5"
     },
     "owner": "naif789"
   }
