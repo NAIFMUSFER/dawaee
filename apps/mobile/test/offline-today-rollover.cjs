@@ -55,7 +55,7 @@ function scenarios(screenFile, hookFile) {
     assert.equal(hero(h)?.dose.id, 'TODAY');
     assert.equal(typeof hero(h).onTaken, 'function');
     assert.deepEqual(
-      h.notifications.map(doses => doses.map(dose => dose.id)),
+      h.notifications.map(doses => Array.from(doses, dose => dose.id)),
       [['TODAY']],
       'offline cold start rendered cache but did not restore its local reminder schedule',
     );
