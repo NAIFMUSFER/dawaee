@@ -99,9 +99,13 @@ jobs:
           test -s "$RUNNER_TEMP/exact-alarm-release-dex.txt"
           "$ANALYZER" dex code --class app.dawaee.exactalarm.ExactAlarmPermissionReceiver "$APK" > "$RUNNER_TEMP/exact-alarm-receiver-release-dex.txt"
           test -s "$RUNNER_TEMP/exact-alarm-receiver-release-dex.txt"
+          "$ANALYZER" dex code --class app.dawaee.exactalarm.ExactAlarmRecoveryJobService "$APK" > "$RUNNER_TEMP/exact-alarm-recovery-job-release-dex.txt"
+          test -s "$RUNNER_TEMP/exact-alarm-recovery-job-release-dex.txt"
           "$ANALYZER" manifest print "$APK" > "$RUNNER_TEMP/android-release-manifest.xml"
           grep -Fq 'app.dawaee.exactalarm.ExactAlarmPermissionReceiver' "$RUNNER_TEMP/android-release-manifest.xml"
           grep -Fq 'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED' "$RUNNER_TEMP/android-release-manifest.xml"
+          grep -Fq 'app.dawaee.exactalarm.ExactAlarmRecoveryJobService' "$RUNNER_TEMP/android-release-manifest.xml"
+          grep -Fq 'android.permission.BIND_JOB_SERVICE' "$RUNNER_TEMP/android-release-manifest.xml"
           "$ANALYZER" manifest permissions "$APK" > "$RUNNER_TEMP/android-release-permissions.txt"
           grep -Fxq 'android.permission.SCHEDULE_EXACT_ALARM' "$RUNNER_TEMP/android-release-permissions.txt"
           if grep -Fxq 'android.permission.USE_EXACT_ALARM' "$RUNNER_TEMP/android-release-permissions.txt"; then
