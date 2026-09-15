@@ -54,6 +54,11 @@ function scenarios(screenFile, hookFile) {
   add('control: one current-day cached dose is actionable offline', [today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY');
     assert.equal(typeof hero(h).onTaken, 'function');
+    assert.deepEqual(
+      h.notifications.map(doses => doses.map(dose => dose.id)),
+      [['TODAY']],
+      'offline cold start rendered cache but did not restore its local reminder schedule',
+    );
   });
   add('an unresolved prior-day cached dose cannot hide the current-day action card', [yesterday, today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY', 'prior local day stole the next-dose selection');
