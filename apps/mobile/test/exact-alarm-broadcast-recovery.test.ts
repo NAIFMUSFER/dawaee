@@ -40,7 +40,21 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     );
     expect(receiverSource).toContain('delegate.getAllScheduledNotifications().forEach { request ->');
     expect(receiverSource).toContain('delegate.scheduleNotification(request)');
-    expect(receiverSource).not.toContain('.setupScheduledNotifications()');
+
+    // The receiver intentionally documents why Expo's bulk restore helper is
+    // unsafe here, so search executable Kotlin lines rather than comments.
+    const executableReceiverLines = receiverSource
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => (
+        line.length > 0
+        && !line.startsWith('//')
+        && !line.startsWith('*')
+        && !line.startsWith('/**')
+        && !line.startsWith('*/')
+      ));
+    expect(executableReceiverLines.some((line) => line.includes('.setupScheduledNotifications()'))).toBe(false);
+
     expect(receiverSource).toContain('val pendingResult = goAsync()');
     expect(receiverSource).toContain('pendingResult.finish()');
     expect(receiverSource).not.toMatch(/startActivity|React|AsyncStorage|SecureStore/);
