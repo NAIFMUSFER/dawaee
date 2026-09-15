@@ -76,14 +76,11 @@ export async function verifyFirebasePhoneIdToken(
     throw new FirebasePhoneProofInvalid();
   }
 
-  let certs = await loadCerts();
-  let cert = certs[kid];
-  if (!cert) {
-    certCache = null;
-    certs = await loadCerts();
-    cert = certs[kid];
-    if (!cert) throw new FirebasePhoneProofInvalid();
-  }
+  // Respect Google's cache lifetime. Do not refetch on an attacker-controlled
+  // unknown kid: otherwise arbitrary JWT headers become a network-amplification
+  // primitive against the public certificate endpoint.
+  const cert = (await loadCerts())[kid];
+  if (!cert) throw new FirebasePhoneProofInvalid();
 
   try {
     const key = await importX509(cert, 'RS256');
