@@ -54,6 +54,11 @@ function scenarios(screenFile, hookFile) {
   add('control: one current-day cached dose is actionable offline', [today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY');
     assert.equal(typeof hero(h).onTaken, 'function');
+    assert.equal(
+      hero(h).onPress,
+      undefined,
+      'offline cache has no medication id, so the hero must not navigate to an empty detail route',
+    );
     assert.deepEqual(
       h.notifications.map(doses => Array.from(doses, dose => dose.id)),
       [['TODAY']],
@@ -68,6 +73,11 @@ function scenarios(screenFile, hookFile) {
     const listed = cards(h.tree).filter(p => !p.prominent);
     assert.equal(listed.length, 1, 'same occurrence is rendered twice in the daily list');
     assert.equal(listed[0].dose.id, 'TODAY');
+    assert.equal(
+      listed[0].onPress,
+      undefined,
+      'offline cached list rows must not navigate without a medication id',
+    );
   });
   add('cached ordering cannot promote a later dose ahead of the earliest current-day dose', [later, today], async h => {
     assert.equal(hero(h)?.dose.id, 'TODAY');
