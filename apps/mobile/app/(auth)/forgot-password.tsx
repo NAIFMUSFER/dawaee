@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { getAuth, getIdToken, signInWithPhoneNumber, signOut } from '@react-native-firebase/auth';
-import { api, ApiError } from '../../src/api/client.js';
-import { Button, Card, Field, Screen, Txt } from '../../src/components/ui.js';
+import { api, ApiError } from '../../src/api/client';
+import { Button, Card, Field, Screen, Txt } from '../../src/components/ui';
 
 type Step = 'phone' | 'code' | 'password';
 type Confirmation = Awaited<ReturnType<typeof signInWithPhoneNumber>>;
