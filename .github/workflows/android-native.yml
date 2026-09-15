@@ -102,13 +102,24 @@ jobs:
           unzip -l "$AAB" | grep -Eq 'base/dex/classes([0-9]+)?\.dex'
           echo "Verified release candidate $(git rev-parse HEAD)"
           sha256sum "$APK" "$AAB" | tee android/release-sha256.txt
-      - name: Upload verified native build evidence
+
+          # This workflow is a compile/packaging gate, not the Play signing
+          # authority. Keep useful evidence, but do not publish its locally
+          # generated AAB as a downloadable artefact that can be mistaken for
+          # the EAS production build signed with the managed Play upload key.
+          EVIDENCE=android/ci-native-evidence
+          mkdir -p "$EVIDENCE"
+          cp android/release-sha256.txt "$EVIDENCE/release-sha256.txt"
+          cp "$RUNNER_TEMP/android-release-manifest.xml" "$EVIDENCE/android-release-manifest.xml"
+          cp "$RUNNER_TEMP/android-release-permissions.txt" "$EVIDENCE/android-release-permissions.txt"
+          printf '%s\n' \
+            'CI NATIVE EVIDENCE ONLY — NOT FOR STORE UPLOAD.' \
+            'Google Play AABs must come from EAS profile production with remote managed credentials.' \
+            > "$EVIDENCE/NOT-FOR-STORE-UPLOAD.txt"
+      - name: Upload CI native evidence (not-for-store)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: android-native-evidence-${{ github.event.pull_request.head.sha || github.sha }}
-          path: |
-            apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-            apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
-            apps/mobile/android/release-sha256.txt
+          name: android-native-ci-evidence-not-for-store-${{ github.event.pull_request.head.sha || github.sha }}
+          path: apps/mobile/android/ci-native-evidence/
           if-no-files-found: error
           retention-days: 7
