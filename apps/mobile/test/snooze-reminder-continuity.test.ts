@@ -29,17 +29,18 @@ describe('snooze reminder continuity across cache and offline actions', () => {
 
     expect(snoozeStart).toBeGreaterThanOrEqual(0);
     expect(snooze).toContain("await enqueue({ type: 'snoozed'");
-    expect(snooze).toContain('activeProfile.isSelf');
+    expect(snooze).toContain('activeProfile?.isSelf');
     expect(snooze).toContain('await rebuildRemindersFromCache(');
   });
 
   it('rebuilds an offline lock-screen snooze before attempting network replay', () => {
     const layout = source(layoutFile);
-    const listenerStart = layout.indexOf('startNotificationActionListener');
-    const groupedStart = layout.indexOf('startGroupedNotificationListener', listenerStart);
+    const listenerStart = layout.indexOf('void startNotificationActionListener(');
+    const groupedStart = layout.indexOf('/** A grouped reminder', listenerStart);
     const listener = layout.slice(listenerStart, groupedStart);
 
     expect(listenerStart).toBeGreaterThanOrEqual(0);
+    expect(groupedStart).toBeGreaterThan(listenerStart);
     expect(listener).toContain("outcome.action === 'snoozed'");
     expect(listener).toContain('!outcome.synced');
     expect(listener).toContain('await rebuildRemindersFromCache(');
