@@ -9,10 +9,13 @@ export { readOfflineBootstrap, writeOfflineBootstrap } from './offline-bootstrap
  * The offline queue.
  *
  * This is the feature that makes the app trustworthy on a patchy connection:
- * pressing "Taken" ALWAYS succeeds locally and is replayed later. Every action
- * carries a client event id that the server treats as an idempotency key, so a
- * retry after a crash, a reinstall or a duplicated batch can never record the
- * same dose twice or decrement the medication box twice.
+ * a dose action that cannot reach the server is persisted locally when secure
+ * storage is available and replayed later. If secure persistence fails, the
+ * caller is told so it can roll back any optimistic UI instead of pretending
+ * the action was saved. Every action carries a client event id that the server
+ * treats as an idempotency key, so a retry after a crash, a reinstall or a
+ * duplicated batch can never record the same dose twice or decrement the
+ * medication box twice.
  */
 
 /**
@@ -229,6 +232,7 @@ export interface CachedSchedule {
   timezone: string;
   doses: Array<{
     id: string; scheduledAt: string; scheduledLocalTime: string; scheduledLocalDate: string;
+    scheduledTimezone?: string; snoozedUntil?: string | null;
     medicationName: string; doseQuantity: number; doseUnit: string; foodInstruction: string; status: string;
   }>;
 }
@@ -366,7 +370,13 @@ export function applyQueuedToCache(cache: CachedSchedule, queue: QueuedAction[])
       if (!action) return d;
       if (action.type === 'taken') return { ...d, status: 'taken' };
       if (action.type === 'skipped') return { ...d, status: 'skipped' };
-      return { ...d, status: 'snoozed' };
+
+      const at = Date.parse(action.at);
+      const minutes = Number(action.minutes);
+      const snoozedUntil = Number.isFinite(at) && Number.isFinite(minutes)
+        ? new Date(at + minutes * 60_000).toISOString()
+        : null;
+      return { ...d, status: 'snoozed', snoozedUntil };
     }),
   };
 }
