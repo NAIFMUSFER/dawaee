@@ -7,7 +7,10 @@ import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
+import {
+  configureCategories, configureChannels, rebuildRemindersFromCache,
+  startNotificationActionListener, syncPushRegistration,
+} from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
@@ -50,7 +53,7 @@ function useWebAlertAdapter() {
  */
 function Shell() {
   const {
-    ready, preferences, signedIn, user, activeProfile, deviceId,
+    ready, preferences, profiles, signedIn, user, activeProfile, deviceId,
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
@@ -119,11 +122,32 @@ function Shell() {
     if (!signedIn) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void startNotificationActionListener(() => { void refreshAfterAction(); })
+    void startNotificationActionListener((outcome) => {
+      void (async () => {
+        // A snooze queued while offline must recreate its local future alarm
+        // before sync gets another chance to remove the queue entry. The cache
+        // rebuild is account-scoped and only targets the owned self profile;
+        // caregiver-view schedules never become reminders on this device.
+        if (outcome.action === 'snoozed' && !outcome.synced) {
+          const selfProfileId = profiles.find((profile) => profile.isSelf && profile.role === 'owner')?.id ?? null;
+          if (selfProfileId) {
+            await rebuildRemindersFromCache(
+              selfProfileId,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            ).catch(() => undefined);
+          }
+        }
+        await refreshAfterAction();
+      })();
+    })
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, refreshAfterAction]);
+  }, [signedIn, profiles, preferences.locale, preferences.showMedicationInNotifications, preferences.voiceRemindersEnabled, refreshAfterAction]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
