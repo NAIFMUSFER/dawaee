@@ -67,5 +67,19 @@
     "@babel/core": "^7.28.6",
     "@types/react": "~19.2.7",
     "typescript": "~5.9.3"
+  },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "exclude": [
+          "expo-barcode-scanner"
+        ]
+      },
+      "ios": {
+        "exclude": [
+          "expo-barcode-scanner"
+        ]
+      }
+    }
   }
 }
