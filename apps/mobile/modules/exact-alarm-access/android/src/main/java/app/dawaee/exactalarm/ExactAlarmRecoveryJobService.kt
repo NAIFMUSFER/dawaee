@@ -36,7 +36,7 @@ class ExactAlarmRecoveryJobService : JobService() {
           // this job is queued behind a JavaScript mutation. Re-check at the
           // protected boundary before touching persisted notification state.
           if (!canScheduleExactAlarms(this)) return@withInterruptibleLease
-          reschedule = !replayPersistedNotifications(applicationContext)
+          reschedule = shouldRescheduleAfterReplay(replayPersistedNotifications(applicationContext))
         }
       } catch (_: InterruptedException) {
         reschedule = true
@@ -44,7 +44,7 @@ class ExactAlarmRecoveryJobService : JobService() {
       } catch (_: Exception) {
         // Never log notification request identifiers, content or exception text.
         Log.e(TAG, "Exact-alarm grant recovery failed")
-        reschedule = true
+        reschedule = runCatching { shouldRescheduleAfterReplay(false) }.getOrDefault(false)
       } finally {
         // onStopJob owns rescheduling after it clears/interupts the active task;
         // only a task that still owns this slot may report completion itself.
@@ -96,9 +96,26 @@ class ExactAlarmRecoveryJobService : JobService() {
     return !restoreFailed
   }
 
+  private fun shouldRescheduleAfterReplay(replaySucceeded: Boolean): Boolean {
+    val preferences = getSharedPreferences(RETRY_PREFERENCES_NAME, Context.MODE_PRIVATE)
+    if (replaySucceeded) {
+      preferences.edit().remove(REPLAY_FAILURE_COUNT_KEY).apply()
+      return false
+    }
+
+    val failureCount = preferences.getInt(REPLAY_FAILURE_COUNT_KEY, 0) + 1
+    // Persist the counter before asking JobScheduler for another run. If durable
+    // bookkeeping itself fails, stop retrying rather than create an unbounded loop.
+    if (!preferences.edit().putInt(REPLAY_FAILURE_COUNT_KEY, failureCount).commit()) return false
+    return failureCount < MAX_REPLAY_FAILURES
+  }
+
   companion object {
     private const val TAG = "DawaeeExactAlarm"
     private const val JOB_ID = 0x0DAAEE
+    private const val RETRY_PREFERENCES_NAME = "dawaee.exactalarm.recovery"
+    private const val REPLAY_FAILURE_COUNT_KEY = "replay_failure_count"
+    private const val MAX_REPLAY_FAILURES = 3
 
     fun schedule(context: Context): Boolean {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
