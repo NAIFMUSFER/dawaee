@@ -6,21 +6,22 @@ import { describe, expect, it } from 'vitest';
 function coldCacheBranch(file: string): string {
   const sourceText = readFileSync(file, 'utf8');
   const sf = ts.createSourceFile(file, sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
-  let match: ts.IfStatement | null = null;
 
-  function visit(node: ts.Node): void {
+  function find(node: ts.Node): ts.IfStatement | null {
     if (
-      !match
-      && ts.isIfStatement(node)
+      ts.isIfStatement(node)
       && node.expression.getText(sf).replace(/\s+/g, ' ') === 'cached && !data'
     ) {
-      match = node;
-      return;
+      return node;
     }
-    ts.forEachChild(node, visit);
+    for (const child of node.getChildren(sf)) {
+      const match = find(child);
+      if (match) return match;
+    }
+    return null;
   }
 
-  visit(sf);
+  const match = find(sf);
   if (!match) throw new Error('could not find the Today cold-cache branch');
   return match.thenStatement.getText(sf);
 }
