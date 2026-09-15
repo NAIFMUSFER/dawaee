@@ -7,6 +7,10 @@ const require = createRequire(import.meta.url);
 const configure = require('../app.config.js');
 const config = JSON.parse(readFileSync(new URL('../app.json', import.meta.url), 'utf8')).expo;
 const profiles = JSON.parse(readFileSync(new URL('../eas.json', import.meta.url), 'utf8')).build;
+const androidNativeWorkflow = readFileSync(
+  new URL('../../../.github/workflows/android-native.yml', import.meta.url),
+  'utf8',
+);
 
 describe('isolated installed audit build', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -41,5 +45,21 @@ describe('isolated installed audit build', () => {
   ])('refuses an audit identity with the wrong backend or demo data: %j', patch => {
     for (const [key, value] of Object.entries({ ...profiles['audit-preview'].env, ...patch })) vi.stubEnv(key, String(value));
     expect(() => configure({ config })).toThrow('AUDIT_MOBILE_TARGET_MISMATCH');
+  });
+
+  it('keeps Google Play signing on remote EAS credentials and CI native output as evidence only', () => {
+    const production = profiles.production;
+    expect(production.credentialsSource).toBe('remote');
+    expect(production.autoIncrement).toBe(true);
+    expect(production.android.buildType).toBe('app-bundle');
+
+    // GitHub Actions proves that the generated Android project compiles, but it
+    // does not own the Play upload key. A locally/generated-signed AAB must not
+    // be downloadable from this workflow and mistaken for a store artefact.
+    expect(androidNativeWorkflow).toContain(':app:bundleRelease');
+    const uploadBlock = androidNativeWorkflow.split('- name: Upload CI native evidence')[1] ?? '';
+    expect(uploadBlock).toContain('not-for-store');
+    expect(uploadBlock).toContain('release-sha256.txt');
+    expect(uploadBlock).not.toContain('app-release.aab');
   });
 });
