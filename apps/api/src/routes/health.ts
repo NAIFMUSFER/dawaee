@@ -193,13 +193,23 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
     const integrationReadiness = assessIntegrationReadiness(providers, cfg.NODE_ENV === 'production');
     if (cfg.NODE_ENV === 'production') checks.integrations = integrationReadiness.check;
 
-    const healthy = Object.values(checks).every((c) => c.ok);
+    const failedChecks = Object.entries(checks)
+      .filter(([, check]) => !check.ok)
+      .map(([name]) => name);
+    const healthy = failedChecks.length === 0;
+
+    /**
+     * Keep the operational evidence above inside the process. This route has no
+     * authentication because Render and external probes need it before an
+     * application session exists. Returning the old `checks`, `env`, provider
+     * inventory, schema revision and worker detail let any internet caller
+     * fingerprint the exact deployment and its failure mode. The public
+     * contract is now only the readiness decision plus failed check *classes*;
+     * logs/tests retain the detailed diagnostics used during release review.
+     */
     return reply.status(healthy ? 200 : 503).send({
       status: healthy ? 'ready' : 'degraded',
-      env: cfg.NODE_ENV,
-      checks,
-      integrations: integrationReadiness.integrations,
-      mockedIntegrations: integrationReadiness.mockedIntegrations,
+      ...(failedChecks.length > 0 ? { failedChecks } : {}),
       time: new Date().toISOString(),
     });
   });
