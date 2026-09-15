@@ -4,7 +4,10 @@ import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
-import { canScheduleExactAlarms as canScheduleExactAlarmsOnDevice } from '../../modules/exact-alarm-access';
+import {
+  canScheduleExactAlarms as canScheduleExactAlarmsOnDevice,
+  withExactAlarmScheduleMutation,
+} from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
@@ -142,6 +145,9 @@ export async function startNotificationActionListener(
 // AFTER any already-started native write, or that write can recreate PHI-bearing
 // reminders on a signed-out phone. New intent invalidates older loops at once;
 // the serial tail makes the final native state belong to the newest operation.
+// Android also takes the native exact-alarm recovery lease here so the system's
+// permission-grant receiver cannot replay an older persisted snapshot across a
+// newer logout, privacy change, or Today/cache rebuild.
 let scheduleGeneration = 0;
 let scheduleTail: Promise<void> = Promise.resolve();
 
@@ -155,7 +161,9 @@ export function captureLocalReminderContext(): () => boolean {
 
 function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
   const generation = ++scheduleGeneration;
-  const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
+  const result = scheduleTail.then(() => withExactAlarmScheduleMutation(
+    () => operation(() => generation === scheduleGeneration),
+  ));
   scheduleTail = result.then(() => undefined, () => undefined);
   return result;
 }
