@@ -1,65 +1,44 @@
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { planExactAlarmGrantRecovery } from '../src/notifications/exact-alarm-recovery.js';
 
 const settingsSource = readFileSync(new URL('../app/settings/notifications.tsx', import.meta.url), 'utf8');
+const receiverSource = readFileSync(
+  new URL(
+    '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmPermissionReceiver.kt',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
-const denied = { supported: true, permissionGranted: true, canScheduleExact: false } as const;
-const granted = { supported: true, permissionGranted: true, canScheduleExact: true } as const;
-const notificationsDenied = { supported: true, permissionGranted: false, canScheduleExact: false } as const;
+describe('Android exact-alarm grant recovery ownership', () => {
+  it('uses the native grant receiver as the sole schedule-repair path', () => {
+    expect(receiverSource).toContain(
+      'AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED',
+    );
+    expect(receiverSource).toContain('alarmManager.canScheduleExactAlarms()');
+    expect(receiverSource).toContain('delegate.getAllScheduledNotifications().forEach { request ->');
+    expect(receiverSource).toContain('delegate.scheduleNotification(request)');
 
-const followed = { id: 'followed-profile', isSelf: false, role: 'caregiver' } as const;
-const selfOwner = { id: 'self-owner-profile', isSelf: true, role: 'owner' } as const;
-
-function plan(overrides: Record<string, unknown> = {}) {
-  return planExactAlarmGrantRecovery({
-    platform: 'android',
-    previous: denied,
-    current: granted,
-    signedIn: true,
-    profiles: [followed, selfOwner],
-    locale: 'ar',
-    voiceEnabled: true,
-    showMedication: false,
-    ...overrides,
-  });
-}
-
-describe('Android exact-alarm grant recovery', () => {
-  it('rebuilds only after an observed denied -> granted transition', () => {
-    expect(plan()).toEqual({
-      profileId: 'self-owner-profile',
-      locale: 'ar',
-      options: { voiceEnabled: true, showMedication: false },
-    });
-
-    expect(plan({ previous: granted })).toBeNull();
-    expect(plan({ previous: null })).toBeNull();
-    expect(plan({ current: denied })).toBeNull();
-    expect(plan({ current: notificationsDenied })).toBeNull();
+    // AppState may refresh what the settings UI reports, but must not mutate
+    // the notification schedule after the same Android grant broadcast. The
+    // receiver can already be replaying its snapshot concurrently; a JS
+    // cancel/rebuild here can interleave and resurrect stale/duplicate payloads.
+    expect(settingsSource).not.toContain('planExactAlarmGrantRecovery');
+    expect(settingsSource).not.toContain('rebuildRemindersFromCache');
   });
 
-  it('never rebuilds a followed patient or a signed-out account', () => {
-    expect(plan({ profiles: [followed] })).toBeNull();
-    expect(plan({ signedIn: false })).toBeNull();
-    expect(plan({ platform: 'ios' })).toBeNull();
-    expect(plan({ platform: 'web' })).toBeNull();
-  });
-
-  it('preserves the current reminder privacy and voice choices', () => {
-    expect(plan({ locale: 'en', voiceEnabled: false, showMedication: true })).toEqual({
-      profileId: 'self-owner-profile',
-      locale: 'en',
-      options: { voiceEnabled: false, showMedication: true },
-    });
-  });
-
-  it('wires Android foreground return to capability recheck and cached-reminder repair', () => {
+  it('still rechecks platform capability when Android returns to the foreground', () => {
     expect(settingsSource).toContain("AppState.addEventListener('change'");
     expect(settingsSource).toContain("nextState !== 'active'");
-    expect(settingsSource).toContain('planExactAlarmGrantRecovery');
-    expect(settingsSource).toContain('rebuildRemindersFromCache');
-    expect(settingsSource).toContain('exactAlarmRecoveryScopeRef');
+    expect(settingsSource).toContain('inspectCapability()');
+    expect(settingsSource).toContain('capabilityRef.current = current');
+    expect(settingsSource).toContain('setCapability(current)');
+  });
+
+  it('does not add a second owner/profile-specific recovery scheduler in JavaScript', () => {
+    expect(settingsSource).not.toContain('exactAlarmRecoveryScopeRef');
+    expect(settingsSource).not.toContain('exactAlarmRecoveryContextRef');
+    expect(settingsSource).not.toContain('selfOwnerProfileId');
   });
 });
