@@ -59,13 +59,15 @@ describe('production readiness covers every per-tick safety-critical worker prer
   });
   afterAll(async () => { vi.unstubAllEnvs(); await app.close(); });
 
-  it.each(['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'])
-  ('returns 503 when %s is the only failed prerequisite', async (jobName) => {
-    workerRows = workerRows.map((row) => row.job_name === jobName ? { ...row, succeeded: false } : row);
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode, response.body).toBe(503);
-    expectPublicWorkerFailure(response.body);
-  });
+  it.each(['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'])(
+    'returns 503 when %s is the only failed prerequisite',
+    async (jobName) => {
+      workerRows = workerRows.map((row) => row.job_name === jobName ? { ...row, succeeded: false } : row);
+      const response = await app.inject({ method: 'GET', url: '/health/ready' });
+      expect(response.statusCode, response.body).toBe(503);
+      expectPublicWorkerFailure(response.body);
+    },
+  );
 
   it('requires current successful worker jobs in an opted-in non-production preview', async () => {
     h.env = 'development';
