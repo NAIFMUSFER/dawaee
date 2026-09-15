@@ -26,6 +26,12 @@ import kotlin.concurrent.thread
  * one request at a time and emits only one generic Dawaee failure message.
  * Expired schedulable requests are removed before Expo's scheduler sees them,
  * because its stale-request cleanup path also logs the request identifier.
+ *
+ * The replay holds the same process-local schedule-mutation lease used by the
+ * JavaScript notification layer. Whichever side starts first completes before
+ * the other reads or mutates Expo's persisted schedule, so a stale receiver
+ * snapshot cannot be written back after logout, a privacy change, or a newer
+ * Today/cache rebuild.
  */
 class ExactAlarmPermissionReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent?) {
@@ -38,28 +44,30 @@ class ExactAlarmPermissionReceiver : BroadcastReceiver() {
     val pendingResult = goAsync()
     thread(name = "dawaee-exact-alarm-recovery") {
       try {
-        val delegate = ExpoSchedulingDelegate(context.applicationContext)
-        var restoreFailed = false
-        try {
-          delegate.getAllScheduledNotifications().forEach { request ->
-            try {
-              val trigger = request.trigger
-              if (trigger is SchedulableNotificationTrigger && trigger.nextTriggerDate() == null) {
-                delegate.removeScheduledNotifications(listOf(request.identifier))
-                return@forEach
+        NotificationScheduleMutationCoordinator.withLease {
+          val delegate = ExpoSchedulingDelegate(context.applicationContext)
+          var restoreFailed = false
+          try {
+            delegate.getAllScheduledNotifications().forEach { request ->
+              try {
+                val trigger = request.trigger
+                if (trigger is SchedulableNotificationTrigger && trigger.nextTriggerDate() == null) {
+                  delegate.removeScheduledNotifications(listOf(request.identifier))
+                  return@forEach
+                }
+                delegate.scheduleNotification(request)
+              } catch (_: Exception) {
+                restoreFailed = true
               }
-              delegate.scheduleNotification(request)
-            } catch (_: Exception) {
-              restoreFailed = true
             }
+          } catch (_: Exception) {
+            restoreFailed = true
           }
-        } catch (_: Exception) {
-          restoreFailed = true
-        }
 
-        if (restoreFailed) {
-          // Never log notification request identifiers, content, or exception text.
-          Log.e(TAG, "Exact-alarm grant recovery failed")
+          if (restoreFailed) {
+            // Never log notification request identifiers, content, or exception text.
+            Log.e(TAG, "Exact-alarm grant recovery failed")
+          }
         }
       } finally {
         pendingResult.finish()
