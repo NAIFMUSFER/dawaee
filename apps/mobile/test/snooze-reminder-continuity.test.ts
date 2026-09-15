@@ -36,7 +36,7 @@ describe('snooze reminder continuity across cache and offline actions', () => {
   it('rebuilds an offline lock-screen snooze before attempting network replay', () => {
     const layout = source(layoutFile);
     const listenerStart = layout.indexOf('void startNotificationActionListener(');
-    const groupedStart = layout.indexOf('/** A grouped reminder', listenerStart);
+    const groupedStart = layout.indexOf('A grouped reminder deliberately', listenerStart);
     const listener = layout.slice(listenerStart, groupedStart);
 
     expect(listenerStart).toBeGreaterThanOrEqual(0);
