@@ -44,6 +44,14 @@ class ExactAlarmAccessModule : Module() {
         return@Function openApplicationSettings(context, packageUri)
       }
     }
+
+    AsyncFunction("acquireNotificationScheduleMutation") {
+      NotificationScheduleMutationCoordinator.acquire()
+    }
+
+    Function("releaseNotificationScheduleMutation") {
+      NotificationScheduleMutationCoordinator.release()
+    }
   }
 
   private fun openApplicationSettings(context: Context, packageUri: Uri): Boolean {
