@@ -110,7 +110,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },
       readQueue: async () => h.queued,
-      enqueue: async (value) => { h.queued.push(value); },
+      enqueue: async (value) => {
+        if (h.enqueueWriter) await h.enqueueWriter(value);
+        h.queued.push(value);
+      },
       applyQueuedToCache: (value) => value,
       newClientEventId: () => `event-${h.requests.length}`,
     },
