@@ -31,30 +31,23 @@ export interface ExactAlarmGrantRecoveryPlan {
 }
 
 /**
- * Decide whether returning from Android's exact-alarm special-access screen
- * requires repairing the local reminder schedule.
+ * Android exact-alarm grant recovery is owned by the native
+ * ExactAlarmPermissionReceiver.
  *
- * Android cancels future exact alarms when SCHEDULE_EXACT_ALARM is revoked.
- * We therefore repair only an observed denied -> granted transition, and only
- * for the signed-in account's owner/self profile. A caregiver viewing another
- * patient must never schedule that patient's reminders on this phone.
+ * The system broadcasts the grant while the app process may be stopped. The
+ * receiver restores the already-persisted Expo notification requests directly.
+ * Creating a second JavaScript rebuild plan when the settings screen later
+ * returns to the foreground would race that native replay: JS can cancel and
+ * rebuild while the receiver is still replaying an older snapshot, allowing a
+ * stale or duplicate request to be written after the current schedule.
+ *
+ * Keep this compatibility seam returning null while the settings integration
+ * still calls it. AppState is allowed to refresh capability/UI state, but it
+ * must not mutate the schedule after the grant broadcast.
  */
 export function planExactAlarmGrantRecovery(
   input: ExactAlarmGrantRecoveryInput,
 ): ExactAlarmGrantRecoveryPlan | null {
-  if (input.platform !== 'android' || !input.signedIn) return null;
-  if (!input.previous || input.previous.canScheduleExact) return null;
-  if (!input.current.supported || !input.current.permissionGranted || !input.current.canScheduleExact) return null;
-
-  const selfOwner = input.profiles.find((profile) => profile.isSelf && profile.role === 'owner');
-  if (!selfOwner) return null;
-
-  return {
-    profileId: selfOwner.id,
-    locale: input.locale,
-    options: {
-      voiceEnabled: input.voiceEnabled,
-      showMedication: input.showMedication,
-    },
-  };
+  void input;
+  return null;
 }
