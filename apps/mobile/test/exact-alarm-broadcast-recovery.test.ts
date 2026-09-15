@@ -30,17 +30,26 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     );
   });
 
-  it('rechecks special access and restores persisted Expo notification alarms off the JS lifecycle', () => {
+  it('rechecks special access and restores persisted Expo alarms without identifier-logging bulk restore', () => {
     expect(receiverSource).toContain(
       'intent?.action != AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED',
     );
     expect(receiverSource).toContain('alarmManager.canScheduleExactAlarms()');
     expect(receiverSource).toContain(
-      'ExpoSchedulingDelegate(context.applicationContext).setupScheduledNotifications()',
+      'val delegate = ExpoSchedulingDelegate(context.applicationContext)',
     );
+    expect(receiverSource).toContain('delegate.getAllScheduledNotifications().forEach { request ->');
+    expect(receiverSource).toContain('delegate.scheduleNotification(request)');
+    expect(receiverSource).not.toContain('.setupScheduledNotifications()');
     expect(receiverSource).toContain('val pendingResult = goAsync()');
     expect(receiverSource).toContain('pendingResult.finish()');
     expect(receiverSource).not.toMatch(/startActivity|React|AsyncStorage|SecureStore/);
+
+    const nativeLogCalls = receiverSource
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('Log.'));
+    expect(nativeLogCalls).toEqual(['Log.e(TAG, "Exact-alarm grant recovery failed")']);
   });
 
   it('compiles and inspects the receiver in the release APK gate', () => {
