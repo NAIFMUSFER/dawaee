@@ -13,7 +13,7 @@ import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
-import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
+import { captureLocalReminderContext, inspectCapability, rebuildRemindersFromCache, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
@@ -27,7 +27,7 @@ function localDateIn(timeZone: string): string {
   }
 }
 
-function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
+function cachedDoseToView(d: CachedSchedule['doses'][number], fallbackTimezone: string): DoseView {
   return {
     id: d.id,
     medicationId: '',
@@ -35,12 +35,12 @@ function cachedDoseToView(d: CachedSchedule['doses'][number]): DoseView {
     scheduledAt: d.scheduledAt,
     scheduledLocalDate: d.scheduledLocalDate,
     scheduledLocalTime: d.scheduledLocalTime,
-    scheduledTimezone: '',
+    scheduledTimezone: d.scheduledTimezone ?? fallbackTimezone,
     doseQuantity: d.doseQuantity,
     doseUnit: d.doseUnit as DoseView['doseUnit'],
     status: d.status as DoseView['status'],
     minutesLate: null,
-    snoozedUntil: null,
+    snoozedUntil: d.snoozedUntil ?? null,
     snoozeCount: 0,
     confirmedAt: null,
     escalationStage: 0,
@@ -131,7 +131,8 @@ function TodayProfileScreen() {
         timezone: res.timezone,
         doses: [...res.today, ...res.prefetch].map((d) => ({
           id: d.id, scheduledAt: d.scheduledAt, scheduledLocalTime: d.scheduledLocalTime,
-          scheduledLocalDate: d.scheduledLocalDate, medicationName: d.medication.name,
+          scheduledLocalDate: d.scheduledLocalDate, scheduledTimezone: d.scheduledTimezone,
+          snoozedUntil: d.snoozedUntil, medicationName: d.medication.name,
           doseQuantity: d.doseQuantity, doseUnit: d.doseUnit,
           foodInstruction: d.medication.foodInstruction, status: d.status,
         })),
@@ -171,7 +172,7 @@ function TodayProfileScreen() {
           // Today and prefetch overlap, and this snapshot can outlive its
           // original local day. Keep occurrence identity unique and select in
           // chronological order rather than letting yesterday hide today's actions.
-          const views = [...new Map(merged.doses.map((d) => [d.id, cachedDoseToView(d)])).values()]
+          const views = [...new Map(merged.doses.map((d) => [d.id, cachedDoseToView(d, merged.timezone)])).values()]
             .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
           setData({
             profileId: merged.profileId,
@@ -328,8 +329,24 @@ function TodayProfileScreen() {
     } catch (err) {
       if (err instanceof NetworkError) {
         try {
-          await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
+          const at = new Date().toISOString();
+          await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at, clientEventId, minutes });
           if (isCurrent()) setOffline(true);
+          // Once the encrypted queue has durably accepted the snooze, make its
+          // future local reminder real immediately. This rebuild reads the same
+          // queue and cache, so a process restart cannot turn the snooze back
+          // into the already-past original reminder time.
+          if (isCurrent() && activeProfile?.isSelf) {
+            const schedule = await rebuildRemindersFromCache(
+              activeProfile.id,
+              preferences.locale,
+              {
+                voiceEnabled: preferences.voiceRemindersEnabled,
+                showMedication: preferences.showMedicationInNotifications,
+              },
+            ).catch(() => null);
+            if (schedule && isCurrent()) setExactAlarmsUnavailable(schedule.exactAlarmsUnavailable);
+          }
         } catch {
           if (isCurrent()) setActionError(t('error.internal_error'));
         }
@@ -337,7 +354,7 @@ function TodayProfileScreen() {
     } finally {
       if (isCurrent()) setBusyDoseId(null);
     }
-  }, [captureScope, canConfirmDose, deviceId, load, setOffline, t]);
+  }, [activeProfile, captureScope, canConfirmDose, deviceId, load, preferences.locale, preferences.showMedicationInNotifications, preferences.voiceRemindersEnabled, setOffline, t]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
