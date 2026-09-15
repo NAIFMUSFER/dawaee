@@ -66,6 +66,25 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     expect(nativeLogCalls).toEqual(['Log.e(TAG, "Exact-alarm grant recovery failed")']);
   });
 
+  it('removes expired persisted triggers before Expo can log their notification identifiers', () => {
+    expect(receiverSource).toContain(
+      'import expo.modules.notifications.notifications.interfaces.SchedulableNotificationTrigger',
+    );
+    expect(receiverSource).toContain('val trigger = request.trigger');
+
+    const staleGuard = receiverSource.indexOf(
+      'if (trigger is SchedulableNotificationTrigger && trigger.nextTriggerDate() == null)',
+    );
+    const privateRemoval = receiverSource.indexOf(
+      'delegate.removeScheduledNotifications(listOf(request.identifier))',
+    );
+    const replay = receiverSource.indexOf('delegate.scheduleNotification(request)');
+
+    expect(staleGuard).toBeGreaterThan(-1);
+    expect(privateRemoval).toBeGreaterThan(staleGuard);
+    expect(replay).toBeGreaterThan(privateRemoval);
+  });
+
   it('compiles and inspects the receiver in the release APK gate', () => {
     expect(expoNotificationsVersion).toBeTruthy();
     expect(moduleGradle).toContain(
