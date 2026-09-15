@@ -97,6 +97,17 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     expect(replay).toBeGreaterThan(privateRemoval);
   });
 
+  it('asks JobScheduler to retry when persisted exact-alarm replay is incomplete', () => {
+    expect(recoveryJobSource).toContain(
+      'reschedule = !replayPersistedNotifications(applicationContext)',
+    );
+    expect(recoveryJobSource).toContain(
+      'private fun replayPersistedNotifications(context: Context): Boolean',
+    );
+    expect(recoveryJobSource).toContain('return !restoreFailed');
+    expect(recoveryJobSource).toContain('jobFinished(params, reschedule)');
+  });
+
   it('compiles and inspects the receiver and recovery job in the release APK gate', () => {
     expect(expoNotificationsVersion).toBeTruthy();
     expect(moduleGradle).toContain(
