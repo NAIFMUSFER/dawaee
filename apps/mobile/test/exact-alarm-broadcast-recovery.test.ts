@@ -13,12 +13,28 @@ const receiverManifest = optionalSource(
 const receiverSource = optionalSource(
   '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmPermissionReceiver.kt',
 );
+const recoveryJobSource = optionalSource(
+  '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmRecoveryJobService.kt',
+);
 const moduleGradle = optionalSource('../modules/exact-alarm-access/android/build.gradle');
 const nativeWorkflow = optionalSource('../../../.github/workflows/android-native.yml');
 const mobileLock = JSON.parse(optionalSource('../package-lock.json')) as {
   packages: Record<string, { version?: string }>;
 };
 const expoNotificationsVersion = mobileLock.packages['node_modules/expo-notifications']?.version;
+
+function executableKotlinLines(source: string): string[] {
+  return source
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => (
+      line.length > 0
+      && !line.startsWith('//')
+      && !line.startsWith('*')
+      && !line.startsWith('/**')
+      && !line.startsWith('*/')
+    ));
+}
 
 describe('Android exact-alarm permission broadcast recovery', () => {
   it('registers a non-exported receiver for the system grant broadcast', () => {
@@ -30,68 +46,67 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     );
   });
 
-  it('rechecks special access and restores persisted Expo alarms without identifier-logging bulk restore', () => {
+  it('rechecks special access and delegates persisted-alarm replay to the lifecycle-managed job', () => {
     expect(receiverSource).toContain(
       'intent?.action != AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED',
     );
     expect(receiverSource).toContain('alarmManager.canScheduleExactAlarms()');
     expect(receiverSource).toContain(
-      'val delegate = ExpoSchedulingDelegate(context.applicationContext)',
+      'ExactAlarmRecoveryJobService.schedule(context.applicationContext)',
     );
-    expect(receiverSource).toContain('delegate.getAllScheduledNotifications().forEach { request ->');
-    expect(receiverSource).toContain('delegate.scheduleNotification(request)');
 
-    // The receiver intentionally documents why Expo's bulk restore helper is
-    // unsafe here, so search executable Kotlin lines rather than comments.
-    const executableReceiverLines = receiverSource
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => (
-        line.length > 0
-        && !line.startsWith('//')
-        && !line.startsWith('*')
-        && !line.startsWith('/**')
-        && !line.startsWith('*/')
-      ));
-    expect(executableReceiverLines.some((line) => line.includes('.setupScheduledNotifications()'))).toBe(false);
+    expect(recoveryJobSource).toContain('val delegate = ExpoSchedulingDelegate(context)');
+    expect(recoveryJobSource).toContain('for (request in delegate.getAllScheduledNotifications())');
+    expect(recoveryJobSource).toContain('delegate.scheduleNotification(request)');
 
-    expect(receiverSource).toContain('val pendingResult = goAsync()');
-    expect(receiverSource).toContain('pendingResult.finish()');
-    expect(receiverSource).not.toMatch(/startActivity|React|AsyncStorage|SecureStore/);
+    // Expo's bulk restore helper can log notification request identifiers. The
+    // recovery job must instead replay requests individually behind our gate.
+    expect(
+      executableKotlinLines(recoveryJobSource)
+        .some((line) => line.includes('.setupScheduledNotifications()')),
+    ).toBe(false);
 
-    const nativeLogCalls = receiverSource
+    expect(`${receiverSource}\n${recoveryJobSource}`).not.toMatch(/startActivity|React|AsyncStorage|SecureStore/);
+
+    const nativeLogCalls = `${receiverSource}\n${recoveryJobSource}`
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.startsWith('Log.'));
-    expect(nativeLogCalls).toEqual(['Log.e(TAG, "Exact-alarm grant recovery failed")']);
+    expect(new Set(nativeLogCalls)).toEqual(new Set([
+      'Log.e(TAG, "Exact-alarm grant recovery could not be scheduled")',
+      'Log.e(TAG, "Exact-alarm grant recovery failed")',
+    ]));
   });
 
   it('removes expired persisted triggers before Expo can log their notification identifiers', () => {
-    expect(receiverSource).toContain(
+    expect(recoveryJobSource).toContain(
       'import expo.modules.notifications.notifications.interfaces.SchedulableNotificationTrigger',
     );
-    expect(receiverSource).toContain('val trigger = request.trigger');
+    expect(recoveryJobSource).toContain('val trigger = request.trigger');
 
-    const staleGuard = receiverSource.indexOf(
+    const staleGuard = recoveryJobSource.indexOf(
       'if (trigger is SchedulableNotificationTrigger && trigger.nextTriggerDate() == null)',
     );
-    const privateRemoval = receiverSource.indexOf(
+    const privateRemoval = recoveryJobSource.indexOf(
       'delegate.removeScheduledNotifications(listOf(request.identifier))',
     );
-    const replay = receiverSource.indexOf('delegate.scheduleNotification(request)');
+    const replay = recoveryJobSource.indexOf('delegate.scheduleNotification(request)');
 
     expect(staleGuard).toBeGreaterThan(-1);
     expect(privateRemoval).toBeGreaterThan(staleGuard);
     expect(replay).toBeGreaterThan(privateRemoval);
   });
 
-  it('compiles and inspects the receiver in the release APK gate', () => {
+  it('compiles and inspects the receiver and recovery job in the release APK gate', () => {
     expect(expoNotificationsVersion).toBeTruthy();
     expect(moduleGradle).toContain(
       `implementation 'host.exp.exponent:expo.modules.notifications:${expoNotificationsVersion}'`,
     );
     expect(nativeWorkflow).toContain(
       'dex code --class app.dawaee.exactalarm.ExactAlarmPermissionReceiver',
+    );
+    expect(nativeWorkflow).toContain(
+      'dex code --class app.dawaee.exactalarm.ExactAlarmRecoveryJobService',
     );
     expect(nativeWorkflow).toContain(
       'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED',
