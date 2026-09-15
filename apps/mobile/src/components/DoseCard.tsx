@@ -104,7 +104,11 @@ export function DoseCard({
   }
 
   return (
-    <Card onPress={onPress} accessibilityLabel={a11yLabel} style={{ paddingVertical: theme.spacing.md }}>
+    <Card
+      onPress={dose.medicationId ? onPress : undefined}
+      accessibilityLabel={a11yLabel}
+      style={{ paddingVertical: theme.spacing.md }}
+    >
       <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
         <View style={{ flex: 1, gap: 2 }}>
           <Txt variant="bodyLarge" weight="bold" numberOfLines={1}>{dose.medication.name}</Txt>
