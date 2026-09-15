@@ -97,14 +97,18 @@ describe('Android exact-alarm permission broadcast recovery', () => {
     expect(replay).toBeGreaterThan(privateRemoval);
   });
 
-  it('asks JobScheduler to retry when persisted exact-alarm replay is incomplete', () => {
+  it('retries incomplete replay without allowing a permanently bad request to loop forever', () => {
     expect(recoveryJobSource).toContain(
-      'reschedule = !replayPersistedNotifications(applicationContext)',
+      'reschedule = shouldRescheduleAfterReplay(replayPersistedNotifications(applicationContext))',
     );
     expect(recoveryJobSource).toContain(
       'private fun replayPersistedNotifications(context: Context): Boolean',
     );
     expect(recoveryJobSource).toContain('return !restoreFailed');
+    expect(recoveryJobSource).toContain('private const val MAX_REPLAY_FAILURES = 3');
+    expect(recoveryJobSource).toContain('private fun shouldRescheduleAfterReplay(replaySucceeded: Boolean): Boolean');
+    expect(recoveryJobSource).toContain('val failureCount = preferences.getInt(REPLAY_FAILURE_COUNT_KEY, 0) + 1');
+    expect(recoveryJobSource).toContain('return failureCount < MAX_REPLAY_FAILURES');
     expect(recoveryJobSource).toContain('jobFinished(params, reschedule)');
   });
 
