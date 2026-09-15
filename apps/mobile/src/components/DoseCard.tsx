@@ -31,12 +31,18 @@ export function DoseCard({
   const actionable = ['upcoming', 'due', 'pending_confirmation', 'snoozed'].includes(dose.status);
   const canAct = actionable && onTaken !== undefined;
   const undoable = onUndo !== undefined && canUndo(dose, new Date());
+  // Offline cache records the patient-local clock time even when a reconstructed
+  // DoseView has no per-dose timezone. Passing an empty timezone to Intl throws;
+  // using the cached local clock keeps the display both safe and patient-local.
+  const scheduledTime = dose.scheduledTimezone
+    ? formatTime(dose.scheduledAt, dose.scheduledTimezone)
+    : dose.scheduledLocalTime;
 
   const a11yLabel = [
     dose.medication.name,
     strength,
     doseText,
-    formatTime(dose.scheduledAt, dose.scheduledTimezone),
+    scheduledTime,
     t(`dose.status.${dose.status}` as never),
   ].filter(Boolean).join('، ');
 
@@ -46,7 +52,7 @@ export function DoseCard({
         <Row style={{ justifyContent: 'space-between' }}>
           <Badge label={t(`dose.status.${dose.status}` as never)} fg={colors.fg} bg={colors.bg} />
           <Txt variant="h2" weight="bold" color={theme.colors.primary700}>
-            {formatTime(dose.scheduledAt, dose.scheduledTimezone)}
+            {scheduledTime}
           </Txt>
         </Row>
 
@@ -117,7 +123,7 @@ export function DoseCard({
           </Txt>
         </View>
         <View style={{ alignItems: 'flex-end', gap: theme.spacing.xs }}>
-          <Txt variant="bodyLarge" weight="bold">{formatTime(dose.scheduledAt, dose.scheduledTimezone)}</Txt>
+          <Txt variant="bodyLarge" weight="bold">{scheduledTime}</Txt>
           <Badge label={t(`dose.status.${dose.status}` as never)} fg={colors.fg} bg={colors.bg} />
         </View>
       </Row>
