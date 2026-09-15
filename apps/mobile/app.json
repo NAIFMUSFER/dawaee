@@ -1,97 +1,53 @@
 {
   "expo": {
-    "name": "دوائي Dawaee",
+    "name": "تداوي",
     "slug": "dawaee",
-    "version": "0.1.0",
-    "orientation": "portrait",
     "scheme": "dawaee",
-    "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.dawaee.mobile",
       "infoPlist": {
-        "CFBundleAllowMixedLocalizations": true,
-        "NSCameraUsageDescription": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
-        "NSPhotoLibraryUsageDescription": "لاختيار صورة الدواء من مكتبة الصور.",
-        "NSMicrophoneUsageDescription": "لتأكيد أخذ الدواء بالصوت.",
-        "NSFaceIDUsageDescription": "لحماية بياناتك الصحية عند فتح التطبيق.",
-        "UIBackgroundModes": [
-          "remote-notification"
-        ]
-      },
-      "buildNumber": "2"
+        "NSCameraUsageDescription": "يحتاج تداوي إلى الكاميرا لتصوير علبة الدواء ومسح الرمز الشريطي.",
+        "NSPhotoLibraryUsageDescription": "يحتاج تداوي إلى الصور لاختيار صورة علبة الدواء.",
+        "NSFaceIDUsageDescription": "يستخدم تداوي Face ID لقفل التطبيق وحماية بياناتك الصحية على هذا الجهاز.",
+        "NSMicrophoneUsageDescription": "يحتاج تداوي إلى الميكروفون عندما تختار استخدام التأكيد الصوتي للجرعة."
+      }
     },
     "android": {
       "package": "app.dawaee.mobile",
-      "allowBackup": false,
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#0E7A6E"
-      },
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",
-        "VIBRATE",
+        "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "SCHEDULE_EXACT_ALARM",
-        "POST_NOTIFICATIONS",
-        "USE_BIOMETRIC"
-      ],
-      "blockedPermissions": [
-        "android.permission.USE_EXACT_ALARM"
-      ],
-      "versionCode": 2
+        "USE_BIOMETRIC",
+        "VIBRATE"
+      ]
     },
-    "web": {
-      "bundler": "metro",
-      "output": "single",
-      "favicon": "./assets/favicon.png"
-    },
+    "web": { "bundler": "metro", "output": "static" },
     "plugins": [
       "expo-router",
       "expo-localization",
-      [
-        "expo-notifications",
-        {
-          "color": "#0E7A6E",
-          "defaultChannel": "medication-critical"
-        }
-      ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
-        }
-      ],
-      [
-        "expo-local-authentication",
-        {
-          "faceIDPermission": "لحماية بياناتك الصحية عند فتح التطبيق."
-        }
-      ],
+      "expo-secure-store",
+      "@react-native-firebase/app/app.plugin.js",
+      ["expo-notifications", { "sounds": [] }],
       [
         "expo-image-picker",
         {
-          "photosPermission": "لاختيار صورة الدواء من مكتبة الصور.",
-          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
+          "photosPermission": "يحتاج تداوي إلى الصور لاختيار صورة علبة الدواء.",
+          "cameraPermission": "يحتاج تداوي إلى الكاميرا لتصوير علبة الدواء."
         }
-      ],
-      "expo-secure-store",
-      "expo-sharing"
+      ]
     ],
+    "experiments": { "typedRoutes": true },
     "extra": {
-      "apiBaseUrl": "https://dawaee-api.onrender.com",
-      "eas": {
-        "projectId": "a7d1638b-045d-4fa3-957f-22d818c51abd"
-      }
-    },
-    "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F2F6F5"
+      "apiBaseUrl": "https://api.dawaee.app",
+      "eas": { "projectId": "7792b6a0-9656-46a7-8e60-f8e67b94d048" }
     },
     "owner": "naif789"
   }
