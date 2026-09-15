@@ -10,12 +10,16 @@ function optionalSource(relativePath: string): string {
 const receiverSource = optionalSource(
   '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmPermissionReceiver.kt',
 );
+const recoveryJobSource = optionalSource(
+  '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmRecoveryJobService.kt',
+);
 const coordinatorSource = optionalSource(
   '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/NotificationScheduleMutationCoordinator.kt',
 );
 const nativeModuleSource = optionalSource(
   '../modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmAccessModule.kt',
 );
+const moduleManifestSource = optionalSource('../modules/exact-alarm-access/android/src/main/AndroidManifest.xml');
 const nativeBindingSource = optionalSource('../modules/exact-alarm-access/index.ts');
 const notificationsSource = optionalSource('../src/notifications/index.ts');
 
@@ -26,12 +30,12 @@ describe('Android exact-alarm recovery schedule serialization', () => {
     expect(coordinatorSource).toContain('fun release()');
     expect(coordinatorSource).toContain('fun <T> withLease');
 
-    const receiverLease = receiverSource.indexOf('NotificationScheduleMutationCoordinator.withLease');
-    const receiverSnapshot = receiverSource.indexOf('delegate.getAllScheduledNotifications()');
-    const receiverReplay = receiverSource.indexOf('delegate.scheduleNotification(request)');
-    expect(receiverLease).toBeGreaterThan(-1);
-    expect(receiverSnapshot).toBeGreaterThan(receiverLease);
-    expect(receiverReplay).toBeGreaterThan(receiverSnapshot);
+    const recoveryLease = recoveryJobSource.indexOf('NotificationScheduleMutationCoordinator.withInterruptibleLease');
+    const recoverySnapshot = recoveryJobSource.indexOf('delegate.getAllScheduledNotifications()');
+    const recoveryReplay = recoveryJobSource.indexOf('delegate.scheduleNotification(request)');
+    expect(recoveryLease).toBeGreaterThan(-1);
+    expect(recoverySnapshot).toBeGreaterThan(recoveryLease);
+    expect(recoveryReplay).toBeGreaterThan(recoverySnapshot);
 
     expect(nativeModuleSource).toContain('AsyncFunction("acquireNotificationScheduleMutation")');
     expect(nativeModuleSource).toContain('Function("releaseNotificationScheduleMutation")');
@@ -43,5 +47,20 @@ describe('Android exact-alarm recovery schedule serialization', () => {
     const serializedMutation = notificationsSource.indexOf('withExactAlarmScheduleMutation', scheduleMutation);
     expect(scheduleMutation).toBeGreaterThan(-1);
     expect(serializedMutation).toBeGreaterThan(scheduleMutation);
+  });
+
+  it('does not hold an asynchronous broadcast open while waiting on the schedule-mutation lease', () => {
+    expect(receiverSource).not.toContain('goAsync()');
+    expect(receiverSource).not.toContain('thread(');
+    expect(receiverSource).toContain('ExactAlarmRecoveryJobService.schedule(context.applicationContext)');
+
+    expect(recoveryJobSource).toContain('class ExactAlarmRecoveryJobService : JobService()');
+    expect(recoveryJobSource).toContain('NotificationScheduleMutationCoordinator.withInterruptibleLease');
+    expect(recoveryJobSource).toContain('jobFinished');
+    expect(recoveryJobSource).toContain('onStopJob');
+    expect(coordinatorSource).toContain('fun <T> withInterruptibleLease');
+
+    expect(moduleManifestSource).toContain('ExactAlarmRecoveryJobService');
+    expect(moduleManifestSource).toContain('android.permission.BIND_JOB_SERVICE');
   });
 });
