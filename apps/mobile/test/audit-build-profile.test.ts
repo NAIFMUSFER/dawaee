@@ -35,7 +35,10 @@ describe('isolated installed audit build', () => {
     expect(audit.extra.apiBaseUrl).toBe(profile.env.EXPO_PUBLIC_API_URL);
     expect(audit.android.allowBackup).toBe(false);
     expect(audit.extra.eas.projectId).toBe(config.extra.eas.projectId);
-    expect(audit.plugins).toEqual(config.plugins);
+    expect(audit.plugins).toEqual(config.plugins.filter((plugin: unknown) =>
+      !['@react-native-firebase/app', '@react-native-firebase/auth'].includes(String(plugin))));
+    expect(audit.android.googleServicesFile).toBeUndefined();
+    expect(config.android.googleServicesFile).toBe('./google-services.json');
     expect(config.android.package).toBe('app.dawaee.mobile');
   });
 

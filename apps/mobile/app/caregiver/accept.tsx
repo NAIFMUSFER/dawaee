@@ -15,6 +15,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverPermission } from '@dawaee/shared';
+import { PhoneVerification } from '@/components/PhoneVerification';
 
 /**
  * Accepting a care-circle invitation.
@@ -44,6 +45,7 @@ interface AcceptResponse {
 type Outcome =
   | { kind: 'idle' }
   | { kind: 'working' }
+  | { kind: 'verification' }
   | { kind: 'accepted'; profileId: string | null; patientName: string }
   | { kind: 'expired' }
   | { kind: 'used' }
@@ -54,7 +56,7 @@ export default function AcceptInvitationScreen() {
   const params = useLocalSearchParams<{ token?: string }>();
   const { t } = useI18n();
   const theme = useTheme();
-  const { signedIn, profiles, refreshProfiles, setActiveProfile, setOffline } = useApp();
+  const { user, signedIn, profiles, refreshProfiles, setActiveProfile, setOffline } = useApp();
 
   const [token, setToken] = useState<string | null>(params.token ?? null);
   const [tokenResolved, setTokenResolved] = useState(false);
@@ -95,6 +97,11 @@ export default function AcceptInvitationScreen() {
         return;
       }
       if (err instanceof ApiError) {
+        if (err.code === 'phone_verification_required') {
+          releaseInviteAttempt(value);
+          setOutcome({ kind: 'verification' });
+          return;
+        }
         // Expired, already used, or invalid: each is a permanent result for
         // this stored bearer. Forget it so the next sign-in cannot route the
         // person back to a capability the server has already refused. Release
@@ -194,6 +201,12 @@ export default function AcceptInvitationScreen() {
 
   if (outcome.kind === 'idle' || outcome.kind === 'working') {
     return <SafeAreaView style={{ flex: 1 }}><Loading label={t('accept.checking')} /></SafeAreaView>;
+  }
+
+  if (outcome.kind === 'verification') {
+    return <SafeAreaView style={{ flex: 1 }}><Screen>
+      <PhoneVerification key={user?.id} onVerified={() => { if (claimInviteAttempt(token)) void accept(token); }} />
+    </Screen></SafeAreaView>;
   }
 
   if (outcome.kind === 'offline') {

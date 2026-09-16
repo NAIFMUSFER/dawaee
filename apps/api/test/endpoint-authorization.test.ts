@@ -170,6 +170,8 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/logout-all': 'authenticated',
   'POST /v1/auth/password': 'authenticated',
   'GET /v1/auth/sessions': 'authenticated',
+  'GET /v1/auth/phone-verification': 'authenticated',
+  'POST /v1/auth/phone-verification': 'authenticated',
 
   'GET /v1/adherence': 'authenticated',
   'GET /v1/admin/overview': 'admin',

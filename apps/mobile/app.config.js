@@ -11,8 +11,11 @@ module.exports = ({ config }) => {
     ...config,
     name: 'دوائي تجريبي',
     scheme: 'dawaee-audit',
-    android: { ...config.android, package: 'app.dawaee.audit' },
+    android: { ...config.android, package: 'app.dawaee.audit', googleServicesFile: undefined },
     ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit' },
     extra: { ...config.extra, apiBaseUrl: origin },
+    // The production Firebase client is registered to app.dawaee.mobile.
+    // Do not reuse its configuration for an isolated audit installation.
+    plugins: config.plugins.filter((plugin) => !['@react-native-firebase/app', '@react-native-firebase/auth'].includes(plugin)),
   };
 };

@@ -42,7 +42,8 @@
       "blockedPermissions": [
         "android.permission.USE_EXACT_ALARM"
       ],
-      "versionCode": 2
+      "versionCode": 2,
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "bundler": "metro",
@@ -79,7 +80,9 @@
         }
       ],
       "expo-secure-store",
-      "expo-sharing"
+      "expo-sharing",
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth"
     ],
     "extra": {
       "apiBaseUrl": "https://dawaee-api.onrender.com",

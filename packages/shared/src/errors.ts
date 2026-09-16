@@ -27,6 +27,7 @@ export const ERROR_CODES = {
   INVITATION_EXPIRED: 'invitation_expired',
   INVITATION_INVALID: 'invitation_invalid',
   INVITATION_ALREADY_USED: 'invitation_already_used',
+  PHONE_VERIFICATION_REQUIRED: 'phone_verification_required',
   DOSE_ALREADY_RESOLVED: 'dose_already_resolved',
   DOSE_NOT_ACTIONABLE: 'dose_not_actionable',
   VOICE_CONFIDENCE_TOO_LOW: 'voice_confidence_too_low',

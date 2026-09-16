@@ -173,6 +173,9 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       );
       const outcome = rows[0]?.outcome ?? 'invalid';
 
+      if (outcome === 'verification_required') {
+        throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your account phone before accepting this invitation');
+      }
       if (outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
       if (outcome === 'already_used') throw new AppError(ERROR_CODES.INVITATION_ALREADY_USED, 409, 'This invitation was already used');
       if (outcome === 'self') throw AppError.badRequest(ERROR_CODES.INVITATION_INVALID, 'You cannot be your own caregiver');

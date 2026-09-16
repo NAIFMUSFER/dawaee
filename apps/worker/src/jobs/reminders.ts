@@ -255,6 +255,7 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
        FROM caregiver_relationships cr
        LEFT JOIN users u ON u.id = cr.caregiver_user_id
       WHERE cr.patient_profile_id = $1 AND cr.status = 'active'
+        AND app.has_verified_phone(cr.caregiver_user_id)
       ORDER BY cr.escalation_priority`,
     [profileId],
   );

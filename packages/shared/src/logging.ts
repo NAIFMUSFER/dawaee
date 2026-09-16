@@ -29,6 +29,8 @@ export const LOG_REDACTED_PATHS: readonly string[] = [
   'req.headers.cookie',
   'req.body.code',
   'req.body.token',
+  'req.body.idToken',
+  'idToken',
   'req.body.refreshToken',
 
   // Identifiers that name a person.
