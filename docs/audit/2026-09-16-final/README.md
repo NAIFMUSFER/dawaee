@@ -61,6 +61,8 @@ P0 خطر تضارب/فقد بيانات؛ P1 تعطّل رحلة أو إدخا�
 
 ## الاختبارات والحدود
 
+عُدِّلت jobs في CI وSecurity لتسحب commit رأس PR المحدد، كما تفعل Android native وruntime recovery، ويُمرر المصدر نفسه إلى metadata الحاوية. بذلك لا تختلط هوية merge ref اصطناعي بهوية الشفرة المختبرة. بوابات الأمان واختباراتها لم تُخفَّف.
+
 الـ commit الأول `b965a8e29e0aa8e72a55ba5af1c51db065463d98` اجتاز [CI بما فيه PG16/17](https://github.com/NAIFMUSFER/dawaee/actions/runs/35102120861)،[Security](https://github.com/NAIFMUSFER/dawaee/actions/runs/35102120897)،[Android native](https://github.com/NAIFMUSFER/dawaee/actions/runs/35102120983). 2396 اختبارًا/320 ملفًا لكل نسخة PostgreSQL. أضيفت بعده حالات OCR و 12 موعدًا وفحص 60b474 ؛**نتيجة آخر HEAD ورقمه وروابطه تُثبت في وصف PR30 بعد اكتمالها،ولا تُورث نتائج b965a8e إليه**.
 
 الفحص المحلي الأخير للحزم/التطبيق واختبارات OCR المحددة:1123PASS/145 ملفًا، Node22.22.2 ؛ build/typecheck/lint PASS. بيانات الاختبارات تركيبية والمزودون controlled ؛ SQL في CI فعلي بمالك غير superuser وغير BYPASSRLS. فشل تشغيل PG محليًا بقيود عمليات/إدارة المستخدمين؛لم تُتجاوز القيود ولم تُستخدم قاعدة إنتاج للاختبار.

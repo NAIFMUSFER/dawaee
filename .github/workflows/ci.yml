@@ -61,6 +61,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -69,6 +72,7 @@ jobs:
 
       - name: Record the toolchain actually in use
         run: |
+          echo "source $(git rev-parse HEAD)"
           echo "node $(node --version), npm $(npm --version)"
           echo "postgres client: $(psql --version 2>/dev/null || echo 'not yet installed')"
 
@@ -188,6 +192,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # The REAL production image, from the real base. P15 could not do this:
@@ -203,7 +210,7 @@ jobs:
           load: true
           tags: dawaee:ci
           build-args: |
-            GIT_COMMIT=${{ github.sha }}
+            GIT_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
             BUILD_TIME=${{ github.event.repository.updated_at }}
           # Cache is scoped per-ref by the action. A fork PR writes to its own
           # scope and cannot poison main's.
@@ -260,6 +267,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
@@ -292,6 +302,9 @@ jobs:
       EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
