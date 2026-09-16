@@ -104,13 +104,18 @@ describe('password recovery on real PostgreSQL with provider boundary fixtures',
     proofs.set(idToken, { ...proofs.get(idToken), phoneE164: '+966500000099' });
     const unknown = await recover(idToken);
     expect(disabled.statusCode).toBe(403); expect(unknown.statusCode).toBe(403);
-    expect(disabled.json().error).toEqual(unknown.json().error);
+    const { requestId: disabledRequestId, ...disabledError } = disabled.json().error;
+    const { requestId: unknownRequestId, ...unknownError } = unknown.json().error;
+    expect(disabledRequestId).toEqual(expect.any(String));
+    expect(unknownRequestId).toEqual(expect.any(String));
+    expect(disabledRequestId).not.toBe(unknownRequestId);
+    expect(disabledError).toEqual(unknownError);
     expect((await owner.query('SELECT id FROM users WHERE phone_e164=$1', ['+966500000099'])).rows).toHaveLength(0);
   });
   it('rolls back the receipt and password if session revocation fails, then retries safely', async () => {
     const { user, idToken } = await fixture();
     await owner.query(`CREATE FUNCTION public.recovery_test_reject_revoke() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN RAISE EXCEPTION 'synthetic revocation failure'; END $$;
+      BEGIN RAISE EXCEPTION 'synthetic revocation failure' USING ERRCODE = 'XX000'; END $$;
       CREATE TRIGGER recovery_test_reject BEFORE UPDATE OF revoked_at ON auth_sessions
       FOR EACH ROW EXECUTE FUNCTION public.recovery_test_reject_revoke()`);
     try { expect((await recover(idToken)).statusCode).toBe(500); }

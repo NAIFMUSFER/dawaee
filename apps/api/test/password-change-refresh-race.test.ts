@@ -19,7 +19,7 @@ afterAll(async () => {
   await h.close();
 });
 
-async function waitUntilPasswordSecurityTransactionIsBlocked(): Promise<void> {
+async function waitUntilPasswordSecurityTransactionIsBlocked(refreshPid: number): Promise<void> {
   for (let attempt = 0; attempt < 160; attempt++) {
     const { rows } = await owner.query<{ waiting: boolean }>(
       `SELECT EXISTS (
@@ -28,11 +28,9 @@ async function waitUntilPasswordSecurityTransactionIsBlocked(): Promise<void> {
           WHERE datname = current_database()
             AND state = 'active'
             AND wait_event_type = 'Lock'
-            AND (
-              query LIKE 'UPDATE auth_sessions SET revoked_at = now()%'
-              OR query LIKE 'SELECT app.set_password%'
-            )
+            AND $1 = ANY(pg_blocking_pids(pid))
        ) AS waiting`,
+      [refreshPid],
     );
     if (rows[0]?.waiting) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -68,6 +66,7 @@ describe('password change versus an in-flight refresh on another device', () => 
     const refreshTx = await owner.connect();
     try {
       await refreshTx.query('BEGIN');
+      const refreshPid = (await refreshTx.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
       const rotated = await refreshTx.query<{ outcome: string; session_id: string | null }>(
         'SELECT outcome, session_id FROM app.rotate_session($1,$2,$3,$4)',
         [presentedRefreshHash, 'f'.repeat(64), null, 30],
@@ -89,7 +88,9 @@ describe('password change versus an in-flight refresh on another device', () => 
         return response;
       });
 
-      await waitUntilPasswordSecurityTransactionIsBlocked();
+      // Observe the actual blocking backend, not a query spelling: password
+      // recovery hardening now acquires the shared lock before set_password.
+      await waitUntilPasswordSecurityTransactionIsBlocked(refreshPid);
       expect(passwordFinished, 'password change completed while the target refresh still held its security lock').toBe(false);
 
       // The red probe originally forced password change to take the session
