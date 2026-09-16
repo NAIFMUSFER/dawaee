@@ -156,6 +156,7 @@ const EXPOSURE: Record<string, Exposure> = {
 
   'GET /v1/doses': 'authenticated',
   'POST /v1/doses/sync': 'authenticated',
+  'POST /v1/dose/action': 'authenticated',
   'GET /v1/doses/:doseId': 'authenticated',
   'POST /v1/doses/:doseId/taken': 'authenticated',
   'POST /v1/doses/:doseId/snooze': 'authenticated',
