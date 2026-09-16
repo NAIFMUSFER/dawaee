@@ -29,6 +29,7 @@ export type RateScope =
   | 'login:ip' | 'login:identifier'
   | 'register:ip' | 'register:identifier'
   | 'otp-verify:ip' | 'otp-verify:identifier'
+  | 'phone-proof:ip' | 'phone-proof:account'
   | 'refresh:ip';
 
 export interface Budget {
@@ -51,6 +52,8 @@ export const BUDGETS: Record<RateScope, Budget> = {
   'register:identifier': { windowSeconds: 3600, max: 5 },
   'otp-verify:ip': { windowSeconds: 600, max: 30 },
   'otp-verify:identifier': { windowSeconds: 600, max: 10 },
+  'phone-proof:ip': { windowSeconds: 600, max: 30 },
+  'phone-proof:account': { windowSeconds: 600, max: 10 },
   'refresh:ip': { windowSeconds: 600, max: 120 },
 };
 

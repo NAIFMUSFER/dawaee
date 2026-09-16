@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Loading } from '@/components/ui';
+import { Button, EmptyState, Loading, Screen } from '@/components/ui';
 import { MedicationDetailView, type MedicationDetail, type StockResponse } from '@/components/MedicationDetailView';
 import { useI18n } from '@/i18n';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
@@ -22,10 +22,24 @@ function shiftDate(date: string, days: number): string {
 
 export default function MedicationDetailScreen() {
   const { user, activeProfile } = useApp();
+  const { t } = useI18n();
   const selection = user && activeProfile
     ? getMedicationDetailRouteIntent(user.id, activeProfile.id)
     : null;
   const medicationId = selection?.medicationId;
+  if (!medicationId) {
+    return (
+      <SafeAreaView style={{ flex: 1 }}>
+        <Screen>
+          <EmptyState
+            title={t('medication.selectAgain')}
+            body={t('medication.selectAgainBody')}
+            action={<Button label={t('medication.listTitle')} onPress={() => router.replace('/(tabs)/medications')} />}
+          />
+        </Screen>
+      </SafeAreaView>
+    );
+  }
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
   return <MedicationDetailProfileScreen key={key} medicationId={medicationId} />;
 }
@@ -65,6 +79,7 @@ function MedicationDetailProfileScreen({ medicationId }: { medicationId: string 
       return;
     }
     const isCurrent = requestScope.begin();
+    setError(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
       const [detail, stockRes, history] = await Promise.all([

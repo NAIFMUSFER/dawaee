@@ -250,10 +250,12 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
   const { rows } = await client.query(
     `SELECT cr.id, cr.caregiver_user_id, cr.invited_phone_e164, cr.invited_name,
             cr.status::text AS status, cr.permissions, cr.escalation_priority,
-            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone
+            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone,
+            COALESCE(u.locale, 'ar') AS caregiver_locale
        FROM caregiver_relationships cr
        LEFT JOIN users u ON u.id = cr.caregiver_user_id
       WHERE cr.patient_profile_id = $1 AND cr.status = 'active'
+        AND app.has_verified_phone(cr.caregiver_user_id)
       ORDER BY cr.escalation_priority`,
     [profileId],
   );
@@ -275,6 +277,7 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
       permissions: r.permissions,
       escalationPriority: r.escalation_priority,
     },
+    locale: r.caregiver_locale === 'en' ? 'en' : 'ar',
     rules: ruleRows
       .filter((x) => x.relationship_id === r.id)
       .map((x) => ({
@@ -336,8 +339,8 @@ async function enqueueNotification(
   },
 ): Promise<boolean> {
   const { dose, recipient, channel, stageIndex } = input;
-  const locale = (dose.patient_locale === 'en' ? 'en' : 'ar') as Locale;
   const isPatient = recipient.kind === 'patient';
+  const locale = ((isPatient ? dose.patient_locale : recipient.locale) === 'en' ? 'en' : 'ar') as Locale;
   const grouped = isPatient && stageIndex === 0 && (input.groupDoses?.length ?? 0) > 1;
 
   const dedupeKey = grouped

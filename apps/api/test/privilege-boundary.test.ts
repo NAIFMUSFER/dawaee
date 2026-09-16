@@ -61,6 +61,8 @@ const WORKER_MANIFEST: Record<string, string[]> = {
 const WORKER_DEFINER_ALLOWED = [
   'can_read_profile', 'caregives_profile', 'cleanup_expired_sessions',
   'deactivate_push_endpoint', 'erase_due_account', 'has_permission',
+  // Read-only eligibility check used before caregiver notification delivery.
+  'has_verified_phone',
   'list_abandoned_object_keys', 'list_due_account_ids', 'list_due_account_object_keys',
   'list_live_push_endpoints', 'list_live_push_tokens',
   'owns_profile', 'purge_expired_otp', 'purge_rate_buckets',

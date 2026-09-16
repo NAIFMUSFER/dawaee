@@ -72,6 +72,7 @@ export function MedicationDetailView({
       <SafeAreaView style={{ flex: 1 }}>
         <View style={{ padding: theme.spacing.lg, gap: theme.spacing.md }}>
           <Banner tone="danger" title={error ?? t('error.not_found')} />
+          <Button label={t('common.retry')} onPress={onRefresh} loading={refreshing} disabled={refreshing} />
           <Button label={t('common.back')} tone="ghost" onPress={() => router.back()} />
         </View>
       </SafeAreaView>

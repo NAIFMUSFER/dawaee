@@ -40,7 +40,9 @@
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
     "react-native-web": "^0.21.0",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "@react-native-firebase/app": "26.4.0",
+    "@react-native-firebase/auth": "26.4.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.10",

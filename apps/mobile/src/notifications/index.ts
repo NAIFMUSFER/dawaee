@@ -4,6 +4,10 @@ import { api } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
+import {
+  canScheduleExactAlarms as canScheduleExactAlarmsOnDevice,
+  withExactAlarmScheduleMutation,
+} from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
 
 /**
@@ -56,15 +60,13 @@ export interface NotificationCapability {
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
 }
 
-let exactAlarmsObservedUnavailable = false;
-
 export async function inspectCapability(): Promise<NotificationCapability> {
   const N = await load();
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
   const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
-  const canScheduleExact = Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
+  const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
     permissionGranted: granted,
@@ -143,6 +145,9 @@ export async function startNotificationActionListener(
 // AFTER any already-started native write, or that write can recreate PHI-bearing
 // reminders on a signed-out phone. New intent invalidates older loops at once;
 // the serial tail makes the final native state belong to the newest operation.
+// Android also takes the native exact-alarm recovery lease here so the system's
+// permission-grant receiver cannot replay an older persisted snapshot across a
+// newer logout, privacy change, or Today/cache rebuild.
 let scheduleGeneration = 0;
 let scheduleTail: Promise<void> = Promise.resolve();
 
@@ -156,7 +161,9 @@ export function captureLocalReminderContext(): () => boolean {
 
 function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
   const generation = ++scheduleGeneration;
-  const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
+  const result = scheduleTail.then(() => withExactAlarmScheduleMutation(
+    () => operation(() => generation === scheduleGeneration),
+  ));
   scheduleTail = result.then(() => undefined, () => undefined);
   return result;
 }
@@ -227,7 +234,11 @@ async function scheduleCurrentNotifications(
 
   let scheduled = 0;
   let failed = 0;
-  let exactAlarmsUnavailable = false;
+  // Expo Android intentionally falls back to an inexact alarm when the special
+  // access is absent. A successful schedule call therefore does not prove exact
+  // delivery. Read the OS source of truth up front so callers can disclose the
+  // degradation even when Expo accepts the fallback without throwing.
+  let exactAlarmsUnavailable = Platform.OS === 'android' && !canScheduleExactAlarmsOnDevice();
   const now = Date.now();
 
   for (const group of groupSchedulableDoses(doses, now)) {
@@ -280,11 +291,6 @@ async function scheduleCurrentNotifications(
       failed += 1;
       if (String(err).includes('exact')) exactAlarmsUnavailable = true;
     }
-  }
-
-  if (isCurrent()) {
-    if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
-    else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
   }
 
   return { scheduled, failed, exactAlarmsUnavailable };

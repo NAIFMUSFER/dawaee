@@ -29,11 +29,13 @@ describe('boolean environment variables', () => {
       expect(load({ OTP_DEBUG_ECHO: off }).OTP_DEBUG_ECHO, off).toBe(false);
       expect(load({ PASSWORD_LOGIN_ENABLED: off }).PASSWORD_LOGIN_ENABLED, off).toBe(false);
       expect(load({ TRUST_CF_CONNECTING_IP: off }).TRUST_CF_CONNECTING_IP, off).toBe(false);
+      expect(load({ WORKER_READINESS_REQUIRED: off }).WORKER_READINESS_REQUIRED, off).toBe(false);
     }
     for (const on of ['true', 'TRUE', '1', 'yes', 'on']) {
       expect(load({ OTP_DEBUG_ECHO: on }).OTP_DEBUG_ECHO, on).toBe(true);
       expect(load({ PASSWORD_LOGIN_ENABLED: on }).PASSWORD_LOGIN_ENABLED, on).toBe(true);
       expect(load({ TRUST_CF_CONNECTING_IP: on }).TRUST_CF_CONNECTING_IP, on).toBe(true);
+      expect(load({ WORKER_READINESS_REQUIRED: on }).WORKER_READINESS_REQUIRED, on).toBe(true);
     }
   });
 

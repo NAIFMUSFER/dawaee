@@ -170,6 +170,8 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/logout-all': 'authenticated',
   'POST /v1/auth/password': 'authenticated',
   'GET /v1/auth/sessions': 'authenticated',
+  'GET /v1/auth/phone-verification': 'authenticated',
+  'POST /v1/auth/phone-verification': 'authenticated',
 
   'GET /v1/adherence': 'authenticated',
   'GET /v1/admin/overview': 'admin',
@@ -239,6 +241,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/caregivers/permissions': 'authenticated',
   'PUT /v1/caregivers/notification-rules': 'authenticated',
   'POST /v1/caregivers/revoke': 'authenticated',
+  'POST /v1/caregivers/notification/resolve': 'authenticated',
 
   'GET /v1/escalation-policy': 'authenticated',
   'PUT /v1/escalation-policy': 'authenticated',
