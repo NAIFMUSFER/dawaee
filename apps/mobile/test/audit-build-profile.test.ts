@@ -57,9 +57,10 @@ describe('isolated installed audit build', () => {
     // does not own the Play upload key. A locally/generated-signed AAB must not
     // be downloadable from this workflow and mistaken for a store artefact.
     expect(androidNativeWorkflow).toContain(':app:bundleRelease');
+    expect(androidNativeWorkflow).toContain('cp android/release-sha256.txt "$EVIDENCE/release-sha256.txt"');
     const uploadBlock = androidNativeWorkflow.split('- name: Upload CI native evidence')[1] ?? '';
     expect(uploadBlock).toContain('not-for-store');
-    expect(uploadBlock).toContain('release-sha256.txt');
+    expect(uploadBlock).toContain('path: apps/mobile/android/ci-native-evidence/');
     expect(uploadBlock).not.toContain('app-release.aab');
   });
 });
