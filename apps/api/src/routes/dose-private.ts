@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, ERROR_CODES, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema,
+  AppError, ERROR_CODES, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, undoDoseSchema,
 } from '@dawaee/shared';
 import { requireUuid } from '../lib/params.js';
 import { withUser } from '../lib/db.js';
@@ -92,7 +92,7 @@ export function registerDosePrivateRoutes(app: FastifyInstance): void {
         });
       }
 
-      return undoDose(tx, { doseId, userId, now, requestId: req.id, ipHash: req.ipHash });
+      return undoDose(tx, { doseId, userId, ...undoDoseSchema.parse(raw), now, requestId: req.id, ipHash: req.ipHash });
     });
   });
 }

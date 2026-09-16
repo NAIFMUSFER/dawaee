@@ -68,7 +68,7 @@ export function parseMedicationText(rawText: string, providerName: string): Medi
     (l) => l.length >= 3 && !/^\d+$/.test(l) && !/^(rx|otc|batch|lot|mfg|exp)\b/i.test(l),
   );
   if (nameLine) {
-    fields.name = { value: nameLine.replace(STRENGTH_RE, '').trim() || nameLine, confidence: 0.62 };
+    fields.name = { value: nameLine.replace(STRENGTH_RE, '').trim() || nameLine, confidence: 0.62, confidenceSource: 'heuristic' };
   }
 
   const strengthMatch = rawText.match(STRENGTH_RE);
@@ -78,28 +78,28 @@ export function parseMedicationText(rawText: string, providerName: string): Medi
     if (unit === 'µg') unit = 'mcg';
     if (unit === '%') unit = 'percent';
     if (Number.isFinite(value) && value > 0) {
-      fields.strengthValue = { value, confidence: 0.8 };
-      fields.strengthUnit = { value: unit, confidence: 0.8 };
+      fields.strengthValue = { value, confidence: 0.8, confidenceSource: 'heuristic' };
+      fields.strengthUnit = { value: unit, confidence: 0.8, confidenceSource: 'heuristic' };
     }
   }
 
   for (const [re, form] of FORM_KEYWORDS) {
     if (re.test(rawText)) {
-      fields.form = { value: form, confidence: 0.7 };
+      fields.form = { value: form, confidence: 0.7, confidenceSource: 'heuristic' };
       break;
     }
   }
 
   const barcode = rawText.match(BARCODE_RE);
-  if (barcode) fields.barcode = { value: barcode[1]!, confidence: 0.85 };
+  if (barcode) fields.barcode = { value: barcode[1]!, confidence: 0.85, confidenceSource: 'heuristic' };
 
   const expiry = rawText.match(EXPIRY_RE);
-  if (expiry) fields.expiryDate = { value: expiry[1]!, confidence: 0.55 };
+  if (expiry) fields.expiryDate = { value: expiry[1]!, confidence: 0.55, confidenceSource: 'heuristic' };
 
   const instructionLine = lines.find((l) =>
     /(take|daily|twice|once|every|before|after|meal|food)|(?:يؤخذ|مرة|مرتين|يوميا|يومياً|قبل|بعد|الأكل|الطعام)/i.test(l),
   );
-  if (instructionLine) fields.instructions = { value: instructionLine, confidence: 0.5 };
+  if (instructionLine) fields.instructions = { value: instructionLine, confidence: 0.5, confidenceSource: 'heuristic' };
 
   return { provider: providerName, rawText, fields, language: detectLanguage(rawText) };
 }
@@ -118,10 +118,10 @@ export function parsePrescriptionText(rawText: string, providerName: string): Pr
 
     lines.push({
       rawLine: line,
-      medicationName: { value: line.replace(STRENGTH_RE, '').split(/[,;]/)[0]!.trim(), confidence: 0.5 },
-      ...(strength ? { dosage: { value: strength[0], confidence: 0.7 } } : {}),
-      ...(frequency ? { frequency: { value: frequency[0], confidence: 0.65 } } : {}),
-      ...(duration ? { duration: { value: duration[0], confidence: 0.6 } } : {}),
+      medicationName: { value: line.replace(STRENGTH_RE, '').split(/[,;]/)[0]!.trim(), confidence: 0.5, confidenceSource: 'heuristic' },
+      ...(strength ? { dosage: { value: strength[0], confidence: 0.7, confidenceSource: 'heuristic' } } : {}),
+      ...(frequency ? { frequency: { value: frequency[0], confidence: 0.65, confidenceSource: 'heuristic' } } : {}),
+      ...(duration ? { duration: { value: duration[0], confidence: 0.6, confidenceSource: 'heuristic' } } : {}),
     });
   }
 
@@ -131,8 +131,8 @@ export function parsePrescriptionText(rawText: string, providerName: string): Pr
   return {
     provider: providerName,
     rawText,
-    ...(prescriber ? { prescriber: { value: prescriber[1]!.trim(), confidence: 0.55 } } : {}),
-    ...(issued ? { issuedDate: { value: issued[1]!, confidence: 0.5 } } : {}),
+    ...(prescriber ? { prescriber: { value: prescriber[1]!.trim(), confidence: 0.55, confidenceSource: 'heuristic' } } : {}),
+    ...(issued ? { issuedDate: { value: issued[1]!, confidence: 0.5, confidenceSource: 'heuristic' } } : {}),
     lines,
     language: detectLanguage(rawText),
   };

@@ -14,7 +14,7 @@ import type { MessageKey } from '@dawaee/shared';
 
 type CaptureMode = 'photo' | 'upload' | 'barcode' | 'prescription';
 type Stage = 'preview' | 'working' | 'consent';
-interface OcrField { value: string | number; confidence: number }
+interface OcrField { value: string | number; confidence: number; confidenceSource?: 'heuristic' | 'provider' }
 interface LabelResponse { kind: 'medication_label'; detected: Record<string, OcrField | undefined> }
 interface PrescriptionLine { medicationName?: OcrField; dosage?: OcrField; frequency?: OcrField; duration?: OcrField }
 interface PrescriptionResponse { kind: 'prescription'; lines: PrescriptionLine[] }
@@ -32,10 +32,10 @@ function imageType(blobType: string, pickerType?: string | null): string | null 
   return blob ? null : 'image/jpeg';
 }
 
-function field(source?: OcrField): { value: string; confidence: number } | null {
+function field(source?: OcrField): { value: string; confidence: number; confidenceSource?: 'heuristic' | 'provider' } | null {
   if (!source) return null;
   const value = typeof source.value === 'number' ? String(source.value) : source.value.trim();
-  return value ? { value, confidence: source.confidence } : null;
+  return value ? { value, confidence: source.confidence, confidenceSource: source.confidenceSource } : null;
 }
 
 function detected(response: OcrResponse): MedicationConfirmDraft['detected'] {
@@ -51,8 +51,8 @@ function detected(response: OcrResponse): MedicationConfirmDraft['detected'] {
   if (!first) return out;
   const name = field(first.medicationName);
   if (name) out.name = name;
-  const parts = [field(first.dosage), field(first.frequency), field(first.duration)].filter((v): v is { value: string; confidence: number } => v !== null);
-  if (parts.length) out.instructions = { value: parts.map((v) => v.value).join(' · '), confidence: Math.min(...parts.map((v) => v.confidence)) };
+  const parts = [field(first.dosage), field(first.frequency), field(first.duration)].filter((v): v is { value: string; confidence: number; confidenceSource?: 'heuristic' | 'provider' } => v !== null);
+  if (parts.length) out.instructions = { value: parts.map((v) => v.value).join(' · '), confidence: Math.min(...parts.map((v) => v.confidence)), confidenceSource: 'heuristic' };
   return out;
 }
 

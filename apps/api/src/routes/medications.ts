@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -209,6 +210,26 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       if (body.schedule) await requireProfileAccess(tx, userId, body.patientProfileId, 'edit_schedule');
       if (body.stock) await requireProfileAccess(tx, userId, body.patientProfileId, 'update_stock');
 
+      // Serialize legacy duplicate checks as well as keyed retries. The lock is
+      // transaction scoped, acquired only after authorization and contains no PHI.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`medication-create:${body.patientProfileId}`]);
+      const requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+      if (body.clientRequestId) {
+        const { rows: prior } = await tx.query(
+          `SELECT ${MEDICATION_COLUMNS}, m.create_request_hash
+             FROM medications m
+            WHERE m.patient_profile_id = $1 AND m.created_by = $2 AND m.client_request_id = $3`,
+          [body.patientProfileId, userId, body.clientRequestId],
+        );
+        if (prior[0]) {
+          if (prior[0].create_request_hash !== requestHash) {
+            throw AppError.conflict(ERROR_CODES.VALIDATION_FAILED, 'Request identity was already used for different input');
+          }
+          return { medication: mapMedication(prior[0]), idempotentReplay: true };
+        }
+      }
+
       if (!body.acknowledgeDuplicate) {
         const { rows: existing } = await tx.query(
           `SELECT id, name, brand_name, generic_name, strength_value, strength_unit::text AS strength_unit,
@@ -237,9 +258,9 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
         `INSERT INTO medications
            (patient_profile_id, name, brand_name, generic_name, form, strength_value, strength_unit,
             manufacturer, barcode, image_key, instructions, doctor_instructions, food_instruction,
-            notes, start_date, end_date, expiry_date, prescription_id, identity_source, created_by)
+            notes, start_date, end_date, expiry_date, prescription_id, identity_source, created_by, client_request_id, create_request_hash)
          VALUES ($1,$2,$3,$4,$5::medication_form,$6,$7::strength_unit,$8,$9,$10,$11,$12,
-                 $13::food_instruction,$14,$15,$16,$17,$18,$19::identity_source,$20)
+                 $13::food_instruction,$14,$15,$16,$17,$18,$19::identity_source,$20,$21,$22)
          RETURNING ${MEDICATION_COLUMNS.replace(/m\./g, '')}`,
         [
           body.patientProfileId, body.name, body.brandName ?? null, body.genericName ?? null, body.form,
@@ -247,7 +268,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.barcode ?? null, body.imageKey ?? null, body.instructions ?? null,
           body.doctorInstructions ?? null, body.foodInstruction, body.notes ?? null,
           body.startDate, body.endDate ?? null, body.expiryDate ?? null, body.prescriptionId ?? null,
-          body.identitySource, userId,
+          body.identitySource, userId, body.clientRequestId ?? null, body.clientRequestId ? requestHash : null,
         ],
       );
       const medication = mapMedication(rows[0]!);

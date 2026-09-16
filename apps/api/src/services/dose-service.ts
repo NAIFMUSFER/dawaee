@@ -105,6 +105,9 @@ export interface ConfirmDoseResult {
 }
 
 export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Promise<ConfirmDoseResult> {
+  // Serialize before replay lookup: a concurrent identical request may have
+  // committed while this transaction waited for the occurrence lock.
+  const dose = await loadDoseForUpdate(tx, input.doseId);
   const replay = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (replay) {
     const { rows } = await tx.query<{ status: DoseStatus; confirmed_at: Date | null; scheduled_at: Date }>(
@@ -124,7 +127,6 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     };
   }
 
-  const dose = await loadDoseForUpdate(tx, input.doseId);
   const thresholds = {
     lateAfterMinutes: dose.late_after_minutes,
     missedAfterMinutes: dose.missed_after_minutes,
@@ -166,7 +168,7 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     [
       dose.id, dose.patient_profile_id, result.confirmedAt, input.userId, input.method,
       input.deviceId ?? null,
-      JSON.stringify({ minutesLate: result.minutesLate, actorRole: input.actorRole, ...(input.voiceConfidence ? { voiceConfidence: input.voiceConfidence } : {}) }),
+      JSON.stringify({ stockLedgerVersion: 1, minutesLate: result.minutesLate, actorRole: input.actorRole, ...(input.voiceConfidence ? { voiceConfidence: input.voiceConfidence } : {}) }),
       input.clientEventId,
     ],
   );
@@ -245,6 +247,9 @@ export async function snoozeDose(
   tx: PoolClient,
   input: { doseId: string; userId: string; minutes: number; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
+  // Serialize before replay lookup: a concurrent identical request may have
+  // committed while this transaction waited for the occurrence lock.
+  const dose = await loadDoseForUpdate(tx, input.doseId);
   const existing = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (existing) {
     const { rows } = await tx.query<{ snoozed_until: Date | null; snooze_count: number }>(
@@ -258,7 +263,6 @@ export async function snoozeDose(
     };
   }
 
-  const dose = await loadDoseForUpdate(tx, input.doseId);
   const thresholds = { lateAfterMinutes: dose.late_after_minutes, missedAfterMinutes: dose.missed_after_minutes };
   const effectiveStatus = deriveStatus(
     { status: dose.status, scheduledAt: dose.scheduled_at.toISOString(), snoozedUntil: dose.snoozed_until?.toISOString() ?? null, notifiedAt: dose.notified_at?.toISOString() ?? null },
@@ -302,10 +306,12 @@ export async function skipDoseAction(
   tx: PoolClient,
   input: { doseId: string; userId: string; reason?: string | null; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
+  // Serialize before replay lookup: a concurrent identical request may have
+  // committed while this transaction waited for the occurrence lock.
+  const dose = await loadDoseForUpdate(tx, input.doseId);
   const existing = await findByClientEvent(tx, input.doseId, input.clientEventId);
   if (existing) return { doseId: existing.id, status: existing.status, idempotentReplay: true };
 
-  const dose = await loadDoseForUpdate(tx, input.doseId);
   const thresholds = { lateAfterMinutes: dose.late_after_minutes, missedAfterMinutes: dose.missed_after_minutes };
   const effectiveStatus = deriveStatus(
     { status: dose.status, scheduledAt: dose.scheduled_at.toISOString(), snoozedUntil: dose.snoozed_until?.toISOString() ?? null, notifiedAt: dose.notified_at?.toISOString() ?? null },
@@ -348,9 +354,12 @@ export async function skipDoseAction(
  */
 export async function undoDose(
   tx: PoolClient,
-  input: { doseId: string; userId: string; now: Date; requestId?: string; ipHash?: string | null },
+  input: { doseId: string; userId: string; clientEventId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
   const dose = await loadDoseForUpdate(tx, input.doseId);
+  if (input.clientEventId && await findByClientEvent(tx, input.doseId, input.clientEventId)) {
+    return { doseId: dose.id, status: dose.status, idempotentReplay: true };
+  }
   if (!['taken', 'taken_late', 'skipped'].includes(dose.status)) {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'Only a recorded dose can be undone');
   }
@@ -362,10 +371,10 @@ export async function undoDose(
   // that caused it. Everything is in one transaction; a later failure rolls
   // the event back as well.
   const { rows: undoEventRows } = await tx.query<{ id: string }>(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata)
-     VALUES ($1,$2,'undone',$3,$4)
+    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata, client_event_id)
+     VALUES ($1,$2,'undone',$3,$4,$5)
      RETURNING id`,
-    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status })],
+    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status }), input.clientEventId ?? null],
   );
 
   // A skip never consumes stock. This status check is load-bearing after an
@@ -375,10 +384,16 @@ export async function undoDose(
     // The latest take movement is the one represented by the currently recorded
     // dose. Repeated take/undo cycles are legitimate, so there may be older ones.
     const { rows: txRows } = await tx.query<{ delta: string }>(
-      `SELECT delta
-         FROM stock_transactions
-        WHERE dose_occurrence_id = $1 AND reason = 'dose_taken'
-        ORDER BY created_at DESC
+      `WITH current_take AS (
+         SELECT id, metadata FROM dose_events
+          WHERE dose_occurrence_id = $1 AND type = 'taken'
+          ORDER BY id DESC LIMIT 1
+       )
+       SELECT st.delta FROM stock_transactions st CROSS JOIN current_take e
+        WHERE st.dose_occurrence_id = $1 AND st.reason = 'dose_taken'
+          AND (st.dose_event_id = e.id OR
+            (e.metadata->>'stockLedgerVersion' IS DISTINCT FROM '1' AND st.dose_event_id IS NULL))
+        ORDER BY st.dose_event_id DESC NULLS LAST, st.created_at DESC
         LIMIT 1`,
       [dose.id],
     );

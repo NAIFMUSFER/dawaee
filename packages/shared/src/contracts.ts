@@ -1,3 +1,4 @@
+import { MAX_DAILY_TIMES, MAX_DOSE_QUANTITY } from './medication-input.js';
 import { z } from 'zod';
 import {
   CAREGIVER_PERMISSIONS, CAREGIVER_ROLES, CALENDAR_SYSTEMS, CAREGIVER_NOTIFY_MODES, CONSENT_TYPES,
@@ -202,7 +203,7 @@ export const updatePreferencesSchema = z.object({
 
 export const fixedTimesRuleSchema = z.object({
   kind: z.literal('fixed_times'),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
 });
 
 export const intervalRuleSchema = z.object({
@@ -216,14 +217,14 @@ export const intervalRuleSchema = z.object({
 export const daysOfWeekRuleSchema = z.object({
   kind: z.literal('days_of_week'),
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
 });
 
 export const cycleRuleSchema = z.object({
   kind: z.literal('cycle'),
   daysOn: z.number().int().min(1).max(365),
   daysOff: z.number().int().min(0).max(365),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
   cycleAnchorDate: localDate,
 });
 
@@ -244,7 +245,7 @@ export const scheduleRuleSchema = z.discriminatedUnion('kind', [
 export const createScheduleSchema = z
   .object({
     rule: scheduleRuleSchema,
-    doseQuantity: z.number().positive().max(1000),
+    doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY),
     doseUnit: z.enum(DOSE_UNITS),
     timezone: timezone.optional(),
     startDate: localDate,
@@ -263,7 +264,7 @@ export const createScheduleSchema = z
 
 export const updateScheduleSchema = z.object({
   rule: scheduleRuleSchema.optional(),
-  doseQuantity: z.number().positive().max(1000).optional(),
+  doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).optional(),
   doseUnit: z.enum(DOSE_UNITS).optional(),
   timezone: timezone.optional(),
   startDate: localDate.optional(),
@@ -278,6 +279,7 @@ export const updateScheduleSchema = z.object({
 // ------------------------------------------------------------ medications
 
 export const createMedicationSchema = z.object({
+  clientRequestId: z.string().min(8).max(128).optional(),
   patientProfileId: uuid,
   name: safeText(160),
   brandName: z.string().trim().max(160).nullish(),
@@ -328,6 +330,10 @@ export const checkDuplicateSchema = z.object({
 });
 
 // ------------------------------------------------------------------ doses
+
+export const undoDoseSchema = z.object({
+  clientEventId: z.string().min(8).max(128).optional(),
+});
 
 export const confirmDoseSchema = z.object({
   /** Client clock at the moment the patient tapped, for offline replay. */

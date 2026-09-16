@@ -17,6 +17,7 @@ import type { MedicationForm, StrengthUnit } from '@dawaee/shared';
 export interface MedicationDetectedField {
   value: string;
   confidence: number;
+  confidenceSource?: 'heuristic' | 'provider';
 }
 
 export interface MedicationConfirmDraft {

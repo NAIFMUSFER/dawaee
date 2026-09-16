@@ -15,7 +15,7 @@ import {
   setMedicationPrefillDraft,
 } from '@/storage/medication-draft';
 import {
-  MEDICATION_FORMS, STRENGTH_UNITS,
+  MEDICATION_FORMS, STRENGTH_UNITS, parseMedicationNumber,
   type MedicationForm, type MessageKey, type StrengthUnit,
 } from '@dawaee/shared';
 
@@ -78,7 +78,7 @@ function ConfirmMedicationProfileScreen() {
       return;
     }
     const rawStrength = strengthValue.trim();
-    const strength = rawStrength === '' ? null : Number(rawStrength.replace(',', '.'));
+    const strength = rawStrength === '' ? null : parseMedicationNumber(rawStrength);
     if (strength !== null && (!Number.isFinite(strength) || strength <= 0 || strength > MAX_STRENGTH_VALUE)) {
       setStrengthError(t('error.validation_failed'));
       return;
@@ -181,19 +181,20 @@ function ConfirmMedicationProfileScreen() {
   );
 }
 
-function Provenance({ source }: { source: { value: string; confidence: number } | undefined }) {
+function Provenance({ source }: { source: { value: string; confidence: number; confidenceSource?: 'heuristic' | 'provider' } | undefined }) {
   const theme = useTheme();
   const { t, formatNumber } = useI18n();
   if (!source) return null;
-  const low = source.confidence < CONFIDENCE_FLOOR;
+  const providerConfidence = source.confidenceSource === 'provider' && Number.isFinite(source.confidence) && source.confidence >= 0 && source.confidence <= 1;
+  const low = !providerConfidence || source.confidence < CONFIDENCE_FLOOR;
   const percent = formatNumber(Math.round(source.confidence * 100));
   return (
     <View style={{ gap: theme.spacing.xxs }}>
       <Row wrap gap={theme.spacing.xs}>
         <Badge label={t('medication.detectedByAi')} fg={low ? theme.colors.warning700 : theme.colors.info700} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
-        <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
+        {providerConfidence ? <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} /> : null}
       </Row>
-      {low ? <Txt variant="caption" color={theme.colors.warning700}>{t('medication.lowConfidence')}</Txt> : null}
+      {low ? <Txt variant="caption" color={theme.colors.warning700}>{t(providerConfidence ? 'medication.lowConfidence' : 'medication.extractionReview')}</Txt> : null}
     </View>
   );
 }

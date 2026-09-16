@@ -16,7 +16,7 @@ import {
   setMedicationDetailRouteIntent,
 } from '@/navigation/private-navigation';
 import {
-  DOSE_UNITS, SCHEDULE_RULE_KINDS,
+  DOSE_UNITS, SCHEDULE_RULE_KINDS, MAX_DAILY_TIMES, MAX_DOSE_QUANTITY, normalizeDigits, parseMedicationNumber,
   type DoseUnit, type MessageKey, type ScheduleRule, type ScheduleRuleKind,
 } from '@dawaee/shared';
 
@@ -40,7 +40,7 @@ const WEEKDAY_ANCHORS = [
 ] as const;
 
 function maskTime(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 4);
+  const digits = normalizeDigits(raw).replace(/\D/g, '').slice(0, 4);
   if (digits.length <= 2) return digits;
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 }
@@ -192,7 +192,7 @@ function ScheduleProfileScreen({
   // A partially entered or invalid row is not permission to drop a dose time.
   // Invalidate the whole time list until every row is corrected or explicitly
   // removed; both preview and Save consume this same all-or-nothing value.
-  const sortedTimes = useMemo(() => times.every(isValidTime) ? [...times].sort() : [], [times]);
+  const sortedTimes = useMemo(() => times.length <= MAX_DAILY_TIMES && times.every(isValidTime) && new Set(times).size === times.length ? [...times].sort() : [], [times]);
 
   const buildRule = useCallback((): ScheduleRule | null => {
     switch (kind) {
@@ -294,8 +294,8 @@ function ScheduleProfileScreen({
       );
       return;
     }
-    const quantity = Number(doseQuantity.replace(',', '.'));
-    if (!Number.isFinite(quantity) || quantity <= 0) {
+    const quantity = parseMedicationNumber(doseQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > MAX_DOSE_QUANTITY) {
       setValidation(t('error.validation_failed'));
       return;
     }
@@ -382,7 +382,7 @@ function ScheduleProfileScreen({
   };
 
   const changeAfter = (change: string): string => {
-    if (change === 'dose_quantity') return formatNumber(Number(doseQuantity.replace(',', '.')));
+    if (change === 'dose_quantity') return formatNumber(parseMedicationNumber(doseQuantity));
     if (change === 'dose_unit') return t(`unit.${doseUnit}` as MessageKey);
     if (change === 'schedule_timing') return preview;
     return '';
@@ -433,7 +433,8 @@ function ScheduleProfileScreen({
             <Button
               label={t('schedule.addTime')}
               tone="secondary"
-              onPress={() => setTimes((current) => [...current, ''])}
+              disabled={times.length >= MAX_DAILY_TIMES}
+              onPress={() => setTimes((current) => current.length < MAX_DAILY_TIMES ? [...current, ''] : current)}
             />
           </Card>
         ) : null}
@@ -537,7 +538,7 @@ function ScheduleProfileScreen({
             onChangeText={setDoseQuantity}
             keyboardType="decimal-pad"
           />
-          <Picker label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
+          <Picker wrap label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
         </Card>
 
         <Card>
@@ -551,7 +552,7 @@ function ScheduleProfileScreen({
           {preview ? (
             <Txt variant="bodySmall" color={theme.colors.ink500}>
               {t('schedule.dosePerTime', {
-                qty: formatNumber(Number(doseQuantity.replace(',', '.')) || 0),
+                qty: formatNumber(parseMedicationNumber(doseQuantity) || 0),
                 unit: t(`unit.${doseUnit}` as MessageKey),
               })}
             </Txt>

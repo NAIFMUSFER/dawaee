@@ -160,7 +160,13 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }, { filename: sourceFile });
     return exports;
   };
-  const Screen = evaluate(file).default;
+  modules['@dawaee/shared'] = {
+    ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/enums.ts')),
+    ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/medication-input.ts')),
+    ...modules['@dawaee/shared'],
+  };
+  modules['@/components/DoseUnitPicker'] ??= hosts;
+  const Screen = evaluate(file)[overrides.__exportName ?? 'default'];
   const disposeFrom = (depth) => {
     for (const f of h.frames.splice(depth)) {
       f.alive = false;
@@ -169,7 +175,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   };
   h.render = (commitEffects = true) => {
     h.dirty = false;
-    let type = Screen, props = {}, depth = 0, tree;
+    let type = Screen, props = overrides.__props ?? {}, depth = 0, tree;
     // Evaluate the route and any keyed screen boundary, not presentation children.
     while (typeof type === 'function') {
       let f = h.frames[depth];

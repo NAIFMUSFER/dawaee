@@ -9,7 +9,7 @@ module.exports = ({ config }) => {
   }
   return {
     ...config,
-    name: 'دوائي تجريبي',
+    name: 'تداوي | TADAWEE تجريبي',
     scheme: 'dawaee-audit',
     android: { ...config.android, package: 'app.dawaee.audit', googleServicesFile: undefined },
     ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit' },
