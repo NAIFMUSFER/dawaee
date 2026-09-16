@@ -49,7 +49,7 @@ function ConfirmMedicationProfileScreen() {
   const [name, setName] = useState(reading('name'));
   const [form, setForm] = useState<MedicationForm>(asEnum(MEDICATION_FORMS, reading('form')) ?? 'tablet');
   const [strengthValue, setStrengthValue] = useState(reading('strengthValue'));
-  const [strengthUnit, setStrengthUnit] = useState<StrengthUnit>(asEnum(STRENGTH_UNITS, reading('strengthUnit')) ?? 'mg');
+  const [strengthUnit, setStrengthUnit] = useState<StrengthUnit | null>(asEnum(STRENGTH_UNITS, reading('strengthUnit')));
   const [expiryDate, setExpiryDate] = useState(isValidLocalDate(reading('expiryDate')) ? reading('expiryDate') : '');
   const [showMore, setShowMore] = useState(false);
   const [brandName, setBrandName] = useState(reading('brandName'));
@@ -59,6 +59,7 @@ function ConfirmMedicationProfileScreen() {
   const [instructions, setInstructions] = useState(reading('instructions'));
   const [nameError, setNameError] = useState<string | null>(null);
   const [strengthError, setStrengthError] = useState<string | null>(null);
+  const [unitError, setUnitError] = useState<string | null>(null);
 
   const formOptions = useMemo(
     () => MEDICATION_FORMS.map((value) => ({ value, label: t(`form.${value}` as MessageKey) })),
@@ -84,6 +85,11 @@ function ConfirmMedicationProfileScreen() {
       return;
     }
     setStrengthError(null);
+    if (strength !== null && strengthUnit === null) {
+      setUnitError(t('medication.strengthUnitRequired'));
+      return;
+    }
+    setUnitError(null);
     setMedicationPrefillDraft({
       patientProfileId: payload.patientProfileId,
       name: trimmed,
@@ -138,7 +144,7 @@ function ConfirmMedicationProfileScreen() {
 
         <Card>
           <Provenance source={detected.form} />
-          <Picker label={t('medication.form')} options={formOptions} value={form} onChange={setForm} />
+          <Picker label={t('medication.form')} options={formOptions} value={form} onChange={setForm} wrap />
           <Divider />
           <Provenance source={detected.strengthValue} />
           <Field
@@ -147,12 +153,15 @@ function ConfirmMedicationProfileScreen() {
             onChangeText={(value) => {
               setStrengthValue(value);
               setStrengthError(null);
+              setUnitError(null);
             }}
             keyboardType="decimal-pad"
             error={strengthError}
           />
           <Provenance source={detected.strengthUnit} />
-          <Picker label={t('medication.strengthUnit')} options={strengthUnitOptions} value={strengthUnit} onChange={setStrengthUnit} />
+          <Picker label={t('medication.strengthUnit')} options={strengthUnitOptions} value={strengthUnit}
+            onChange={(value) => { setStrengthUnit(value); setUnitError(null); }}
+            hint={t('medication.strengthReview')} error={unitError} wrap />
         </Card>
 
         {detected.expiryDate ? (
@@ -166,6 +175,13 @@ function ConfirmMedicationProfileScreen() {
 
         {showMore ? (
           <Card>
+            {payload.rawText ? (
+              <>
+                <Txt weight="bold">{t('medication.rawText')}</Txt>
+                <Txt selectable>{payload.rawText}</Txt>
+                <Divider />
+              </>
+            ) : null}
             <Field label={t('medication.brandName')} value={brandName} onChangeText={setBrandName} />
             <Field label={t('medication.genericName')} value={genericName} onChangeText={setGenericName} />
             <Field label={t('medication.manufacturer')} value={manufacturer} onChangeText={setManufacturer} />

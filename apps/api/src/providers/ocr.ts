@@ -1,4 +1,4 @@
-import { AppError, ERROR_CODES } from '@dawaee/shared';
+import { AppError, ERROR_CODES, normalizeDigits, parseMedicationNumber } from '@dawaee/shared';
 import type {
   MedicationOcrResult, OcrProvider, PrescriptionOcrLine, PrescriptionOcrResult,
 } from './types.js';
@@ -20,7 +20,37 @@ import type { Config } from '../config.js';
  * loop. Keep these bounds finite when extending the parser.
  */
 
-const STRENGTH_RE = /(\d{1,6}(?:[.,]\d{1,4})?)\s{0,8}(mg|mcg|µg|g|ml|iu|%)\b/i;
+const STRENGTH_RE = /(?<![\p{L}\p{N}_.,٫٬/⁄+\-−])(\d{1,6}(?:[.,]\d{1,4})?)\s{0,8}(mg|mcg|µg|μg|g|ml|iu|%)(?![\p{L}\p{N}_])/iu;
+
+const normalizeOcrNumbers = (text: string) => normalizeDigits(text).replace(/٫/g, '.');
+
+/** Only a complete, single scalar can populate the structured strength fields.
+ * Ratios, ranges, multiple amounts and ambiguous separators remain raw text
+ * for review. Never strip the denominator from mg/5 ml or recover a numeric
+ * suffix from .5, 1/2, 1e3 or an over-precision number.
+ * All scans are bounded per position; at most two candidates are inspected.
+ */
+function scalarStrength(text: string): { value: number; unit: string; raw: string } | null {
+  const normalized = normalizeOcrNumbers(text);
+  let strength: { value: number; unit: string; raw: string } | null = null;
+  for (const match of normalized.matchAll(new RegExp(STRENGTH_RE.source, 'giu'))) {
+    if (strength) return null;
+    const before = normalized.slice(0, match.index).trimEnd();
+    const after = normalized.slice(match.index! + match[0].length).trimStart();
+    if (/[+\-/⁄−.,٫٬]$/.test(before) || /(?:\bper|لكل)$/iu.test(before)
+      || /^(?:[/⁄:+−-]|per\b|لكل)/iu.test(after)
+      || /^[1-9]\d{0,2},\d{3}$/.test(match[1]!)) return null;
+    const value = parseMedicationNumber(match[1]!);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    let unit = match[2]!.toLowerCase();
+    if (unit === 'µg' || unit === 'μg') unit = 'mcg';
+    if (unit === '%') unit = 'percent';
+    // Digit normalization preserves character positions; retain the original
+    // text for review, including Arabic/Persian digits.
+    strength = { value, unit, raw: text.slice(match.index, match.index! + match[0].length) };
+  }
+  return strength;
+}
 const BARCODE_RE = /\b(\d{8}|\d{12,14})\b/;
 const EXPIRY_RE =
   /\b(?:exp(?:iry|\.|ires)?|صلاحية|ينتهي|انتهاء)\s{0,8}[:.]?\s{0,8}(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}[-/]\d{2})/i;
@@ -60,6 +90,7 @@ export function parseMedicationText(rawText: string, providerName: string): Medi
     .filter(Boolean);
 
   const fields: MedicationOcrResult['fields'] = {};
+  const strength = scalarStrength(rawText);
 
   // The medication name is usually the largest / first substantial line. We
   // take the first line that is not purely numeric or a known boilerplate word,
@@ -69,19 +100,13 @@ export function parseMedicationText(rawText: string, providerName: string): Medi
     (l) => l.length >= 3 && !/^\d+$/.test(l) && !/^(rx|otc|batch|lot|mfg|exp)\b/i.test(l),
   );
   if (nameLine) {
-    fields.name = { value: nameLine.replace(STRENGTH_RE, '').trim() || nameLine, confidence: 0.62, confidenceSource: 'heuristic' };
+    const name = strength ? nameLine.replace(strength.raw, '').trim() : nameLine;
+    fields.name = { value: name || nameLine, confidence: 0.62, confidenceSource: 'heuristic' };
   }
 
-  const strengthMatch = rawText.match(STRENGTH_RE);
-  if (strengthMatch) {
-    const value = Number(strengthMatch[1]!.replace(',', '.'));
-    let unit = strengthMatch[2]!.toLowerCase();
-    if (unit === 'µg') unit = 'mcg';
-    if (unit === '%') unit = 'percent';
-    if (Number.isFinite(value) && value > 0) {
-      fields.strengthValue = { value, confidence: 0.8, confidenceSource: 'heuristic' };
-      fields.strengthUnit = { value: unit, confidence: 0.8, confidenceSource: 'heuristic' };
-    }
+  if (strength) {
+    fields.strengthValue = { value: strength.value, confidence: 0.8, confidenceSource: 'heuristic' };
+    fields.strengthUnit = { value: strength.unit, confidence: 0.8, confidenceSource: 'heuristic' };
   }
 
   for (const [re, form] of FORM_KEYWORDS) {
@@ -110,17 +135,18 @@ export function parsePrescriptionText(rawText: string, providerName: string): Pr
   const lines: PrescriptionOcrLine[] = [];
 
   for (const line of rawLines) {
-    const strength = line.match(STRENGTH_RE);
+    const strength = scalarStrength(line);
+    const strengthSignal = STRENGTH_RE.test(normalizeOcrNumbers(line));
     const frequency = line.match(FREQUENCY_RE);
     const duration = line.match(DURATION_RE);
     // A line is only treated as a medication line when it carries at least one
     // prescription-shaped signal. Everything else stays raw text.
-    if (!strength && !frequency && !duration) continue;
+    if (!strengthSignal && !frequency && !duration) continue;
 
     lines.push({
       rawLine: line,
-      medicationName: { value: line.replace(STRENGTH_RE, '').split(/[,;]/)[0]!.trim(), confidence: 0.5, confidenceSource: 'heuristic' },
-      ...(strength ? { dosage: { value: strength[0], confidence: 0.7, confidenceSource: 'heuristic' } } : {}),
+      medicationName: { value: (strength ? line.replace(strength.raw, '') : line).split(/[,;]/)[0]!.trim(), confidence: 0.5, confidenceSource: 'heuristic' },
+      ...(strength ? { dosage: { value: strength.raw, confidence: 0.7, confidenceSource: 'heuristic' } } : {}),
       ...(frequency ? { frequency: { value: frequency[0], confidence: 0.65, confidenceSource: 'heuristic' } } : {}),
       ...(duration ? { duration: { value: duration[0], confidence: 0.6, confidenceSource: 'heuristic' } } : {}),
     });

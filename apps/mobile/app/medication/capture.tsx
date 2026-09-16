@@ -18,7 +18,7 @@ interface OcrField { value: string | number; confidence: number; confidenceSourc
 interface LabelResponse { kind: 'medication_label'; detected: Record<string, OcrField | undefined> }
 interface PrescriptionLine { medicationName?: OcrField; dosage?: OcrField; frequency?: OcrField; duration?: OcrField }
 interface PrescriptionResponse { kind: 'prescription'; lines: PrescriptionLine[] }
-type OcrResponse = LabelResponse | PrescriptionResponse;
+type OcrResponse = (LabelResponse | PrescriptionResponse) & { rawText?: string };
 interface UploadTicket { objectKey: string; upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string> } }
 
 const MODES = new Set<string>(['photo', 'upload', 'barcode', 'prescription']);
@@ -117,6 +117,7 @@ function CaptureProfileScreen() {
         kind: response.kind,
         detected: detected(response),
         remainingLines: response.kind === 'prescription' ? Math.max(0, response.lines.length - 1) : 0,
+        ...(typeof response.rawText === 'string' && response.rawText ? { rawText: response.rawText } : {}),
       });
       router.replace('/medication/confirm');
     } catch (err) {

@@ -26,6 +26,8 @@ export interface MedicationConfirmDraft {
   kind: 'medication_label' | 'prescription';
   detected: Record<string, MedicationDetectedField | undefined>;
   remainingLines: number;
+  /** Provider text for user review only; never forwarded to medication save. */
+  rawText?: string;
 }
 
 export interface MedicationPrefillDraft {

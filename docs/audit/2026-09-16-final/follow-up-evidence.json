@@ -1,0 +1,101 @@
+{
+  "observedDateUTC": "2026-09-16",
+  "scope": "Follow-up audit; metadata only, no patient rows or production writes",
+  "baselineSource": "7b19235087ab7289c103f3add2a90ef36dd9ffbb",
+  "production": {
+    "api": "60b474ea81105529c16f88d5b878c5c274c7b03b",
+    "worker": "0338ddefc475d23cccecf13d5ede0f32d2007fb0",
+    "failedDeploy": "dep-dal0hudg1s2s73dqea90",
+    "failedSource": "07bf101c8a4720dc74d55de37b0dcb825c7841e5",
+    "failure": {
+      "timestampUTC": "2026-09-16T03:13:52.511947123Z",
+      "file": "0078_push_receipt_token_generation.sql",
+      "line": 40,
+      "message": "ERROR: function digest(text, unknown) does not exist",
+      "exitStatus": 3
+    }
+  },
+  "database": {
+    "project": "knkuxdfnfokqxbgnxzpe",
+    "runtimeConnectionCorrelation": "NOT VERIFIED",
+    "state": [
+      {
+        "database_name": "postgres",
+        "version": "17.6",
+        "migration_count": 77,
+        "last_migration": "0077_push_receipt_claim_recovery.sql",
+        "create_identity_columns": 0
+      }
+    ],
+    "extensions": [
+      {
+        "extname": "pgcrypto",
+        "extension_schema": "extensions"
+      },
+      {
+        "extname": "sha256",
+        "extension_schema": "pg_catalog"
+      },
+      {
+        "extname": "digest",
+        "extension_schema": "extensions"
+      },
+      {
+        "extname": "digest",
+        "extension_schema": "extensions"
+      }
+    ],
+    "indexes": [
+      {
+        "index_name": "dose_events_client_event_profile_idx",
+        "valid": true,
+        "ready": true,
+        "unique_index": true,
+        "definition": "CREATE UNIQUE INDEX dose_events_client_event_profile_idx ON public.dose_events USING btree (patient_profile_id, client_event_id) WHERE (client_event_id IS NOT NULL)"
+      },
+      {
+        "index_name": "dose_occurrences_client_event_idx",
+        "valid": true,
+        "ready": true,
+        "unique_index": true,
+        "definition": "CREATE UNIQUE INDEX dose_occurrences_client_event_idx ON public.dose_occurrences USING btree (patient_profile_id, client_event_id) WHERE (client_event_id IS NOT NULL)"
+      },
+      {
+        "index_name": "stock_tx_dose_event_idx",
+        "valid": true,
+        "ready": true,
+        "unique_index": true,
+        "definition": "CREATE UNIQUE INDEX stock_tx_dose_event_idx ON public.stock_transactions USING btree (dose_event_id) WHERE (dose_event_id IS NOT NULL)"
+      }
+    ]
+  },
+  "reproduction": {
+    "environment": "Local Node 22 screen harness and parser tests, synthetic text; before repair, baseline source plus uncommitted regression tests",
+    "testCount": 27,
+    "failed": 18,
+    "passed": 9,
+    "cases": [
+      {
+        "input": "250 mg/5 ml",
+        "observedStrengthValue": 250,
+        "observedStrengthUnit": "mg",
+        "expected": "No scalar strength; retain original text"
+      },
+      {
+        "input": ".5 mg",
+        "observedStrengthValue": 5,
+        "expected": "No partial numeric suffix"
+      },
+      {
+        "input": "OCR strength value with missing or unsupported unit",
+        "observedDefaultUnit": "mg",
+        "expected": "Explicit user selection"
+      }
+    ]
+  },
+  "limits": {
+    "actualImageProviderRun": false,
+    "physicalDevice": false,
+    "localRepairRerun": "BLOCKED: exec-server transport disconnected; CI results on follow-up source recorded in PR30"
+  }
+}

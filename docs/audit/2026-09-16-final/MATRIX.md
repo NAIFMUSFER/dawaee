@@ -44,6 +44,10 @@ PASS هنا يخص نوع الدليل المذكور فقط. لا تعني اخ
 | PostgreSQL/الفهارس/RLS/المعاملات | `catalog-readonly.json`, `stock-transaction-graph-integrity.test.ts`, `schema-contract.test.ts`, migrations tests | PASS قراءة الكتالوج واختبارات قاعدة حقيقية؛ ledger readiness وحده لا يكشف كل drift. مراجعة فهارس ما بعد الترحيل مطلوبة |
 | النسخ الاحتياطي والاستعادة | `release-runtime-recovery.mjs`, `release-recovery-harness.mjs` | PASS لاستعادة قاعدة تركيبية وبناء المصادر المحددة؛ نسخة احتياطية إنتاجية قابلة للاستعادة و RPO/RTO معتمدان NOT VERIFIED |
 
+## متابعة OCR
+
+[المتابعة](FOLLOW-UP.md) تضيف انحدارات للتركيز المركب وحدود الأرقام ووحدة المراجعة والنص الأصلي وعزل الملف. لا تعني هذه الاختبارات تحليل صورة حقيقية أو PASS على هاتف. نتيجة commit المتابعة تُثبت في PR30.
+
 ## دليل الصور والتفاعل
 
 ![قبل الإصلاح: كمية مخصصة 6 وخيارات وحدات أفقية](images/before-quantity-units.jpeg)
