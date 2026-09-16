@@ -178,7 +178,7 @@ function ConfirmMedicationProfileScreen() {
             {payload.rawText ? (
               <>
                 <Txt weight="bold">{t('medication.rawText')}</Txt>
-                <Txt selectable>{payload.rawText}</Txt>
+                <Txt>{payload.rawText}</Txt>
                 <Divider />
               </>
             ) : null}
