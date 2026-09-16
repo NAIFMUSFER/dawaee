@@ -107,7 +107,9 @@ function CaptureProfileScreen() {
     setBusyLabel(t('capture.analyzing'));
     setStage('working');
     try {
-      const response = await api.post<OcrResponse>('/v1/ocr/analyze', { imageKey: key, patientProfileId, kind: mode === 'prescription' ? 'prescription' : 'medication_label' });
+      // Provider deadline is 25s, plus bounded private-storage and API work.
+      // A 15s generic API timeout used to abandon valid OCR work prematurely.
+      const response = await api.post<OcrResponse>('/v1/ocr/analyze', { imageKey: key, patientProfileId, kind: mode === 'prescription' ? 'prescription' : 'medication_label' }, undefined, { timeoutMs: 45_000 });
       if (!current()) return;
       setMedicationConfirmDraft({
         patientProfileId,
@@ -143,9 +145,16 @@ function CaptureProfileScreen() {
         patientProfileId: activeProfile.id,
       });
       if (!current()) return;
-      const uploaded = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob });
+      const controller = new AbortController();
+      const uploadTimeout = setTimeout(() => controller.abort(), 45_000);
+      let uploaded: Response;
+      try {
+        uploaded = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob, signal: controller.signal });
+      } catch {
+        throw new ApiError('upload_failed', 503, 'Image upload did not complete');
+      } finally { clearTimeout(uploadTimeout); }
       if (!current()) return;
-      if (!uploaded.ok) throw new ApiError('upload_rejected', uploaded.status, 'upload failed');
+      if (!uploaded.ok) throw new ApiError('upload_failed', uploaded.status, 'Image upload did not complete');
       await api.post('/v1/uploads/finalize', { objectKey: ticket.objectKey });
       if (!current()) return;
       setImageKey(ticket.objectKey);

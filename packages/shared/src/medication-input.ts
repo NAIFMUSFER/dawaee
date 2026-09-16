@@ -9,16 +9,23 @@ export function normalizeDigits(value: string): string {
     String(digit.charCodeAt(0) - (digit <= '٩' ? 0x0660 : 0x06f0)));
 }
 
-/** No grouping separators, exponents, units or partial parses in health input. */
+/** Match PostgreSQL numeric(*,4), without silently rounding clinical input. */
+function exactStoredNumber(value: number): number {
+  return Number.isFinite(value) && Math.abs(value * 10_000 - Math.round(value * 10_000)) < 1e-7 ? value : NaN;
+}
+
+/** No grouping separators, exponents, units or partial parses in health input.
+ * Fractions must have an exact decimal representation within four places.
+ */
 export function parseMedicationNumber(raw: string): number {
   const value = normalizeDigits(raw.trim()).replace(/[٫,]/g, '.');
   if (/^\d+\s*[/⁄]\s*\d+$/.test(value)) {
     const [numerator, denominator] = value.split(/[/⁄]/).map(Number);
-    return denominator! > 0 ? numerator! / denominator! : NaN;
+    return denominator! > 0 ? exactStoredNumber(numerator! / denominator!) : NaN;
   }
   const fractions: Record<string, number> = { '½': 0.5, '¼': 0.25, '¾': 0.75 };
-  if (value in fractions) return fractions[value]!;
-  return /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? Number(value) : NaN;
+  if (Object.hasOwn(fractions, value)) return fractions[value]!;
+  return /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) ? exactStoredNumber(Number(value)) : NaN;
 }
 
 /** Entry shortcuts by dosage form. Extras require an explicit user selection. */

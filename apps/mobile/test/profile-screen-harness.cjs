@@ -148,7 +148,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }).outputText;
     const exports = {};
     vm.runInNewContext(code, {
-      exports, Date, Intl, console,
+      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout,
       ...vmGlobals,
       require: (id) => {
         if (id === '@/hooks/useRequestScope') {

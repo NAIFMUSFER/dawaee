@@ -39,13 +39,13 @@ function mapMedication(row: Record<string, unknown>) {
   };
 }
 
-async function loadSchedules(tx: PoolClient, medicationId: string) {
+async function loadSchedules(tx: PoolClient, medicationId: string | string[]) {
   const { rows } = await tx.query(
     `SELECT id, medication_id, patient_profile_id, rule, rule_kind::text AS rule_kind, dose_quantity,
             dose_unit::text AS dose_unit, timezone, start_date, end_date, missed_after_minutes,
             late_after_minutes, active, created_by
-       FROM medication_schedules WHERE medication_id = $1 ORDER BY created_at`,
-    [medicationId],
+       FROM medication_schedules WHERE medication_id = ANY($1::uuid[]) ORDER BY created_at`,
+    [Array.isArray(medicationId) ? medicationId : [medicationId]],
   );
   return rows;
 }
@@ -110,9 +110,18 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       );
       const defaultThreshold = prefs[0]?.low_stock_threshold_days ?? 7;
 
+      // One RLS-scoped schedule read for the visible medicines. The previous
+      // per-row query added a network round trip for every medication.
+      const scheduleRows = await loadSchedules(tx, rows.map((row) => row.id as string));
+      const schedulesByMedication = new Map<string, typeof scheduleRows>();
+      for (const schedule of scheduleRows) {
+        const group = schedulesByMedication.get(schedule.medication_id) ?? [];
+        group.push(schedule);
+        schedulesByMedication.set(schedule.medication_id, group);
+      }
       const medications = [];
       for (const row of rows) {
-        const schedules = await loadSchedules(tx, row.id as string);
+        const schedules = schedulesByMedication.get(row.id as string) ?? [];
         const stock = row.tracking_enabled === null ? null : {
           unit: row.stock_unit,
           remainingQuantity: row.remaining_quantity === null ? null : Number(row.remaining_quantity),

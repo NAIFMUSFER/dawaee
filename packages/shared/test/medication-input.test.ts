@@ -24,3 +24,8 @@ describe('medication quantity entry and schedule contracts', () => {
     for (const doseQuantity of [0, -1, 1001]) expect(createScheduleSchema.safeParse({ rule: { kind: 'fixed_times', times: ['08:00'] }, doseQuantity, doseUnit: 'tablet', startDate: '2026-09-16' }).success).toBe(false);
   });
 });
+
+// Never silently round a repeating fraction or a fifth decimal in storage.
+it.each(['1/3', '0.00001', 'toString', '__proto__'])('rejects unrepresentable quantity %s', (input) => {
+  expect(Number.isNaN(parseMedicationNumber(input))).toBe(true);
+});

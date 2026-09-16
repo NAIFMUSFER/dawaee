@@ -187,6 +187,23 @@ async function exerciseRecovery() {
     const incompatibleWorker = await tick(upgrade, 'oldWorker', false);
     runtime.stop(server);
 
+    // Keep 4cf2353 as the negative control. The actual serving PR #28 hotfix
+    // is a different source and must be exercised, not inferred from that test.
+    console.info('Runtime recovery: serving PR #28 hotfix on upgraded catalog');
+    server = await api(upgrade, 'servingApi');
+    token = await session(server);
+    const hotfixTake = await apiRequest(server, '/v1/dose/action', { method: 'POST', token,
+      body: { doseId: dose, action: 'taken', method: 'app', clientEventId: 'serving-hotfix-take' } });
+    assert.equal(hotfixTake.stock.remainingQuantity, 29);
+    const hotfixReplay = await apiRequest(server, '/v1/dose/action', { method: 'POST', token,
+      body: { doseId: dose, action: 'taken', method: 'app', clientEventId: 'serving-hotfix-take' } });
+    assert.equal(hotfixReplay.idempotentReplay, true);
+    await apiRequest(server, '/v1/dose/action', { method: 'POST', token, body: { doseId: dose, action: 'undo' } });
+    await stock(server, token, medication, 30);
+    const hotfixLedger = (await sql(upgrade, `SELECT sum(delta)::int AS balance FROM stock_transactions WHERE medication_id=$1`, [medication])).rows[0];
+    assert.equal(hotfixLedger.balance, 30);
+    runtime.stop(server);
+
     console.info('Runtime recovery: restore original archive and run both recorded runtimes');
     await db.create(recovered);
     const restore = await db.restore(recovered);
@@ -213,7 +230,7 @@ async function exerciseRecovery() {
     assert.equal((await ledger(recovered)).length, 34, 'restored ledger was upgraded by runtime startup');
     return { images: runtime.images, postgresVersion, baselineMigrations: 34, upgradedMigrations: expectedLedger.length,
       backup, restore, baselineWorker, candidateWorker, incompatibleWorker, recoveredWorker,
-      legacyOnUpgradeHttpStatus: 500, restoredCandidateExitCode: 1,
+      legacyOnUpgradeHttpStatus: 500, servingHotfixOnUpgradeHttpStatus: 200, restoredCandidateExitCode: 1,
       legacyRetake: { liveBalance: 29, ledgerBalance: legacyRetakeLedger.balance, missingMovement: true },
       limits: { syntheticData: true, rebuiltImages: true, originalRenderImages: false,
         testConfiguration: true, productionBackup: false, realPush: false, installedDevices: false } };

@@ -251,8 +251,8 @@ function TodayProfileScreen() {
     async (dose: DoseView, action: 'taken' | 'skip') => {
       const isCurrent = captureScope();
       if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
-    actionInFlight.current.add(dose.id);
-    setActionError(null);
+      actionInFlight.current.add(dose.id);
+      setActionError(null);
       setBusyDoseId(dose.id);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
@@ -291,7 +291,7 @@ function TodayProfileScreen() {
         }
       } finally {
         actionInFlight.current.delete(dose.id);
-      if (isCurrent()) setBusyDoseId(null);
+        if (isCurrent()) setBusyDoseId(null);
       }
     },
     [captureScope, canConfirmDose, deviceId, load, setOffline, t],

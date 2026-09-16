@@ -11,6 +11,7 @@ import { validateRecoveryEnvironment } from './release-recovery-harness.mjs';
 export const RECORDED_RUNTIME_SHAS = Object.freeze({
   oldApi: '4cf23531dfaa5cc7c3790b473f8b4ff9f88d9f72',
   oldWorker: '0338ddefc475d23cccecf13d5ede0f32d2007fb0',
+  servingApi: '60b474ea81105529c16f88d5b878c5c274c7b03b',
 });
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pause = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -136,7 +137,7 @@ export async function createRuntimeHarness(env = process.env) {
     if (failures.length) throw new AggregateError(failures, 'runtime rehearsal cleanup failed');
   };
   try {
-    // Fetch only the two fixed, reviewed sources from this repository. Build
+    // Fetch only the fixed, reviewed sources from this repository. Build
     // each unmodified Dockerfile and lockfile in a detached, temporary worktree.
     run('git', ['fetch', '--no-tags', 'origin', ...Object.values(RECORDED_RUNTIME_SHAS)]);
     for (const [name, sha] of Object.entries({ ...RECORDED_RUNTIME_SHAS, candidate: head })) {

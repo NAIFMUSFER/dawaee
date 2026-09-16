@@ -245,7 +245,7 @@ export const scheduleRuleSchema = z.discriminatedUnion('kind', [
 export const createScheduleSchema = z
   .object({
     rule: scheduleRuleSchema,
-    doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY),
+    doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).multipleOf(0.0001),
     doseUnit: z.enum(DOSE_UNITS),
     timezone: timezone.optional(),
     startDate: localDate,
@@ -264,7 +264,7 @@ export const createScheduleSchema = z
 
 export const updateScheduleSchema = z.object({
   rule: scheduleRuleSchema.optional(),
-  doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).optional(),
+  doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).multipleOf(0.0001).optional(),
   doseUnit: z.enum(DOSE_UNITS).optional(),
   timezone: timezone.optional(),
   startDate: localDate.optional(),
@@ -314,7 +314,7 @@ export const createMedicationSchema = z.object({
 });
 
 export const updateMedicationSchema = createMedicationSchema
-  .omit({ patientProfileId: true, schedule: true, stock: true, acknowledgeDuplicate: true })
+  .omit({ patientProfileId: true, schedule: true, stock: true, acknowledgeDuplicate: true, clientRequestId: true })
   .partial()
   .extend({
     status: z.enum(MEDICATION_STATUSES).optional(),

@@ -1,0 +1,97 @@
+{
+  "observedDateUTC": "2026-09-16",
+  "scope": "Supabase project knkuxdfnfokqxbgnxzpe, read-only metadata only; no patient rows",
+  "runtimeConnectionCorrelation": "NOT VERIFIED",
+  "columns": [
+    {
+      "data_type": "bigint",
+      "table_name": "stock_transactions",
+      "column_name": "dose_event_id",
+      "is_nullable": "YES"
+    },
+    {
+      "data_type": "text",
+      "table_name": "dose_occurrences",
+      "column_name": "client_event_id",
+      "is_nullable": "YES"
+    },
+    {
+      "data_type": "text",
+      "table_name": "dose_events",
+      "column_name": "client_event_id",
+      "is_nullable": "YES"
+    }
+  ],
+  "indexes": [
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_events_pkey ON public.dose_events USING btree (id)",
+      "indexname": "dose_events_pkey",
+      "tablename": "dose_events"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_events_one_missed_idx ON public.dose_events USING btree (dose_occurrence_id) WHERE (type = 'missed'::dose_event_type)",
+      "indexname": "dose_events_one_missed_idx",
+      "tablename": "dose_events"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_events_client_event_profile_idx ON public.dose_events USING btree (patient_profile_id, client_event_id) WHERE (client_event_id IS NOT NULL)",
+      "indexname": "dose_events_client_event_profile_idx",
+      "tablename": "dose_events"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_occurrences_pkey ON public.dose_occurrences USING btree (id)",
+      "indexname": "dose_occurrences_pkey",
+      "tablename": "dose_occurrences"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_occurrences_unique_idx ON public.dose_occurrences USING btree (schedule_id, scheduled_at)",
+      "indexname": "dose_occurrences_unique_idx",
+      "tablename": "dose_occurrences"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX dose_occurrences_client_event_idx ON public.dose_occurrences USING btree (patient_profile_id, client_event_id) WHERE (client_event_id IS NOT NULL)",
+      "indexname": "dose_occurrences_client_event_idx",
+      "tablename": "dose_occurrences"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX stock_transactions_pkey ON public.stock_transactions USING btree (id)",
+      "indexname": "stock_transactions_pkey",
+      "tablename": "stock_transactions"
+    },
+    {
+      "indexdef": "CREATE INDEX stock_tx_med_idx ON public.stock_transactions USING btree (medication_id, created_at DESC)",
+      "indexname": "stock_tx_med_idx",
+      "tablename": "stock_transactions"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX stock_tx_dose_event_idx ON public.stock_transactions USING btree (dose_event_id) WHERE (dose_event_id IS NOT NULL)",
+      "indexname": "stock_tx_dose_event_idx",
+      "tablename": "stock_transactions"
+    },
+    {
+      "indexdef": "CREATE INDEX stock_tx_dose_occurrence_idx ON public.stock_transactions USING btree (dose_occurrence_id, created_at DESC) WHERE (dose_occurrence_id IS NOT NULL)",
+      "indexname": "stock_tx_dose_occurrence_idx",
+      "tablename": "stock_transactions"
+    }
+  ],
+  "database_name": "postgres",
+  "last_migration": "0077_push_receipt_claim_recovery.sql",
+  "last_applied_at": "2026-09-16T03:13:52.383129+00:00",
+  "migration_count": 77,
+  "postgres_version": "17.6",
+  "recent_migrations": [
+    {
+      "checksum": "3cb3f77144a3e417fd51e1516a6fec31",
+      "filename": "0075_push_delivery_receipts.sql"
+    },
+    {
+      "checksum": "caec6daab1339709f6215195ef2599dc",
+      "filename": "0076_push_endpoint_exact_session.sql"
+    },
+    {
+      "checksum": "8724062f1d23326404a552e24ce29abd",
+      "filename": "0077_push_receipt_claim_recovery.sql"
+    }
+  ],
+  "workerDirectObjectRead": false
+}

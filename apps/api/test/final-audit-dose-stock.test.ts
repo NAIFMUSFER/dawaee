@@ -29,6 +29,24 @@ describe('final audit: real PostgreSQL medication/dose transactions', () => {
     expect(conflict.statusCode, conflict.body).toBe(409);
     const list = await get(`/v1/medications?profileId=${user.profileId}`);
     expect(list.json().medications.filter((m: { name: string }) => m.name === body.name)).toHaveLength(1);
+    // SQL CHECK must reject one-null identities; NULL must not pass by UNKNOWN.
+    await expect(withUser(user.userId, (tx) => tx.query(
+      'UPDATE medications SET create_request_hash = NULL WHERE id = $1', [retry.json().medication.id],
+    ))).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('round-trips twelve explicit daily times and rejects duplicate or excess entries', async () => {
+    const body = medBody('Audit twelve appointments', false);
+    body.schedule.rule.times = Array.from({ length: 12 }, (_, i) => `${String(i * 2).padStart(2, '0')}:17`);
+    const created = await post('/v1/medications', body);
+    expect(created.statusCode, created.body).toBe(200);
+    const medication = (await get(`/v1/medications/${created.json().medication.id}`)).json();
+    expect(medication.schedules[0].rule.times).toEqual(body.schedule.rule.times);
+    expect(medication.schedules[0].doseQuantity).toBe(6);
+    for (const times of [[...body.schedule.rule.times, '23:59'], ['08:00', '08:00']]) {
+      const invalid = await post('/v1/medications', { ...body, name: 'Audit invalid appointments', schedule: { ...body.schedule, rule: { ...body.schedule.rule, times } } });
+      expect(invalid.statusCode, invalid.body).toBe(400);
+    }
   });
 
 

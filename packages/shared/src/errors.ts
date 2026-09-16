@@ -34,6 +34,11 @@ export const ERROR_CODES = {
   STOCK_TRACKING_DISABLED: 'stock_tracking_disabled',
   CONSENT_REQUIRED: 'consent_required',
   UPLOAD_REJECTED: 'upload_rejected',
+  UPLOAD_FAILED: 'upload_failed',
+  OCR_BILLING: 'ocr_billing',
+  OCR_CONFIGURATION: 'ocr_configuration',
+  OCR_TIMEOUT: 'ocr_timeout',
+  OCR_NO_TEXT: 'ocr_no_text',
   PROVIDER_UNAVAILABLE: 'provider_unavailable',
   INTERNAL: 'internal_error',
 } as const;

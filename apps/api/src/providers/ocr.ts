@@ -1,3 +1,4 @@
+import { AppError, ERROR_CODES } from '@dawaee/shared';
 import type {
   MedicationOcrResult, OcrProvider, PrescriptionOcrLine, PrescriptionOcrResult,
 } from './types.js';
@@ -146,7 +147,9 @@ export class GoogleVisionOcrProvider implements OcrProvider {
   }
 
   private async detect(image: Buffer): Promise<string> {
-    const res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+    let res: Response;
+    try {
+      res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -164,13 +167,29 @@ export class GoogleVisionOcrProvider implements OcrProvider {
       }),
       signal: AbortSignal.timeout(25_000),
     });
-    if (!res.ok) throw new Error(`Vision API returned ${res.status}`);
-    const json = (await res.json()) as {
-      responses?: Array<{ fullTextAnnotation?: { text?: string }; error?: { message?: string } }>;
+    } catch (err) {
+      const timedOut = err instanceof Error && ['AbortError', 'TimeoutError'].includes(err.name);
+      throw new AppError(timedOut ? ERROR_CODES.OCR_TIMEOUT : ERROR_CODES.PROVIDER_UNAVAILABLE,
+        timedOut ? 504 : 503, timedOut ? 'Image analysis timed out' : 'Image analysis service is unavailable');
+    }
+    type VisionError = { code?: number; status?: string; details?: Array<{ reason?: string }> };
+    const json = await res.json().catch(() => null) as null | {
+      error?: VisionError;
+      responses?: Array<{ fullTextAnnotation?: { text?: string }; error?: VisionError }>;
     };
-    const first = json.responses?.[0];
-    if (first?.error?.message) throw new Error(first.error.message);
-    return first?.fullTextAnnotation?.text ?? '';
+    const first = json?.responses?.[0];
+    const failure = json?.error ?? first?.error;
+    if (!res.ok || failure || !json) {
+      // Provider messages may contain project IDs, keys or request text. Use
+      // structured categories only; neither API responses nor logs echo them.
+      const billing = failure?.details?.some((d) => d.reason === 'BILLING_DISABLED');
+      const configuration = res.status === 401 || res.status === 403 || failure?.code === 7 || failure?.code === 16;
+      throw new AppError(billing ? ERROR_CODES.OCR_BILLING : configuration ? ERROR_CODES.OCR_CONFIGURATION : ERROR_CODES.PROVIDER_UNAVAILABLE,
+        503, billing ? 'Image analysis billing is unavailable' : configuration ? 'Image analysis service needs configuration' : 'Image analysis service is unavailable');
+    }
+    const text = first?.fullTextAnnotation?.text?.trim();
+    if (!text) throw new AppError(ERROR_CODES.OCR_NO_TEXT, 422, 'No readable text was found in the image');
+    return text;
   }
 
   async readMedicationLabel(image: Buffer): Promise<MedicationOcrResult> {

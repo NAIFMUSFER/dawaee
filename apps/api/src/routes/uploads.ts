@@ -488,7 +488,8 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
         provenanceLabelKey: 'medication.detectedByAi',
       };
     } catch (err) {
-      req.log.error({ provider: providers.ocr.name, err: (err as Error).message }, 'OCR analysis failed');
+      req.log.error({ provider: providers.ocr.name, code: err instanceof AppError ? err.code : 'provider_unavailable' }, 'OCR analysis failed');
+      if (err instanceof AppError && ([ERROR_CODES.OCR_BILLING, ERROR_CODES.OCR_CONFIGURATION, ERROR_CODES.OCR_TIMEOUT, ERROR_CODES.OCR_NO_TEXT] as string[]).includes(err.code)) throw err;
       throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Image analysis is temporarily unavailable. You can enter the details manually.');
     }
   });
