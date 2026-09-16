@@ -39,3 +39,11 @@ Do not reverse 0085 or rewrite 0078 ledger entries. It is a compatible function 
 - **FAIL:** API startup's independent `schema-contract.ts` still rejected historical 0078 at 21:03:06 UTC. This exposed a third consumer of the history contract, beyond migration and bootstrap verification. Runtime supervision stopped the worker when the API exited.
 - Follow-up uses the shared exact-history predicate in the API gate ONLY when corrective 0085 is itself present with the expected checksum. Unknown checksums, missing correction or modified correction still fail. The PostgreSQL upgrade regression now invokes the actual startup assertion before and after migration; a local contract test checks missing/corrupt 0085.
 - No additional database migration is needed by the follow-up; the existing preview schema is already at 0085. Preview-only startup verification may proceed while the updated CI regression completes. Production remains untouched and readiness is not claimed while latest CI is pending.
+
+## Live API acceptance exposed numeric-email login failure
+
+- **PASS:** `c5152f07311e1bff516511bb44bcda74b96519a0` became live at 21:07:59 UTC; `/version` matched exactly and `/health/ready` returned ready. Browser `/language` displayed تداوي / TADAWEE in green and white.
+- **FAIL:** synthetic email registration and profile creation succeeded, but logging in with the same generated password returned HTTP 401. No medication acceptance result was claimed from this failed attempt.
+- Root cause: `normalizePhone` stripped all nondigits, including email letters and `@`, then treated eight or more remaining digits as a phone. Password login therefore searched for a different identity. The generated audit email contained a numeric UUID.
+- Follow-up rejects non-phone characters before formatting normalization can reinterpret them. Supported local/international formatted phones remain accepted. A PostgreSQL regression registers separate phone and numeric-email accounts and proves login reaches the email account's own profiles.
+- Synthetic accounts only; no provider messages, patient data or production changes. Latest regression and remote retest results belong in the PR status, not inferred from the earlier CI run.
