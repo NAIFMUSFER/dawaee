@@ -8,6 +8,7 @@ import { hashNewPassword, passwordLoginEnabled } from '../auth/password-service.
 import { enforceAuthBudget } from '../auth/rate-budget.js';
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable, verifyFirebasePhoneIdToken } from '../auth/firebase-phone-proof.js';
 import { recordAudit } from '../services/audit-service.js';
+import { deriveRecoveryRequestKey } from '../lib/password.js';
 
 const resetSchema = z.object({ idToken: z.string().min(100).max(16_384), newPassword: z.string().min(1).max(200) }).strict();
 
@@ -29,9 +30,10 @@ export function registerPasswordRecoveryRoutes(app: FastifyInstance): void {
     await enforceAuthBudget({ identifier: { scope: 'recovery:phone', value: proof.phoneE164 } });
     const passwordHash = await hashNewPassword(body.newPassword, locale, proof.phoneE164);
     const proofKey = createHash('sha256').update(JSON.stringify([proof.phoneE164, proof.firebaseUid, proof.authenticatedAt])).digest('hex');
-    // A keyed digest, not an offline dictionary oracle for the new password.
+    // Apply password-strength derivation before the keyed retry fingerprint.
+    const requestKey = await deriveRecoveryRequestKey(body.newPassword, proofKey);
     const requestHash = createHmac('sha256', loadConfig().JWT_SECRET)
-      .update(JSON.stringify(['password-recovery:v1', proofKey, body.newPassword])).digest('hex');
+      .update('password-recovery:v1').update(requestKey).digest('hex');
     const updated = await withTransaction(async (tx) => {
       const { rows } = await tx.query<{ user_id: string | null }>(
         'SELECT app.recover_password($1,$2,$3,$4,$5) AS user_id',
