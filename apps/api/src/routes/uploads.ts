@@ -58,6 +58,131 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
     });
   });
 
+  app.post('/v1/uploads/finalize', async (req) => {
+    const raw = req.body as { objectKey?: unknown } | null;
+    const objectKey = typeof raw?.objectKey === 'string' ? raw.objectKey : '';
+    if (!objectKey || objectKey.length > 512) {
+      throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'objectKey is required');
+    }
+    const { userId } = currentUser(req);
+
+    const object = await withUserReadOnly(userId, async (tx) => {
+      const { rows } = await tx.query<{
+        object_key: string;
+        owner_user_id: string | null;
+        content_type: string;
+        byte_size: number;
+        uploaded_at: Date | null;
+        scan_status: string;
+      }>(
+        `SELECT object_key, owner_user_id, content_type, byte_size, uploaded_at, scan_status
+           FROM stored_objects WHERE object_key = $1`,
+        [objectKey],
+      );
+      const row = rows[0];
+      if (!row || row.owner_user_id !== userId || row.scan_status === 'rejected') {
+        throw AppError.notFound('Object not found');
+      }
+      return row;
+    });
+
+    // A successful replay is harmless and must not re-read provider bytes after
+    // the lease has already been finalized.
+    if (object.uploaded_at) return { ok: true, objectKey };
+
+    let buffer: Buffer;
+    try {
+      buffer = await providers.storage.getObject(objectKey, object.byte_size);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('exceeds configured upload limit') || message.includes('size does not match declared upload size')) {
+        await withUser(userId, async (tx) => {
+          await tx.query(
+            `UPDATE stored_objects
+                SET scan_status = 'rejected', reject_reason = 'actual_size_mismatch'
+              WHERE object_key = $1 AND owner_user_id = $2 AND uploaded_at IS NULL`,
+            [objectKey, userId],
+          );
+        });
+        try {
+          await providers.storage.deleteObject(objectKey);
+          await withUser(userId, async (tx) => {
+            await tx.query(
+              `DELETE FROM stored_objects
+                WHERE object_key = $1 AND owner_user_id = $2 AND uploaded_at IS NULL AND scan_status = 'rejected'`,
+              [objectKey, userId],
+            );
+          });
+        } catch {
+          // The logical rejection is already durable. Do not turn a cleanup
+          // failure into a path that can read or OCR the object.
+        }
+        throw AppError.badRequest(ERROR_CODES.UPLOAD_REJECTED, 'Uploaded bytes do not match the approved upload lease');
+      }
+      throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'The uploaded image could not be verified');
+    }
+
+    const sniffed = sniffImageType(buffer);
+    const invalid = buffer.length !== object.byte_size || sniffed !== object.content_type;
+    if (invalid) {
+      await withUser(userId, async (tx) => {
+        await tx.query(
+          `UPDATE stored_objects
+              SET scan_status = 'rejected',
+                  reject_reason = CASE
+                    WHEN byte_size <> $3 THEN 'actual_size_mismatch'
+                    ELSE 'content_type_mismatch'
+                  END
+            WHERE object_key = $1 AND owner_user_id = $2 AND uploaded_at IS NULL`,
+          [objectKey, userId, buffer.length],
+        );
+      });
+      try {
+        await providers.storage.deleteObject(objectKey);
+        await withUser(userId, async (tx) => {
+          await tx.query(
+            `DELETE FROM stored_objects
+              WHERE object_key = $1 AND owner_user_id = $2 AND uploaded_at IS NULL AND scan_status = 'rejected'`,
+            [objectKey, userId],
+          );
+        });
+      } catch {
+        // See above: rejected metadata is the fail-closed state.
+      }
+      throw AppError.badRequest(ERROR_CODES.UPLOAD_REJECTED, 'Uploaded bytes do not match the approved upload lease');
+    }
+
+    const finalized = await withUser(userId, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE stored_objects
+            SET uploaded_at = now(), scan_status = 'clean', reject_reason = NULL
+          WHERE object_key = $1 AND owner_user_id = $2 AND uploaded_at IS NULL AND scan_status <> 'rejected'`,
+        [objectKey, userId],
+      );
+      return (rowCount ?? 0) === 1;
+    });
+    if (!finalized) {
+      // A concurrent retry can reach the provider at the same time as this
+      // request. Exactly one compare-and-set UPDATE wins; the loser must not
+      // report a false 404 when the same uploader's twin request has already
+      // completed the very same lease. Re-read only the owner-scoped terminal
+      // state. Missing, rejected, cross-account, and still-pending rows remain
+      // failures, and no database lock is held across the provider read.
+      const alreadyFinalized = await withUserReadOnly(userId, async (tx) => {
+        const { rows } = await tx.query<{ uploaded_at: Date | null; scan_status: string }>(
+          `SELECT uploaded_at, scan_status
+             FROM stored_objects
+            WHERE object_key = $1 AND owner_user_id = $2`,
+          [objectKey, userId],
+        );
+        return Boolean(rows[0]?.uploaded_at && rows[0]?.scan_status === 'clean');
+      });
+      if (!alreadyFinalized) throw AppError.notFound('Object not found');
+    }
+    return { ok: true, objectKey };
+  });
+
+
   /**
    * Short-lived read URL. Images are never served from a public bucket.
    *
@@ -201,7 +326,7 @@ export function registerUploadRoutes(app: FastifyInstance, providers: Providers)
         );
       }
       const { rows } = await tx.query<{ object_key: string; content_type: string }>(
-        'SELECT object_key, content_type FROM stored_objects WHERE object_key = $1',
+        "SELECT object_key, content_type FROM stored_objects WHERE object_key = $1 AND scan_status <> 'rejected'",
         [body.imageKey],
       );
       if (!rows[0]) throw AppError.notFound('Image not found');

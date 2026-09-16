@@ -156,6 +156,7 @@ const EXPOSURE: Record<string, Exposure> = {
 
   'GET /v1/doses': 'authenticated',
   'POST /v1/doses/sync': 'authenticated',
+  'POST /v1/dose/action': 'authenticated',
   'GET /v1/doses/:doseId': 'authenticated',
   'POST /v1/doses/:doseId/taken': 'authenticated',
   'POST /v1/doses/:doseId/snooze': 'authenticated',
@@ -216,6 +217,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/emergency/scan/:token': 'capability',
 
   'POST /v1/uploads/request': 'authenticated',
+  'POST /v1/uploads/finalize': 'authenticated',
   'GET /v1/uploads/url': 'authenticated',
   'POST /v1/ocr/analyze': 'authenticated',
   // Development storage sink only; `STORAGE_PROVIDER=local` is refused in

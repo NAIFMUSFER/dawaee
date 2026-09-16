@@ -211,13 +211,15 @@ async function applyStockForDose(
   await tx.query('UPDATE medication_stock SET remaining_quantity = $2 WHERE medication_id = $1', [
     dose.medication_id, applied.balanceAfter,
   ]);
-  // The unique index on (dose_occurrence_id, reason) is the second line of
-  // defence against a replayed confirmation decrementing twice.
+  // Schema versions differ in their ledger uniqueness indexes. Let Postgres
+  // use the constraints that actually exist instead of requiring the legacy
+  // partial index. The occurrence lock/status and client event guard above
+  // still prevent a replay from changing stock twice.
   await tx.query(
     `INSERT INTO stock_transactions
        (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, balance_after, actor_user_id)
      VALUES ($1,$2,$3,'dose_taken',$4,$5,$6)
-     ON CONFLICT (dose_occurrence_id, reason) WHERE dose_occurrence_id IS NOT NULL DO NOTHING`,
+     ON CONFLICT DO NOTHING`,
     [dose.medication_id, dose.patient_profile_id, applied.delta, dose.id, applied.balanceAfter, userId],
   );
 
@@ -348,7 +350,7 @@ export async function undoDose(
       `INSERT INTO stock_transactions
          (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, balance_after, actor_user_id)
        VALUES ($1,$2,$3,'dose_undone',$4,$5,$6)
-       ON CONFLICT (dose_occurrence_id, reason) WHERE dose_occurrence_id IS NOT NULL DO NOTHING`,
+       ON CONFLICT DO NOTHING`,
       [dose.medication_id, dose.patient_profile_id, delta, dose.id,
        stockRows[0]?.remaining_quantity ?? null, input.userId],
     );

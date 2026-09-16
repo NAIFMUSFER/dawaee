@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  push: { branches: [main] }
+  push: { branches: [main, hotfix/mobile-api-routing-20260916] }
   pull_request: { branches: [main] }
 
 # Read-only by default, at the top level, so a job that needs more has to say

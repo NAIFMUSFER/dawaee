@@ -135,6 +135,7 @@ export class S3StorageProvider implements StorageProvider {
   private readonly region: string;
   private readonly accessKeyId: string;
   private readonly secretAccessKey: string;
+  private readonly maxBytes: number;
 
   constructor(cfg: Config) {
     if (!cfg.STORAGE_BUCKET || !cfg.STORAGE_ACCESS_KEY_ID || !cfg.STORAGE_SECRET_ACCESS_KEY) {
@@ -145,10 +146,23 @@ export class S3StorageProvider implements StorageProvider {
     this.region = cfg.STORAGE_REGION;
     this.accessKeyId = cfg.STORAGE_ACCESS_KEY_ID;
     this.secretAccessKey = cfg.STORAGE_SECRET_ACCESS_KEY;
+    this.maxBytes = cfg.UPLOAD_MAX_BYTES;
     this.endpoint = (cfg.STORAGE_ENDPOINT ?? `https://s3.${cfg.STORAGE_REGION}.amazonaws.com`).replace(/\/$/, '');
   }
 
-  private presign(method: 'PUT' | 'GET', objectKey: string, ttlSeconds: number, extraQuery: Record<string, string> = {}): string {
+  /**
+   * The HTTP method and every declared signed header are part of SigV4's
+   * canonical request. A URL signed for PUT cannot authorize DELETE, and an
+   * upload ticket signed for image/png cannot be reused with another
+   * Content-Type while keeping the same signature.
+   */
+  private presign(
+    method: 'PUT' | 'GET' | 'DELETE',
+    objectKey: string,
+    ttlSeconds: number,
+    extraQuery: Record<string, string> = {},
+    extraSignedHeaders: Record<string, string> = {},
+  ): string {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
     const dateStamp = amzDate.slice(0, 8);
@@ -156,13 +170,25 @@ export class S3StorageProvider implements StorageProvider {
     const host = new URL(this.endpoint).host;
     const canonicalUri = `/${this.bucket}/${objectKey.split('/').map(encodeURIComponent).join('/')}`;
 
+    const headerValues: Record<string, string> = { host };
+    for (const [name, value] of Object.entries(extraSignedHeaders)) {
+      headerValues[name.toLowerCase()] = value.trim().replace(/\s+/g, ' ');
+    }
+    const signedHeaderNames = Object.keys(headerValues).sort();
+    const signedHeaders = signedHeaderNames.join(';');
+    const canonicalHeaders = signedHeaderNames
+      .map((name) => `${name}:${headerValues[name]!}\n`)
+      .join('');
+
     const query: Record<string, string> = {
       'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
       'X-Amz-Credential': `${this.accessKeyId}/${credentialScope}`,
       'X-Amz-Date': amzDate,
       'X-Amz-Expires': String(ttlSeconds),
-      'X-Amz-SignedHeaders': 'host',
       ...extraQuery,
+      // Do not let a caller-supplied query override the actual canonical
+      // header set used below.
+      'X-Amz-SignedHeaders': signedHeaders,
     };
     const canonicalQuery = Object.keys(query)
       .sort()
@@ -170,7 +196,7 @@ export class S3StorageProvider implements StorageProvider {
       .join('&');
 
     const canonicalRequest = [
-      method, canonicalUri, canonicalQuery, `host:${host}\n`, 'host', 'UNSIGNED-PAYLOAD',
+      method, canonicalUri, canonicalQuery, canonicalHeaders, signedHeaders, 'UNSIGNED-PAYLOAD',
     ].join('\n');
 
     const stringToSign = [
@@ -187,11 +213,15 @@ export class S3StorageProvider implements StorageProvider {
 
   async createUploadTicket(input: { objectKey: string; contentType: string }): Promise<UploadTicket> {
     const ttl = 900;
+    const headers = { 'content-type': input.contentType, 'if-none-match': '*' };
     return {
       objectKey: input.objectKey,
-      uploadUrl: this.presign('PUT', input.objectKey, ttl),
+      // AWS S3 and Cloudflare R2 both support conditional PutObject. Signing
+      // If-None-Match: * makes the capability create-only at the object store
+      // itself, so it cannot overwrite the verified bytes after /finalize.
+      uploadUrl: this.presign('PUT', input.objectKey, ttl, {}, headers),
       method: 'PUT',
-      headers: { 'content-type': input.contentType },
+      headers,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
     };
   }
@@ -200,14 +230,66 @@ export class S3StorageProvider implements StorageProvider {
     return this.presign('GET', objectKey, ttlSeconds);
   }
 
-  async getObject(objectKey: string): Promise<Buffer> {
+  /**
+   * Never buffer an unbounded or lease-mismatched remote object.
+   *
+   * The upload ticket is a direct S3/R2 PUT. The API validates the size the
+   * caller DECLARES before issuing it, but the bucket receives the actual bytes
+   * without passing through Fastify. Content-Length rejects a known oversize or
+   * mismatch before reading. The streaming count is authoritative when metadata
+   * is missing or inaccurate, and it also stops reading as soon as either the
+   * configured cap or the recorded lease would be exceeded.
+   */
+  async getObject(objectKey: string, expectedBytes?: number): Promise<Buffer> {
     const res = await fetch(this.presign('GET', objectKey, 120), { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error(`object fetch failed with ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+
+    const lengthHeader = res.headers.get('content-length');
+    const length = lengthHeader === null ? Number.NaN : Number(lengthHeader);
+    if (Number.isFinite(length) && length > this.maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('object exceeds configured upload limit');
+    }
+    if (expectedBytes !== undefined && Number.isFinite(length) && length !== expectedBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error('object size does not match declared upload size');
+    }
+    if (!res.body) {
+      if (expectedBytes !== undefined && expectedBytes !== 0) {
+        throw new Error('object size does not match declared upload size');
+      }
+      return Buffer.alloc(0);
+    }
+
+    const reader = res.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > this.maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error('object exceeds configured upload limit');
+        }
+        if (expectedBytes !== undefined && total > expectedBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error('object size does not match declared upload size');
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    if (expectedBytes !== undefined && total !== expectedBytes) {
+      throw new Error('object size does not match declared upload size');
+    }
+    return Buffer.concat(chunks, total);
   }
 
   async deleteObject(objectKey: string): Promise<void> {
-    const res = await fetch(this.presign('PUT', objectKey, 120).replace('X-Amz-Expires', 'X-Amz-Expires'), {
+    const res = await fetch(this.presign('DELETE', objectKey, 120), {
       method: 'DELETE',
       signal: AbortSignal.timeout(15_000),
     });
