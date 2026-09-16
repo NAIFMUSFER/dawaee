@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDatabase } from './harness.js';
+import { assertSchemaContract, checkSchemaContract } from '../src/lib/schema-contract.js';
 
 const root = resolve(import.meta.dirname, '../../..');
 // Disposable integration database only; never accepts a deployment URL.
@@ -27,9 +28,12 @@ describe('upgrade from shipped 0078 on real PostgreSQL', () => {
     await pool.query('UPDATE schema_migrations SET checksum=$1 WHERE filename=$2', [legacy, file]);
     await pool.query("DELETE FROM schema_migrations WHERE filename='0085_push_receipt_portable_hash.sql'");
     const before = (await pool.query('SELECT * FROM schema_migrations WHERE filename=$1', [file])).rows;
+    // API startup/readiness must reject history until the correction commits.
+    expect((await checkSchemaContract(pool)).ok).toBe(false);
     const run = migrate();
     expect(run.status, run.stderr).toBe(0);
     expect((await pool.query('SELECT * FROM schema_migrations WHERE filename=$1', [file])).rows).toEqual(before);
+    expect((await assertSchemaContract(pool, { attempts: 1 })).ok).toBe(true);
     const definition = (await pool.query("SELECT pg_get_functiondef('app.deactivate_push_endpoint(uuid,uuid,text)'::regprocedure) AS body")).rows[0].body;
     expect(definition).toContain('pg_catalog.sha256');
     expect(definition).toContain('p_token_fingerprint');
@@ -50,6 +54,7 @@ describe('upgrade from shipped 0078 on real PostgreSQL', () => {
       expect(run.status).not.toBe(0);
       expect(run.stderr).toContain('was already applied but its contents have changed');
       expect((await pool.query('SELECT checksum FROM schema_migrations WHERE filename=$1', [file])).rows[0].checksum).toBe(unknown);
+      expect((await checkSchemaContract(pool)).ok).toBe(false);
     } finally {
       await pool.query('UPDATE schema_migrations SET checksum=$1 WHERE filename=$2', [legacy, file]);
     }

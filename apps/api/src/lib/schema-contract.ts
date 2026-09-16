@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { isKnownMigrationHistory } from '../../../../scripts/migration-history.mjs';
 
 /**
  * The schema this build requires, and the refusal to run without it.
@@ -157,10 +158,14 @@ export async function checkSchemaContract(db: Queryable): Promise<SchemaCheck> {
   const missing: string[] = [];
   const mismatched: string[] = [];
   const required = requiredMigrations();
+  const correction = required.find(m => m.filename === '0085_push_receipt_portable_hash.sql');
+  const historicalReady = correction !== undefined && applied.get(correction.filename) === correction.checksum;
   for (const m of required) {
     const got = applied.get(m.filename);
     if (got === undefined) missing.push(m.filename);
-    else if (got !== m.checksum) mismatched.push(m.filename);
+    else if (got !== m.checksum && !(historicalReady && isKnownMigrationHistory(m.filename, got, m.checksum))) {
+      mismatched.push(m.filename);
+    }
   }
 
   return {
