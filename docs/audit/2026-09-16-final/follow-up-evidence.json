@@ -96,6 +96,20 @@
   "limits": {
     "actualImageProviderRun": false,
     "physicalDevice": false,
-    "localRepairRerun": "BLOCKED: exec-server transport disconnected; CI results on follow-up source recorded in PR30"
+    "localRepairRerun": "PASS: exec-server recovered; 50 tests / 5 files passed locally on 9b61ce0924aab8870ee723f81a352b0c4a79d4a3; parser/component evidence only"
+  },
+  "ciClockRegression": {
+    "source": "9b61ce0924aab8870ee723f81a352b0c4a79d4a3",
+    "runId": 35127555963,
+    "postgresMajors": [
+      16,
+      17
+    ],
+    "passedPerMajor": 2438,
+    "failedPerMajor": 3,
+    "failedFile": "apps/api/test/final-audit-dose-stock.test.ts",
+    "cause": "Fixture created same-day 08:00-14:00 appointments after 20:00 Asia/Riyadh, outside materializer six-hour lookback; per-case clock was not reset.",
+    "repair": "Set API and worker clock to 07:00 before each case. Keep all ledger assertions. Add explicit evening creation, next-day schedule and late-confirmation replay case.",
+    "repairedResult": "NOT VERIFIED at commit creation; exact-head CI results recorded in PR30."
   }
 }

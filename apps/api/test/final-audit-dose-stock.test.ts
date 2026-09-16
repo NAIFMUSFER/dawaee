@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { withUser } from '../src/lib/db.js';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
@@ -14,6 +14,10 @@ const medBody = (name: string, tracked = true) => ({
   ...(tracked ? { stock: { trackingEnabled: true, initialQuantity: 60, unit: 'tablet' } } : {}),
 });
 beforeAll(async () => { resetDatabase(); h = await startHarness(); user = await signIn(h, '+966500098601'); });
+// Creation materializes only six hours into the past. Start each scenario
+// before its first appointment; inheriting the runner's evening clock (or a
+// previous case's action time) otherwise tests missing fixtures, not the ledger.
+beforeEach(() => { h.setNow(new Date(`${date}T07:00:00+03:00`)); });
 afterAll(async () => { await h?.close(); });
 
 describe('final audit: real PostgreSQL medication/dose transactions', () => {
@@ -56,6 +60,7 @@ describe('final audit: real PostgreSQL medication/dose transactions', () => {
     const medicationId = created.json().medication.id;
     const doses = (await get(`/v1/doses?profileId=${user.profileId}&from=${date}&to=${date}`)).json().doses;
     const dose = doses.find((d: { medicationId: string }) => d.medicationId === medicationId);
+    expect(dose, 'morning creation must materialize the scheduled dose').toBeDefined();
     h.setNow(new Date(dose.scheduledAt));
     expect((await action(dose.id, 'taken', 'toggle-take-1')).statusCode).toBe(200);
     expect((await action(dose.id, 'undo', 'toggle-undo-1')).statusCode).toBe(200);
@@ -69,6 +74,40 @@ describe('final audit: real PostgreSQL medication/dose transactions', () => {
     const stock = (await get(`/v1/medications/${medicationId}/stock`)).json();
     expect(stock.stock.remainingQuantity).toBe(60);
     expect(stock.transactions.filter((t: { reason: string }) => t.reason === 'dose_undone')).toHaveLength(1);
+  });
+
+  it('creates the next day after an evening addition and persists a late confirmation once', async () => {
+    h.setNow(new Date(`${date}T21:00:00+03:00`));
+    const created = await post('/v1/medications', medBody('Audit evening addition'));
+    expect(created.statusCode, created.body).toBe(200);
+    const medicationId = created.json().medication.id;
+    const tomorrow = new Date(new Date(`${date}T00:00:00Z`).getTime() + 86_400_000).toISOString().slice(0, 10);
+    const list = async (day: string) => {
+      const res = await get(`/v1/doses?profileId=${user.profileId}&from=${day}&to=${day}`);
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json().doses.filter((d: { medicationId: string }) => d.medicationId === medicationId)
+        .sort((a: { scheduledAt: string }, b: { scheduledAt: string }) => a.scheduledAt.localeCompare(b.scheduledAt));
+    };
+    // Do not invent old reminders when all of today's times predate the
+    // recovery window. Tomorrow must still contain all four explicit times.
+    expect(await list(date)).toHaveLength(0);
+    const doses = await list(tomorrow);
+    expect(doses).toHaveLength(4);
+    expect(doses.map((d: { scheduledAt: string }) => d.scheduledAt)).toEqual(
+      ['08:00', '10:00', '12:00', '14:00'].map((time) => new Date(`${tomorrow}T${time}:00+03:00`).toISOString()),
+    );
+    const dose = doses[0];
+    h.setNow(new Date(new Date(dose.scheduledAt).getTime() + 45 * 60_000));
+    const taken = await action(dose.id, 'taken', 'audit-evening-late');
+    expect(taken.statusCode, taken.body).toBe(200);
+    expect(taken.json().minutesLate).toBe(45);
+    const retry = await action(dose.id, 'taken', 'audit-evening-late');
+    expect(retry.statusCode, retry.body).toBe(200);
+    expect(retry.json().idempotentReplay).toBe(true);
+    expect((await list(tomorrow)).find((d: { id: string }) => d.id === dose.id).status).toBe('taken_late');
+    const stock = (await get(`/v1/medications/${medicationId}/stock`)).json();
+    expect(stock.stock.remainingQuantity).toBe(54);
+    expect(stock.transactions.filter((t: { reason: string }) => t.reason === 'dose_taken')).toHaveLength(1);
   });
 
   for (const tracked of [true, false]) it(`persists confirmation/readback/undo/retake and concurrent replay (stock=${tracked})`, async () => {
