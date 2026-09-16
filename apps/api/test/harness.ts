@@ -156,14 +156,15 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
     method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
 
-  const userId = me.json<{ user: { id: string } }>().user.id;
+  const account = me.json<{ user: { id: string; phoneE164: string } }>().user;
+  const userId = account.id;
   // Ordinary clinical scenarios use an explicitly verified fixture. The
   // external SMS provider is not part of this fixture; its API boundary has
   // its own tests. Registration alone remains unverified in production.
   if (options.verifiedPhone !== false) {
     await withUser(userId, async (tx) => {
       const proof = await tx.query<{ verified: boolean }>(
-        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, phone],
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, account.phoneE164],
       );
       if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
     });
