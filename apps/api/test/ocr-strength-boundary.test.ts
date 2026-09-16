@@ -7,6 +7,7 @@ describe('OCR strength must retain its full numeric and unit meaning', () => {
     '500 mg in 5 ml', '5-10 mg', '1/2 mg', '.5 mg', '-5 mg',
     '1234567 mg', '0.12345 mg', '1e3 mg', '1,250 mg', '1٬250 mg',
     '250 mg   /   ml', '250 mg\n/ 5 ml', '250 mg + 2 g',
+    '5 mg - 10', '5–10 mg', '5 mg − 10',
   ])('does not reduce %s to a different scalar strength', (label) => {
     const rawText = 'Synthetic medicine\n' + label;
     const result = parseMedicationText(rawText, 'synthetic');

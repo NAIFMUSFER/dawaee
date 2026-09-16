@@ -20,7 +20,7 @@ import type { Config } from '../config.js';
  * loop. Keep these bounds finite when extending the parser.
  */
 
-const STRENGTH_RE = /(?<![\p{L}\p{N}_.,٫٬/⁄+\-−])(\d{1,6}(?:[.,]\d{1,4})?)\s{0,8}(mg|mcg|µg|μg|g|ml|iu|%)(?![\p{L}\p{N}_])/iu;
+const STRENGTH_RE = /(?<![\p{L}\p{N}\p{Pd}_.,٫٬/⁄+−])(\d{1,6}(?:[.,]\d{1,4})?)\s{0,8}(mg|mcg|µg|μg|g|ml|iu|%)(?![\p{L}\p{N}_])/iu;
 
 const normalizeOcrNumbers = (text: string) => normalizeDigits(text).replace(/٫/g, '.');
 
@@ -37,8 +37,9 @@ function scalarStrength(text: string): { value: number; unit: string; raw: strin
     if (strength) return null;
     const before = normalized.slice(0, match.index).trimEnd();
     const after = normalized.slice(match.index! + match[0].length).trimStart();
-    if (/[+\-/⁄−.,٫٬]$/.test(before) || /(?:\bper|لكل)$/iu.test(before)
-      || /^(?:[/⁄:+−-]|per\b|لكل)/iu.test(after)
+    const continuesRange = /^[\p{Pd}−]/u.test(after) && /^[\d.]/.test(after.slice(1).trimStart());
+    if (/[+/⁄−.,٫٬\p{Pd}]$/u.test(before) || /(?:\bper|لكل)$/iu.test(before)
+      || /^(?:[/⁄:+]|per\b|لكل)/iu.test(after) || continuesRange
       || /^[1-9]\d{0,2},\d{3}$/.test(match[1]!)) return null;
     const value = parseMedicationNumber(match[1]!);
     if (!Number.isFinite(value) || value <= 0) return null;
