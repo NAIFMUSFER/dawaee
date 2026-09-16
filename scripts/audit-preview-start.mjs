@@ -42,7 +42,7 @@ export function migrationFailureSummary(error, files) {
     if (match && known.has(match[1])) return `AUDIT_MIGRATION_CHECKSUM_MISMATCH file=${match[1]}`;
   }
   const output = typeof error?.stdout === 'string' ? error.stdout.split(/\r?\n/) : [];
-  const attempted = output.map(line => /^  applying (\d{4}_[a-z0-9_]+\.sql)$/.exec(line)?.[1])
+  const attempted = output.map(line => /^ {2}applying (\d{4}_[a-z0-9_]+\.sql)$/.exec(line)?.[1])
     .filter(file => known.has(file));
   const last = attempted.at(-1);
   return last ? `AUDIT_MIGRATION_EXECUTION_FAILED file=${last}` : 'AUDIT_MIGRATION_SETUP_FAILED';
