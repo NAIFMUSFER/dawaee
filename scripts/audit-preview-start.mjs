@@ -21,6 +21,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { supervisePreview } from './audit-preview-runtime.mjs';
+import { isKnownMigrationHistory } from './migration-history.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SERVICE = 'srv-daipkbuk1f9s73952trg';
@@ -168,7 +169,8 @@ export async function bootstrap(env, apply = false) {
       expected.set(file, createHash('md5').update(await readFile(resolve(ROOT, 'db/migrations', file))).digest('hex'));
     }
     const ledger = await owner.query('SELECT filename, checksum FROM public.schema_migrations');
-    if (ledger.rows.length !== expected.size || ledger.rows.some(r => expected.get(r.filename) !== r.checksum)) refuse('AUDIT_LEDGER_VERIFICATION_FAILED');
+    if (ledger.rows.length !== expected.size || ledger.rows.some(r => expected.get(r.filename) !== r.checksum
+      && !isKnownMigrationHistory(r.filename, r.checksum, expected.get(r.filename)))) refuse('AUDIT_LEDGER_VERIFICATION_FAILED');
     const runtime = {
       api: runtimeEnvironment(env, ownerUrl, appPassword),
       worker: runtimeEnvironment(env, ownerUrl, workerPassword, 'dawaee_worker'),

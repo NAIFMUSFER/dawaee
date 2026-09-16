@@ -277,6 +277,11 @@ for f in "$ROOT"/db/migrations/*.sql; do
 
   if [ -n "$prior" ]; then
     if [ "$prior" != "$sum" ]; then
+      if [ -f "$ROOT/db/migrations/0085_push_receipt_portable_hash.sql" ] &&
+          node "$ROOT/scripts/migration-history.mjs" "$base" "$prior" "$sum"; then
+        echo "  recognized shipped original $base; ledger retained; corrective migration 0085 required"
+        continue
+      fi
       echo "ERROR: $base was already applied but its contents have changed." >&2
       echo "       Migrations are immutable once shipped — add a new file instead." >&2
       exit 1
