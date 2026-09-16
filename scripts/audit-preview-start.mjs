@@ -31,6 +31,22 @@ const DB_OWNER = 'dawaee_audit_db_user';
 const runFile = promisify(execFile);
 const refuse = (code) => { throw new Error(code); };
 
+// Return only repository-owned filenames and fixed categories, never child
+// output, SQL, connection strings, environment variables or error messages.
+export function migrationFailureSummary(error, files) {
+  const known = new Set(files.filter(f => /^\d{4}_[a-z0-9_]+\.sql$/.test(f)));
+  const lines = typeof error?.stderr === 'string' ? error.stderr.split(/\r?\n/) : [];
+  for (const line of lines) {
+    const match = /^ERROR: (\d{4}_[a-z0-9_]+\.sql) was already applied but its contents have changed\.$/.exec(line);
+    if (match && known.has(match[1])) return `AUDIT_MIGRATION_CHECKSUM_MISMATCH file=${match[1]}`;
+  }
+  const output = typeof error?.stdout === 'string' ? error.stdout.split(/\r?\n/) : [];
+  const attempted = output.map(line => /^  applying (\d{4}_[a-z0-9_]+\.sql)$/.exec(line)?.[1])
+    .filter(file => known.has(file));
+  const last = attempted.at(-1);
+  return last ? `AUDIT_MIGRATION_EXECUTION_FAILED file=${last}` : 'AUDIT_MIGRATION_SETUP_FAILED';
+}
+
 export function validateTarget(env) {
   if (env.RENDER_SERVICE_ID !== SERVICE || env.RENDER_EXTERNAL_URL !== ORIGIN) refuse('AUDIT_SERVICE_MISMATCH');
   if (env.NODE_ENV !== 'test') refuse('AUDIT_TEST_ENV_REQUIRED');
@@ -141,8 +157,10 @@ export async function bootstrap(env, apply = false) {
     try {
       await runFile('bash', ['scripts/migrate.sh'], { cwd: ROOT, env: migrationEnv,
         timeout: 300000, maxBuffer: 4 * 1024 * 1024 });
-    } catch {
+    } catch (error) {
       // Do not print execFile's Error object: it retains child env/stdout/stderr.
+      const files = await readdir(resolve(ROOT, 'db/migrations'));
+      console.error(migrationFailureSummary(error, files));
       refuse('AUDIT_MIGRATION_FAILED_REVIEW_REQUIRED');
     }
     const expected = new Map();

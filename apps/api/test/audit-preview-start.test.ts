@@ -2,10 +2,25 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { migrationFailureSummary } from '../../../scripts/audit-preview-start.mjs';
 
 const script = resolve(import.meta.dirname, '../../..', 'scripts/audit-preview-start.mjs');
 
 describe('managed audit preview bootstrap safety', () => {
+  it('reports a changed applied migration without exposing child secrets', () => {
+    const file = '0078_push_receipt_token_generation.sql';
+    const error = { stderr: `postgres://secret@example/db\nERROR: ${file} was already applied but its contents have changed.\npassword=secret`, stdout: 'secret', message: 'secret' };
+    expect(migrationFailureSummary(error, [file])).toBe(`AUDIT_MIGRATION_CHECKSUM_MISMATCH file=${file}`);
+  });
+
+  it('reports only the last known attempted migration and suppresses SQL and unknown filenames', () => {
+    const file = '0084_password_recovery.sql';
+    expect(migrationFailureSummary({ stdout: `  applying ${file}\n  applying 9999_secret.sql`, stderr: 'ERROR: secret SQL' }, [file]))
+      .toBe(`AUDIT_MIGRATION_EXECUTION_FAILED file=${file}`);
+    expect(migrationFailureSummary({ stderr: 'ERROR: 9999_secret.sql was already applied but its contents have changed.' }, [file]))
+      .toBe('AUDIT_MIGRATION_SETUP_FAILED');
+    expect(migrationFailureSummary(null, [file])).toBe('AUDIT_MIGRATION_SETUP_FAILED');
+  });
   it('resolves the bootstrap inside this repository rather than its parent directory', () => {
     expect(existsSync(script)).toBe(true);
   });
