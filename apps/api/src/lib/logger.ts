@@ -59,10 +59,16 @@ const PATH_SECRETS: Array<{ pattern: RegExp; replace: string }> = [
 ];
 
 export function redactUrl(url: string): string {
+  let redacted = url;
   for (const { pattern, replace } of PATH_SECRETS) {
-    if (pattern.test(url)) return url.replace(pattern, replace);
+    if (pattern.test(redacted)) {
+      redacted = redacted.replace(pattern, replace);
+      break;
+    }
   }
-  return url;
+  // The internal resource rewrite must not put the private header's UUID back
+  // into an application request log.
+  return redacted.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '[id]');
 }
 
 // Typed as FastifyBaseLogger so passing the instance to Fastify does not
