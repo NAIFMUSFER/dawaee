@@ -104,6 +104,6 @@ export interface StorageProvider {
     byteSize: number;
   }): Promise<UploadTicket>;
   createReadUrl(objectKey: string, ttlSeconds: number): Promise<string>;
-  getObject(objectKey: string): Promise<Buffer>;
+  getObject(objectKey: string, expectedBytes?: number): Promise<Buffer>;
   deleteObject(objectKey: string): Promise<void>;
 }

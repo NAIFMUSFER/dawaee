@@ -216,6 +216,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/emergency/scan/:token': 'capability',
 
   'POST /v1/uploads/request': 'authenticated',
+  'POST /v1/uploads/finalize': 'authenticated',
   'GET /v1/uploads/url': 'authenticated',
   'POST /v1/ocr/analyze': 'authenticated',
   // Development storage sink only; `STORAGE_PROVIDER=local` is refused in
