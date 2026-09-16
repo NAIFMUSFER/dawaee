@@ -43,6 +43,7 @@ P0 خطر تضارب/فقد بيانات؛ P1 تعطّل رحلة أو إدخا�
 | OCR-01:نسب ثقة ثابتة | P1 | parser قاعدي يعطي 0.62/0.8… ولا يأخذ ثقة الحقول من Vision | source=`heuristic` ؛الواجهة الجديدة تعرض نسبة فقط مع source=`provider` وقيمة صالحة؛كل حقل قابل للتعديل | `final-audit-ocr.test.ts`:PASS ؛ثقة OCR النص ليست ثقة اسم الدواء/الوصفة. العملاء القديمة تحتاج تحديث العرض |
 | OCR-02:انتهاء مهلة مبكر ورسائل غامضة/سجل مزود خام | P1 | مهلة التطبيق 15s أقصر من Vision25s ؛ PUT بلا deadline ؛رسالة المزود تُطبع | مهلة OCR/رفع 45s ؛تمييز upload/billing/configuration/timeout/no-text ؛تصنيف structured reason دون كشف رسالة/مشروع/سر؛لا حفظ قبل المراجعة | PASS تصنيف HTTP401/403/429 وأخطاء داخل 200 و timeout/no-text ،وعزل capture/finalize ؛المزود الحقيقي وتنوع الصور NOT VERIFIED |
 | PERF-01:استعلام جداول لكل دواء | P2 | N+1 في قائمة الأدوية | تجميع loadSchedules باستعلام ANY واحد ضمن قائمة IDs المرئية و RLS نفسه | إعادة اختبارات القراءة/الصلاحيات في CI ؛زمن الاستجابة تحت حمل وذاكرة/بطارية NOT VERIFIED |
+| SEC-01: تهريب محارف التقرير | P1 | CodeQL كشف js/incomplete-sanitization في مولّد جدول الطلبات | `markdown-cell.mjs`: ترميز HTML والمحارف الفاصلة وأسوار الكود والسطر الجديد كوحدة نصية | اختبار مدخل يحتوي pipe/backslash/fence/script؛ يعاد CodeQL دون استثناء أو تخفيف |
 | BRAND-01:الاسم الإنجليزي والعربي | P2 | بعض النصوص واسم التطبيق بالهوية القديمة | TADAWEE بالضبط و«تداوي»،أخضر/أبيض؛ package IDs مستقرة؛ Android versionCode5 | PASS typecheck/build ؛فحص بصري على جهاز BLOCKED |
 
 ## العقود بين التطبيق والخادم
@@ -60,6 +61,8 @@ P0 خطر تضارب/فقد بيانات؛ P1 تعطّل رحلة أو إدخا�
 | POST caregivers/revoke و notification/resolve ؛ PATCH permissions ؛ PUT notification-rules | علاقة/إعداد داخل body | موجود بالمرشح،غائب من 60b474 ؛لا يُحلّ بإرجاع المعرف إلى URL |
 
 ## الاختبارات والحدود
+
+كشف [CodeQL على bffdfab](https://github.com/NAIFMUSFER/dawaee/actions/runs/35104990126) مشكلة في مولّد التقرير؛ بقيت البوابة FAIL حتى إصلاحها. يُسجل تشغيل التصحيح على آخر HEAD في PR.
 
 عُدِّلت jobs في CI وSecurity لتسحب commit رأس PR المحدد، كما تفعل Android native وruntime recovery، ويُمرر المصدر نفسه إلى metadata الحاوية. بذلك لا تختلط هوية merge ref اصطناعي بهوية الشفرة المختبرة. بوابات الأمان واختباراتها لم تُخفَّف.
 
