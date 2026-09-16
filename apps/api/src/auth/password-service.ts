@@ -11,7 +11,7 @@ export const MAX_LOGIN_ATTEMPTS = 8;
 export const LOCK_MINUTES = 15;
 
 export type LoginOutcome =
-  | { outcome: 'ok'; userId: string; rehashed: boolean }
+  | { outcome: 'ok'; userId: string; rehashed: boolean; credentialHash: string }
   | { outcome: 'invalid' }
   | { outcome: 'locked'; until: Date };
 
@@ -38,10 +38,14 @@ export async function attemptPasswordLogin(
   identifier: string,
   password: string,
 ): Promise<LoginOutcome> {
-  const { rows } = await tx.query<LoginRow>(
+  let { rows } = await tx.query<LoginRow>(
     'SELECT * FROM app.find_user_for_password_login($1)',
     [identifier],
   );
+  if (rows[0]) {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 20260912))', [rows[0].user_id]);
+    ({ rows } = await tx.query<LoginRow>('SELECT * FROM app.find_user_for_password_login($1)', [identifier]));
+  }
   const row = rows[0];
 
   // No account, or an account with no password yet (an OTP-era account that
@@ -108,12 +112,14 @@ export async function attemptPasswordLogin(
   await tx.query('SELECT app.clear_login_failures($1)', [row.user_id]);
 
   let rehashed = false;
+  let credentialHash = row.password_hash;
   if (needsRehash(row.password_hash)) {
-    await tx.query('SELECT app.set_password($1,$2)', [row.user_id, await hashPassword(password)]);
+    credentialHash = await hashPassword(password);
+    await tx.query('SELECT app.set_password($1,$2)', [row.user_id, credentialHash]);
     rehashed = true;
   }
 
-  return { outcome: 'ok', userId: row.user_id, rehashed };
+  return { outcome: 'ok', userId: row.user_id, rehashed, credentialHash };
 }
 
 /** Call only after the transaction has committed. */

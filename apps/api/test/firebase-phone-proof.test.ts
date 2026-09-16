@@ -45,4 +45,10 @@ describe('Firebase phone proof validation', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
     await expect(verifyFirebasePhoneIdToken(await token())).rejects.toBeInstanceOf(FirebasePhoneProofUnavailable);
   });
+  it('enforces the shorter recovery authentication window even for a refreshed valid token', async () => {
+    certificates();
+    const proof = await token({ age: 360 });
+    await expect(verifyFirebasePhoneIdToken(proof)).resolves.toBeTruthy();
+    await expect(verifyFirebasePhoneIdToken(proof, { maxAuthAgeSeconds: 300 })).rejects.toBeInstanceOf(FirebasePhoneProofInvalid);
+  });
 });

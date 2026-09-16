@@ -171,7 +171,7 @@ export function Button({
 
 export function Field({
   label, value, onChangeText, placeholder, keyboardType, hint, error, secureTextEntry, autoFocus,
-  maxLength, multiline, autoCapitalize, autoCorrect, autoComplete, textContentType,
+  maxLength, multiline, autoCapitalize, autoCorrect, autoComplete, textContentType, editable,
 }: {
   label: string;
   value: string;
@@ -193,6 +193,7 @@ export function Field({
   autoCorrect?: boolean;
   autoComplete?: React.ComponentProps<typeof TextInput>['autoComplete'];
   textContentType?: React.ComponentProps<typeof TextInput>['textContentType'];
+  editable?: boolean;
 }) {
   const theme = useTheme();
   const { isRtl } = useI18n();
@@ -210,6 +211,7 @@ export function Field({
         autoCorrect={autoCorrect}
         autoComplete={autoComplete}
         textContentType={textContentType}
+        editable={editable}
         autoFocus={autoFocus}
         maxLength={maxLength}
         multiline={multiline}

@@ -105,7 +105,8 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
-    '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body) } },
+    '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
+      anonymous: { post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },

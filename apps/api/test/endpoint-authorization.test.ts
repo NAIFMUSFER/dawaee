@@ -166,6 +166,9 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/register': 'auth-plane',
   'POST /v1/auth/refresh': 'auth-plane',
   'POST /v1/auth/login': 'auth-plane',
+  // Anonymous account recovery requires fresh signed phone proof. Its account
+  // binding, non-creation, replay, expiry and SQL boundaries have real-PG tests.
+  'POST /v1/auth/password/recover': 'auth-plane',
   'POST /v1/auth/logout': 'authenticated',
   'POST /v1/auth/logout-all': 'authenticated',
   'POST /v1/auth/password': 'authenticated',
