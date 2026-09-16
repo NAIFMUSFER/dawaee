@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
 const RIYADH = 'Asia/Riyadh';
@@ -17,6 +18,7 @@ let h: Harness;
 let owner: TestUser;
 let stranger: TestUser;
 let doses: DoseRef[] = [];
+let medicationId: string;
 
 beforeAll(async () => {
   resetDatabase();
@@ -30,6 +32,7 @@ beforeAll(async () => {
     payload: {
       patientProfileId: owner.profileId,
       name: 'Fixed path dose transport', form: 'tablet', startDate,
+      stock: { trackingEnabled: true, initialQuantity: 30, unit: 'tablet' },
       schedule: {
         rule: { kind: 'fixed_times', times: ['08:00', '10:00', '12:00', '14:00'] },
         doseQuantity: 1, doseUnit: 'tablet', startDate,
@@ -37,6 +40,7 @@ beforeAll(async () => {
     },
   });
   expect(med.statusCode, med.body).toBe(200);
+  medicationId = med.json().medication.id;
 
   const list = await h.app.inject({
     method: 'GET',
@@ -133,5 +137,46 @@ describe('fixed-path dose action transport', () => {
     expect((await action({ doseId: 'not-a-uuid', action: 'taken', clientEventId: 'private-dose-bad-id-1' })).statusCode)
       .toBe(400);
     expect((await action({ doseId: doses[3]!.id, action: 'admin_override' })).statusCode).toBe(400);
+  });
+
+  it('confirms tracked stock and undoes when the legacy ledger index is absent', async () => {
+    // Synthetic test database only: simulate the changed index contract that
+    // caused production SQLSTATE 42P10. Never alter a live database here.
+    execFileSync('psql', ['-X', '-v', 'ON_ERROR_STOP=1', '-d', 'dawaee_test', '-c',
+      'DROP INDEX public.stock_tx_dose_idx'], {
+      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' },
+      stdio: 'pipe',
+    });
+    const dose = doses[3]!;
+    atDose(dose);
+    const stock = async () => {
+      const res = await h.app.inject({
+        method: 'GET', url: `/v1/medications/${medicationId}/stock`, headers: authHeaders(owner),
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return Number(res.json().stock.remainingQuantity);
+    };
+    const before = await stock();
+    const payload = {
+      doseId: dose.id, action: 'taken', clientEventId: 'tracked-stock-compatible-1',
+      method: 'app', takenAt: dose.scheduledAt,
+    };
+    const taken = await action(payload);
+    expect(taken.statusCode, taken.body).toBe(200);
+    expect(await stock()).toBe(before - 1);
+    const replay = await action(payload);
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json().idempotentReplay).toBe(true);
+    expect(await stock()).toBe(before - 1);
+    const today = await h.app.inject({
+      method: 'GET', url: '/v1/today',
+      headers: { ...authHeaders(owner), 'x-dawaee-profile-id': owner.profileId },
+    });
+    expect(today.statusCode, today.body).toBe(200);
+    expect(today.json().today.find((d: DoseRef) => d.id === dose.id).status).toBe('taken');
+    expect(today.json().next?.id).not.toBe(dose.id);
+    const undo = await action({ doseId: dose.id, action: 'undo' });
+    expect(undo.statusCode, undo.body).toBe(200);
+    expect(await stock()).toBe(before);
   });
 });
