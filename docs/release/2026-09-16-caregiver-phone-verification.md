@@ -32,11 +32,21 @@ not used. The audit installation `app.dawaee.audit` does not reuse the productio
 Firebase application configuration. It needs its own registered client before
 it can perform real phone verification.
 
-Before production cutover, verify Firebase Phone Authentication is enabled,
-Saudi SMS delivery is allowed, and the actual EAS/Google Play signing
-fingerprints are registered. Verify real delivery and automatic/manual
-confirmation on an installed signed Android build. Provider configuration and
-physical-device evidence have not been established by the automated tests.
+Read-only console checks on 2026-09-16 confirmed Phone Authentication is
+enabled, the SMS region policy allows Saudi Arabia, and the configured Android
+client has SHA-1 and SHA-256 certificates registered. The console displays a
+ten-SMS-per-day quota for this project. These observations do not prove delivery.
+
+Before production cutover, match the installed artifact and Google Play signing
+certificates to Firebase, then verify real delivery and automatic/manual
+confirmation on a signed Android device. No real SMS or device verification has
+been performed. Android versionCode is now 4, above the previously built store
+artifact's versionCode 3, so this candidate does not use a lower version number.
+
+The candidate also includes the exact migration 0078 portability repair from
+PR #27: use PostgreSQL's core SHA-256 function rather than requiring pgcrypto.
+This removes that known source dependency; the production migration/recovery
+and coordinated rollout gates still require their own evidence.
 
 References: [Firebase Android phone authentication](https://firebase.google.com/docs/auth/android/phone-auth)
 and [server ID-token validation](https://firebase.google.com/docs/auth/admin/verify-id-tokens).

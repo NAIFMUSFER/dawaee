@@ -42,7 +42,7 @@
       "blockedPermissions": [
         "android.permission.USE_EXACT_ALARM"
       ],
-      "versionCode": 2,
+      "versionCode": 4,
       "googleServicesFile": "./google-services.json"
     },
     "web": {
