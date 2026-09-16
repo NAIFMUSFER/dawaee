@@ -13,7 +13,7 @@ import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView } from '@/api/types';
 import { DOSE_STATUS_COLORS, errorMessageKey, type DoseStatus, type MessageKey } from '@dawaee/shared';
-import { addDays, eachDate, weekdayOf } from '@dawaee/core';
+import { addDays, eachDate, weekdayOf, localDateInZone } from '@dawaee/core';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
 /**
@@ -111,9 +111,7 @@ function startOfWeek(date: string): string {
 }
 
 function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  return localDateInZone(new Date(), timezone);
 }
 
 export default function HistoryScreen() {

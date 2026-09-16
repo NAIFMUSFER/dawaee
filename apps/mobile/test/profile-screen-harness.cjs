@@ -132,7 +132,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       setCaregiverDetailRouteIntent: () => undefined,
     },
     '@dawaee/shared': { DOSE_STATUS_COLORS: new Proxy({}, { get: () => ({ fg: '#000', bg: '#fff' }) }), errorMessageKey: (code) => `error.${code}` },
-    '@dawaee/core': { addDays, weekdayOf: (date) => new Date(`${date}T12:00:00Z`).getUTCDay(), eachDate: (from, to) => {
+    '@dawaee/core': { addDays, localDateInZone: (instant, timeZone) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+      return ['year', 'month', 'day'].map((type) => parts.find((part) => part.type === type).value).join('-');
+    }, weekdayOf: (date) => new Date(`${date}T12:00:00Z`).getUTCDay(), eachDate: (from, to) => {
       const result = []; for (let d = from; d <= to; d = addDays(d, 1)) result.push(d); return result;
     } },
   };

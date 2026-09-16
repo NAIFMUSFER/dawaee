@@ -14,7 +14,7 @@ import type { MedicationView } from '@/api/types';
 import {
   DOSE_STATUS_COLORS, errorMessageKey, type DoseStatus, type MessageKey, type ScheduleRule,
 } from '@dawaee/shared';
-import { addDays, daysBetween } from '@dawaee/core';
+import { addDays, daysBetween, localDateInZone } from '@dawaee/core';
 
 /**
  * The doctor / pharmacist report.
@@ -67,9 +67,7 @@ interface ClinicianReport {
 }
 
 function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  return localDateInZone(new Date(), timezone);
 }
 
 function firstParam(value: string | string[] | undefined): string | null {

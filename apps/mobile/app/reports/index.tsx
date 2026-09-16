@@ -11,7 +11,7 @@ import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { errorMessageKey, type MessageKey } from '@dawaee/shared';
-import { addDays } from '@dawaee/core';
+import { addDays, localDateInZone } from '@dawaee/core';
 
 /**
  * The reports hub.
@@ -48,9 +48,7 @@ interface ExportResponse {
 }
 
 function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  return localDateInZone(new Date(), timezone);
 }
 
 export default function ReportsHubScreen() {

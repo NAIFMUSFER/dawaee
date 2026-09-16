@@ -669,6 +669,8 @@ export const MESSAGES = {
     'food.noPreference': 'لا يوجد تفضيل',
 
     'medication.listTitle': 'أدويتي',
+    'medication.selectAgain': 'اختر الدواء لعرض تفاصيله',
+    'medication.selectAgainBody': 'عد إلى قائمة الأدوية واختر الدواء مرة أخرى.',
     'medication.empty': 'لم تُضف أي دواء بعد',
     'medication.emptyBody': 'أضف دواءك الأول لتبدأ التذكيرات.',
     'medication.emptyFiltered': 'لا توجد أدوية في هذا التصنيف',
@@ -1629,6 +1631,8 @@ export const MESSAGES = {
     'food.noPreference': 'No preference',
 
     'medication.listTitle': 'My medications',
+    'medication.selectAgain': 'Choose a medication to view its details',
+    'medication.selectAgainBody': 'Return to your medication list and select the medication again.',
     'medication.empty': 'No medications yet',
     'medication.emptyBody': 'Add your first medication to start the reminders.',
     'medication.emptyFiltered': 'No medications in this filter',
