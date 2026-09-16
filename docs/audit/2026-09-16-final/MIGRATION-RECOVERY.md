@@ -47,3 +47,8 @@ Do not reverse 0085 or rewrite 0078 ledger entries. It is a compatible function 
 - Root cause: `normalizePhone` stripped all nondigits, including email letters and `@`, then treated eight or more remaining digits as a phone. Password login therefore searched for a different identity. The generated audit email contained a numeric UUID.
 - Follow-up rejects non-phone characters before formatting normalization can reinterpret them. Supported local/international formatted phones remain accepted. A PostgreSQL regression registers separate phone and numeric-email accounts and proves login reaches the email account's own profiles.
 - Synthetic accounts only; no provider messages, patient data or production changes. Latest regression and remote retest results belong in the PR status, not inferred from the earlier CI run.
+
+## Container packaging follow-up
+
+- **FAIL:** CI job `104980404518` on `0ef263c` found TS2307: the Docker TypeScript build stage did not copy the shared migration-history module/declaration. Render's checkout build had both files, so preview success did not prove Docker packaging.
+- Add the two required files to the existing build stage; runtime already copies scripts. Existing Docker build and container security jobs verify the complete packaging. No runtime permissions or schema rules are relaxed.
