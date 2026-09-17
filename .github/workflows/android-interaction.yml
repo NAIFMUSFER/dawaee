@@ -56,7 +56,14 @@ jobs:
           test -e /dev/kvm
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'system-images;android-35;google_apis;x86_64' 'emulator' 'platform-tools'
-          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name tadawee_audit --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
+          # Use one explicit AVD directory for both SDK tools and the emulator.
+          # Their default user directories can differ on hosted runners.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/tadawee-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name tadawee_audit --path "$ANDROID_AVD_HOME/tadawee_audit.avd" --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
+          test -s "$ANDROID_AVD_HOME/tadawee_audit.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx tadawee_audit
       - name: Exercise touch, scrolling, hardware Back and persisted input
         timeout-minutes: 18
         run: bash scripts/android-interaction/run.sh
