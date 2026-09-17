@@ -20,6 +20,11 @@
         "NSFaceIDUsageDescription": "لحماية بياناتك الصحية عند فتح التطبيق.",
         "UIBackgroundModes": [
           "remote-notification"
+        ],
+        "CFBundleDisplayName": "تداوي",
+        "CFBundleLocalizations": [
+          "ar",
+          "en"
         ]
       },
       "buildNumber": "2"
@@ -82,7 +87,15 @@
       "expo-secure-store",
       "expo-sharing",
       "@react-native-firebase/app",
-      "@react-native-firebase/auth"
+      "@react-native-firebase/auth",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "dynamic"
+          }
+        }
+      ]
     ],
     "extra": {
       "apiBaseUrl": "https://dawaee-api.onrender.com",

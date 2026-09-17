@@ -42,8 +42,8 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
   {
-    // Metro config is CommonJS by necessity.
-    files: ['**/metro.config.js', '**/babel.config.js', '**/*.cjs'],
+    // Expo, Metro and Babel build configs are CommonJS.
+    files: ['**/app.config.js', '**/metro.config.js', '**/babel.config.js', '**/*.cjs'],
     languageOptions: { sourceType: 'commonjs' },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },

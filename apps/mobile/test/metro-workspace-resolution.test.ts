@@ -15,7 +15,7 @@ const config = require('../metro.config.js') as {
 
 const origin = fileURLToPath(new URL('../app/(auth)/_layout.tsx', import.meta.url));
 
-function resolveDirect(moduleName: string) {
+function resolveDirect(moduleName: string, platform = 'android') {
   return config.resolver.resolveRequest(
     {
       originModulePath: origin,
@@ -24,7 +24,7 @@ function resolveDirect(moduleName: string) {
       },
     },
     moduleName,
-    'android',
+    platform,
   );
 }
 
@@ -51,5 +51,14 @@ describe('Metro release source resolution', () => {
     const result = resolveDirect('@/notifications/actions.js');
     expect(result.type).toBe('sourceFile');
     expect(result.filePath?.replaceAll('\\', '/')).toMatch(/\/apps\/mobile\/src\/notifications\/actions\.ts$/);
+  });
+});
+
+describe('phone proof platform resolution', () => {
+  it.each(['ios', 'android'])('loads the native SMS implementation on %s', (platform) => {
+    expect(resolveDirect('@/security/phone-proof', platform).filePath).toMatch(/phone-proof\.native\.ts$/);
+  });
+  it('keeps native Firebase out of the browser bundle', () => {
+    expect(resolveDirect('@/security/phone-proof', 'web').filePath).toMatch(/phone-proof\.ts$/);
   });
 });
