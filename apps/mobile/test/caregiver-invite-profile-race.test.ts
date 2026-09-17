@@ -26,6 +26,9 @@ const shared = {
 function harness() {
   return createHarness(screen, hook, {}, {
     '@dawaee/shared': shared,
+    'expo-clipboard': { setStringAsync: async () => undefined },
+    'expo-sms': { isAvailableAsync: async () => false },
+    '@/components/QrCode': { QrCode: 'QrCode' },
     'expo-router': { router: { back: () => undefined, replace: () => undefined, push: () => undefined } },
   });
 }

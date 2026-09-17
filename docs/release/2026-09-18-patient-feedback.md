@@ -23,8 +23,11 @@ not a production deployment or a newly uploaded TestFlight build.
 - Caregiver invitations render their returned link as an on-device QR. The SMS
   button opens the device Messages composer with the recipient and invitation;
   the user must press Send. Cancellation/unknown results never claim delivery.
-  **Automatic server SMS is not implemented or configured.** It needs a selected
-  SMS provider, sender setup and a backend delivery integration.
+  Optional server SMS for Saudi caregiver invitations is now implemented behind
+  disabled-by-default configuration. The app discovers availability, explains
+  the automatic send, and distinguishes acceptance from confirmed delivery.
+  QR/link remain available on SMS failure. **Live SMS is not configured or
+  verified.** See [sender eligibility and setup](twilio-caregiver-invitations.md).
 - Unsupported voice reminder/confirmation controls and microphone permission
   declarations are removed. Medication details have a persistent Back button.
 - Emergency QR is always reachable from Settings, including simplified mode.

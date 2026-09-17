@@ -10,6 +10,12 @@ import type { Locale } from './enums.js';
  */
 export const MESSAGES = {
   ar: {
+    'family.inviteSmsBody': 'لديك دعوة للانضمام كمرافق في تداوي. صالحة لمدة {hours} ساعة: {link}',
+    'invite.smsAutomaticHint': 'بعد إنشاء الدعوة، نرسل رابطها برسالة نصية إلى رقم المرافق السعودي.',
+    'invite.smsAccepted': 'تم إرسال طلب الرسالة. وصولها إلى جوال المرافق لم يُؤكد بعد.',
+    'invite.smsFailed': 'تم إنشاء الدعوة، لكن تعذر إرسال الرسالة. يمكنك مشاركة الرابط أو رمز QR.',
+    'invite.smsUnknown': 'تم إنشاء الدعوة، وحالة الرسالة غير مؤكدة. قد تكون أُرسلت؛ تحقق مع المرافق قبل إعادة إرسالها.',
+    'invite.smsServiceUnavailable': 'تم إنشاء الدعوة، والإرسال التلقائي غير متاح حاليًا. يمكنك مشاركة الرابط أو إرساله من جوالك.',
     'today.dueGroups': 'جرعات حان وقتها',
     'today.timeGroup': 'أدوية موعد {time}',
     'today.laterToday': 'لاحقًا اليوم',
@@ -1042,6 +1048,12 @@ export const MESSAGES = {
   },
 
   en: {
+    'family.inviteSmsBody': 'You have an invitation to join TADAWEE as a caregiver. Valid for {hours} hours: {link}',
+    'invite.smsAutomaticHint': 'After creating the invitation, we send its link by SMS to the caregiver’s Saudi mobile number.',
+    'invite.smsAccepted': 'The message request was accepted. Delivery to the caregiver’s phone is not yet confirmed.',
+    'invite.smsFailed': 'The invitation was created, but the message could not be sent. Share the link or QR code.',
+    'invite.smsUnknown': 'The invitation was created, but the message status is uncertain. It may have been sent; check with the caregiver before sending again.',
+    'invite.smsServiceUnavailable': 'The invitation was created. Automatic SMS is currently unavailable; share the link or send it from your phone.',
     'today.dueGroups': 'Doses due',
     'today.timeGroup': 'Medications at {time}',
     'today.laterToday': 'Later today',

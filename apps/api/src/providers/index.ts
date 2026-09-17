@@ -1,4 +1,5 @@
 import type { Config } from '../config.js';
+import { buildInvitationSms, type InvitationSmsProvider } from './invitation-sms.js';
 import { ExpoPushProvider, MockPushProvider } from './push.js';
 import {
   AzureDocumentIntelligenceOcrProvider, GoogleVisionOcrProvider, MockOcrProvider,
@@ -11,20 +12,14 @@ import type {
 /**
  * Outbound integrations.
  *
- * There is exactly one messaging channel — push — and that is a deliberate,
- * externally forced choice rather than an unfinished one. Reaching a Saudi
- * phone by SMS requires an alphanumeric Sender ID registered against a
- * commercial registration, and no long or short codes are available; reaching
- * one by WhatsApp requires a Meta-verified business and an approved
- * AUTHENTICATION template. Neither can be turned on by configuration, so
- * neither is offered as configuration. When a commercial registration exists,
- * the channel goes back in as a new provider against the same interfaces —
- * the notification pipeline is already channel-shaped.
+ * Push handles medication/caregiver alerts. Invitation SMS is a separate,
+ * optional integration: it does not enable SMS OTP or medication alerts.
  */
 export interface Providers {
   push: PushProvider;
   ocr: OcrProvider;
   storage: StorageProvider;
+  invitationSms?: InvitationSmsProvider;
 }
 
 /**
@@ -74,7 +69,7 @@ export function buildProviders(cfg: Config): Providers {
         ? new S3StorageProvider(cfg)
         : new UnconfiguredStorageProvider();
 
-  return { push, ocr, storage };
+  return { push, ocr, storage, invitationSms: buildInvitationSms(cfg) };
 }
 
 export * from './types.js';

@@ -160,7 +160,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerDoseRoutes(scope);
     registerDosePrivateRoutes(scope);
     registerStockRoutes(scope);
-    registerCaregiverRoutes(scope);
+    registerCaregiverRoutes(scope, providers.invitationSms);
     registerCaregiverPrivateRoutes(scope);
     registerEmergencyRoutes(scope);
     registerNoteRoutes(scope);
