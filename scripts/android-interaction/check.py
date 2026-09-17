@@ -26,9 +26,14 @@ AUTHENTICATED = False
 
 def adb(*args, binary=False, timeout=35):
     # Do not echo command arguments: input text can contain a test password.
-    result = subprocess.run(["adb", *args], capture_output=True, timeout=timeout)
+    # Command family is useful; values/stderr/TimeoutExpired.cmd are sensitive.
+    family = " ".join(args[:3]) if args[:1] == ("shell",) else args[0]
+    try:
+        result = subprocess.run(["adb", *args], capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise AssertionError("ADB " + family + " timed out (values withheld)") from None
     if result.returncode:
-        raise AssertionError("ADB command failed (arguments withheld)")
+        raise AssertionError("ADB " + family + " failed, exit " + str(result.returncode) + " (values withheld)")
     return result.stdout if binary else result.stdout.decode(errors="replace")
 
 
@@ -47,12 +52,22 @@ def api(path, body=None, token=None):
 
 
 def tree():
-    adb("shell", "uiautomator", "dump", "/sdcard/audit-window.xml")
-    raw = adb("shell", "cat", "/sdcard/audit-window.xml")
-    nodes = list(ET.fromstring(raw).iter("node"))
-    for node in nodes:
-        SEEN.update([node.get("text", ""), node.get("content-desc", "")])
-    return nodes
+    # The first activity/frame can be between windows during launch. Retry only
+    # this read, never a tap, save, registration or other state-changing action.
+    for attempt in range(5):
+        try:
+            dumped = adb("shell", "uiautomator", "dump", "/sdcard/audit-window.xml", timeout=12)
+            assert "dumped to:" in dumped, "Android window dump was not produced; refusing a stale tree"
+            raw = adb("shell", "cat", "/sdcard/audit-window.xml", timeout=5)
+            nodes = list(ET.fromstring(raw).iter("node"))
+            assert nodes, "Android window has no accessibility nodes"
+            for node in nodes:
+                SEEN.update([node.get("text", ""), node.get("content-desc", "")])
+            return nodes
+        except (AssertionError, ET.ParseError, subprocess.TimeoutExpired):
+            if attempt == 4:
+                raise
+            time.sleep(1)
 
 
 def bounds(node):
@@ -174,7 +189,12 @@ def scenario(case, width, height, density, font):
         "displayName": "SyntheticAndroid", "locale": "ar", "deviceId": "ci-" + identity})
     token = tokens["accessToken"]
     profile = api("/v1/profiles", token=token)["profiles"][0]["id"]
-    adb("shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
+    launch = adb("shell", "cmd", "package", "resolve-activity", "--brief",
+        "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", "-p", PACKAGE)
+    activity = next((line.strip() for line in launch.splitlines() if line.strip().startswith(PACKAGE + "/")), None)
+    assert activity, "isolated app has no resolved launcher activity"
+    started = adb("shell", "am", "start", "-W", "-n", activity)
+    assert "Status: ok" in started, "Android did not finish launching the isolated activity"
     tap("العربية")
     fill("رقم الجوال أو البريد الإلكتروني", email)
     fill("كلمة المرور", password)
