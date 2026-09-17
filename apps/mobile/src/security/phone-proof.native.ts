@@ -10,7 +10,7 @@ export interface PhoneChallenge {
 export const phoneVerificationSupported =
   (Platform.OS === 'android' && Constants.expoConfig?.android?.package === 'app.dawaee.mobile')
   || (Platform.OS === 'ios' && Constants.expoConfig?.ios?.bundleIdentifier === 'app.dawaee.mobile'
-    && !!Constants.expoConfig?.ios?.googleServicesFile);
+    && Constants.expoConfig?.extra?.iosPhoneVerificationEnabled === true);
 let nextAttempt = 0;
 
 export async function startPhoneProof(

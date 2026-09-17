@@ -27,5 +27,10 @@ function preflight() {
 }
 module.exports = { validateFirebasePlist, preflight };
 if (require.main === module) {
-  if (!process.argv.includes('--eas') || (process.env.EAS_BUILD_PLATFORM === 'ios' && process.env.DAWAEE_AUDIT_BUILD !== '1')) preflight();
+  // The post-install hook also runs for development/preview and Android.
+  // Explicit check:ios calls always validate a release; EAS hooks do so only
+  // for our iOS store profiles, including a misconfigured audit release.
+  const iosRelease = process.env.EAS_BUILD_PLATFORM === 'ios'
+    && ['production', 'ios-testflight'].includes(process.env.EAS_BUILD_PROFILE);
+  if (!process.argv.includes('--eas') || iosRelease) preflight();
 }

@@ -1,10 +1,14 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { URL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { URL, fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import ts from 'typescript';
 const require = createRequire(import.meta.url);
 const source = readFileSync(new URL('../src/security/phone-proof.native.ts', import.meta.url), 'utf8');
+const configure = require('../app.config.js');
+const base = require('../app.json').expo;
+const { getConfig } = require('../node_modules/expo/config');
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 function supported(platform: string, config: object) {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
   const exports: Record<string, unknown> = {};
@@ -18,14 +22,33 @@ function supported(platform: string, config: object) {
   return exports.phoneVerificationSupported;
 }
 describe('installed iOS phone verification availability', () => {
-  it('enables phone recovery for a configured production iOS app', () => {
-    expect(supported('ios', { ios: { bundleIdentifier: 'app.dawaee.mobile', googleServicesFile: '/build/GoogleService-Info.plist' } })).toBe(true);
+  it('preserves the capability in Expo public config without requiring the plist path at runtime', () => {
+    vi.stubEnv('DAWAEE_AUDIT_BUILD', '0');
+    vi.stubEnv('GOOGLE_SERVICES_PLIST', '/build/GoogleService-Info.plist');
+    const { exp } = getConfig(fileURLToPath(new URL('..', import.meta.url)), { isPublicConfig: true });
+    expect(exp.extra.iosPhoneVerificationEnabled).toBe(true);
+    expect(exp.extra.eas.projectId).toBe(base.extra.eas.projectId);
+    // Model a manifest with no build-machine path; do not mock that path as
+    // available to Constants.expoConfig inside the installed application.
+    delete exp.ios.googleServicesFile;
+    expect(supported('ios', exp)).toBe(true);
+  });
+  it('disables the capability when no iOS plist is configured', () => {
+    vi.stubEnv('DAWAEE_AUDIT_BUILD', '0');
+    vi.stubEnv('GOOGLE_SERVICES_PLIST', undefined);
+    vi.spyOn(require('node:fs'), 'existsSync').mockReturnValue(false);
+    const config = configure({ config: { ...base, extra: { ...base.extra, iosPhoneVerificationEnabled: true } } });
+    expect(config.extra.iosPhoneVerificationEnabled).toBe(false);
+    expect(supported('ios', config)).toBe(false);
   });
   it('does not enable phone recovery for an unconfigured iPhone app', () => {
     expect(supported('ios', { ios: { bundleIdentifier: 'app.dawaee.mobile' } })).toBe(false);
   });
   it('never reuses production phone verification in the audit identity', () => {
-    expect(supported('ios', { ios: { bundleIdentifier: 'app.dawaee.audit', googleServicesFile: '/build/GoogleService-Info.plist' } })).toBe(false);
+    expect(supported('ios', { ios: { bundleIdentifier: 'app.dawaee.audit' }, extra: { iosPhoneVerificationEnabled: true } })).toBe(false);
+  });
+  it.each([false, undefined, 'true'])('requires an explicit boolean capability, received %s', flag => {
+    expect(supported('ios', { ios: { bundleIdentifier: 'app.dawaee.mobile' }, extra: { iosPhoneVerificationEnabled: flag } })).toBe(false);
   });
   it('preserves configured Android support', () => {
     expect(supported('android', { android: { package: 'app.dawaee.mobile' } })).toBe(true);

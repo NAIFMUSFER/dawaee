@@ -73,12 +73,15 @@ const equivalentFixtures: Array<[string, string]> = [
 ];
 
 describe('web production-bundle hardening', () => {
-  it('preserves image selection in the actual bundled Expo picker', async () => {
+  it.each([
+    { label: 'resolves image selection', selected: { type: 'image/png', name: 'medicine.png', size: 12 }, error: undefined },
+    { label: 'rejects unsupported video selection without hanging', selected: { type: 'video/mp4', name: 'video.mp4', size: 12 }, error: 'TADAWEE supports medicine photos only' },
+  ])('$label in the actual bundled Expo picker', async ({ selected, error }) => {
     const html = readFileSync(join(ROOT, 'apps/api/public/index.html'), 'utf8');
     const module = html.split('\n').find(line => line.includes('launchImageLibraryAsync:') && line.includes('new FileReader'));
     expect(module).toBeDefined();
     const events: Record<string, () => Promise<void>> = {};
-    const selected = { type: 'image/png', name: 'medicine.png', size: 12 };
+    let removedInputs = 0;
     const context: Record<string, unknown> = {
       URL: { createObjectURL: () => 'blob:https://dawaee.test/photo' },
       MouseEvent: class {},
@@ -87,7 +90,7 @@ describe('web production-bundle hardening', () => {
         set src(_value: string) { this.onload(); }
       },
       document: {
-        body: { appendChild: () => {}, removeChild: () => {} },
+        body: { appendChild: () => {}, removeChild: () => { removedInputs++; } },
         createElement: (tag: string) => {
           expect(tag).toBe('input');
           return { style: {}, files: [selected], setAttribute: () => {},
@@ -108,9 +111,15 @@ describe('web production-bundle hardening', () => {
     }\n${module}`, context);
     const picker = context.__picker as { launchImageLibraryAsync: (options: object) => Promise<{ canceled: boolean; assets: Array<{ width: number; height: number; fileName: string }> }> };
     const result = picker.launchImageLibraryAsync({ mediaTypes: ['images'] });
+    // Observe the caller's promise, not only the async event listener. The SDK
+    // catches readFile failures and adopts their rejection via resolve(...).
+    const assertion = error
+      ? expect(result).rejects.toThrow(error)
+      : expect(result).resolves.toMatchObject({ canceled: false, assets: [{ width: 640, height: 480, fileName: 'medicine.png' }] });
     await events.change();
-    expect(await result).toMatchObject({ canceled: false, assets: [{ width: 640, height: 480, fileName: 'medicine.png' }] });
-  });
+    await assertion;
+    expect(removedInputs).toBe(1);
+  }, 5_000);
   it('rejects unsupported video selection without creating a DOM element', async () => {
     const fixture = makeDist();
     try {

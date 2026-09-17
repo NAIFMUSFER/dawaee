@@ -8,8 +8,8 @@ Based on `audit/final-tadawee-20260916` at `cfcc4e8db8039b053fb04fe63ee3b46cbaba
 - `ios-testflight` EAS profile: store distribution, production API, physical-device build, remote signing, incremented build number. It does not submit or publish automatically.
 - RN Firebase 26.4's default Swift Package Manager integration uses dynamic frameworks through Expo build properties.
 - `GOOGLE_SERVICES_PLIST` accepts an EAS file variable; a local untracked `apps/mobile/GoogleService-Info.plist` also works. Android/web do not require this file.
-- Native phone verification/password recovery is reachable through Metro's corrected platform-aware source resolution; iOS support requires its own Firebase registration. Audit identity remains disabled.
-- Preflight rejects missing or mismatched Firebase registration, audit identity, and incorrect API target before a signed iOS build.
+- Native phone verification/password recovery is reachable through Metro's corrected platform-aware source resolution; iOS support requires its own Firebase registration. A non-secret `extra.iosPhoneVerificationEnabled` capability survives public manifest processing without depending on a build-machine plist path at runtime. Audit identity remains disabled.
+- Preflight rejects missing or mismatched Firebase registration, audit identity, and incorrect API target before a signed iOS build. The EAS post-install hook applies it to iOS `production` and `ios-testflight` profiles; development, preview, audit-preview, and Android builds are not subjected to iOS store requirements. An explicit `npm run check:ios` always runs the release validation.
 - Existing camera, photo, Face ID, encrypted local storage and remote notification configuration retained. Arabic/English iOS localizations and Arabic home-screen label included.
 
 ## Setup still required (step by step with the owner)
