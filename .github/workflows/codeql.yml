@@ -1,7 +1,7 @@
 name: Security scan
 
 on:
-  push: { branches: [main] }
+  push: { branches: [main, 'prepare/ios-testflight-20260917'] }
   pull_request: { branches: [main] }
   schedule: [{ cron: '0 3 * * 1' }]
 
@@ -63,6 +63,15 @@ jobs:
           output: codeql-results
       - name: Record CodeQL finding locations without source snippets
         run: node scripts/codeql-evidence.cjs
+      - name: Preserve failed scan evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codeql-diagnostic
+          retention-days: 3
+          path: |
+            codeql-results/javascript.sarif
+            apps/api/public/index.html
 
   # Secret scanning as a workflow rather than only as a repository setting.
   # GitHub's own push protection is a repository-level configuration this audit

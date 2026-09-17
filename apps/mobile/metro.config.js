@@ -40,7 +40,7 @@ config.resolver.extraNodeModules = {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 
-function resolveMobileAlias(moduleName) {
+function resolveMobileAlias(moduleName, platform) {
   if (!moduleName.startsWith('@/')) return null;
   let relative = moduleName.slice(2);
   if (relative.endsWith('.js')) relative = relative.slice(0, -3);
@@ -48,8 +48,11 @@ function resolveMobileAlias(moduleName) {
   const srcPrefix = `${mobileSrc}${path.sep}`;
   if (base !== mobileSrc && !base.startsWith(srcPrefix)) return null;
 
-  for (const suffix of ['', '.ts', '.tsx', path.join('index.ts'), path.join('index.tsx')]) {
-    const candidate = suffix.startsWith('index.') ? path.join(base, suffix) : base + suffix;
+  // Match Metro's platform precedence. Otherwise the generic web fallback
+  // shadows phone-proof.native.ts on installed iOS and Android builds.
+  const platforms = platform === 'web' ? ['web'] : [platform, 'native'].filter(Boolean);
+  const extensions = [...platforms.flatMap((p) => [`.${p}.ts`, `.${p}.tsx`, `.${p}.js`]), '.ts', '.tsx', '.js'];
+  for (const candidate of [base, ...extensions.map((ext) => base + ext), ...extensions.map((ext) => path.join(base, 'index' + ext))]) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
       return { type: 'sourceFile', filePath: candidate };
     }
@@ -63,7 +66,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     return { type: 'sourceFile', filePath: workspaceEntry };
   }
 
-  const mobileAlias = resolveMobileAlias(moduleName);
+  const mobileAlias = resolveMobileAlias(moduleName, platform);
   if (mobileAlias) return mobileAlias;
 
   // Only rewrite relative `.js` specifiers that originate inside our own

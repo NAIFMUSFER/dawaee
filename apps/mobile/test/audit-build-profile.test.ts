@@ -17,9 +17,11 @@ describe('isolated installed audit build', () => {
 
   it('keeps the normal application identity unchanged', () => {
     vi.stubEnv('DAWAEE_AUDIT_BUILD', undefined);
-    expect(configure({ config })).toBe(config);
-    expect(config.android.package).toBe('app.dawaee.mobile');
-    expect(config.ios.bundleIdentifier).toBe('app.dawaee.mobile');
+    const normal = configure({ config });
+    expect(normal.android.package).toBe('app.dawaee.mobile');
+    expect(normal.ios.bundleIdentifier).toBe('app.dawaee.mobile');
+    expect(normal.name).toBe(config.name);
+    expect(normal.extra.eas.projectId).toBe(config.extra.eas.projectId);
   });
 
   it('builds an internal APK and physical iOS app in a separate installation sandbox', () => {
@@ -38,6 +40,8 @@ describe('isolated installed audit build', () => {
     expect(audit.plugins).toEqual(config.plugins.filter((plugin: unknown) =>
       !['@react-native-firebase/app', '@react-native-firebase/auth'].includes(String(plugin))));
     expect(audit.android.googleServicesFile).toBeUndefined();
+    expect(audit.ios.googleServicesFile).toBeUndefined();
+    expect(audit.extra.iosPhoneVerificationEnabled).toBe(false);
     expect(config.android.googleServicesFile).toBe('./google-services.json');
     expect(config.android.package).toBe('app.dawaee.mobile');
   });

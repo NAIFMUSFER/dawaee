@@ -1,5 +1,8 @@
 {
-  "cli": { "version": ">= 12.0.0", "appVersionSource": "local" },
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "local"
+  },
   "build": {
     "development": {
       "developmentClient": true,
@@ -11,8 +14,12 @@
     },
     "preview": {
       "distribution": "internal",
-      "android": { "buildType": "apk" },
-      "ios": { "simulator": false },
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://dawaee-api.onrender.com",
         "EXPO_PUBLIC_DEMO": "0"
@@ -21,8 +28,12 @@
     "audit-preview": {
       "distribution": "internal",
       "environment": "preview",
-      "android": { "buildType": "apk" },
-      "ios": { "simulator": false },
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      },
       "env": {
         "DAWAEE_AUDIT_BUILD": "1",
         "EXPO_PUBLIC_API_URL": "https://dawaee-audit-preview.onrender.com",
@@ -41,7 +52,23 @@
         "EXPO_PUBLIC_API_URL": "https://dawaee-api.onrender.com",
         "EXPO_PUBLIC_DEMO": "0"
       }
+    },
+    "ios-testflight": {
+      "extends": "production",
+      "distribution": "store",
+      "environment": "production",
+      "ios": {
+        "simulator": false,
+        "image": "latest",
+        "node": "22.22.2"
+      },
+      "env": {
+        "DAWAEE_AUDIT_BUILD": "0"
+      }
     }
   },
-  "submit": { "production": {} }
+  "submit": {
+    "production": {},
+    "ios-testflight": {}
+  }
 }

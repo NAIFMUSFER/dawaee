@@ -28,7 +28,7 @@ js = open(entries[0], encoding='utf-8').read()
 
 # Minified local names and string quotes vary with the entry graph. Bind
 # repeated identifiers to the same capture instead of trusting fixed names.
-# Everything else in the four known SDK shapes remains mandatory, including
+# Everything else in the known SDK shapes remains mandatory, including
 # exactly one occurrence per shape. This is not a general JS sanitizer.
 IDENTIFIER = r'[A-Za-z_$][A-Za-z0-9_$]*'
 
@@ -85,6 +85,26 @@ js = replace_structure(
     rf'decodeURIComponent\((?P<value>{IDENTIFIER})\)',
     lambda match: f"{match['target']}[{match['key']}]={match['value']}",
     'Expo Linking query decoding',
+)
+
+# TADAWEE captures medicine photos only (both picker calls request images).
+# Reject the bundled SDK's unused video path instead of loading user-selected
+# content into a video DOM element. Images retain the original SDK pipeline.
+js = replace_structure(
+    js,
+    rf'async function (?P<fn>{IDENTIFIER})\((?P<url>{IDENTIFIER})\)'
+    rf'\{{return new Promise\((?P<resolve>{IDENTIFIER})=>\{{const '
+    rf'(?P<element>{IDENTIFIER})=document\.createElement\((?P<quote>[\'\"])video(?P=quote)\);'
+    rf'(?P=element)\.preload=(?P<q2>[\'\"])metadata(?P=q2),'
+    rf'(?P=element)\.onloadedmetadata=\(\)=>\{{(?P=resolve)\(\{{width:(?P=element)\.videoWidth,'
+    rf'height:(?P=element)\.videoHeight,duration:(?P=element)\.duration\}}\)\}},'
+    rf'(?P=element)\.onerror=\(\)=>(?P=resolve)\(\{{width:0,height:0,duration:0\}}\),'
+    rf'(?P=element)\.src=(?P=url)\}}\)\}}',
+    lambda match: (
+        f"async function {match['fn']}({match['url']}){{"
+        "throw new Error('TADAWEE supports medicine photos only')}"
+    ),
+    'Expo ImagePicker unsupported video path',
 )
 
 MIME = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
