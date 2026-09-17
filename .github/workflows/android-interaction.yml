@@ -58,6 +58,7 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'system-images;android-35;google_apis;x86_64' 'emulator' 'platform-tools'
           printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name tadawee_audit --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
       - name: Exercise touch, scrolling, hardware Back and persisted input
+        timeout-minutes: 18
         run: bash scripts/android-interaction/run.sh
       - name: Upload interaction evidence even when an assertion fails
         if: always()

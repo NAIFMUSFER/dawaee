@@ -156,6 +156,7 @@ def scenario(case, width, height, density, font):
     SEEN.clear()
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "pm", "clear", PACKAGE)  # only the disposable CI installation
+    adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
     adb("shell", "wm", "size", str(width) + "x" + str(height))
     adb("shell", "wm", "density", str(density))
     adb("shell", "settings", "put", "system", "font_scale", str(font))
@@ -230,7 +231,7 @@ def main():
         try:
             version = api("/version")
             break
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, AssertionError, json.JSONDecodeError):
             if attempt == 2:
                 raise
             time.sleep(5)
