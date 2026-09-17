@@ -8,7 +8,8 @@ import {
 import { QrCode, encodeQr } from '@/components/QrCode';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
-import { profileScopeKey } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
+import { readEmergencyQr, saveEmergencyQr } from '@/storage/emergency-qr';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { MESSAGES, type MessageKey } from '@dawaee/shared';
@@ -22,10 +23,9 @@ import { MESSAGES, type MessageKey } from '@dawaee/shared';
  * prominent whenever the code is live, and rotating says plainly that every
  * printed copy stops working.
  *
- * The link itself is shown exactly once, at creation. The server stores only a
- * hash of the token, which is what keeps a database read from becoming a
- * scannable card — the honest consequence is that a code cannot be re-displayed
- * later, only replaced.
+ * The server keeps only a token hash. This device keeps an encrypted copy bound
+ * to the account and profile; the rotation timestamp prevents redisplaying a
+ * code replaced on another device. Signing out erases the saved copy.
  */
 
 /**
@@ -48,6 +48,7 @@ interface EmergencyCardState {
   includeContacts: boolean;
   includeConditions: boolean;
   qrEnabled: boolean;
+  qrRotatedAt?: string | null;
   qrViewCount: number;
   qrLastViewedAt: string | null;
 }
@@ -60,7 +61,8 @@ export default function EmergencyQrScreen() {
 function EmergencyQrView() {
   const { t, formatNumber, formatDate } = useI18n();
   const theme = useTheme();
-  const { activeProfile } = useApp();
+  const { user, activeProfile } = useApp();
+  const { capture } = useRequestScope(profileScopeKey(user?.id, activeProfile));
   const apiErrorText = useApiErrorText();
 
   const [card, setCard] = useState<EmergencyCardState | null>(null);
@@ -72,9 +74,11 @@ function EmergencyQrView() {
   const [error, setError] = useState<string | null>(null);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [savedOnDevice, setSavedOnDevice] = useState(false);
 
   const load = useCallback(async () => {
     if (!activeProfile) return;
+    const current = capture();
     setLoading(true);
     setLoaded(false);
     setError(null);
@@ -82,17 +86,27 @@ function EmergencyQrView() {
       const res = await api.get<{ card: EmergencyCardState | null }>('/v1/emergency/card', {
         profileId: activeProfile.id,
       });
+      if (!current()) return;
+      const saved = user ? await readEmergencyQr(user.id, activeProfile.id) : null;
+      if (!current()) return;
+      if (saved && res.card?.qrEnabled && saved.rotatedAt === res.card.qrRotatedAt) {
+        setQrUrl(saved.url); setSavedOnDevice(true);
+      } else if (saved || !res.card?.qrEnabled) {
+        setQrUrl(null); setSavedOnDevice(false);
+        if (user) await saveEmergencyQr(user.id, activeProfile.id, null, current).catch(() => false);
+      }
       setCard(res.card);
       setLoaded(true);
       setOffline(false);
     } catch (err) {
+      if (!current()) return;
       if (err instanceof NetworkError) setOffline(true);
       else if (err instanceof ApiError) setError(apiErrorText(err));
       else setError(t('error.internal_error'));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [activeProfile, apiErrorText, t]);
+  }, [activeProfile, user, capture, apiErrorText, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -101,18 +115,25 @@ function EmergencyQrView() {
     setBusy(true);
     setError(null);
     setCopied(false);
+    const current = capture();
     try {
-      const res = await api.post<{ enabled: boolean; qrUrl: string }>(
+      const res = await api.post<{ enabled: boolean; qrUrl: string; qrRotatedAt?: string }>(
         '/v1/emergency/qr/enable', undefined, { profileId: activeProfile.id },
       );
+      if (!current()) return;
       setQrUrl(res.qrUrl);
+      const stored = user && res.qrRotatedAt ? await saveEmergencyQr(user.id, activeProfile.id,
+        { url: res.qrUrl, rotatedAt: res.qrRotatedAt }, current).catch(() => false) : false;
+      if (!current()) return;
+      setSavedOnDevice(!!stored);
       setCard((current) => (current ? { ...current, qrEnabled: true, qrViewCount: 0, qrLastViewedAt: null } : current));
       await load();
     } catch (err) {
+      if (!current()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(t('emergency.qrEnableFailed'));
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   };
 
@@ -120,16 +141,22 @@ function EmergencyQrView() {
     if (!activeProfile || !loaded || loading || busy) return;
     setBusy(true);
     setError(null);
+    const current = capture();
     try {
       await api.post('/v1/emergency/qr/disable', undefined, { profileId: activeProfile.id });
+      if (!current()) return;
+      if (user) await saveEmergencyQr(user.id, activeProfile.id, null, current).catch(() => false);
+      if (!current()) return;
       setQrUrl(null);
+      setSavedOnDevice(false);
       setCard((current) => (current ? { ...current, qrEnabled: false } : current));
       await load();
     } catch (err) {
+      if (!current()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(t('error.internal_error'));
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
   };
 
@@ -251,7 +278,7 @@ function EmergencyQrView() {
 
             <Button label={t('emergency.qrCopy')} tone="secondary" onPress={copyLink} />
             {copied ? <Txt variant="bodySmall" color={theme.colors.success700}>{t('emergency.qrCopied')}</Txt> : null}
-            <Txt variant="caption" color={theme.colors.ink500}>{t('emergency.qrTokenOnce')}</Txt>
+            <Txt variant="caption" color={theme.colors.ink500}>{t(savedOnDevice ? 'emergency.qrSavedOnDevice' : 'emergency.qrTokenOnce')}</Txt>
           </Card>
         ) : loaded && enabled ? (
           <Banner tone="info" title={t('emergency.qrTokenOnce')} body={t('emergency.qrRotateWarning')} />

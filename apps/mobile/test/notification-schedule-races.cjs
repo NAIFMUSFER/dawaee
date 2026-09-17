@@ -62,6 +62,14 @@ function loadModule(file, platform = 'ios') {
   }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, Date, console, require: (id) => {
+    if (id === './permission.js') {
+      const permission = {};
+      const source = ts.transpileModule(fs.readFileSync(require('node:path').join(require('node:path').dirname(file), 'permission.ts'), 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS },
+      }).outputText;
+      vm.runInNewContext(source, { exports: permission });
+      return permission;
+    }
     if (!(id in imports)) throw new Error(`unmocked import ${id}`);
     return imports[id];
   } }, { filename: file });

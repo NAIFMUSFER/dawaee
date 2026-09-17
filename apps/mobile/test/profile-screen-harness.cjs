@@ -83,7 +83,12 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     h.requests.push({ method, route, payload, ...gate });
     return gate.promise;
   };
-  const hosts = new Proxy({}, { get: (_target, key) => key === '__esModule' ? true : String(key) });
+  const foregroundListeners = new Set();
+  h.changeAppState = state => { for (const listener of foregroundListeners) listener(state); };
+  const hosts = new Proxy({ AppState: { addEventListener: (_event, listener) => {
+    foregroundListeners.add(listener);
+    return { remove: () => foregroundListeners.delete(listener) };
+  } } }, { get: (target, key) => key === '__esModule' ? true : target[key] ?? String(key) });
   const modules = {
     react: { __esModule: true, default: React, ...React },
     'react-native': hosts,
@@ -115,6 +120,8 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       applyQueuedToCache: (value) => value,
       newClientEventId: () => `event-${h.requests.length}`,
     },
+    '@/storage/emergency-qr': { readEmergencyQr: async () => null, saveEmergencyQr: async () => false },
+    '@/privacy/share-patient-report': { sharePatientReport: async () => false },
     '@/notifications': {
       captureLocalReminderContext: () => () => true,
       inspectCapability: async () => ({ supported: false }),
@@ -141,7 +148,9 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     } },
   };
   const vmGlobals = overrides.__globals && typeof overrides.__globals === 'object' ? overrides.__globals : {};
+  const focusEffect = modules['expo-router'].useFocusEffect;
   Object.assign(modules, overrides);
+  modules['expo-router'].useFocusEffect ??= focusEffect;
   const evaluate = (sourceFile) => {
     const code = ts.transpileModule(fs.readFileSync(sourceFile, 'utf8'), {
       fileName: sourceFile,
@@ -149,7 +158,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }).outputText;
     const exports = {};
     vm.runInNewContext(code, {
-      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout,
+      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
       ...vmGlobals,
       require: (id) => {
         if (id === '@/hooks/useRequestScope') {
@@ -167,6 +176,9 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     ...modules['@dawaee/shared'],
   };
   modules['@/components/DoseUnitPicker'] ??= hosts;
+  modules['@/security/phone-proof-errors'] ??= evaluate(path.resolve(__dirname, '../src/security/phone-proof-errors.ts'));
+  modules['@/notifications/today-groups'] ??= evaluate(path.resolve(__dirname, '../src/notifications/today-groups.ts'));
+  modules['@/privacy/patient-report'] ??= { buildPatientReport: (value) => ({ html: '', text: JSON.stringify(value) }) };
   const Screen = evaluate(file)[overrides.__exportName ?? 'default'];
   const disposeFrom = (depth) => {
     for (const f of h.frames.splice(depth)) {
@@ -222,7 +234,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     for (const r of batch) {
       r.completed = true;
-      const dose = { id: `dose-${label}`, medicationId: `med-${label}`, scheduleId: `schedule-${label}`, scheduledAt: `${date}T09:00:00Z`, scheduledLocalDate: date, scheduledLocalTime: '12:00', scheduledTimezone: 'Asia/Riyadh', status: 'due', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${label}-ONLY`, foodInstruction: 'none' } };
+      const dose = { id: `dose-${label}`, medicationId: `med-${label}`, scheduleId: `schedule-${label}`, scheduledAt: new Date(Date.now() - 60_000).toISOString(), scheduledLocalDate: date, scheduledLocalTime: '12:00', scheduledTimezone: 'Asia/Riyadh', status: 'due', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${label}-ONLY`, foodInstruction: 'none' } };
       const medication = { id: dose.medicationId, name: dose.medication.name, form: 'tablet', strengthValue: null, strengthUnit: null, status: r.payload?.status || 'active' };
       r.resolve(r.method === 'POST' ? {} : r.route === '/v1/today'
         ? { profileId: r.payload.profileId, localDate: date, timezone: 'Asia/Riyadh', serverTime: new Date().toISOString(), today: [dose], prefetch: [], next: dose, prefetchDays: 7 }

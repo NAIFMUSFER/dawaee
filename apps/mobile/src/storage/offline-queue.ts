@@ -2,6 +2,7 @@ import { api, NetworkError } from '../api/client.js';
 import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js';
 import type { CacheSlot } from './secure-cache.js';
 import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
+import { purgeEmergencyQrs } from './emergency-qr.js';
 import { OFFLINE_BOOTSTRAP_SLOT } from './offline-bootstrap.js';
 export { readOfflineBootstrap, writeOfflineBootstrap } from './offline-bootstrap.js';
 
@@ -345,6 +346,7 @@ export async function readCachedSchedule(profileId: string): Promise<CachedSched
  * previous user is exactly what the current session does not have.
  */
 export async function purgeLocalCaches(userId: string | null): Promise<void> {
+  await purgeEmergencyQrs();
   if (userId) {
     await clearSlot(QUEUE_SLOT, userId);
     await clearSlot(CACHE_SLOT, userId);

@@ -152,7 +152,7 @@ export default function SettingsScreen() {
       key: 'emergency-qr',
       label: t('emergency.qr'),
       hint: t('emergency.qrWhatIsShown'),
-      essential: false,
+      essential: true,
       onPress: () => router.push('/settings/emergency-qr'),
     },
   ];

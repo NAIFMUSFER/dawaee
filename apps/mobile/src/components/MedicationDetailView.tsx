@@ -119,6 +119,10 @@ export function MedicationDetailView({
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: theme.spacing.lg, backgroundColor: theme.colors.background }}>
+        <Button label={t('common.back')} tone="ghost" fullWidth={false}
+          onPress={() => router.replace('/(tabs)/medications')} />
+      </View>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xxxl }}

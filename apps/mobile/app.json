@@ -19,7 +19,6 @@
         "CFBundleAllowMixedLocalizations": true,
         "NSCameraUsageDescription": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
         "NSPhotoLibraryUsageDescription": "لاختيار صورة الدواء من مكتبة الصور.",
-        "NSMicrophoneUsageDescription": "لتأكيد أخذ الدواء بالصوت.",
         "NSFaceIDUsageDescription": "لحماية بياناتك الصحية عند فتح التطبيق.",
         "UIBackgroundModes": [
           "remote-notification"
@@ -30,7 +29,7 @@
           "en"
         ]
       },
-      "buildNumber": "2"
+      "buildNumber": "4"
     },
     "android": {
       "package": "app.dawaee.mobile",
@@ -48,7 +47,8 @@
         "USE_BIOMETRIC"
       ],
       "blockedPermissions": [
-        "android.permission.USE_EXACT_ALARM"
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.RECORD_AUDIO"
       ],
       "versionCode": 5,
       "googleServicesFile": "./google-services.json"
@@ -71,7 +71,9 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
+          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [
@@ -84,7 +86,8 @@
         "expo-image-picker",
         {
           "photosPermission": "لاختيار صورة الدواء من مكتبة الصور.",
-          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها."
+          "cameraPermission": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
+          "microphonePermission": false
         }
       ],
       "expo-secure-store",

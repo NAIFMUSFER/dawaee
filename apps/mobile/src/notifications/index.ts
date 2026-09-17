@@ -9,6 +9,7 @@ import {
   withExactAlarmScheduleMutation,
 } from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
+import { notificationPermissionGranted } from './permission.js';
 
 /**
  * Local notifications.
@@ -65,7 +66,7 @@ export async function inspectCapability(): Promise<NotificationCapability> {
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
-  const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
+  const granted = notificationPermissionGranted(settings);
   const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
@@ -81,7 +82,7 @@ export async function requestPermission(): Promise<boolean> {
   const res = await N.requestPermissionsAsync({
     ios: { allowAlert: true, allowSound: true, allowBadge: true, allowProvisional: false },
   });
-  return res.granted;
+  return notificationPermissionGranted(res);
 }
 
 export async function configureChannels(): Promise<void> {
@@ -315,8 +316,7 @@ export async function syncPushRegistration(deviceId: string): Promise<boolean> {
   if (!N) return false;
 
   const settings = await N.getPermissionsAsync();
-  const granted = settings.granted
-    || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL
+  const granted = notificationPermissionGranted(settings)
     || (await requestPermission());
   if (!granted) return false;
 

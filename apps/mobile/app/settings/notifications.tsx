@@ -108,7 +108,7 @@ export default function NotificationSettingsScreen() {
   // choices. The account/profile scope is re-read after the async OS check so a
   // logout or account switch cannot schedule a stale patient's reminders.
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (Platform.OS === 'web') return;
 
     let cancelled = false;
     let recheckInFlight = false;

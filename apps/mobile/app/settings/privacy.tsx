@@ -10,11 +10,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
-import {
-  shareTemporaryExportFile,
-  type ExportFileSystemModule,
-  type ExportSharingModule,
-} from '@/privacy/export-file';
+import { buildPatientReport } from '@/privacy/patient-report';
+import { sharePatientReport } from '@/privacy/share-patient-report';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -65,21 +62,8 @@ interface MeResponse {
   consents: Array<{ type: string; granted: boolean; patientProfileId?: string | null }>;
 }
 
-/**
- * Optional native modules, loaded the same way the notification layer does it:
- * inside a try/catch, so Expo Web — where neither exists — still renders this
- * screen and simply offers the share sheet instead.
- */
-function optionalModule<T>(load: () => unknown): T | null {
-  try {
-    return load() as T;
-  } catch {
-    return null;
-  }
-}
-
 export default function PrivacyScreen() {
-  const { t, formatNumber } = useI18n();
+  const { t, locale } = useI18n();
   const theme = useTheme();
   const { user, activeProfile, signOut } = useApp();
   const apiErrorText = useApiErrorText();
@@ -206,33 +190,20 @@ export default function PrivacyScreen() {
     try {
       const payload = await api.get<unknown>('/v1/reports/export', { profileId: patientProfileId });
       if (!isCurrent()) return;
-      const json = JSON.stringify(payload, null, 2);
-      const kilobytes = Math.max(1, Math.round(json.length / 1024));
-      const fileName = `dawaee-export-${patientProfileId}.json`;
-
-      const fileSystem = optionalModule<ExportFileSystemModule>(() => require('expo-file-system'));
-      const sharing = optionalModule<ExportSharingModule>(() => require('expo-sharing'));
-      const sharedFile = await shareTemporaryExportFile({
-        fileSystem,
-        sharing,
-        fileName,
-        contents: json,
-        dialogTitle: t('settings.exportData'),
-      });
+      const report = buildPatientReport(payload, locale);
+      const sharedFile = await sharePatientReport(report.html, t('privacy.reportTitle'), isCurrent);
       if (!isCurrent()) return;
 
       if (sharedFile) {
-        setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
+        setExportNotice(t('privacy.reportReady'));
         return;
       }
 
-      // No native file-sharing path (Expo Web, or a build without the module):
-      // hand the JSON to the platform share sheet instead of pretending a file
-      // was saved.
-      const result = await Share.share({ message: json, title: fileName });
+      // Readable text remains available on platforms without native PDF sharing.
+      const result = await Share.share({ message: report.text, title: t('privacy.reportTitle') });
       if (!isCurrent()) return;
       if (result.action === Share.dismissedAction) setExportNotice(null);
-      else setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
+      else setExportNotice(t('privacy.reportReady'));
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);

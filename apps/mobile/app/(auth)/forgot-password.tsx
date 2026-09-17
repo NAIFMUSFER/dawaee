@@ -7,6 +7,7 @@ import { useI18n } from '@/i18n';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { phoneVerificationSupported, startPhoneProof, type PhoneChallenge } from '@/security/phone-proof';
+import { phoneProofErrorKey } from '@/security/phone-proof-errors';
 
 export function recoveryPhone(raw: string): string | null {
   let phone = normalizeDigits(raw).replace(/[\s().-]/g, '');
@@ -54,12 +55,12 @@ export default function ForgotPasswordScreen() {
       const next = await startPhoneProof(canonical, async (idToken) => {
         if (!current()) return;
         proof.current = idToken; setCode(''); setStep('password'); setError(null);
-      }, () => { if (current()) setError(t('phoneVerification.codeError')); });
+      }, (err) => { if (current()) setError(t(phoneProofErrorKey(err))); });
       if (!current()) { next.cancel(); return; }
       lastSend.current = Date.now(); setCooldown(true);
       if (proof.current) { next.cancel(); return; }
       challenge.current = next; setStep('code');
-    } catch { if (current()) setError(t('phoneVerification.failed')); }
+    } catch (err) { if (current()) setError(t(phoneProofErrorKey(err))); }
     finally { locked.current = false; if (current()) setBusy(false); }
   };
   const confirmCode = async () => {
@@ -68,7 +69,7 @@ export default function ForgotPasswordScreen() {
     locked.current = true; setBusy(true); setError(null);
     const current = capture();
     try { await challenge.current.confirm(normalized); }
-    catch { if (current()) setError(t('phoneVerification.codeError')); }
+    catch (err) { if (current()) setError(t(phoneProofErrorKey(err))); }
     finally { locked.current = false; if (current()) setBusy(false); }
   };
   const save = async () => {

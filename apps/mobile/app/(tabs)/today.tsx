@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshControl, ScrollView, View } from 'react-native';
-import { router } from 'expo-router';
+import { AppState, RefreshControl, ScrollView, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, EmptyState, Loading, SafetyNote, SectionTitle, Txt } from '@/components/ui';
 import { DoseCard } from '@/components/DoseCard';
@@ -16,6 +16,7 @@ import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCache
 import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
+import { canActOnTodayDose, groupTodayDoses } from '@/notifications/today-groups';
 
 function localDateIn(timeZone: string): string {
   try {
@@ -62,7 +63,7 @@ export default function TodayScreen() {
 }
 
 function TodayProfileScreen() {
-  const { t, formatDate } = useI18n();
+  const { t, formatDate, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, user, preferences, deviceId, offline, setOffline, pendingSyncCount, syncNow } = useApp();
   const arabic = preferences.locale === 'ar';
@@ -98,6 +99,7 @@ function TodayProfileScreen() {
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
   const [serviceUnavailable, setServiceUnavailable] = useState(false);
+  const [now, setNow] = useState(Date.now);
 
   const { begin: beginLoad, capture: captureScope } = useRequestScope();
 
@@ -215,12 +217,34 @@ function TodayProfileScreen() {
     void load();
   }, [activeProfile?.id, canViewToday]);
 
-  useEffect(() => {
-    void (async () => {
-      const cap = await inspectCapability();
-      if (cap.supported && !cap.permissionGranted) setNotificationWarning(t('notifications.disabledTitle'));
-    })();
-  }, [t]);
+  useFocusEffect(useCallback(() => {
+    const tick = () => setNow(Date.now());
+    tick();
+    const timer = setInterval(tick, 1000);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') tick();
+    });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, []));
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    let latest = 0;
+    const inspect = async () => {
+      const attempt = ++latest;
+      try {
+        const cap = await inspectCapability();
+        if (!active || attempt !== latest) return;
+        setNotificationWarning(cap.supported && !cap.permissionGranted
+          ? t('notifications.disabledTitle') : null);
+      } catch { /* An unreadable permission is not a denied permission. */ }
+    };
+    void inspect();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void inspect();
+    });
+    return () => { active = false; subscription.remove(); };
+  }, [t]));
 
   const undo = useCallback(async (dose: DoseView) => {
     const isCurrent = captureScope();
@@ -250,7 +274,7 @@ function TodayProfileScreen() {
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
       const isCurrent = captureScope();
-      if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
+      if (!canConfirmDose || !isCurrent() || !canActOnTodayDose(dose, Date.now()) || actionInFlight.current.has(dose.id)) return;
       actionInFlight.current.add(dose.id);
       setActionError(null);
       setBusyDoseId(dose.id);
@@ -299,7 +323,7 @@ function TodayProfileScreen() {
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
     const isCurrent = captureScope();
-    if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
+    if (!canConfirmDose || !isCurrent() || !canActOnTodayDose(dose, Date.now()) || actionInFlight.current.has(dose.id)) return;
     actionInFlight.current.add(dose.id);
     setActionError(null);
     setSnoozeFor(null);
@@ -337,9 +361,7 @@ function TodayProfileScreen() {
   if (loading && !data) return <SafeAreaView style={{ flex: 1 }}><Loading /></SafeAreaView>;
 
   const todayList = (data?.today ?? []).map(withOverride);
-  const nextAnyDay = data?.next ? withOverride(data.next) : null;
-  const next = nextAnyDay && data && nextAnyDay.scheduledLocalDate === data.localDate ? nextAnyDay : null;
-  const allDone = todayList.length > 0 && todayList.every((d) => !['upcoming', 'due', 'pending_confirmation', 'snoozed'].includes(d.status));
+  const groups = groupTodayDoses(todayList, now);
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -395,24 +417,6 @@ function TodayProfileScreen() {
 
         {canViewToday ? (
           <>
-            {next ? (
-              <>
-                <SectionTitle>{t('today.nextMedication')}</SectionTitle>
-                <DoseCard
-                  dose={next}
-                  prominent
-                  busy={busyDoseId === next.id}
-                  onTaken={canConfirmDose ? () => void act(next, 'taken') : undefined}
-                  onUndo={canConfirmDose ? () => void undo(next) : undefined}
-                  onSnooze={canConfirmDose ? () => setSnoozeFor(next) : undefined}
-                  onSkip={canConfirmDose ? () => void act(next, 'skip') : undefined}
-                />
-              </>
-            ) : allDone || nextAnyDay ? (
-              <Card><Txt variant="h3" weight="bold" align="center">{t('today.allDone')}</Txt></Card>
-            ) : null}
-
-            <SectionTitle>{t('today.title')}</SectionTitle>
             {serviceUnavailable ? (
               <Banner
                 tone="warning"
@@ -428,8 +432,39 @@ function TodayProfileScreen() {
                 action={canAddMedication ? <Button label={t('medication.add')} onPress={() => router.push('/medication/add')} fullWidth={false} /> : undefined}
               />
             ) : (
-              <View style={{ gap: theme.spacing.sm }}>
-                {todayList.map((dose) => (
+              <View style={{ gap: theme.spacing.lg }}>
+                {groups.due.length > 0 ? <SectionTitle>{t('today.dueGroups')}</SectionTitle> : (
+                  <Card><Txt align="center">{t('today.noDosesDue')}</Txt></Card>
+                )}
+                {groups.due.map(group => (
+                  <View key={group.scheduledAt} testID="today-due-group" style={{ gap: theme.spacing.sm }}>
+                    <SectionTitle>{t('today.timeGroup', { time: formatTime(group.scheduledAt, data?.timezone) })}</SectionTitle>
+                    {group.doses.map(dose => (
+                      <DoseCard key={dose.id} dose={dose} prominent busy={busyDoseId === dose.id}
+                        onTaken={canConfirmDose ? () => void act(dose, 'taken') : undefined}
+                        onUndo={canConfirmDose ? () => void undo(dose) : undefined}
+                        onSnooze={canConfirmDose ? () => setSnoozeFor(dose) : undefined}
+                        onSkip={canConfirmDose ? () => void act(dose, 'skip') : undefined}
+                      />
+                    ))}
+                  </View>
+                ))}
+                {groups.upcoming.length > 0 ? (
+                  <>
+                    <SectionTitle>{t('today.laterToday')}</SectionTitle>
+                    <Txt color={theme.colors.ink500}>{t('today.confirmAtTime')}</Txt>
+                    {groups.upcoming.map(group => (
+                      <View key={group.scheduledAt} testID="today-upcoming-group" style={{ gap: theme.spacing.sm }}>
+                        <SectionTitle>{t('today.timeGroup', { time: formatTime(group.scheduledAt, data?.timezone) })}</SectionTitle>
+                        {group.doses.map(dose => (
+                          <DoseCard key={dose.id} dose={dose} onPress={() => openMedication(dose.medicationId)} />
+                        ))}
+                      </View>
+                    ))}
+                  </>
+                ) : null}
+                {groups.recorded.length > 0 ? <SectionTitle>{t('today.recorded')}</SectionTitle> : null}
+                {groups.recorded.map((dose) => (
                   <DoseCard
                     key={dose.id}
                     dose={dose}
