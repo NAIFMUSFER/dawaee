@@ -1,0 +1,39 @@
+{
+  "results": [
+    {
+      "case": "small-ar",
+      "status": "PASS",
+      "detail": "three hardware Back cycles and Cancel retain 08:00"
+    },
+    {
+      "case": "small-ar",
+      "status": "PASS",
+      "detail": "both columns reach 23:59; four independently selected times"
+    },
+    {
+      "case": "small-ar",
+      "status": "PASS",
+      "detail": "UI save persisted quantity 6, tablet unit, 4 times, 7 days and stock 60"
+    },
+    {
+      "case": "large-ar-font200",
+      "status": "PASS",
+      "detail": "three hardware Back cycles and Cancel retain 08:00"
+    },
+    {
+      "case": "large-ar-font200",
+      "status": "PASS",
+      "detail": "both columns reach 23:59; four independently selected times"
+    },
+    {
+      "case": "large-ar-font200",
+      "status": "PASS",
+      "detail": "UI save persisted quantity 6, tablet unit, 4 times, 7 days and stock 60"
+    }
+  ],
+  "limits": [
+    "emulator only; physical phone NOT VERIFIED",
+    "no real SMS, OCR or Push",
+    "gesture navigation and offline sync NOT VERIFIED"
+  ]
+}

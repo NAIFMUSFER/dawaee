@@ -1,0 +1,7 @@
+{
+  "service": "dawaee-api",
+  "commit": "0de543b54613757a116596fcb9e52d549c2f23ae",
+  "version": "unknown",
+  "builtAt": "unknown",
+  "schema": "0085_push_receipt_portable_hash.sql"
+}
