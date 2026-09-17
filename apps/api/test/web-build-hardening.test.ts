@@ -86,11 +86,14 @@ describe('web production-bundle hardening', () => {
         }) },
       };
       vm.runInNewContext(scriptBody(readFileSync(fixture.out, 'utf8')), context);
-      const api = context.__fixture as { videoMeta: (url: string) => Promise<unknown> };
-      for (const url of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'https://evil.invalid/media', '//evil.invalid', ' blob:test']) {
+      const api = context.__fixture as { videoMeta: (url: unknown) => Promise<unknown> };
+      let coercions = 0;
+      const changingValue = { toString() { return ++coercions === 1 ? 'blob:https://dawaee.test/id' : 'javascript:alert(1)'; } };
+      for (const url of [changingValue, null, undefined, 42, ['blob:https://dawaee.test/id'], 'javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'https://evil.invalid/media', '//evil.invalid', ' blob:test']) {
         await expect(api.videoMeta(url)).rejects.toThrow('Expected local media blob URL');
       }
       expect(seen).toEqual([]);
+      expect(coercions).toBe(0);
       await expect(api.videoMeta('blob:https://dawaee.test/local-id')).resolves.toEqual({ width: 32 });
       expect(seen).toEqual(['blob:https://dawaee.test/local-id']);
     } finally { rmSync(fixture.root, { recursive: true, force: true }); }

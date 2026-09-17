@@ -97,7 +97,7 @@ js = replace_structure(
     rf'(?P<element>{IDENTIFIER})=document\.createElement\((?P<quote>[\'\"])video(?P=quote)\);',
     lambda match: (
         f"async function {match['fn']}({match['url']}){{"
-        f"if(!/^blob:/.test({match['url']}))throw new Error('Expected local media blob URL');"
+        f"if(typeof {match['url']}!==\"string\"||!/^blob:/.test({match['url']}))throw new Error('Expected local media blob URL');"
         f"return new Promise({match['resolve']}=>{{const {match['element']}=document.createElement('video');"
     ),
     'Expo ImagePicker video metadata URL',
