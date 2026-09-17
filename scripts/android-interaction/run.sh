@@ -28,3 +28,4 @@ adb shell input keyevent 82
 adb shell settings put secure show_ime_with_hard_keyboard 1
 timeout 90 adb install "$APK"
 python3 scripts/android-interaction/check.py
+python3 scripts/android-interaction/dose_check.py
