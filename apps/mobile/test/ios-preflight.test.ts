@@ -41,4 +41,11 @@ describe('iOS Firebase preflight', () => {
     vi.stubEnv('DAWAEE_AUDIT_BUILD', '1');
     expect(preflight).toThrow('IOS_TESTFLIGHT_MUST_NOT_USE_AUDIT_IDENTITY');
   });
+  it('rejects an explicitly empty API URL', () => {
+    vi.stubEnv('GOOGLE_SERVICES_PLIST', file());
+    vi.stubEnv('DAWAEE_AUDIT_BUILD', '0');
+    vi.stubEnv('EXPO_PUBLIC_API_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_DEMO', '0');
+    expect(preflight).toThrow('IOS_BACKEND_MISMATCH');
+  });
 });

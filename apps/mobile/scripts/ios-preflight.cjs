@@ -20,7 +20,7 @@ function preflight() {
   const base = require('../app.json').expo;
   const config = require('../app.config.js')({ config: base });
   if (config.name !== 'تداوي | TADAWEE' || config.ios.bundleIdentifier !== 'app.dawaee.mobile') throw new Error('IOS_APP_IDENTITY_MISMATCH');
-  const api = process.env.EXPO_PUBLIC_API_URL || config.extra.apiBaseUrl;
+  const api = process.env.EXPO_PUBLIC_API_URL ?? config.extra.apiBaseUrl;
   if (api !== 'https://dawaee-api.onrender.com' || process.env.EXPO_PUBLIC_DEMO === '1') throw new Error('IOS_BACKEND_MISMATCH');
   validateFirebasePlist(config.ios.googleServicesFile ? path.resolve(root, config.ios.googleServicesFile) : undefined);
   console.log('iOS configuration preflight passed. Apple signing, APNs, SMS and device testing remain separate checks.');
