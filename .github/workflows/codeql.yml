@@ -1,7 +1,7 @@
 name: Security scan
 
 on:
-  push: { branches: [main] }
+  push: { branches: [main, 'prepare/ios-testflight-20260917'] }
   pull_request: { branches: [main] }
   schedule: [{ cron: '0 3 * * 1' }]
 
