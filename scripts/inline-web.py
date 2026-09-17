@@ -87,6 +87,22 @@ js = replace_structure(
     'Expo Linking query decoding',
 )
 
+# Expo ImagePicker passes locally-created blob URLs to the video metadata
+# element. Enforce that contract at the DOM boundary: never accept a script,
+# data, or remote URL as a media source. Keep the SDK structure fail-closed.
+js = replace_structure(
+    js,
+    rf'async function (?P<fn>{IDENTIFIER})\((?P<url>{IDENTIFIER})\)'
+    rf'\{{return new Promise\((?P<resolve>{IDENTIFIER})=>\{{const '
+    rf'(?P<element>{IDENTIFIER})=document\.createElement\((?P<quote>[\'\"])video(?P=quote)\);',
+    lambda match: (
+        f"async function {match['fn']}({match['url']}){{"
+        f"if(!/^blob:/.test({match['url']}))throw new Error('Expected local media blob URL');"
+        f"return new Promise({match['resolve']}=>{{const {match['element']}=document.createElement('video');"
+    ),
+    'Expo ImagePicker video metadata URL',
+)
+
 MIME = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
         'gif': 'image/gif', 'svg': 'image/svg+xml'}
 for ref in sorted(set(re.findall(

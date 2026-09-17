@@ -22,7 +22,8 @@ const vulnerableFixture = [
   "function second(s){const o=[];const v=n=>s({url:window.location.href,nativeEvent:n});return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)}",
   'function enc(o,t,n){return o.searchParams.set(t,encodeURIComponent(n))}',
   'function dec(o,n,t){o[n]=decodeURIComponent(t)}',
-  'globalThis.__fixture={first,second,enc,dec};',
+  "async function videoMeta(o){return new Promise(s=>{const n=document.createElement('video');n.onloadedmetadata=()=>s({width:n.videoWidth});n.src=o})}",
+  'globalThis.__fixture={first,second,enc,dec,videoMeta};',
 ].join('\n');
 
 function makeDist(entry = vulnerableFixture) {
@@ -72,6 +73,28 @@ const equivalentFixtures: Array<[string, string]> = [
 ];
 
 describe('web production-bundle hardening', () => {
+  it('only allows local blob URLs at the video metadata DOM boundary', async () => {
+    const fixture = makeDist();
+    try {
+      const result = runInline(fixture.dist, fixture.out);
+      expect(result.status, result.stderr).toBe(0);
+      const seen: string[] = [];
+      const context: Record<string, unknown> = {
+        document: { createElement: () => ({
+          videoWidth: 32, onloadedmetadata: () => {},
+          set src(value: string) { seen.push(value); this.onloadedmetadata(); },
+        }) },
+      };
+      vm.runInNewContext(scriptBody(readFileSync(fixture.out, 'utf8')), context);
+      const api = context.__fixture as { videoMeta: (url: string) => Promise<unknown> };
+      for (const url of ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'https://evil.invalid/media', '//evil.invalid', ' blob:test']) {
+        await expect(api.videoMeta(url)).rejects.toThrow('Expected local media blob URL');
+      }
+      expect(seen).toEqual([]);
+      await expect(api.videoMeta('blob:https://dawaee.test/local-id')).resolves.toEqual({ width: 32 });
+      expect(seen).toEqual(['blob:https://dawaee.test/local-id']);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  });
   for (const [name, entry] of equivalentFixtures) {
     it(`blocks cross-origin Linking signals and preserves URLSearchParams values: ${name}`, () => {
       const fixture = makeDist(entry);
@@ -186,7 +209,7 @@ describe('web production-bundle hardening', () => {
 // changed callback/registration identities must still stop the real bundler.
 describe('web hardening retains fail-closed structure checks', () => {
   const lines = vulnerableFixture.split('\n');
-  for (const index of [0, 1, 2, 3]) {
+  for (const index of [0, 1, 2, 3, 4]) {
     for (const mutation of ['missing', 'duplicate'] as const) {
       it(`rejects ${mutation} snippet ${index}`, () => {
         const entry = mutation === 'missing'
