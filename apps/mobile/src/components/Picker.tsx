@@ -18,7 +18,7 @@ export interface PickerOption<T extends string> {
 }
 
 export function Picker<T extends string>({
-  label, options, value, onChange, hint, error, disabled,
+  label, options, value, onChange, hint, error, disabled, wrap = false,
 }: {
   label: string;
   options: ReadonlyArray<PickerOption<T>>;
@@ -27,17 +27,21 @@ export function Picker<T extends string>({
   hint?: string;
   error?: string | null;
   disabled?: boolean;
+  wrap?: boolean;
 }) {
   const theme = useTheme();
+
+  const OptionsContainer = wrap ? View : ScrollView;
+  const containerStyle = { gap: theme.spacing.sm, paddingVertical: theme.spacing.xxs };
 
   return (
     <View style={{ gap: theme.spacing.xs }}>
       <Txt variant="bodySmall" weight="medium" color={theme.colors.ink700}>{label}</Txt>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ gap: theme.spacing.sm, paddingVertical: theme.spacing.xxs }}
+      <OptionsContainer
+        {...(wrap ? { style: { ...containerStyle, flexDirection: 'row', flexWrap: 'wrap' } as const } : {
+          horizontal: true, showsHorizontalScrollIndicator: true,
+          keyboardShouldPersistTaps: 'handled' as const, contentContainerStyle: containerStyle,
+        })}
         accessibilityRole="radiogroup"
         accessibilityLabel={label}
       >
@@ -53,6 +57,7 @@ export function Picker<T extends string>({
               accessibilityState={{ selected, disabled: Boolean(disabled) }}
               style={({ pressed }) => [{
                 minHeight: theme.touch,
+                maxWidth: '100%',
                 justifyContent: 'center',
                 paddingHorizontal: theme.spacing.lg,
                 borderRadius: theme.radius.pill,
@@ -72,7 +77,7 @@ export function Picker<T extends string>({
             </Pressable>
           );
         })}
-      </ScrollView>
+      </OptionsContainer>
       {hint && !error ? <Txt variant="caption" color={theme.colors.ink500}>{hint}</Txt> : null}
       {error ? <Txt variant="caption" color={theme.colors.danger700}>{error}</Txt> : null}
     </View>

@@ -7,3 +7,4 @@ export * from './i18n.js';
 export * from './design.js';
 export * from './reminder-text.js';
 export * from './logging.js';
+export * from './medication-input.js';

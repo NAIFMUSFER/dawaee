@@ -12,7 +12,7 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { AdherenceResponse } from '@/api/types';
 import { errorMessageKey } from '@dawaee/shared';
-import { addDays } from '@dawaee/core';
+import { addDays, localDateInZone } from '@dawaee/core';
 
 /**
  * The adherence dashboard.
@@ -31,9 +31,7 @@ const CHART_HEIGHT = 120;
 const BAR_WIDTH = 22;
 
 function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  return localDateInZone(new Date(), timezone);
 }
 
 export default function AdherenceScreen() {

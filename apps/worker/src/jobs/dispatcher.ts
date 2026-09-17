@@ -94,7 +94,13 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
 
     const result = await sendOne(ctx, client, row);
 
-    if (result.ok) {
+    if (result.skipped) {
+      await finalise(ctx, row,
+        `UPDATE notification_deliveries
+            SET status = 'skipped', lease_until = NULL, lease_token = NULL
+          WHERE id = $1 AND status = 'sending' AND lease_token = $2`,
+        []);
+    } else if (result.ok) {
       const applied = await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'sent', sent_at = $3::timestamptz, provider = $4, provider_message_id = $5,
@@ -143,6 +149,7 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
       WHERE id = $1
         AND patient_profile_id = $2
         AND caregiver_user_id = $3
+        AND app.has_verified_phone(caregiver_user_id)
         AND status = 'active'`,
     [row.relationship_id, row.patient_profile_id, row.recipient_user_id],
   );
@@ -176,6 +183,7 @@ async function finalise(
 
 interface SendOutcome {
   ok: boolean;
+  skipped?: boolean;
   provider: string;
   providerMessageId?: string;
   receiptTickets?: ReceiptTicket[];
@@ -243,6 +251,7 @@ async function applyCurrentNotificationPrivacy(
     const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
       `SELECT status = 'active'
               AND caregiver_user_id = $2
+              AND app.has_verified_phone(caregiver_user_id)
               AND 'view_medications' = ANY(permissions) AS can_view_medication
          FROM caregiver_relationships
         WHERE id = $1 AND patient_profile_id = $3`,
@@ -277,12 +286,24 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
   }
 
   const safe = await applyCurrentNotificationPrivacy(client, row);
-  const grouped = safe.payload.grouped === true;
-  const messages: PushMessage[] = tokens.map((token) => ({
+  // A caregiver's lock screen and push provider are not an authenticated
+  // medical-record view. Never forward names, dose identifiers or dose actions,
+  // even when the patient opted into detailed reminders on their own device.
+  // Preserve the detailed outbox record for authorized in-app access.
+  const caregiver = row.relationship_id !== null || row.kind === 'escalation';
+  const english = row.locale === 'en';
+  const grouped = !caregiver && safe.payload.grouped === true;
+  const messages: PushMessage[] = tokens.map((token): PushMessage => ({
     token: token.token,
-    title: row.title ?? '',
-    body: safe.body ?? '',
-    data: {
+    title: caregiver
+      ? (english ? 'Dawaee — Follow-up alert' : 'دوائي — تنبيه متابعة')
+      : row.title ?? '',
+    body: caregiver
+      ? (english
+          ? 'You have a follow-up alert. Open Dawaee to view the details.'
+          : 'لديك تنبيه يحتاج إلى متابعتك. افتح دوائي لعرض التفاصيل.')
+      : safe.body ?? '',
+    data: caregiver ? { deliveryId: row.id, kind: row.kind } : {
       deliveryId: row.id,
       kind: grouped ? 'dose_group_reminder' : row.kind,
       doseId: grouped ? '' : String(safe.payload.doseId ?? ''),
@@ -291,9 +312,30 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
     },
     priority: row.kind === 'dose_reminder' || row.kind === 'dose_reminder_repeat' || row.kind === 'escalation'
       ? 'high' : 'default',
-    categoryId: row.kind.startsWith('dose_reminder') && !grouped ? 'MEDICATION_REMINDER' : undefined,
+    categoryId: !caregiver && row.kind.startsWith('dose_reminder') && !grouped ? 'MEDICATION_REMINDER' : undefined,
     sound: 'default',
   }));
+
+  if (row.kind === 'escalation') {
+    // A confirmation/cancellation/snooze can arrive after the outbox claim while
+    // resolving devices/privacy. Re-read the authoritative occurrence and our
+    // exact live lease immediately before the external send. This prevents
+    // known-stale alerts; it cannot retract a push already accepted by Expo.
+    const { rows: pending } = await client.query<{ still_pending: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM notification_deliveries nd
+         JOIN dose_occurrences d ON d.id = nd.dose_occurrence_id
+          WHERE nd.id = $1 AND nd.lease_token = $2 AND nd.status = 'sending'
+            AND d.patient_profile_id = nd.patient_profile_id
+            AND d.status NOT IN ('taken','taken_late','skipped','cancelled')
+            AND (d.snoozed_until IS NULL OR d.snoozed_until <= $3::timestamptz)
+       ) AS still_pending`,
+      [row.id, row.lease_token, ctx.now()],
+    );
+    if (pending[0]?.still_pending !== true) {
+      return { ok: false, skipped: true, provider: ctx.providers.push.name };
+    }
+  }
 
   const results = await ctx.providers.push.send(messages);
 

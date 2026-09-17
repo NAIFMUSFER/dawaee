@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { closePool } from '../src/lib/db.js';
+import { closePool, withUser } from '../src/lib/db.js';
 import { buildProviders } from '../src/providers/index.js';
 import { loadConfig } from '../src/config.js';
 import type { MockPushProvider } from '../src/providers/index.js';
@@ -125,7 +125,7 @@ export const TEST_PASSWORD = 'correct horse battery staple';
  * endpoint refuses, and a suite that signed in through it would be testing a
  * route no real user can take. This is the way in that actually exists.
  */
-export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`): Promise<TestUser> {
+export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`, options: { verifiedPhone?: boolean } = {}): Promise<TestUser> {
   const remoteAddress = nextRemoteAddress();
 
   const registered = await h.app.inject({
@@ -156,8 +156,22 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
     method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
 
+  const account = me.json<{ user: { id: string; phoneE164: string } }>().user;
+  const userId = account.id;
+  // Ordinary clinical scenarios use an explicitly verified fixture. The
+  // external SMS provider is not part of this fixture; its API boundary has
+  // its own tests. Registration alone remains unverified in production.
+  if (options.verifiedPhone !== false) {
+    await withUser(userId, async (tx) => {
+      const proof = await tx.query<{ verified: boolean }>(
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, account.phoneE164],
+      );
+      if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
+    });
+  }
+
   return {
-    userId: me.json<{ user: { id: string } }>().user.id,
+    userId,
     phone,
     token: auth.accessToken,
     refreshToken: auth.refreshToken,

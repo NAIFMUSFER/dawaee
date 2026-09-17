@@ -48,6 +48,8 @@ const schema = z.object({
   DATABASE_CA_CERT: z.string().optional(),
   DATABASE_CA_CERT_FILE: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  /** Preview deployments can require worker health too. Production always does. */
+  WORKER_READINESS_REQUIRED: envBoolean(false),
   // Managed providers hand out one connection string, and it belongs to the
   // database owner. The owner is exactly the identity that must never serve a
   // request: every RLS policy in migration 0008 is written `TO dawaee_app`, so

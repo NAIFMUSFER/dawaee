@@ -203,3 +203,28 @@ describe('medication capture profile isolation', () => {
     }
   });
 });
+
+it('carries complete OCR text in the profile draft while keeping navigation free of label data', async () => {
+  const { h, drafts, replacements } = makeHarness();
+  try {
+    chooseFile(h);
+    await h.flush();
+    resolveTicket(pending(h, '/v1/uploads/request')[0]);
+    await h.flush();
+    resolveFinalize(pending(h, '/v1/uploads/finalize')[0]);
+    await h.flush();
+    const request = pending(h, '/v1/ocr/analyze')[0];
+    const rawText = 'SYNTHETIC CONCENTRATION 250 mg/5 ml';
+    request.completed = true;
+    request.resolve({
+      kind: 'medication_label',
+      detected: { name: { value: 'Synthetic medicine', confidence: 0.6, confidenceSource: 'heuristic' } },
+      rawText,
+    });
+    await h.flush();
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({ patientProfileId: 'A', rawText });
+    expect(replacements).toEqual(['/medication/confirm']);
+    expect(JSON.stringify(replacements)).not.toContain(rawText);
+  } finally { h.unmount(); }
+});

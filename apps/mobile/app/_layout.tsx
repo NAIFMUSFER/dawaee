@@ -12,6 +12,9 @@ import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
+import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
+import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
+import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -53,6 +56,15 @@ function Shell() {
   const router = useRouter();
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
+  const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
+  bindCaregiverNotificationAccount(caregiverOwner);
+  const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
+  if (caregiverSession.current.owner !== caregiverOwner) {
+    caregiverSession.current = {
+      owner: caregiverOwner,
+      generation: caregiverSession.current.generation + 1,
+    };
+  }
 
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
   // fixed-route children can read stale process-local ids or OCR medication
@@ -79,6 +91,29 @@ function Shell() {
     void syncPushRegistration(deviceId).catch(() => undefined);
   }, [signedIn, deviceId]);
 
+  /** Keep the delivery selection in account-bound memory. The landing resolves
+   * its patient through the authenticated API, after the app lock permits it. */
+  useEffect(() => {
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startCaregiverNotificationListener(
+        native,
+        (selection) => {
+          if (!isCurrent()) return;
+          setCaregiverNotificationIntent(user.id, selection);
+          router.replace('/caregiver/notification');
+        },
+        isCurrent,
+      );
+    }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [ready, signedIn, user?.id, router]);
+
   /** Act on the reminder's own buttons. */
   useEffect(() => {
     if (!signedIn) return;
@@ -101,33 +136,22 @@ function Shell() {
    * the patient to the doses they were being asked to review.
    */
   useEffect(() => {
-    if (!signedIn || Platform.OS === 'web') return;
-    let stop: (() => void) | undefined;
+    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
     let cancelled = false;
-
-    void import('expo-notifications').then(async (N) => {
-      const handle = async (response: {
-        notification?: { request?: { content?: { data?: Record<string, unknown> } } };
-      } | null) => {
-        const data = response?.notification?.request?.content?.data ?? {};
-        if (data.kind !== 'dose_group_reminder') return;
-        router.replace('/(tabs)/today');
-        // A cold-start response remains available until it is cleared. If it
-        // stayed there, a later remount could route the patient back to Today
-        // for an old reminder they already reviewed.
-        await N.clearLastNotificationResponseAsync?.();
-      };
-
-      await handle(await N.getLastNotificationResponseAsync());
-      if (cancelled) return;
-      const sub = N.addNotificationResponseReceivedListener((response) => {
-        void handle(response as Parameters<typeof handle>[0]);
-      });
-      stop = () => sub.remove();
+    let stop: (() => void) | undefined;
+    // Both default-tap listeners share the synchronous account-change fence.
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startGroupedNotificationListener(
+        native,
+        () => router.replace('/(tabs)/today'),
+        isCurrent,
+      );
     }).catch(() => undefined);
-
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, router]);
+  }, [ready, signedIn, user?.id, router]);
 
   return (
     <I18nProvider

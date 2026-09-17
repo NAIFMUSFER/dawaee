@@ -15,7 +15,7 @@ import {
   setMedicationPrefillDraft,
 } from '@/storage/medication-draft';
 import {
-  MEDICATION_FORMS, STRENGTH_UNITS,
+  MEDICATION_FORMS, STRENGTH_UNITS, parseMedicationNumber,
   type MedicationForm, type MessageKey, type StrengthUnit,
 } from '@dawaee/shared';
 
@@ -49,7 +49,7 @@ function ConfirmMedicationProfileScreen() {
   const [name, setName] = useState(reading('name'));
   const [form, setForm] = useState<MedicationForm>(asEnum(MEDICATION_FORMS, reading('form')) ?? 'tablet');
   const [strengthValue, setStrengthValue] = useState(reading('strengthValue'));
-  const [strengthUnit, setStrengthUnit] = useState<StrengthUnit>(asEnum(STRENGTH_UNITS, reading('strengthUnit')) ?? 'mg');
+  const [strengthUnit, setStrengthUnit] = useState<StrengthUnit | null>(asEnum(STRENGTH_UNITS, reading('strengthUnit')));
   const [expiryDate, setExpiryDate] = useState(isValidLocalDate(reading('expiryDate')) ? reading('expiryDate') : '');
   const [showMore, setShowMore] = useState(false);
   const [brandName, setBrandName] = useState(reading('brandName'));
@@ -59,6 +59,7 @@ function ConfirmMedicationProfileScreen() {
   const [instructions, setInstructions] = useState(reading('instructions'));
   const [nameError, setNameError] = useState<string | null>(null);
   const [strengthError, setStrengthError] = useState<string | null>(null);
+  const [unitError, setUnitError] = useState<string | null>(null);
 
   const formOptions = useMemo(
     () => MEDICATION_FORMS.map((value) => ({ value, label: t(`form.${value}` as MessageKey) })),
@@ -78,12 +79,17 @@ function ConfirmMedicationProfileScreen() {
       return;
     }
     const rawStrength = strengthValue.trim();
-    const strength = rawStrength === '' ? null : Number(rawStrength.replace(',', '.'));
+    const strength = rawStrength === '' ? null : parseMedicationNumber(rawStrength);
     if (strength !== null && (!Number.isFinite(strength) || strength <= 0 || strength > MAX_STRENGTH_VALUE)) {
       setStrengthError(t('error.validation_failed'));
       return;
     }
     setStrengthError(null);
+    if (strength !== null && strengthUnit === null) {
+      setUnitError(t('medication.strengthUnitRequired'));
+      return;
+    }
+    setUnitError(null);
     setMedicationPrefillDraft({
       patientProfileId: payload.patientProfileId,
       name: trimmed,
@@ -138,7 +144,7 @@ function ConfirmMedicationProfileScreen() {
 
         <Card>
           <Provenance source={detected.form} />
-          <Picker label={t('medication.form')} options={formOptions} value={form} onChange={setForm} />
+          <Picker label={t('medication.form')} options={formOptions} value={form} onChange={setForm} wrap />
           <Divider />
           <Provenance source={detected.strengthValue} />
           <Field
@@ -147,12 +153,15 @@ function ConfirmMedicationProfileScreen() {
             onChangeText={(value) => {
               setStrengthValue(value);
               setStrengthError(null);
+              setUnitError(null);
             }}
             keyboardType="decimal-pad"
             error={strengthError}
           />
           <Provenance source={detected.strengthUnit} />
-          <Picker label={t('medication.strengthUnit')} options={strengthUnitOptions} value={strengthUnit} onChange={setStrengthUnit} />
+          <Picker label={t('medication.strengthUnit')} options={strengthUnitOptions} value={strengthUnit}
+            onChange={(value) => { setStrengthUnit(value); setUnitError(null); }}
+            hint={t('medication.strengthReview')} error={unitError} wrap />
         </Card>
 
         {detected.expiryDate ? (
@@ -166,6 +175,13 @@ function ConfirmMedicationProfileScreen() {
 
         {showMore ? (
           <Card>
+            {payload.rawText ? (
+              <>
+                <Txt weight="bold">{t('medication.rawText')}</Txt>
+                <Txt>{payload.rawText}</Txt>
+                <Divider />
+              </>
+            ) : null}
             <Field label={t('medication.brandName')} value={brandName} onChangeText={setBrandName} />
             <Field label={t('medication.genericName')} value={genericName} onChangeText={setGenericName} />
             <Field label={t('medication.manufacturer')} value={manufacturer} onChangeText={setManufacturer} />
@@ -181,19 +197,20 @@ function ConfirmMedicationProfileScreen() {
   );
 }
 
-function Provenance({ source }: { source: { value: string; confidence: number } | undefined }) {
+function Provenance({ source }: { source: { value: string; confidence: number; confidenceSource?: 'heuristic' | 'provider' } | undefined }) {
   const theme = useTheme();
   const { t, formatNumber } = useI18n();
   if (!source) return null;
-  const low = source.confidence < CONFIDENCE_FLOOR;
+  const providerConfidence = source.confidenceSource === 'provider' && Number.isFinite(source.confidence) && source.confidence >= 0 && source.confidence <= 1;
+  const low = !providerConfidence || source.confidence < CONFIDENCE_FLOOR;
   const percent = formatNumber(Math.round(source.confidence * 100));
   return (
     <View style={{ gap: theme.spacing.xxs }}>
       <Row wrap gap={theme.spacing.xs}>
         <Badge label={t('medication.detectedByAi')} fg={low ? theme.colors.warning700 : theme.colors.info700} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
-        <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} />
+        {providerConfidence ? <Badge label={t('medication.confidence', { percent })} fg={low ? theme.colors.warning700 : theme.colors.ink500} bg={low ? theme.colors.warning100 : theme.colors.ink100} /> : null}
       </Row>
-      {low ? <Txt variant="caption" color={theme.colors.warning700}>{t('medication.lowConfidence')}</Txt> : null}
+      {low ? <Txt variant="caption" color={theme.colors.warning700}>{t(providerConfidence ? 'medication.lowConfidence' : 'medication.extractionReview')}</Txt> : null}
     </View>
   );
 }

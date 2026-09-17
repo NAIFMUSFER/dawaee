@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, syncDoseActionsSchema,
+  AppError, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, undoDoseSchema, syncDoseActionsSchema,
 } from '@dawaee/shared';
 import { can, consecutiveMissed, dailyBreakdown, localDateInZone, summarizeAdherence, viewOf } from '@dawaee/core';
 import { requireDateRange, requireUuid, optionalUuid, requireLimit } from '../lib/params.js';
@@ -241,7 +241,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
       await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
-      return undoDose(tx, { doseId, userId, now: serverNow(), requestId: req.id, ipHash: req.ipHash });
+      return undoDose(tx, { doseId, userId, ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
     });
   });
 

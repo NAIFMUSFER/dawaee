@@ -562,7 +562,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
 export const api = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { method: 'GET', query }),
-  post: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'POST', body, query }),
+  post: <T>(path: string, body?: unknown, query?: RequestOptions['query'], options?: Pick<RequestOptions, 'timeoutMs' | 'signal'>) => request<T>(path, { ...options, method: 'POST', body, query }),
   put: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'PUT', body, query }),
   patch: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'PATCH', body, query }),
   delete: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { method: 'DELETE', query }),

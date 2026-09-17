@@ -251,6 +251,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     assertLogin(attempt, locale);
 
     const session = await withTransaction(async (tx) => {
+      // Recovery may commit between the login attempt and session creation.
+      // Serialize and recheck the exact credential that was verified; never
+      // mint a fresh session from a password that has just been replaced.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 20260912))', [attempt.userId]);
+      const credential = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [attempt.userId]);
+      if (credential.rows[0]?.hash !== attempt.credentialHash) {
+        throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.invalidCredentials'));
+      }
       const created = await createSession(tx, attempt.userId, {
         deviceId: body.deviceId,
         deviceName: body.deviceName ?? null,
@@ -345,6 +353,13 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     // nothing and the revocation is a no-op that reports success — which is
     // exactly the failure mode this whole finding is about.
     await withUser(userId, async (tx) => {
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 20260912))', [userId]);
+      const current = await tx.query<{ hash: string | null; live: boolean }>(
+        'SELECT app.password_hash_for_user($1) AS hash, app.session_is_live($2) AS live', [userId, sessionId],
+      );
+      if (!current.rows[0]?.live || current.rows[0].hash !== existing) {
+        throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.currentPasswordWrong'));
+      }
       await tx.query('SELECT app.set_password($1,$2)', [userId, hash]);
 
       /**

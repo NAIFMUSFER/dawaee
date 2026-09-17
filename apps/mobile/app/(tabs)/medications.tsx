@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Banner, Button, Card, EmptyState, Loading, Row, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
@@ -83,7 +83,12 @@ function MedicationsProfileScreen() {
     }
   }, [beginLoad, activeProfile, setOffline]);
 
-  useEffect(() => { void load(filter); }, [load, filter]);
+  // Tab screens stay mounted in Expo Router. Refresh whenever this tab regains
+  // focus so a medication created on /medication/quick-create appears
+  // immediately instead of leaving the pre-create list cached on screen.
+  useFocusEffect(useCallback(() => {
+    void load(filter);
+  }, [load, filter]));
 
   const filterOptions = useMemo(() => [
     { value: 'active' as const, label: t('medication.status.active') },

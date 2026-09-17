@@ -128,6 +128,13 @@ export default function SettingsScreen() {
 
   const familyRows: SettingsRow[] = [
     {
+      key: 'phone-verification',
+      label: t('phoneVerification.title'),
+      hint: t('phoneVerification.body'),
+      essential: true,
+      onPress: () => router.push('/settings/phone-verification'),
+    },
+    {
       key: 'family',
       label: t('family.title'),
       hint: t('settings.familyHint'),

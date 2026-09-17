@@ -81,6 +81,9 @@ function FamilyProfileScreen() {
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
       if (!isCurrent()) return;
+      if (!res || !Array.isArray(res.caregivers) || !['owner', 'caregiver', 'none'].includes(res.viewerRole)) {
+        throw new Error('Invalid care circle response');
+      }
       setData(res);
       setError(null);
       setOffline(false);
@@ -200,7 +203,7 @@ function FamilyProfileScreen() {
           />
         ) : null}
 
-        {isOwner ? (
+        {data && (isOwner ? (
           <OwnerView
             active={active}
             pending={pending}
@@ -216,7 +219,7 @@ function FamilyProfileScreen() {
             busy={busyId !== null}
             onLeave={you ? () => remove(you, true) : null}
           />
-        )}
+        ))}
       </ScrollView>
     </SafeAreaView>
   );

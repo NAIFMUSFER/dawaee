@@ -22,7 +22,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 const addDays = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 
 function createHarness(file, hookFile, profile = {}, overrides = {}) {
-  const h = { requests: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
+  const h = { requests: [], routes: [], cacheWrites: [], cachedReads: [], queued: [], notifications: [], offlineWrites: [], frames: [], dirty: false, effects: [], tree: null };
   h.app = {
     user: { id: 'synthetic-account', displayName: 'Caregiver' },
     activeProfile: { id: 'A', displayName: 'Patient A', timezone: 'Asia/Riyadh', isSelf: false, permissions: ['view_medications', 'view_schedule', 'view_adherence', 'confirm_dose'], ...profile },
@@ -34,6 +34,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   const i18n = Object.fromEntries(['t', 'formatTime', 'formatDate', 'formatMeasure', 'formatWeekday', 'formatNumber'].map((k) => [k, (value) => String(value)]));
   const theme = { colors: new Proxy({}, { get: () => '#000' }), spacing: new Proxy({}, { get: () => 4 }) };
   let frame;
+  const focusCleanups = new Set();
   const slot = () => { const i = frame.cursor++; return [frame, i]; };
   const memo = (fn, deps) => {
     const [f, i] = slot();
@@ -71,6 +72,11 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     useCallback: (fn, deps) => memo(() => fn, deps),
     useEffect: effect,
     useLayoutEffect: effect,
+    useSyncExternalStore: (subscribe, getSnapshot) => {
+      const [f] = slot();
+      effect(() => subscribe(() => { if (f.alive) h.dirty = true; }), [subscribe]);
+      return getSnapshot();
+    },
   };
   const request = (method, route, payload) => {
     const gate = deferred();
@@ -82,7 +88,15 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     react: { __esModule: true, default: React, ...React },
     'react-native': hosts,
     'react-native-safe-area-context': hosts,
-    'expo-router': { router: { push: () => undefined } },
+    'expo-router': { router: {
+      push: (route) => { h.routes.push(route); },
+      replace: (route) => { h.routes.push(route); },
+      back: () => { h.routes.push('back'); },
+    }, useFocusEffect: (fn) => effect(() => {
+      const cleanup = fn();
+      if (cleanup) focusCleanups.add(cleanup);
+      return () => { if (focusCleanups.delete(cleanup)) cleanup?.(); };
+    }, [fn]) },
     '@/components/ui': hosts,
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
@@ -91,7 +105,8 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
-    '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body) } },
+    '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
+      anonymous: { post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },
@@ -118,7 +133,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       setCaregiverDetailRouteIntent: () => undefined,
     },
     '@dawaee/shared': { DOSE_STATUS_COLORS: new Proxy({}, { get: () => ({ fg: '#000', bg: '#fff' }) }), errorMessageKey: (code) => `error.${code}` },
-    '@dawaee/core': { addDays, weekdayOf: (date) => new Date(`${date}T12:00:00Z`).getUTCDay(), eachDate: (from, to) => {
+    '@dawaee/core': { addDays, localDateInZone: (instant, timeZone) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant);
+      return ['year', 'month', 'day'].map((type) => parts.find((part) => part.type === type).value).join('-');
+    }, weekdayOf: (date) => new Date(`${date}T12:00:00Z`).getUTCDay(), eachDate: (from, to) => {
       const result = []; for (let d = from; d <= to; d = addDays(d, 1)) result.push(d); return result;
     } },
   };
@@ -131,7 +149,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }).outputText;
     const exports = {};
     vm.runInNewContext(code, {
-      exports, Date, Intl, console,
+      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout,
       ...vmGlobals,
       require: (id) => {
         if (id === '@/hooks/useRequestScope') {
@@ -143,7 +161,13 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }, { filename: sourceFile });
     return exports;
   };
-  const Screen = evaluate(file).default;
+  modules['@dawaee/shared'] = {
+    ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/enums.ts')),
+    ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/medication-input.ts')),
+    ...modules['@dawaee/shared'],
+  };
+  modules['@/components/DoseUnitPicker'] ??= hosts;
+  const Screen = evaluate(file)[overrides.__exportName ?? 'default'];
   const disposeFrom = (depth) => {
     for (const f of h.frames.splice(depth)) {
       f.alive = false;
@@ -152,7 +176,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   };
   h.render = (commitEffects = true) => {
     h.dirty = false;
-    let type = Screen, props = {}, depth = 0, tree;
+    let type = Screen, props = overrides.__props ?? {}, depth = 0, tree;
     // Evaluate the route and any keyed screen boundary, not presentation children.
     while (typeof type === 'function') {
       let f = h.frames[depth];
@@ -182,6 +206,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     h.render(commitEffects);
   };
   h.unmount = () => { h.disposed = true; disposeFrom(0); h.effects = []; h.dirty = false; };
+  h.blur = () => { for (const cleanup of focusCleanups) cleanup(); focusCleanups.clear(); };
   h.text = () => JSON.stringify(h.tree, (_key, value) => typeof value === 'function' ? value.name : value);
   h.find = (type, predicate = () => true) => {
     const walk = (value) => {

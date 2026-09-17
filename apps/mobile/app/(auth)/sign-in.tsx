@@ -108,6 +108,9 @@ export default function SignInScreen() {
           size="large"
         />
 
+        <Button label={t('recovery.title')} tone="ghost" disabled={busy}
+          onPress={() => router.push('/(auth)/forgot-password')} />
+
         <Pressable
           onPress={() => router.push('/(auth)/sign-up')}
           accessibilityRole="button"

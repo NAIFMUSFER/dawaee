@@ -82,10 +82,21 @@ for i in $(seq 1 40); do
 done
 
 # ----------------------------------------------------------------- readiness
-step "readiness reports the schema"
+step "public readiness is ready without exposing schema internals"
 READY="$(curl -fsS "$BASE/health/ready")"
-echo "$READY" | grep -q '"status":"ready"' || fail "not ready: $READY"
-echo "$READY" | grep -q '"schema"' || fail "readiness does not report the schema: $READY"
+if ! READY_JSON="$READY" python3 - <<'PY'
+import json
+import os
+
+body = json.loads(os.environ["READY_JSON"])
+if body.get("status") != "ready":
+    raise SystemExit("readiness status is not ready")
+if set(body) != {"status", "time"}:
+    raise SystemExit(f"unexpected public readiness fields: {sorted(body)}")
+PY
+then
+  fail "public readiness contract mismatch: $READY"
+fi
 
 # ------------------------------------------------------------------- routes
 ip() { echo "10.90.$((RANDOM % 250)).$((RANDOM % 250))"; }

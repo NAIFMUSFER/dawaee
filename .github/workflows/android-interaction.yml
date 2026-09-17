@@ -1,0 +1,77 @@
+name: Android interaction audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-interaction.yml'
+      - 'scripts/android-interaction/**'
+      - 'apps/mobile/**'
+      - 'packages/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-interaction-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interaction:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      NODE_ENV: production
+      EXPO_NO_TELEMETRY: '1'
+      DAWAEE_AUDIT_BUILD: '1'
+      EXPO_PUBLIC_DEMO: '0'
+      EXPO_PUBLIC_API_URL: https://dawaee-audit-preview.onrender.com
+      # Refuse an unexpected backend before creating any synthetic account.
+      AUDIT_API_COMMIT: 0de543b54613757a116596fcb9e52d549c2f23ae
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - run: npm ci --legacy-peer-deps
+        working-directory: apps/mobile
+      - name: Build the actual isolated app for the emulator
+        working-directory: apps/mobile
+        run: |
+          npx --no-install expo prebuild --platform android --no-install --skip-dependency-update react-native,react
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon --console=plain --max-workers=2 -PreactNativeArchitectures=x86_64 '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g'
+      - name: Install official Android system image
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'system-images;android-35;google_apis;x86_64' 'emulator' 'platform-tools'
+          # Use one explicit AVD directory for both SDK tools and the emulator.
+          # Their default user directories can differ on hosted runners.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/tadawee-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --force --name tadawee_audit --path "$ANDROID_AVD_HOME/tadawee_audit.avd" --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
+          test -s "$ANDROID_AVD_HOME/tadawee_audit.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx tadawee_audit
+      - name: Exercise touch, scrolling, hardware Back and persisted input
+        timeout-minutes: 18
+        run: bash scripts/android-interaction/run.sh
+      - name: Upload interaction evidence even when an assertion fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-interaction-${{ github.event.pull_request.head.sha }}
+          path: android-interaction-evidence/
+          if-no-files-found: warn
+          retention-days: 7

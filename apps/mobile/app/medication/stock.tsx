@@ -383,7 +383,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
               placeholder={t('stock.enterNewQuantity')}
               autoFocus
             />
-            <Picker label={t('schedule.doseUnit')} options={unitOptions} value={refillUnit} onChange={setRefillUnit} />
+            <Picker wrap label={t('schedule.doseUnit')} options={unitOptions} value={refillUnit} onChange={setRefillUnit} />
             <Field label={t('refill.pharmacy')} value={pharmacy} onChangeText={setPharmacy} />
             <Field label={t('refill.cost')} value={cost} onChangeText={setCost} keyboardType="decimal-pad" />
             <Field label={t('refill.note')} value={note} onChangeText={setNote} multiline />

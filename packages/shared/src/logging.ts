@@ -29,7 +29,16 @@ export const LOG_REDACTED_PATHS: readonly string[] = [
   'req.headers.cookie',
   'req.body.code',
   'req.body.token',
+  'req.body.idToken',
+  'idToken',
   'req.body.refreshToken',
+  'req.body.password',
+  'req.body.newPassword',
+  'req.body.currentPassword',
+  'password',
+  'newPassword',
+  'currentPassword',
+  'credentialHash',
 
   // Identifiers that name a person.
   'req.body.phone',

@@ -8,7 +8,7 @@ const { createHarness } = require('./profile-screen-harness.cjs') as {
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/medication/confirm.tsx');
 const hook = path.resolve(process.cwd(), 'apps/mobile/src/hooks/useRequestScope.ts');
 
-function setup() {
+function setup(detected: Record<string, { value: string; confidence: number }> = {}, rawText?: string) {
   const prefills: any[] = [];
   const replacements: string[] = [];
   const h = createHarness(screen, hook, {}, {
@@ -29,15 +29,13 @@ function setup() {
         patientProfileId: profileId,
         imageKey: `image-${profileId}`,
         remainingLines: 0,
+        rawText,
         detected: {
           name: { value: 'SYNTHETIC-OCR-MEDICATION', confidence: 0.99 },
+          ...detected,
         },
       }),
       setMedicationPrefillDraft: (value: any) => { prefills.push(JSON.parse(JSON.stringify(value))); },
-    },
-    '@dawaee/shared': {
-      MEDICATION_FORMS: ['tablet'],
-      STRENGTH_UNITS: ['mg'],
     },
   });
   return { h, prefills, replacements };
@@ -80,6 +78,8 @@ describe('OCR confirmation strength validation', () => {
     const { h, prefills, replacements } = setup();
     try {
       await enterStrength(h, '500');
+      h.find('Picker', (props: any) => props.label === 'medication.strengthUnit').onChange('mg');
+      await h.flush();
       await next(h);
       expect(prefills).toHaveLength(1);
       expect(prefills[0].patientProfileId).toBe('A');
@@ -103,5 +103,43 @@ describe('OCR confirmation strength validation', () => {
     } finally {
       h.unmount();
     }
+  });
+});
+
+describe('OCR strength source review', () => {
+  it.each([undefined, 'mg/5 ml'])('requires an explicit unit when OCR unit is %s', async (unit) => {
+    const { h, prefills, replacements } = setup({
+      strengthValue: { value: '250', confidence: 0.8 },
+      ...(unit ? { strengthUnit: { value: unit, confidence: 0.8 } } : {}),
+    });
+    try {
+      expect(h.find('Picker', (props: any) => props.label === 'medication.strengthUnit').value).toBeNull();
+      await next(h);
+      expect(prefills).toEqual([]);
+      expect(replacements).toEqual([]);
+      expect(h.text()).toContain('medication.strengthUnitRequired');
+      expect(strengthField(h).value).toBe('250');
+      h.find('Picker', (props: any) => props.label === 'medication.strengthUnit').onChange('mg');
+      await h.flush();
+      await next(h);
+      expect(prefills[0]).toMatchObject({ strengthValue: 250, strengthUnit: 'mg' });
+    } finally { h.unmount(); }
+  });
+
+  it('retains a recognized OCR unit and exposes the original text only for review', async () => {
+    const rawText = 'SYNTHETIC ORIGINAL LABEL 100 mcg';
+    const { h, prefills } = setup({
+      strengthValue: { value: '100', confidence: 0.8 },
+      strengthUnit: { value: 'mcg', confidence: 0.8 },
+    }, rawText);
+    try {
+      expect(h.find('Picker', (props: any) => props.label === 'medication.strengthUnit').value).toBe('mcg');
+      h.find('Button', (props: any) => props.label === 'Additional details').onPress();
+      await h.flush();
+      expect(h.text()).toContain(rawText);
+      await next(h);
+      expect(prefills[0]).toMatchObject({ strengthValue: 100, strengthUnit: 'mcg' });
+      expect(prefills[0]).not.toHaveProperty('rawText');
+    } finally { h.unmount(); }
   });
 });

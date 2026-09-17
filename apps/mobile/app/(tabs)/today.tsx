@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -92,6 +92,8 @@ function TodayProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyDoseId, setBusyDoseId] = useState<string | null>(null);
   const [snoozeFor, setSnoozeFor] = useState<DoseView | null>(null);
+  const actionInFlight = useRef(new Set<string>());
+  const [actionError, setActionError] = useState<string | null>(null);
   const [notificationWarning, setNotificationWarning] = useState<string | null>(null);
   const [exactAlarmsUnavailable, setExactAlarmsUnavailable] = useState(false);
   const [localOverrides, setLocalOverrides] = useState<Record<string, DoseView['status']>>({});
@@ -121,6 +123,9 @@ function TodayProfileScreen() {
       const res = await api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id });
       if (!isCurrent()) return;
       setData(res);
+      // An authoritative read supersedes local action display, including after
+      // another device changed/undid the occurrence.
+      setLocalOverrides({});
       setServiceUnavailable(false);
       setOffline(false);
 
@@ -219,10 +224,12 @@ function TodayProfileScreen() {
 
   const undo = useCallback(async (dose: DoseView) => {
     const isCurrent = captureScope();
-    if (!canConfirmDose || !isCurrent()) return;
+    if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
+    actionInFlight.current.add(dose.id);
+    setActionError(null);
     setBusyDoseId(dose.id);
     try {
-      await api.post('/v1/dose/action', { doseId: dose.id, action: 'undo' });
+      await api.post('/v1/dose/action', { doseId: dose.id, action: 'undo', clientEventId: `undo-${dose.id}-${dose.confirmedAt ?? 'unknown'}` });
       if (!isCurrent()) return;
       setLocalOverrides((o) => {
         const next = { ...o };
@@ -233,8 +240,9 @@ function TodayProfileScreen() {
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
-      else setNotificationWarning(t('today.undoFailed'));
+      setActionError(t('today.undoFailed'));
     } finally {
+      actionInFlight.current.delete(dose.id);
       if (isCurrent()) setBusyDoseId(null);
     }
   }, [captureScope, canConfirmDose, load, setOffline, t]);
@@ -242,11 +250,14 @@ function TodayProfileScreen() {
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
       const isCurrent = captureScope();
-      if (!canConfirmDose || !isCurrent()) return;
+      if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
+      actionInFlight.current.add(dose.id);
+      setActionError(null);
       setBusyDoseId(dose.id);
       const clientEventId = newClientEventId();
       const at = new Date().toISOString();
-      setLocalOverrides((o) => ({ ...o, [dose.id]: action === 'taken' ? 'taken' : 'skipped' }));
+      // Keep the saved status while a request is pending; only durable offline
+      // queue entries get a clearly labelled pending-sync display.
 
       try {
         if (action === 'taken') {
@@ -257,13 +268,21 @@ function TodayProfileScreen() {
         if (isCurrent()) await load();
       } catch (err) {
         if (err instanceof NetworkError) {
-          await enqueue(
-            action === 'taken'
-              ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
-              : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
-          );
-          if (isCurrent()) setOffline(true);
+          try {
+            await enqueue(
+              action === 'taken'
+                ? { type: 'taken', doseOccurrenceId: dose.id, at, clientEventId }
+                : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
+            );
+            if (isCurrent()) {
+              setOffline(true);
+              setLocalOverrides((o) => ({ ...o, [dose.id]: action === 'taken' ? 'taken' : 'skipped' }));
+            }
+          } catch {
+            if (isCurrent()) setActionError(t('today.actionSaveFailed'));
+          }
         } else if (isCurrent()) {
+          setActionError(t('today.actionSaveFailed'));
           setLocalOverrides((o) => {
             const next = { ...o };
             delete next[dose.id];
@@ -271,15 +290,18 @@ function TodayProfileScreen() {
           });
         }
       } finally {
+        actionInFlight.current.delete(dose.id);
         if (isCurrent()) setBusyDoseId(null);
       }
     },
-    [captureScope, canConfirmDose, deviceId, load, setOffline],
+    [captureScope, canConfirmDose, deviceId, load, setOffline, t],
   );
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
     const isCurrent = captureScope();
-    if (!canConfirmDose || !isCurrent()) return;
+    if (!canConfirmDose || !isCurrent() || actionInFlight.current.has(dose.id)) return;
+    actionInFlight.current.add(dose.id);
+    setActionError(null);
     setSnoozeFor(null);
     setBusyDoseId(dose.id);
     const clientEventId = newClientEventId();
@@ -288,13 +310,20 @@ function TodayProfileScreen() {
       if (isCurrent()) await load();
     } catch (err) {
       if (err instanceof NetworkError) {
-        await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
-        if (isCurrent()) setOffline(true);
+        try {
+          await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at: new Date().toISOString(), clientEventId, minutes });
+          if (isCurrent()) setOffline(true);
+        } catch {
+          if (isCurrent()) setActionError(t('today.actionSaveFailed'));
+        }
+      } else if (isCurrent()) {
+        setActionError(t('today.actionSaveFailed'));
       }
     } finally {
+      actionInFlight.current.delete(dose.id);
       if (isCurrent()) setBusyDoseId(null);
     }
-  }, [captureScope, canConfirmDose, deviceId, load, setOffline]);
+  }, [captureScope, canConfirmDose, deviceId, load, setOffline, t]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -358,6 +387,7 @@ function TodayProfileScreen() {
           />
         ) : null}
 
+        {actionError ? <Banner tone="danger" title={actionError} /> : null}
         {notificationWarning ? <Banner tone="danger" title={notificationWarning} body={t('notifications.disabledBody')} /> : null}
         {exactAlarmsUnavailable ? (
           <Banner tone="warning" title={t('notifications.exactAlarmsOff')} body={t('notifications.exactAlarmsOffBody')} />
