@@ -107,9 +107,16 @@ def swipe(upward=False, x=None, top=None, bottom=None):
 def fill(label, value, prefix=False):
     assert re.fullmatch(r"[A-Za-z0-9@_.+-]+", value), "only generated ASCII test input"
     touch(locate(label, prefix=prefix, field=True, scroll=True))
-    adb("shell", "input", "keyevent", "123")
-    adb("shell", "input", "keyevent", *( ["67"] * 70))
+    # End is a visual caret operation in an RTL editor. Clear both directions
+    # instead of assuming it placed the caret after the existing value.
+    adb("shell", "input", "keyevent", *( ["KEYCODE_DEL"] * 70))
+    adb("shell", "input", "keyevent", *( ["KEYCODE_FORWARD_DEL"] * 70))
+    verify_amount = label.startswith("كمية الجرعة")
+    if verify_amount:
+        assert locate(label, prefix=prefix, field=True).get("text", "") == "", "dose editor did not clear"
     adb("shell", "input", "text", value)
+    if verify_amount:
+        assert locate(label, prefix=prefix, field=True).get("text") == value, "dose editor differs from requested test input"
     adb("shell", "input", "keyevent", "4")  # close the keyboard
 
 
@@ -180,6 +187,7 @@ def scenario(case, width, height, density, font):
     fill("كمية الجرعة في كل مرة", "6", prefix=True)
     capture(case + "-quantity")
     tap("الأوقات 1:", prefix=True, scroll=True)
+    locate("تم", attempts=5)
     capture(case + "-picker-open")
     # Hardware Back dismisses without committing; repeat catches stuck overlays.
     for _ in range(3):
@@ -207,11 +215,16 @@ def scenario(case, width, height, density, font):
         assert len(meds) == 1, "save created wrong medication count"
         detail = api("/v1/medications/" + meds[0]["id"], token=token)
         schedule = detail["schedules"][0]
-        assert schedule["doseQuantity"] == 6 and schedule["doseUnit"] == "tablet"
-        assert schedule["rule"]["times"] == ["00:00", "06:00", "12:00", "23:59"]
-        assert schedule["rule"]["weekdays"] == list(range(7))
         stock = api("/v1/medications/" + meds[0]["id"] + "/stock", token=token)["stock"]
-        assert stock["remainingQuantity"] == 60 and stock["unit"] == "tablet"
+        # Evidence contains only the synthetic fixture, never account/session IDs.
+        persisted = {"doseQuantity": schedule["doseQuantity"], "doseUnit": schedule["doseUnit"],
+            "times": schedule["rule"]["times"], "weekdays": schedule["rule"]["weekdays"],
+            "remainingQuantity": stock["remainingQuantity"], "stockUnit": stock["unit"]}
+        (OUT / (case + "-persisted.json")).write_text(json.dumps(persisted, indent=2))
+        assert persisted["doseQuantity"] == 6 and persisted["doseUnit"] == "tablet", "saved quantity/unit mismatch"
+        assert persisted["times"] == ["00:00", "06:00", "12:00", "23:59"], "saved times mismatch"
+        assert persisted["weekdays"] == list(range(7)), "saved weekdays mismatch"
+        assert persisted["remainingQuantity"] == 60 and persisted["stockUnit"] == "tablet", "saved stock mismatch"
         pass_result(case, "UI save persisted quantity 6, tablet unit, 4 times, 7 days and stock 60")
     finally:
         subprocess.run(["adb", "shell", "pkill", "-INT", "screenrecord"],
@@ -239,6 +252,7 @@ def main():
     assert api("/health/ready")["status"] == "ready"
     (OUT / "backend-version.json").write_text(json.dumps(version, indent=2))
     (OUT / "device.txt").write_text(adb("shell", "getprop", "ro.build.fingerprint"))
+    failed = False
     for case, width, height, density, font in [
         ("small-ar", 720, 1280, 320, 1.0),
         ("large-ar-font200", 1080, 2400, 420, 2.0),
@@ -251,7 +265,8 @@ def main():
             if AUTHENTICATED:
                 capture(case + "-failed")
             print("FAIL " + case + ": " + str(error), flush=True)
-            raise
+            failed = True
+    assert not failed, "Native scenarios failed; see results.json and interaction evidence"
 
 
 if __name__ == "__main__":
