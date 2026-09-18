@@ -157,7 +157,7 @@ describe('registration', () => {
       h.app.inject({
         method: 'POST', url: '/v1/auth/register',
         remoteAddress: address,
-        payload: { ...DEVICE, phone: `05670000${String(n).padStart(2, '0')}`,
+        payload: { ...DEVICE, phone: `05670000${String(n).padStart(2, '0')}`, email: `rate-${n}@example.test`,
           displayName: 'x', password: 'correct horse battery' },
       });
 

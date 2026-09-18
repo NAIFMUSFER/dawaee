@@ -216,7 +216,7 @@ describe('rate limiting cannot be sidestepped with a header', () => {
         method: 'POST', url: '/v1/auth/register', remoteAddress: '10.66.0.1',
         ...(hdr ? { headers: hdr } : {}),
         payload: {
-          phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
+          email: `burst-${run}-${i}@example.test`, phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
           deviceId: `burst-${run}-${i}-${Date.now() % 100000}`,
         },
       });
