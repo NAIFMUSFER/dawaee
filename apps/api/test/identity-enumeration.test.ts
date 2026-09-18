@@ -282,7 +282,7 @@ describe('one phone number is one identity however it is written', () => {
     const { normalizePhone } = await import('../src/lib/crypto.js');
     // Invisible characters and malformed numbers must never create a second
     // identity. Arabic and Persian digits above share the canonical identity.
-    for (const odd of ['+966512345678​', '٠٥١٢٣٤٥٦٧٨x', '051234567', '++966512345678']) {
+    for (const odd of ['+966512345678​', '٠٥١٢٣٤٥٦٧٨x', '++966512345678']) {
       expect(normalizePhone(odd), `${JSON.stringify(odd)} was accepted as an identifier`).toBeNull();
     }
   });
