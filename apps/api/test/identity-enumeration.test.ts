@@ -271,6 +271,7 @@ describe('one phone number is one identity however it is written', () => {
     const same = [
       '+966512345678', '00966512345678', '0512345678', '966512345678',
       '+966 51 234 5678', '+966-51-234-5678', ' +966512345678 ',
+      '+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '۰۵۱۲۳۴۵۶۷۸',
     ];
     const normalised = same.map((v) => normalizePhone(v));
     expect(new Set(normalised).size, `variants disagreed: ${JSON.stringify(normalised)}`).toBe(1);
@@ -279,10 +280,9 @@ describe('one phone number is one identity however it is written', () => {
 
   it('a form that cannot be normalised is refused, never treated as a new identity', async () => {
     const { normalizePhone } = await import('../src/lib/crypto.js');
-    // Arabic-Indic digits and a zero-width space. Neither is accepted as a
-    // second spelling of an existing number — they are rejected outright, which
-    // is the safe direction: no duplicate account, no second rate-limit bucket.
-    for (const odd of ['+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '+966512345678​']) {
+    // Invisible characters and malformed numbers must never create a second
+    // identity. Arabic and Persian digits above share the canonical identity.
+    for (const odd of ['+966512345678​', '٠٥١٢٣٤٥٦٧٨x', '051234567', '++966512345678']) {
       expect(normalizePhone(odd), `${JSON.stringify(odd)} was accepted as an identifier`).toBeNull();
     }
   });

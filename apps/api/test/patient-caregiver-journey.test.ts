@@ -65,12 +65,15 @@ describe('reported patient, caregiver and nurse journeys through HTTP and Postgr
     expect(today.localDate).toBe(DAY);
     const dose=today.today.find((d:any)=>d.medicationId===med.medication.id&&d.scheduledLocalTime==='01:15');
     expect(dose.medication.notes).toBe('ملاحظة الدواء التجريبية');
-    await post(nurse,`/v1/doses/${dose.id}/confirm`,{clientEventId:randomUUID(),method:'caregiver',takenAt:NOW.toISOString()});
-    await post(nurse,'/v1/notes',{profileId:patient.profileId,doseOccurrenceId:dose.id,text:'ملاحظة الجرعة بعد التأكيد'});
+    await post(nurse,`/v1/doses/${dose.id}/taken`,{clientEventId:randomUUID(),method:'caregiver',takenAt:NOW.toISOString()});
+    const note=await post(nurse,'/v1/notes',{profileId:patient.profileId,doseOccurrenceId:dose.id,text:'ملاحظة الجرعة بعد التأكيد'});
+    await owner.query('UPDATE symptom_notes SET recorded_at=$1 WHERE id=$2',[NOW,note.note.id]);
     for(const viewer of [patient,caregiver,nurse]){
       const recorded=await read(viewer,`/v1/doses?profileId=${patient.profileId}&medicationId=${med.medication.id}&from=${DAY}&to=${DAY}&recorded=true&limit=20`);
       expect(recorded.doses).toHaveLength(1);
       expect(recorded.doses[0]).toMatchObject({id:dose.id,status:'taken',medication:{notes:'ملاحظة الدواء التجريبية'},notes:[expect.objectContaining({text:'ملاحظة الجرعة بعد التأكيد'})]});
+      const notes=await read(viewer,`/v1/notes?profileId=${patient.profileId}&from=${DAY}&to=${DAY}`);
+      expect(notes.notes).toContainEqual(expect.objectContaining({id:note.note.id}));
       const refreshed=await read(viewer,`/v1/today?profileId=${patient.profileId}`);
       expect(refreshed.today.find((d:any)=>d.id===dose.id).status).toBe('taken');
     }

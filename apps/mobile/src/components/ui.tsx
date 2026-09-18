@@ -21,7 +21,7 @@ export function Screen({
 }: { children: React.ReactNode; scroll?: boolean; padded?: boolean; style?: StyleProp<ViewStyle> }) {
   const theme = useTheme();
   const content = (
-    <View style={[padded && { padding: theme.spacing.lg, gap: theme.spacing.md }, style]}>{children}</View>
+    <View style={[{ width: '100%', maxWidth: 800, alignSelf: 'center' }, padded && { padding: theme.spacing.lg, gap: theme.spacing.md }, style]}>{children}</View>
   );
   if (!scroll) {
     return <View style={{ flex: 1, backgroundColor: theme.colors.background }}>{content}</View>;
@@ -171,7 +171,7 @@ export function Button({
 
 export function Field({
   label, value, onChangeText, placeholder, keyboardType, hint, error, secureTextEntry, autoFocus,
-  maxLength, multiline, autoCapitalize, autoCorrect, autoComplete, textContentType, editable,
+  maxLength, multiline, autoCapitalize, autoCorrect, autoComplete, textContentType, editable, onSubmitEditing, returnKeyType,
 }: {
   label: string;
   value: string;
@@ -194,6 +194,8 @@ export function Field({
   autoComplete?: React.ComponentProps<typeof TextInput>['autoComplete'];
   textContentType?: React.ComponentProps<typeof TextInput>['textContentType'];
   editable?: boolean;
+  onSubmitEditing?: () => void;
+  returnKeyType?: React.ComponentProps<typeof TextInput>['returnKeyType'];
 }) {
   const theme = useTheme();
   const { isRtl } = useI18n();
@@ -212,6 +214,8 @@ export function Field({
         autoComplete={autoComplete}
         textContentType={textContentType}
         editable={editable}
+        onSubmitEditing={onSubmitEditing}
+        returnKeyType={returnKeyType}
         autoFocus={autoFocus}
         maxLength={maxLength}
         multiline={multiline}

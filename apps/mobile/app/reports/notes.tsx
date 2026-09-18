@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,7 +7,8 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
-import { profileScopeKey } from '@/hooks/useRequestScope';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { SYMPTOM_TAGS, errorMessageKey, type MessageKey, type SymptomTag } from '@dawaee/shared';
@@ -70,6 +71,10 @@ function NotesProfileScreen() {
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
   const timezone = activeProfile?.timezone ?? 'UTC';
+  const { begin, capture } = useRequestScope(activeProfile?.id ?? 'none');
+  const owner = activeProfile?.role === 'owner' || activeProfile?.isSelf === true;
+  const canRead = owner || Boolean(activeProfile?.permissions?.includes('view_history'));
+  const canWrite = owner || Boolean(activeProfile?.permissions?.includes('confirm_dose'));
 
   const [notes, setNotes] = useState<NoteRow[]>([]);
   const [measurements, setMeasurements] = useState<MeasurementRow[]>([]);
@@ -97,25 +102,28 @@ function NotesProfileScreen() {
   }, [t]);
 
   const load = useCallback(async () => {
-    if (!activeProfile) return;
+    const current = begin();
+    if (!activeProfile || !canRead) { setLoading(false); return; }
     setError(null);
     try {
       const [noteRes, measurementRes] = await Promise.all([
         api.get<{ notes: NoteRow[] }>('/v1/notes', { profileId: activeProfile.id }),
         api.get<{ measurements: MeasurementRow[] }>('/v1/measurements', { profileId: activeProfile.id }),
       ]);
+      if (!current()) return;
       setNotes(noteRes.notes);
       setMeasurements(measurementRes.measurements);
       setOffline(false);
     } catch (err) {
+      if (!current()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describeError(err));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [activeProfile, describeError, setOffline]);
+  }, [activeProfile, describeError, setOffline, begin, canRead]);
 
-  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useScreenRefresh(load, activeProfile?.id ?? 'none');
 
   const selectType = useCallback((next: MeasurementType) => {
     setType(next);
@@ -130,7 +138,8 @@ function NotesProfileScreen() {
   }, []);
 
   const saveNote = useCallback(async () => {
-    if (!activeProfile) return;
+    if (!activeProfile || !canWrite) return;
+    const current = capture();
     const text = noteText.trim();
     if (tags.length === 0 && text.length === 0) {
       setNoteError(t('notes.needContent'));
@@ -140,18 +149,20 @@ function NotesProfileScreen() {
     setNoteError(null);
     try {
       await api.post('/v1/notes', { profileId: activeProfile.id, tags, text: text.length > 0 ? text : null });
+      if (!current()) return;
       setTags([]);
       setNoteText('');
       await load();
     } catch (err) {
-      setNoteError(err instanceof NetworkError ? t('notifications.offlineBanner') : describeError(err));
+      if (current()) setNoteError(err instanceof NetworkError ? t('notifications.offlineBanner') : describeError(err));
     } finally {
-      setSavingNote(false);
+      if (current()) setSavingNote(false);
     }
-  }, [activeProfile, noteText, tags, t, load, describeError]);
+  }, [activeProfile, noteText, tags, t, load, describeError, canWrite, capture]);
 
   const saveMeasurement = useCallback(async () => {
-    if (!activeProfile) return;
+    if (!activeProfile || !owner) return;
+    const current = capture();
     const valuePrimary = parseNumber(primary);
     const valueSecondary = type === 'blood_pressure' ? parseNumber(secondary) : null;
     if (valuePrimary === null || (type === 'blood_pressure' && valueSecondary === null)) {
@@ -166,15 +177,16 @@ function NotesProfileScreen() {
         { type, valuePrimary, valueSecondary, unit },
         { profileId: activeProfile.id },
       );
+      if (!current()) return;
       setPrimary('');
       setSecondary('');
       await load();
     } catch (err) {
-      setMeasurementError(err instanceof NetworkError ? t('notifications.offlineBanner') : describeError(err));
+      if (current()) setMeasurementError(err instanceof NetworkError ? t('notifications.offlineBanner') : describeError(err));
     } finally {
-      setSavingMeasurement(false);
+      if (current()) setSavingMeasurement(false);
     }
-  }, [activeProfile, primary, secondary, type, unit, t, load, describeError]);
+  }, [activeProfile, primary, secondary, type, unit, t, load, describeError, owner, capture]);
 
   const unitLabel = useCallback(
     (stored: string) => {
@@ -237,7 +249,7 @@ function NotesProfileScreen() {
         <SectionTitle>{t('notes.title')}</SectionTitle>
         <Banner tone="info" title={t('notes.interpretationNotice')} />
 
-        <Card style={{ gap: theme.spacing.md }}>
+        {canWrite ? <Card style={{ gap: theme.spacing.md }}>
           <Txt variant="bodyLarge" weight="bold" accessibilityRole="header">{t('notes.compose')}</Txt>
           <Txt variant="bodySmall" color={theme.colors.ink700}>{t('notes.tagsLabel')}</Txt>
           <Row wrap gap={theme.spacing.sm}>
@@ -260,9 +272,9 @@ function NotesProfileScreen() {
             error={noteError}
           />
           <Button label={t('notes.save')} onPress={() => void saveNote()} loading={savingNote} />
-        </Card>
+        </Card> : null}
 
-        {loading ? (
+        {!canRead ? <Banner tone="info" title={t('error.forbidden')} /> : loading ? (
           <Loading label={t('common.loading')} />
         ) : notes.length === 0 ? (
           <EmptyState title={t('notes.empty')} />
@@ -305,7 +317,7 @@ function NotesProfileScreen() {
         <SectionTitle>{t('measurements.title')}</SectionTitle>
         <Banner tone="info" title={t('measurements.interpretationNotice')} />
 
-        <Card style={{ gap: theme.spacing.md }}>
+        {owner ? <Card style={{ gap: theme.spacing.md }}>
           <Txt variant="bodyLarge" weight="bold" accessibilityRole="header">{t('measurements.compose')}</Txt>
           <Txt variant="bodySmall" color={theme.colors.ink700}>{t('measurements.typeLabel')}</Txt>
           <Row wrap gap={theme.spacing.sm}>
@@ -365,7 +377,7 @@ function NotesProfileScreen() {
           ) : null}
 
           <Button label={t('measurements.save')} onPress={() => void saveMeasurement()} loading={savingMeasurement} />
-        </Card>
+        </Card> : null}
 
         {loading ? (
           <Loading />

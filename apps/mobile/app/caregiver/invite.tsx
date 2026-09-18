@@ -271,7 +271,7 @@ function InviteCaregiverProfileScreen() {
         <Field
           label={t('invite.recipient')}
           value={phone}
-          onChangeText={(v) => { setPhone(v); setFieldError((e) => ({ ...e, phone: undefined })); }}
+          onChangeText={(v) => { setPhone(v); if (v.includes('@')) setChannel('link'); setFieldError((e) => ({ ...e, phone: undefined })); }}
           keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
           hint={t('invite.recipientHint')}
           error={fieldError.phone ?? null}

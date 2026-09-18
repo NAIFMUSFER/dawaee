@@ -107,7 +107,7 @@ export default function AcceptInvitationScreen() {
           setOutcome({ kind: 'verification' });
           return;
         }
-        // Expired, already used, or invalid: each is a permanent result for
+        // Expired or already used is a permanent result for
         // this stored bearer. Forget it so the next sign-in cannot route the
         // person back to a capability the server has already refused. Release
         // the process-wide claim too, so reopening the exact same refused link

@@ -29,7 +29,7 @@ export function registerNoteRoutes(app: FastifyInstance): void {
     const to = optionalDate(q.to, 'to');
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
-      await requireProfileAccess(tx, userId, profileId, 'view_history');
+      const access = await requireProfileAccess(tx, userId, profileId, 'view_history');
       if (doseId) await requireOwnDose(tx, profileId, doseId);
       const { rows } = await tx.query(
         `SELECT n.id, n.tags, n.text, n.recorded_at, n.dose_occurrence_id, m.name AS medication_name
@@ -37,11 +37,11 @@ export function registerNoteRoutes(app: FastifyInstance): void {
            LEFT JOIN dose_occurrences d ON d.id = n.dose_occurrence_id
            LEFT JOIN medications m ON m.id = d.medication_id
           WHERE n.patient_profile_id = $1
-            AND ($2::date IS NULL OR n.recorded_at >= $2::date)
-            AND ($3::date IS NULL OR n.recorded_at < ($3::date + 1))
+            AND ($2::date IS NULL OR n.recorded_at >= ($2::date::timestamp AT TIME ZONE $5))
+            AND ($3::date IS NULL OR n.recorded_at < (($3::date + 1)::timestamp AT TIME ZONE $5))
             AND ($4::uuid IS NULL OR n.dose_occurrence_id = $4)
           ORDER BY n.recorded_at DESC LIMIT 300`,
-        [profileId, from, to, doseId],
+        [profileId, from, to, doseId, access.profileTimezone],
       );
       return {
         notes: rows.map((r) => ({
@@ -120,17 +120,17 @@ async function requireOwnDose(
     const to = optionalDate(q.to, 'to');
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
-      await requireProfileAccess(tx, userId, profileId, 'view_history');
+      const access = await requireProfileAccess(tx, userId, profileId, 'view_history');
       const { rows } = await tx.query(
         `SELECT id, type::text AS type, value_primary, value_secondary, unit, measured_at,
                 dose_occurrence_id, note
            FROM health_measurements
           WHERE patient_profile_id = $1
             AND ($2::text IS NULL OR type = $2::measurement_type)
-            AND ($3::date IS NULL OR measured_at >= $3::date)
-            AND ($4::date IS NULL OR measured_at < ($4::date + 1))
+            AND ($3::date IS NULL OR measured_at >= ($3::date::timestamp AT TIME ZONE $5))
+            AND ($4::date IS NULL OR measured_at < (($4::date + 1)::timestamp AT TIME ZONE $5))
           ORDER BY measured_at DESC LIMIT 500`,
-        [profileId, type, from, to],
+        [profileId, type, from, to, access.profileTimezone],
       );
       return {
         measurements: rows.map((r) => ({
