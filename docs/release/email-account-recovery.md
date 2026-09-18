@@ -53,28 +53,40 @@ domain with Resend, configure these on the API service only:
 
 ```dotenv
 ACCOUNT_EMAIL_PROVIDER=resend
-ACCOUNT_EMAIL_FROM=accounts@mail.your-owned-domain.example
+ACCOUNT_EMAIL_FROM=accounts@mail.tadawee.net
 ACCOUNT_EMAIL_SENDER_VERIFIED=true
-ACCOUNT_EMAIL_BASE_URL=https://your-api-origin.example
+ACCOUNT_EMAIL_BASE_URL=https://dawaee-api.onrender.com
 RESEND_API_KEY=<server secret stored in hosting configuration>
 ```
 
-The example domains above are placeholders. `ACCOUNT_EMAIL_FROM` must be a
-plain address on the verified sending domain. `ACCOUNT_EMAIL_BASE_URL` must be
+`ACCOUNT_EMAIL_FROM` must be a plain address on the verified sending domain.
+`ACCOUNT_EMAIL_BASE_URL` must be
 an HTTPS origin serving `/account-email` and the API on the same origin; no path,
 query or credentials. The current API origin can be used until a custom API
 hostname is configured. Do not point this value at a parked registrar page.
 
-The owner has a GoDaddy domain but its exact name is not yet available in this
-session. Resend returned no sending domains. GoDaddy requires sign-in. Use the
-actual DNS records supplied by Resend for that domain, verify sending readiness,
-and configure an appropriate DMARC policy before activation; preserve existing
-mail/MX configuration. Never publish provider keys in the mobile app or Git.
-The sender-ready flag is an operator assertion, not an automated DNS check.
+The owner controls `tadawee.net` through GoDaddy. The sending domain
+`mail.tadawee.net` is registered in Resend. On 2026-09-18 the owner supplied
+screenshots matching the generated MX and TXT values at `send.mail`, including
+MX priority 10. The latest Resend check still reports `partially_verified`:
+DKIM at `resend._domainkey.mail` and CNAME at `rsend.mail` are verified; the
+`send.mail` MX/TXT records remain pending. Preserve the existing apex MX/SPF
+and DMARC records. A matching screenshot alone is not proof of completed DNS
+verification or mailbox delivery. Recheck Resend before activation.
 
-Render's connector has no selected workspace and explicitly requires the owner
-to confirm the workspace before selection. No production environment variables,
-DNS records or Twilio account resources were modified during this change.
+The owner approved Render workspace `My Workspace`. Disabled configuration was
+saved on the API service (`ACCOUNT_EMAIL_PROVIDER=disabled` and
+`ACCOUNT_EMAIL_SENDER_VERIFIED=false`, with the sender/origin above). No sending
+API key has been created or installed. Never publish provider keys in the mobile
+app or Git. The sender-ready flag is an operator assertion, not an automated
+DNS check.
+
+The Render environment-update operation triggered its configured `main` branch
+even with automatic deployment disabled. That old-source deploy (`07bf101`)
+failed; serving release `60b474e` remains live. Correct the release source before
+another environment update or deploy. The connector cannot select a commit for
+deployment. This PR has not been deployed. External Twilio resources and hosting
+secrets have not been deleted.
 
 ## Verification and rollout limits
 
@@ -85,9 +97,17 @@ migrations are applied to the SQL test database using the migration role. Raw
 app/worker access, account binding, expiration, replay, password/session
 invalidation, queue leases and stale acknowledgements are exercised.
 
-PGlite uses one connection. These tests do not prove native PostgreSQL concurrent
-interleaving. Run the existing native PostgreSQL authorization/recovery suites in
-CI before merge/deployment. No live email or SMS was sent. No new native build or
-TestFlight upload was performed. Real mailbox receipt, reset from a physical
-phone, pending-invitation continuation and Messages sending remain device and
-service checks after configuration/deployment.
+PGlite uses one connection and cannot prove native concurrent interleaving.
+`account-email-concurrency.test.ts` therefore uses separate native PostgreSQL
+connections with real application credentials and observes database blocking
+before releasing the first transaction. It covers competing mailbox claims,
+identical versus conflicting reset retries, verification requests overlapping a
+reset, replaced tokens, disjoint outbox claims, and stale lease acknowledgements.
+The function owner is asserted to be NOSUPERUSER/NOBYPASSRLS. Run this suite and
+the existing authorization/recovery gates on PostgreSQL 16 and 17 in CI before
+production activation.
+
+No live email or SMS was sent. No new native build or TestFlight upload was
+performed. Real mailbox receipt, reset from a physical phone, pending-invitation
+continuation and Messages sending remain device and service checks after
+configuration/deployment.
