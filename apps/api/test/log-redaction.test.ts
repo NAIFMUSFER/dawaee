@@ -74,10 +74,6 @@ function workerLogger(sink: Writable) {
  * there. The values are distinctive so a match cannot be a coincidence.
  */
 const SECRETS: Array<{ what: string; value: string; payload: () => Record<string, unknown> }> = [
-  { what: 'a recovery challenge', value: 'probe-recovery-challenge', payload: () => ({ challengeToken: 'probe-recovery-challenge' }) },
-  { what: 'a recovery proof', value: 'probe-recovery-proof', payload: () => ({ recoveryToken: 'probe-recovery-proof' }) },
-  { what: 'a recovery challenge in a request', value: 'probe-body-recovery-challenge', payload: () => ({ req: { body: { challengeToken: 'probe-body-recovery-challenge' } } }) },
-  { what: 'a recovery proof in a request', value: 'probe-body-recovery-proof', payload: () => ({ req: { body: { recoveryToken: 'probe-body-recovery-proof' } } }) },
   { what: 'a recovery password', value: 'probe-new-password-secret', payload: () => ({ newPassword: 'probe-new-password-secret' }) },
   { what: 'a recovery request password', value: 'probe-body-password-secret', payload: () => ({ req: { body: { newPassword: 'probe-body-password-secret' } } }) },
   { what: 'a verified credential hash', value: 'probe-credential-hash-secret', payload: () => ({ credentialHash: 'probe-credential-hash-secret' }) },

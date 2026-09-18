@@ -23,17 +23,8 @@ not a production deployment or a newly uploaded TestFlight build.
 - Caregiver invitations render their returned link as an on-device QR. The SMS
   button opens the device Messages composer with the recipient and invitation;
   the user must press Send. Cancellation/unknown results never claim delivery.
-  Optional server SMS for Saudi caregiver invitations is now implemented behind
-  disabled-by-default configuration. The app discovers availability, explains
-  the automatic send, and distinguishes acceptance from confirmed delivery.
-  QR/link remain available on SMS failure. **Live SMS is not configured or
-  verified.** See [sender eligibility and setup](twilio-caregiver-invitations.md).
-- Forgot-password can use Twilio Verify via the API when explicitly configured.
-  The mobile app discovers the provider, requests SMS only on a user action,
-  accepts Arabic digits and requires an approved, encrypted, short-lived proof
-  before resetting the password. Existing Firebase recovery clients remain
-  compatible. See [Verify setup and limits](twilio-password-recovery.md).
-  This does not enable live SMS or change authenticated profile phone proof.
+  **Automatic server SMS is not implemented or configured.** It needs a selected
+  SMS provider, sender setup and a backend delivery integration.
 - Unsupported voice reminder/confirmation controls and microphone permission
   declarations are removed. Medication details have a persistent Back button.
 - Emergency QR is always reachable from Settings, including simplified mode.
@@ -51,7 +42,8 @@ not a production deployment or a newly uploaded TestFlight build.
 ## Release dependencies
 
 1. Deploy the reviewed API changes with the current audited application lineage.
-   The QR enable endpoint now returns `qrRotatedAt`; no migration is required.
+   The QR enable endpoint now returns `qrRotatedAt`. The email recovery follow-up
+   requires migration `0086_account_email_recovery.sql`.
    Older APIs can still show a newly generated code during the current visit,
    but cannot establish its persistent copy through the new response contract.
 2. Build a **new native iOS binary**: `expo-print` and `expo-sms` were added and
@@ -86,7 +78,15 @@ and Hermes iOS export were run locally. The temporary generated bundles are not
 release artifacts.
 
 Still requires a physical iPhone and the next TestFlight build: actual SMS
-receipt and verification/recovery, notification delivery with app closed,
+receipt for caregiver phone verification, email ownership/reset, notification delivery with app closed,
 scanning the invitation and emergency QR, Messages sending, and Arabic PDF
 rendering/saving. This work has not changed Firebase/Apple settings, deployed
 Render, sent invitations or uploaded a new TestFlight build.
+
+## Email recovery follow-up
+
+The owner replaced Twilio with verified-email password recovery and retained
+user-sent Messages invitations. Twilio integration/configuration and its setup
+documents were removed. Email setup, database migration, delivery configuration,
+security behavior and remaining domain/device checks are documented in
+[email-account-recovery.md](email-account-recovery.md).

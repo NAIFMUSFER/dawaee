@@ -122,20 +122,16 @@ const schema = z.object({
   /** Salt for hashing IPs in the audit log — we never store a raw address. */
   IP_HASH_SALT: z.string().min(8).default('dawaee-dev-salt'),
 
-  // --- providers (invitations default to disabled; others support dev mocks) ---
+  // --- providers (all optional; each falls back to a logging mock) ---
   PUSH_PROVIDER: z.enum(['mock', 'expo']).default('mock'),
   EXPO_ACCESS_TOKEN: z.string().optional(),
 
-  // Invitations only. Keep disabled until the sender and link are approved.
-  CAREGIVER_SMS_PROVIDER: z.enum(['disabled', 'twilio']).default('disabled'),
-  CAREGIVER_SMS_SENDER_APPROVED: envBoolean(false),
-  TWILIO_ACCOUNT_SID: z.string().optional(),
-  TWILIO_API_KEY_SID: z.string().optional(),
-  TWILIO_API_KEY_SECRET: z.string().optional(),
-  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
-  // Password recovery is independent of caregiver invitation sender approval.
-  PASSWORD_RECOVERY_PROVIDER: z.enum(['firebase', 'twilio']).default('firebase'),
-  TWILIO_VERIFY_SERVICE_SID: z.string().optional(),
+  ACCOUNT_EMAIL_PROVIDER: z.enum(['disabled', 'resend']).default('disabled'),
+  RESEND_API_KEY: z.string().optional(),
+  ACCOUNT_EMAIL_FROM: z.string().optional(),
+  ACCOUNT_EMAIL_SENDER_VERIFIED: envBoolean(false),
+  // Public HTTPS origin of this API, which serves /account-email.
+  ACCOUNT_EMAIL_BASE_URL: z.string().optional(),
 
   OCR_PROVIDER: z.enum(['mock', 'google_vision', 'azure_document_intelligence']).default('mock'),
   GOOGLE_VISION_API_KEY: z.string().optional(),

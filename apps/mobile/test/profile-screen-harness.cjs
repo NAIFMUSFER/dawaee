@@ -16,7 +16,7 @@ function deferred() {
 }
 class NetworkError extends Error {}
 class ApiError extends Error {
-  constructor(code, status) { super(code); this.code = code; this.status = status; }
+  constructor(code) { super(code); this.code = code; }
 }
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 const addDays = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
@@ -111,7 +111,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
     '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
-      anonymous: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body) } } },
+      anonymous: { get: (route) => request('GET', route), post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },

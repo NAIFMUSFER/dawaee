@@ -405,7 +405,7 @@ export const inviteCaregiverSchema = z.object({
   role: z.enum(CAREGIVER_ROLES),
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(1).max(CAREGIVER_PERMISSIONS.length),
   escalationPriority: z.number().int().min(1).max(20).default(10),
-  channel: z.enum(['link', 'qr', 'sms']).default('link'),
+  channel: z.enum(['link', 'qr']).default('link'),
   expiresInHours: z.number().int().min(1).max(168).default(72),
 });
 

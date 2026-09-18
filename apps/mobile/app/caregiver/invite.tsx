@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Share, Switch, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as SMS from 'expo-sms';
@@ -26,14 +26,14 @@ import {
  * checkboxes, but the checkboxes stay one tap away because "my nurse, but she
  * cannot delete anything" is a real request.
  *
- * The result shows a locally rendered QR and optional server SMS status.
+ * The result shows a locally rendered QR and an explicit SMS/share action.
  * Opening the SMS composer does not mean a message has been sent or delivered.
  */
 
 const PRESET_KEYS = ['observer', 'family', 'nurse', 'emergency_only'] as const;
 type PresetKey = (typeof PRESET_KEYS)[number];
 
-// Server SMS is offered only when its authenticated capability is available.
+// SMS opens the device composer; the API only creates a link/QR invitation.
 const CHANNELS = ['link', 'qr', 'sms'] as const;
 type InviteChannel = (typeof CHANNELS)[number];
 
@@ -55,13 +55,7 @@ interface InviteResponse {
   expiresAt: string;
   invitationLink: string;
   invitationMessage: string;
-  delivery?: { channel: 'sms'; status: 'accepted' | 'failed' | 'unknown' | 'unavailable' };
 }
-
-const SMS_STATUS_KEYS = {
-  accepted: 'invite.smsAccepted', failed: 'invite.smsFailed',
-  unknown: 'invite.smsUnknown', unavailable: 'invite.smsServiceUnavailable',
-} as const;
 
 function presetPermissions(key: PresetKey): CaregiverPermission[] {
   return [...(CAREGIVER_ROLE_PRESETS[key] ?? [])];
@@ -89,9 +83,6 @@ function InviteCaregiverProfileScreen() {
   const [customising, setCustomising] = useState(false);
   const [priority, setPriority] = useState(1);
   const [channel, setChannel] = useState<InviteChannel>('link');
-  const [smsAvailable, setSmsAvailable] = useState(false);
-  const choseChannel = useRef(false);
-  const busyRef = useRef(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,18 +90,6 @@ function InviteCaregiverProfileScreen() {
   const [result, setResult] = useState<InviteResponse | null>(null);
   const [copied, setCopied] = useState(false);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    const current = capture();
-    void api.get<{ smsAvailable: boolean }>('/v1/caregivers/delivery-options').then((options) => {
-      if (!current()) return;
-      const available = options.smsAvailable === true;
-      setSmsAvailable(available);
-      if (available && !choseChannel.current && !busyRef.current) setChannel('sms');
-    }).catch(() => {
-      // Older APIs and unavailable capability reads retain link/QR creation.
-    });
-  }, [capture]);
 
   const describe = useCallback((err: unknown): string => {
     if (!(err instanceof ApiError)) return t('error.internal_error');
@@ -141,7 +120,7 @@ function InviteCaregiverProfileScreen() {
    */
 
   const submit = useCallback(async () => {
-    if (!activeProfile || busyRef.current) return;
+    if (!activeProfile) return;
     const current = capture();
 
     const errors: { name?: string; phone?: string } = {};
@@ -157,7 +136,6 @@ function InviteCaregiverProfileScreen() {
       return;
     }
 
-    busyRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -168,7 +146,9 @@ function InviteCaregiverProfileScreen() {
         role,
         permissions,
         escalationPriority: priority,
-        channel: channel === 'sms' && !smsAvailable ? 'link' : channel,
+        // The API stores how the link was created. SMS is delivered using the
+        // device composer, not an unconfigured server messaging channel.
+        channel: channel === 'sms' ? 'link' : channel,
         expiresInHours: INVITE_EXPIRY_HOURS,
       });
       if (current()) setResult(res);
@@ -177,10 +157,9 @@ function InviteCaregiverProfileScreen() {
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      busyRef.current = false;
       if (current()) setBusy(false);
     }
-  }, [activeProfile, capture, channel, describe, name, permissions, phone, priority, role, setOffline, smsAvailable, t]);
+  }, [activeProfile, capture, channel, describe, name, permissions, phone, priority, role, setOffline, t]);
 
   const copyLink = async (link: string) => {
     try { await Clipboard.setStringAsync(link); setCopied(true); }
@@ -238,19 +217,12 @@ function InviteCaregiverProfileScreen() {
 
           {error ? <Banner tone="warning" title={error} /> : null}
           {shareNotice ? <Banner tone="success" title={shareNotice} /> : null}
-          {result.delivery ? (
-            <Banner tone={result.delivery.status === 'accepted' ? 'info' : 'warning'} title={t(SMS_STATUS_KEYS[result.delivery.status])} />
-          ) : null}
           <Card style={{ alignItems: 'center' }}>
             <QrCode value={result.invitationLink} size={240} accessibilityLabel={t('invite.qrLabel')} />
             <Txt variant="bodySmall">{t('invite.qrHint')}</Txt>
           </Card>
-          {result.delivery?.status !== 'accepted' ? (
-            <>
-              <Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
-              <Txt variant="caption">{t('invite.smsComposerHint')}</Txt>
-            </>
-          ) : null}
+          <Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
+          <Txt variant="caption">{t('invite.smsComposerHint')}</Txt>
           <Button label={t('invite.share')} tone="secondary" onPress={() => void share()} />
 
           <Card>
@@ -388,18 +360,16 @@ function InviteCaregiverProfileScreen() {
 
         <SectionTitle>{t('invite.channel')}</SectionTitle>
         <Row wrap gap={theme.spacing.sm}>
-          {CHANNELS.filter((c) => c !== 'sms' || smsAvailable).map((c) => (
+          {CHANNELS.map((c) => (
             <Button
               key={c}
               label={`${channel === c ? '✓ ' : ''}${t(`channel.${c}`)}`}
               tone={channel === c ? 'primary' : 'secondary'}
               fullWidth={false}
-              onPress={() => { choseChannel.current = true; setChannel(c); }}
+              onPress={() => setChannel(c)}
             />
           ))}
         </Row>
-
-        {channel === 'sms' ? <Txt variant="bodySmall">{t('invite.smsAutomaticHint')}</Txt> : null}
 
         <Button
           label={t('invite.send')}

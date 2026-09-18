@@ -13,8 +13,6 @@ import {
   loadProfileAccess, profileIdForMedication, requireProfileAccess, requireProfileOwner,
 } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
-import { enforceAuthBudget } from '../auth/rate-budget.js';
-import { disabledInvitationSms, type InvitationSmsProvider, type InvitationSmsStatus } from '../providers/invitation-sms.js';
 
 /**
  * Family Care Circle.
@@ -24,7 +22,7 @@ import { disabledInvitationSms, type InvitationSmsProvider, type InvitationSmsSt
  *  2. The patient can revoke that authorization at any moment, and revocation
  *     takes effect on the very next request — there is no cached grant.
  */
-export function registerCaregiverRoutes(app: FastifyInstance, sms: InvitationSmsProvider = disabledInvitationSms): void {
+export function registerCaregiverRoutes(app: FastifyInstance): void {
   const cfg = loadConfig();
 
   app.addHook('preHandler', async (req) => {
@@ -88,8 +86,6 @@ export function registerCaregiverRoutes(app: FastifyInstance, sms: InvitationSms
     });
   });
 
-  app.get('/v1/caregivers/delivery-options', async () => ({ smsAvailable: sms.ready }));
-
   /** Invite a caregiver. Only the patient can do this. */
   app.post('/v1/caregivers/invite', async (req) => {
     const body = inviteCaregiverSchema.parse(req.body);
@@ -97,26 +93,7 @@ export function registerCaregiverRoutes(app: FastifyInstance, sms: InvitationSms
     const phone = normalizePhone(body.invitedPhone);
     if (!phone) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid caregiver phone number');
 
-    if (body.channel === 'sms' && sms.ready) {
-      // Release the read connection before the durable budget transactions.
-      // Holding it while borrowing another could exhaust the database pool.
-      await withUserReadOnly(userId, (tx) => requireProfileOwner(tx, userId, body.patientProfileId));
-      if (!/^\+9665\d{8}$/.test(phone)) {
-        throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invitation SMS currently supports Saudi mobile numbers');
-      }
-      // Durable budgets are shared across replicas, including failed attempts.
-      // Authorize ownership first so unrelated accounts cannot spend a budget.
-      await enforceAuthBudget({
-        ip: { scope: 'invite-sms:ip', value: req.ip },
-        identifier: { scope: 'invite-sms:account', value: userId },
-      });
-      await enforceAuthBudget({ identifier: { scope: 'invite-sms:phone', value: phone } });
-      await enforceAuthBudget({ identifier: { scope: 'invite-sms:daily', value: phone } });
-      await enforceAuthBudget({ identifier: { scope: 'invite-sms:global', value: 'caregiver-invitations' } });
-    }
-
     const result = await withUser(userId, async (tx) => {
-      // Recheck in the write transaction after budgeting, including deletion.
       const access = await requireProfileOwner(tx, userId, body.patientProfileId);
 
       // The raw token exists only in the outgoing message; the database keeps
@@ -168,21 +145,15 @@ export function registerCaregiverRoutes(app: FastifyInstance, sms: InvitationSms
       patient: result.patientName, hours: body.expiresInHours, link,
     });
 
-    // Send only after the invitation commits. A failed/ambiguous send leaves
-    // the usable QR/link intact; never retry here or claim handset delivery.
-    // The SMS contains no patient name, medicines or clinical information.
-    let smsStatus: InvitationSmsStatus | null = null;
-    if (body.channel === 'sms') {
-      smsStatus = sms.ready
-        ? await sms.send(phone, t(locale, 'family.inviteSmsBody', { hours: body.expiresInHours, link })).catch(() => 'unknown' as const)
-        : 'unavailable';
-    }
+    // The invitation is handed to the patient to pass on themselves — by
+    // whichever messenger they already use. The app does not send it: the two
+    // channels it could have sent on both need a commercial registration, and
+    // an invitation the patient forwards is a channel that always works.
     return {
       relationshipId: result.relationshipId,
       expiresAt: result.expiresAt,
       invitationLink: link,
       invitationMessage: message,
-      ...(smsStatus ? { delivery: { channel: 'sms', status: smsStatus } } : {}),
     };
   });
 

@@ -1,5 +1,4 @@
 import type { Config } from '../config.js';
-import { buildInvitationSms, type InvitationSmsProvider } from './invitation-sms.js';
 import { ExpoPushProvider, MockPushProvider } from './push.js';
 import {
   AzureDocumentIntelligenceOcrProvider, GoogleVisionOcrProvider, MockOcrProvider,
@@ -9,17 +8,11 @@ import type {
   MedicationOcrResult, OcrProvider, PrescriptionOcrResult, PushProvider, StorageProvider,
 } from './types.js';
 
-/**
- * Outbound integrations.
- *
- * Push handles medication/caregiver alerts. Invitation SMS is a separate,
- * optional integration: it does not enable SMS OTP or medication alerts.
- */
+/** Push, OCR and storage. Account email has a separate authentication-only queue. */
 export interface Providers {
   push: PushProvider;
   ocr: OcrProvider;
   storage: StorageProvider;
-  invitationSms?: InvitationSmsProvider;
 }
 
 /**
@@ -69,7 +62,7 @@ export function buildProviders(cfg: Config): Providers {
         ? new S3StorageProvider(cfg)
         : new UnconfiguredStorageProvider();
 
-  return { push, ocr, storage, invitationSms: buildInvitationSms(cfg) };
+  return { push, ocr, storage };
 }
 
 export * from './types.js';

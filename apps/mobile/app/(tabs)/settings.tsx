@@ -158,6 +158,7 @@ export default function SettingsScreen() {
   ];
 
   const privacyRows: SettingsRow[] = [
+    { key: 'email-verification', label: t('emailAccount.title'), hint: t('emailAccount.verifyBody'), essential: true, onPress: () => router.push('/settings/email-verification') },
     {
       key: 'privacy',
       label: t('settings.privacy'),
