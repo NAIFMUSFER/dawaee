@@ -28,6 +28,12 @@ not a production deployment or a newly uploaded TestFlight build.
   the automatic send, and distinguishes acceptance from confirmed delivery.
   QR/link remain available on SMS failure. **Live SMS is not configured or
   verified.** See [sender eligibility and setup](twilio-caregiver-invitations.md).
+- Forgot-password can use Twilio Verify via the API when explicitly configured.
+  The mobile app discovers the provider, requests SMS only on a user action,
+  accepts Arabic digits and requires an approved, encrypted, short-lived proof
+  before resetting the password. Existing Firebase recovery clients remain
+  compatible. See [Verify setup and limits](twilio-password-recovery.md).
+  This does not enable live SMS or change authenticated profile phone proof.
 - Unsupported voice reminder/confirmation controls and microphone permission
   declarations are removed. Medication details have a persistent Back button.
 - Emergency QR is always reachable from Settings, including simplified mode.

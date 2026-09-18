@@ -29,11 +29,30 @@ export default function ForgotPasswordScreen() {
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [channel, setChannel] = useState<'firebase' | 'twilio' | 'unavailable' | null>(null);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
   const locked = useRef(false);
-  const proof = useRef<string | null>(null);
+  const proof = useRef<{ idToken: string } | { recoveryToken: string } | null>(null);
   const challenge = useRef<PhoneChallenge | null>(null);
+  const smsChallenge = useRef<string | null>(null);
   const lastSend = useRef(0);
-  useEffect(() => () => { challenge.current?.cancel(); proof.current = null; }, []);
+  useEffect(() => () => { challenge.current?.cancel(); smsChallenge.current = null; proof.current = null; }, []);
+  useEffect(() => {
+    let active = true;
+    setChannel(null);
+    api.anonymous.get<{ provider: string; available: boolean }>('/v1/auth/password/recovery-options')
+      .then((options) => {
+        if (!active) return;
+        setChannel(options.available === true && (options.provider === 'firebase' || options.provider === 'twilio')
+          ? options.provider : 'unavailable');
+      }).catch((err) => {
+        if (!active) return;
+        // An older API has no discovery endpoint. Outages/malformed responses
+        // must not silently switch a configured provider or claim SMS readiness.
+        setChannel(err instanceof ApiError && err.status === 404 ? 'firebase' : 'unavailable');
+      });
+    return () => { active = false; };
+  }, [optionsAttempt]);
   useEffect(() => {
     if (!cooldown) return;
     const timer = setTimeout(() => setCooldown(false), 60_000);
@@ -41,35 +60,57 @@ export default function ForgotPasswordScreen() {
   }, [cooldown]);
 
   const restart = () => {
-    begin(); challenge.current?.cancel(); challenge.current = null; proof.current = null;
+    if (locked.current) return;
+    begin(); challenge.current?.cancel(); challenge.current = null; smsChallenge.current = null; proof.current = null;
     setCode(''); setPassword(''); setConfirmation(''); setError(null); setStep('phone');
   };
   const send = async () => {
-    if (locked.current || !phoneVerificationSupported || Date.now() - lastSend.current < 60_000) return;
+    if (locked.current || !channel || channel === 'unavailable' || (channel === 'firebase' && !phoneVerificationSupported)
+      || Date.now() - lastSend.current < 60_000) return;
     const canonical = recoveryPhone(phone);
     if (!canonical) { setError(t('recovery.phoneInvalid')); return; }
+    if (channel === 'twilio' && !/^\+9665\d{8}$/.test(canonical)) { setError(t('recovery.saudiPhone')); return; }
     locked.current = true; setBusy(true); setError(null);
     const current = begin();
-    challenge.current?.cancel(); proof.current = null; setCode('');
+    challenge.current?.cancel(); challenge.current = null; smsChallenge.current = null; proof.current = null; setCode('');
     try {
+      if (channel === 'twilio') {
+        // Apply cooldown even after a timeout: Twilio may already have accepted
+        // the send. Do not automatically resend or switch to Firebase.
+        lastSend.current = Date.now(); setCooldown(true);
+        const next = await api.anonymous.post<{ challengeToken: string }>('/v1/auth/password/recovery/start', { phone: canonical });
+        if (!current()) return;
+        if (typeof next.challengeToken !== 'string' || next.challengeToken.length < 100) throw new Error('Invalid recovery response');
+        smsChallenge.current = next.challengeToken; setStep('code');
+        return;
+      }
       const next = await startPhoneProof(canonical, async (idToken) => {
         if (!current()) return;
-        proof.current = idToken; setCode(''); setStep('password'); setError(null);
+        proof.current = { idToken }; setCode(''); setStep('password'); setError(null);
       }, (err) => { if (current()) setError(t(phoneProofErrorKey(err))); });
       if (!current()) { next.cancel(); return; }
       lastSend.current = Date.now(); setCooldown(true);
       if (proof.current) { next.cancel(); return; }
       challenge.current = next; setStep('code');
-    } catch (err) { if (current()) setError(t(phoneProofErrorKey(err))); }
+    } catch (err) { if (current()) setError(channel === 'twilio' ? recoveryError(err) : t(phoneProofErrorKey(err))); }
     finally { locked.current = false; if (current()) setBusy(false); }
   };
   const confirmCode = async () => {
     const normalized = normalizeDigits(code).trim();
-    if (locked.current || !challenge.current || !/^\d{6}$/.test(normalized)) return;
+    if (locked.current || (!challenge.current && !smsChallenge.current) || !/^\d{6}$/.test(normalized)) return;
     locked.current = true; setBusy(true); setError(null);
     const current = capture();
-    try { await challenge.current.confirm(normalized); }
-    catch (err) { if (current()) setError(t(phoneProofErrorKey(err))); }
+    try {
+      if (channel === 'twilio' && smsChallenge.current) {
+        const result = await api.anonymous.post<{ recoveryToken: string }>('/v1/auth/password/recovery/check', {
+          challengeToken: smsChallenge.current, code: normalized,
+        });
+        if (!current()) return;
+        if (typeof result.recoveryToken !== 'string' || result.recoveryToken.length < 100) throw new Error('Invalid recovery response');
+        proof.current = { recoveryToken: result.recoveryToken }; smsChallenge.current = null;
+        setCode(''); setStep('password');
+      } else { await challenge.current?.confirm(normalized); }
+    } catch (err) { if (current()) setError(channel === 'twilio' ? recoveryError(err) : t(phoneProofErrorKey(err))); }
     finally { locked.current = false; if (current()) setBusy(false); }
   };
   const save = async () => {
@@ -79,7 +120,7 @@ export default function ForgotPasswordScreen() {
     const current = capture();
     try {
       const result = await api.anonymous.post<{ updated: boolean }>('/v1/auth/password/recover', {
-        idToken: proof.current, newPassword: password,
+        ...proof.current, newPassword: password,
       });
       if (!current()) return;
       if (result.updated !== true) { setError(t('recovery.failed')); return; }
@@ -92,15 +133,25 @@ export default function ForgotPasswordScreen() {
       else setError(t('recovery.failed'));
     } finally { locked.current = false; if (current()) setBusy(false); }
   };
+  const recoveryError = (err: unknown) => {
+    if (err instanceof NetworkError) return t('notifications.offlineBanner');
+    if (err instanceof ApiError && err.code === 'rate_limited') return t('error.rate_limited');
+    if (err instanceof ApiError && err.code === 'otp_invalid') return t('phoneVerification.codeError');
+    if (err instanceof ApiError && err.code === 'otp_expired') return t('phoneVerification.expired');
+    return t('recovery.unavailable');
+  };
   return <SafeAreaView style={{ flex: 1 }}><Screen>
     <Txt variant="h1" weight="bold" accessibilityRole="header">{t('recovery.title')}</Txt>
     {error ? <Banner tone="warning" title={error} /> : null}
     {step === 'done' ? <Banner tone="success" title={t('recovery.success')} /> : <>
       <Txt>{t('recovery.body')}</Txt>
-      {!phoneVerificationSupported ? <Banner tone="warning" title={t('recovery.platform')} /> : step === 'phone' ? <>
+      {channel === null ? <Txt>{t('common.loading')}</Txt> : channel === 'unavailable' ? <>
+        <Banner tone="warning" title={t('recovery.unavailable')} />
+        <Button label={t('common.retry')} onPress={() => setOptionsAttempt((value) => value + 1)} />
+      </> : channel === 'firebase' && !phoneVerificationSupported ? <Banner tone="warning" title={t('recovery.platform')} /> : step === 'phone' ? <>
         <Field label={t('recovery.phone')} value={phone} onChangeText={setPhone} keyboardType="phone-pad"
           autoComplete="tel" editable={!busy} maxLength={24} />
-        <Txt variant="caption">{t('phoneVerification.consent')}</Txt>
+        <Txt variant="caption">{t(channel === 'twilio' ? 'recovery.twilioConsent' : 'phoneVerification.consent')}</Txt>
         {cooldown ? <Txt>{t('recovery.cooldown')}</Txt> : null}
         <Button label={t('phoneVerification.send')} loading={busy} disabled={cooldown || !recoveryPhone(phone)} onPress={() => void send()} />
       </> : step === 'code' ? <>
@@ -112,7 +163,7 @@ export default function ForgotPasswordScreen() {
         {cooldown ? <Txt>{t('recovery.cooldown')}</Txt> : null}
         <Button label={t('recovery.changePhone')} tone="ghost" disabled={busy} onPress={restart} />
       </> : <>
-        <Txt>{t('recovery.expiry')}</Txt>
+        <Txt>{t(channel === 'twilio' ? 'recovery.smsExpiry' : 'recovery.expiry')}</Txt>
         <Field label={t('recovery.newPassword')} value={password} onChangeText={setPassword} secureTextEntry
           autoComplete="new-password" autoCapitalize="none" autoCorrect={false} editable={!busy} maxLength={200} />
         <Field label={t('recovery.confirmPassword')} value={confirmation} onChangeText={setConfirmation} secureTextEntry

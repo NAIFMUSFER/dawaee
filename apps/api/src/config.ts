@@ -133,6 +133,9 @@ const schema = z.object({
   TWILIO_API_KEY_SID: z.string().optional(),
   TWILIO_API_KEY_SECRET: z.string().optional(),
   TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  // Password recovery is independent of caregiver invitation sender approval.
+  PASSWORD_RECOVERY_PROVIDER: z.enum(['firebase', 'twilio']).default('firebase'),
+  TWILIO_VERIFY_SERVICE_SID: z.string().optional(),
 
   OCR_PROVIDER: z.enum(['mock', 'google_vision', 'azure_document_intelligence']).default('mock'),
   GOOGLE_VISION_API_KEY: z.string().optional(),

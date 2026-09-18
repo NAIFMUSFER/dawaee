@@ -15,6 +15,7 @@ process.env.LOG_LEVEL ??= 'silent';
 process.env.SMS_PROVIDER = 'mock';
 process.env.CAREGIVER_SMS_PROVIDER = 'disabled';
 process.env.CAREGIVER_SMS_SENDER_APPROVED = 'false';
+process.env.PASSWORD_RECOVERY_PROVIDER = 'firebase';
 process.env.WHATSAPP_PROVIDER = 'mock';
 process.env.PUSH_PROVIDER = 'mock';
 process.env.OCR_PROVIDER = 'mock';

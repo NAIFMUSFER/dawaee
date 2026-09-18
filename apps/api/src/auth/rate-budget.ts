@@ -31,6 +31,8 @@ export type RateScope =
   | 'otp-verify:ip' | 'otp-verify:identifier'
   | 'phone-proof:ip' | 'phone-proof:account'
   | 'recovery:ip' | 'recovery:phone'
+  | 'recovery-send:ip' | 'recovery-send:phone' | 'recovery-send:hour' | 'recovery-send:global'
+  | 'recovery-check:verification'
   | 'invite-sms:ip' | 'invite-sms:account' | 'invite-sms:phone' | 'invite-sms:daily' | 'invite-sms:global'
   | 'refresh:ip';
 
@@ -58,6 +60,11 @@ export const BUDGETS: Record<RateScope, Budget> = {
   'phone-proof:account': { windowSeconds: 600, max: 10 },
   'recovery:ip': { windowSeconds: 600, max: 30 },
   'recovery:phone': { windowSeconds: 600, max: 10 },
+  'recovery-send:ip': { windowSeconds: 3600, max: 10 },
+  'recovery-send:phone': { windowSeconds: 60, max: 1 },
+  'recovery-send:hour': { windowSeconds: 3600, max: 5 },
+  'recovery-send:global': { windowSeconds: 86400, max: 100 },
+  'recovery-check:verification': { windowSeconds: 300, max: 5 },
   'refresh:ip': { windowSeconds: 600, max: 120 },
   'invite-sms:ip': { windowSeconds: 3600, max: 20 },
   'invite-sms:account': { windowSeconds: 3600, max: 5 },

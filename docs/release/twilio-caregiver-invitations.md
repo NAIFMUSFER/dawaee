@@ -2,8 +2,9 @@
 
 Status: implemented for review, **disabled by default**. No real credentials,
 approved sender, production deployment or handset delivery is established by
-this change. It only sends caregiver invitation links. Firebase phone proof,
-login/recovery and medication/missed-dose notification channels are unchanged.
+this adapter. It only sends caregiver invitation links. Optional password
+recovery uses a separate [Twilio Verify integration](twilio-password-recovery.md).
+Firebase profile phone proof and medication/missed-dose channels are unchanged.
 
 ## Eligibility before purchase
 
