@@ -25,7 +25,7 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
        JOIN patient_profiles pp ON pp.id = cr.patient_profile_id
       WHERE r.enabled
         AND cr.status = 'active'
-        AND app.has_verified_phone(cr.caregiver_user_id)
+        AND app.caregiver_identity_verified(cr.id)
         AND r.mode IN ('daily_summary','weekly_summary')
         AND r.summary_time IS NOT NULL
         -- receive_notifications permits a delivery channel; it does not grant

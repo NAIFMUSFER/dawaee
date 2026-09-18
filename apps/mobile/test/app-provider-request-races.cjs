@@ -55,6 +55,7 @@ function makeProvider(file) {
     }, NetworkError: class NetworkError extends Error {}, isSignedIn: () => currentUser !== null,
     getDeviceId: () => { h.deviceCalls++; return h.device(); }, loadStoredSession: async () => true, setUnauthenticatedHandler: () => {},
     clearSession: async () => { currentUser = null; }, storeSession: async tokens => { currentUser = tokens.accessToken; } },
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => currentUser },
     '../storage/offline-queue.js': {
       setCacheOwner: id => h.owners.push(id), purgeLocalCaches: async () => {},

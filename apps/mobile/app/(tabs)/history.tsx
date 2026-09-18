@@ -1,3 +1,5 @@
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import { DoseNotesSheet } from '@/components/DoseNotesSheet';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
@@ -131,6 +133,7 @@ function HistoryProfileScreen() {
   const [medicationId, setMedicationId] = useState<string | null>(null);
   const [status, setStatus] = useState<DoseStatus | null>(null);
 
+  const [notesFor, setNotesFor] = useState<DoseView | null>(null);
   const [doses, setDoses] = useState<DoseView[]>([]);
   const [medications, setMedications] = useState<MedicationView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,7 +201,7 @@ function HistoryProfileScreen() {
     }
   }, [beginLoad, activeProfile, range.from, range.to, medicationId, setOffline, t]);
 
-  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useScreenRefresh(load, JSON.stringify([activeProfile?.id, range.from, range.to, medicationId]));
 
   // A day selected in one month must not survive a jump to another.
   useEffect(() => {
@@ -413,6 +416,7 @@ function HistoryProfileScreen() {
                   key={dose.id}
                   dose={dose}
                   onPress={() => openMedication(dose.medicationId)}
+                  onNote={() => setNotesFor(dose)}
                 />
               ))}
               <Divider />
@@ -420,6 +424,10 @@ function HistoryProfileScreen() {
           ))
         )}
       </ScrollView>
+      {notesFor ? <DoseNotesSheet key={notesFor.id} profileId={activeProfile.id} dose={notesFor}
+        canRead={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('view_history'))}
+        canWrite={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('confirm_dose'))}
+        onClose={() => { setNotesFor(null); void load(); }} /> : null}
     </SafeAreaView>
   );
 }

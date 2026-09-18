@@ -34,6 +34,7 @@ export interface DoseView {
   snoozeCount: number;
   confirmedAt: string | null;
   escalationStage: number;
+  notes?: Array<{ id: string; text: string | null; tags: string[]; recordedAt: string }>;
   medication: {
     name: string;
     form: MedicationForm;
@@ -42,6 +43,7 @@ export interface DoseView {
     strengthUnit: StrengthUnit | null;
     foodInstruction: FoodInstruction;
     instructions: string | null;
+    notes?: string | null;
   };
 }
 

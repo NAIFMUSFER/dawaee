@@ -10,8 +10,10 @@ import { phoneProofErrorKey } from '@/security/phone-proof-errors';
 
 export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
   const { t } = useI18n();
-  const { user } = useApp();
+  const { user, refreshProfiles } = useApp();
   const { begin, capture } = useRequestScope(user?.id ?? '');
+  const [newPhone, setNewPhone] = useState('');
+  const [password, setPassword] = useState('');
   const [phone, setPhone] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -35,6 +37,18 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
     finally { if (current()) setLoading(false); }
   }, [begin, t]);
   useEffect(() => { void load(); return () => { challenge.current?.cancel(); }; }, [load]);
+
+  const link = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError(null);
+    const current = capture();
+    try {
+      await api.post('/v1/auth/phone', { phone: newPhone.trim(), currentPassword: password });
+      if (!current()) return;
+      setPassword(''); await refreshProfiles(); await load();
+    } catch { if (current()) setError(t('phoneVerification.linkFailed')); }
+    finally { busyRef.current = false; if (current()) setBusy(false); }
+  };
 
   const send = async () => {
     if (busyRef.current || !phone || !phoneVerificationSupported) return;
@@ -84,7 +98,9 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
     {error ? <Banner tone="warning" title={error} /> : null}
     {!loaded ? <Button label={t('common.retry')} onPress={() => void load()} /> : !phone ? <>
       <Txt>{t('phoneVerification.noPhone')}</Txt>
-      <Button label={t('common.retry')} onPress={() => void load()} />
+      <Field label={t('invite.phone')} value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" maxLength={20} />
+      <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+      <Button label={t('phoneVerification.link')} loading={busy} disabled={!newPhone.trim() || !password} onPress={() => void link()} />
     </> : !phoneVerificationSupported ? <Txt>{t('phoneVerification.androidRequired')}</Txt> : sent ? <>
       <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}
         keyboardType="number-pad" textContentType="oneTimeCode" maxLength={6} autoComplete="sms-otp" />

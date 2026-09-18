@@ -8,6 +8,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
 
+import { phoneInput } from '@dawaee/shared';
+
 const MIN_PASSWORD = 10;
 
 interface AuthTokens {
@@ -23,6 +25,7 @@ export default function SignUpScreen() {
 
   const [name, setName] = useState('');
   const [identifier, setIdentifier] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +38,7 @@ export default function SignUpScreen() {
     try {
       const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/register', {
         email: typed.toLowerCase(),
+        phone: phone.trim(),
         displayName: name.trim(),
         password,
         // The language chosen on the first screen, not a hardcoded default:
@@ -56,7 +60,7 @@ export default function SignUpScreen() {
   };
 
   const ready =
-    name.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim()) && password.length >= MIN_PASSWORD;
+    name.trim().length > 0 && phoneInput.safeParse(phone).success && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim()) && password.length >= MIN_PASSWORD;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -73,6 +77,10 @@ export default function SignUpScreen() {
           maxLength={120}
           autoFocus
         />
+
+        <Field label={t('invite.phone')} value={phone} onChangeText={setPhone}
+          autoComplete="tel" keyboardType="phone-pad" maxLength={20}
+          hint={t('auth.linkedPhoneHint')} />
 
         <Field
           label={t('emailAccount.email')}

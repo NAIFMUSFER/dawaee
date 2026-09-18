@@ -29,6 +29,7 @@ export type RateScope =
   | 'login:ip' | 'login:identifier'
   | 'register:ip' | 'register:identifier'
   | 'otp-verify:ip' | 'otp-verify:identifier'
+  | 'phone-link:ip' | 'phone-link:account'
   | 'phone-proof:ip' | 'phone-proof:account'
   | 'recovery:ip' | 'recovery:phone'
   | 'email:ip' | 'email:account' | 'email:recipient' | 'email:hour' | 'email:global' | 'email:token'
@@ -60,6 +61,8 @@ export const BUDGETS: Record<RateScope, Budget> = {
   'register:identifier': { windowSeconds: 3600, max: 5 },
   'otp-verify:ip': { windowSeconds: 600, max: 30 },
   'otp-verify:identifier': { windowSeconds: 600, max: 10 },
+  'phone-link:ip': { windowSeconds: 600, max: 10 },
+  'phone-link:account': { windowSeconds: 600, max: 5 },
   'phone-proof:ip': { windowSeconds: 600, max: 30 },
   'phone-proof:account': { windowSeconds: 600, max: 10 },
   'recovery:ip': { windowSeconds: 600, max: 30 },

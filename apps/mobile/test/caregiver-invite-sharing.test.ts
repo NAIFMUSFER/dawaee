@@ -14,7 +14,7 @@ describe('caregiver invitation QR and explicit SMS sharing', () => {
     });
     try {
       h.find('Field', (p: any) => p.label === 'invite.name').onChangeText('Synthetic caregiver');
-      h.find('Field', (p: any) => p.label === 'invite.phone').onChangeText('٠٥٠٠٠٠٠٠٠١');
+      h.find('Field', (p: any) => p.label === 'invite.recipient').onChangeText('٠٥٠٠٠٠٠٠٠١');
       await h.flush();
       h.find('Button', (p: any) => p.label === 'invite.send').onPress(); await h.flush();
       expect(h.requests).toHaveLength(1);

@@ -60,6 +60,7 @@ function QuickCreateMedicationProfileScreen() {
   const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
   const { capture: captureSave } = useRequestScope();
 
+  const [notes, setNotes] = useState('');
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
   const [form, setForm] = useState<MedicationForm>(prefill.form ?? 'tablet');
@@ -145,6 +146,7 @@ function QuickCreateMedicationProfileScreen() {
         barcode: prefill.barcode ?? null,
         imageKey: prefill.imageKey ?? null,
         instructions: prefill.instructions ?? null,
+        notes: notes.trim() || null,
         startDate,
         endDate: endDate || null,
         expiryDate: prefill.expiryDate ?? null,
@@ -277,7 +279,10 @@ function QuickCreateMedicationProfileScreen() {
               </Txt>
             </Card>
 
-            <SectionTitle>{t('schedule.title')}</SectionTitle>
+            <Field label={t('medication.notes')} value={notes} onChangeText={setNotes}
+          multiline maxLength={2000} hint={t('notes.medicationHint')} />
+
+        <SectionTitle>{t('schedule.title')}</SectionTitle>
             <Card>
               <Txt weight="bold">{t('schedule.dailyTimesCount', { count: formatNumber(times.length), max: formatNumber(MAX_DAILY_TIMES) })}</Txt>
               <MultiPicker

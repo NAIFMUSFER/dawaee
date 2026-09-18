@@ -149,7 +149,7 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
       WHERE id = $1
         AND patient_profile_id = $2
         AND caregiver_user_id = $3
-        AND app.has_verified_phone(caregiver_user_id)
+        AND app.caregiver_identity_verified(id)
         AND status = 'active'`,
     [row.relationship_id, row.patient_profile_id, row.recipient_user_id],
   );
@@ -251,7 +251,7 @@ async function applyCurrentNotificationPrivacy(
     const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
       `SELECT status = 'active'
               AND caregiver_user_id = $2
-              AND app.has_verified_phone(caregiver_user_id)
+              AND app.caregiver_identity_verified(id)
               AND 'view_medications' = ANY(permissions) AS can_view_medication
          FROM caregiver_relationships
         WHERE id = $1 AND patient_profile_id = $3`,

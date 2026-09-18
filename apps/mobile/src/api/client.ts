@@ -1,3 +1,4 @@
+import { notifyClinicalChange } from './clinical-changes.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import type { ErrorCode } from '@dawaee/shared';
@@ -549,7 +550,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     }
   }
 
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204) { requireCurrentRequest(); notifyClinicalChange(method, path); return undefined as T; }
 
   const payload = await res.json().catch(() => ({}));
   // Decoding a response is also asynchronous: do not return old-account PHI.
@@ -557,6 +558,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!res.ok) {
     throw apiErrorFromResponse(res, payload);
   }
+  notifyClinicalChange(method, path);
   return payload as T;
 }
 

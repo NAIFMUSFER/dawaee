@@ -41,9 +41,22 @@ export function DoseCard({
     t(`dose.status.${dose.status}` as never),
   ].filter(Boolean).join('، ');
 
+  const notes = <>
+    {dose.medication.instructions ? <Txt variant="bodySmall" color={theme.colors.ink700}>{dose.medication.instructions}</Txt> : null}
+    {dose.medication.notes ? <View style={{ gap: theme.spacing.xs }}>
+      <Txt variant="caption" weight="bold">{t('medication.notes')}</Txt>
+      <Txt variant="bodySmall">{dose.medication.notes}</Txt>
+    </View> : null}
+    {dose.notes?.map(note => <View key={note.id} style={{ padding: theme.spacing.sm, borderRadius: theme.radius.md, backgroundColor: theme.colors.surfaceAlt }}>
+      <Txt variant="caption" weight="bold">{t('notes.doseNote')}</Txt>
+      {note.text ? <Txt variant="bodySmall">{note.text}</Txt> : null}
+      {note.tags.length ? <Txt variant="caption">{note.tags.map(tag => t(`symptom.${tag}` as never)).join('، ')}</Txt> : null}
+    </View>)}
+  </>;
+
   if (prominent) {
     return (
-      <Card style={{ gap: theme.spacing.lg, borderColor: colors.fg, borderWidth: 2 }} accessibilityLabel={a11yLabel}>
+      <Card style={{ gap: theme.spacing.md, borderColor: colors.bg, borderWidth: 1 }} accessibilityLabel={a11yLabel}>
         <Row style={{ justifyContent: 'space-between' }}>
           <Badge label={t(`dose.status.${dose.status}` as never)} fg={colors.fg} bg={colors.bg} />
           <Txt variant="h2" weight="bold" color={theme.colors.primary700}>
@@ -56,10 +69,9 @@ export function DoseCard({
           accessibilityLabel={a11yLabel}
           style={{
             alignItems: 'center', gap: theme.spacing.xs,
-            paddingVertical: theme.elderlyMode ? theme.spacing.xl : theme.spacing.md,
+            paddingVertical: theme.spacing.xs,
           }}
         >
-          <Txt variant="display" align="center">💊</Txt>
           <Txt variant={theme.elderlyMode ? 'h1' : 'h2'} weight="bold" align="center">{dose.medication.name}</Txt>
           {strength ? <Txt variant="h3" color={theme.colors.ink500} align="center">{strength}</Txt> : null}
           <Txt variant="h3" weight="medium" align="center">{doseText}</Txt>
@@ -100,7 +112,8 @@ export function DoseCard({
             ) : null}
           </View>
         )}
-        {onNote ? <Button label={t('notes.title')} tone="secondary" onPress={onNote} /> : null}
+        {notes}
+        {onNote ? <Button label={t('notes.title')} tone="ghost" fullWidth={false} onPress={onNote} /> : null}
       </Card>
     );
   }
@@ -124,7 +137,8 @@ export function DoseCard({
       {dose.status === 'taken_late' && dose.minutesLate ? (
         <Txt variant="caption" color={theme.colors.warning700}>{t('dose.lateBy', { minutes: dose.minutesLate })}</Txt>
       ) : null}
-      {onNote ? <Button label={t('notes.title')} tone="secondary" onPress={onNote} /> : null}
+      {notes}
+        {onNote ? <Button label={t('notes.title')} tone="ghost" fullWidth={false} onPress={onNote} /> : null}
       {undoable ? (
         <View style={{ alignItems: 'flex-start', marginTop: theme.spacing.xs }}>
           <Button label={t('today.undo')} tone="ghost" loading={busy} fullWidth={false}

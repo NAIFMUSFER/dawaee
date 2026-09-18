@@ -1,4 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { DoseCard } from '@/components/DoseCard';
+import { DoseNotesSheet } from '@/components/DoseNotesSheet';
+import { localDateInZone } from '@dawaee/core';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,23 +30,7 @@ import type { CaregiverPermission, DoseStatus } from '@dawaee/shared';
 
 const ACTIVE_STATUSES: readonly DoseStatus[] = ['upcoming', 'due', 'pending_confirmation', 'snoozed'];
 
-const STATUS_GLYPHS: Record<DoseStatus, string> = {
-  upcoming: '○',
-  due: '◉',
-  pending_confirmation: '◉',
-  snoozed: '⏱',
-  taken: '✓',
-  taken_late: '✓',
-  skipped: '⤫',
-  missed: '✕',
-  cancelled: '–',
-};
-
 const ADHERENCE_DAYS = 7;
-
-function isoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
 
 export default function CaregiverDashboardScreen() {
   const { profiles, activeProfile, user } = useApp();
@@ -76,6 +64,7 @@ function CaregiverPatientDashboard({
   const theme = useTheme();
   const { offline, setOffline, setActiveProfile } = useApp();
 
+  const [notesFor, setNotesFor] = useState<DoseView | null>(null);
   const [today, setToday] = useState<TodayResponse | null>(null);
   const [adherence, setAdherence] = useState<AdherenceResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,7 +108,7 @@ function CaregiverPatientDashboard({
       const [todayRes, adherenceRes] = await Promise.all([
         canSeeToday ? api.get<TodayResponse>('/v1/today', { profileId: patient.id }) : Promise.resolve(null),
         canSeeAdherence
-          ? api.get<AdherenceResponse>('/v1/adherence', { profileId: patient.id, from: isoDate(from), to: isoDate(to) })
+          ? api.get<AdherenceResponse>('/v1/adherence', { profileId: patient.id, from: localDateInZone(from, patient.timezone), to: localDateInZone(to, patient.timezone) })
           : Promise.resolve(null),
       ]);
       if (!isCurrent()) return;
@@ -139,7 +128,7 @@ function CaregiverPatientDashboard({
     }
   }, [beginLoad, canSeeAdherence, canSeeToday, describe, patient, setOffline]);
 
-  useEffect(() => { void load(); }, [load]);
+  useScreenRefresh(load, patient?.id ?? '');
 
   const doses = today?.today ?? [];
   const now = Date.now();
@@ -267,27 +256,11 @@ function CaregiverPatientDashboard({
         ) : doses.length === 0 ? (
           <EmptyState title={t('caregiver.noDosesToday')} />
         ) : (
-          <Card>
-            {doses.map((dose, index) => (
-              <View key={dose.id}>
-                {index > 0 ? <Divider /> : null}
-                <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
-                  <Txt variant="h3" color={statusColors(dose.status).fg}>{STATUS_GLYPHS[dose.status]}</Txt>
-                  <View style={{ flex: 1 }}>
-                    <Txt variant="body" numberOfLines={1}>
-                      {can('view_medications') ? dose.medication.name : t('caregiver.medicationHidden')}
-                    </Txt>
-                  </View>
-                  <View style={{ alignItems: 'flex-end', gap: 2 }}>
-                    <Txt variant="body" weight="bold">{formatTime(dose.scheduledAt, dose.scheduledTimezone)}</Txt>
-                    <Txt variant="caption" color={statusColors(dose.status).fg}>
-                      {t(`dose.status.${dose.status}` as 'dose.status.taken')}
-                    </Txt>
-                  </View>
-                </Row>
-              </View>
-            ))}
-          </Card>
+          <View style={{ gap: theme.spacing.sm }}>
+            {doses.map(dose => <DoseCard key={dose.id} dose={dose}
+              onNote={can('view_history') || can('confirm_dose') ? () => setNotesFor(dose) : undefined} />)}
+            {can('confirm_dose') ? <Button label={t('today.title')} onPress={() => { setActiveProfile(patient.id); router.push('/(tabs)/today'); }} /> : null}
+          </View>
         )}
 
         {!loadFailedWithoutClinicalData && canSeeToday && upcoming.length > 0 ? (
@@ -361,6 +334,8 @@ function CaregiverPatientDashboard({
 
         <SafetyNote textKey="adherence.disclaimer" />
       </ScrollView>
+      {notesFor ? <DoseNotesSheet key={notesFor.id} dose={notesFor} profileId={patient.id}
+        canRead={can('view_history')} canWrite={can('confirm_dose')} onClose={() => setNotesFor(null)} /> : null}
     </SafeAreaView>
   );
 }

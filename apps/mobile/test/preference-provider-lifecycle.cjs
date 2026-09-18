@@ -69,6 +69,7 @@ function makeProvider(file, notificationsFile, options = {}) {
     // bootstrap. This harness is not exercising secure-storage/JWT parsing —
     // restored-session-owner.test.ts does that directly — so return the seeded
     // authenticated account and keep these lifecycle scenarios focused.
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => seed.user?.id ?? null },
     '../storage/offline-queue.js': { setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
       queueSize: async () => 0, flushQueue: async () => ({ offline: false }) },

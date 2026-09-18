@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelfReminderRefresh } from '../hooks/useSelfReminderRefresh.js';
 import * as Localization from 'expo-localization';
 import type { Locale } from '@dawaee/shared';
 import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
@@ -164,6 +165,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * older response must not undo a newer privacy/accessibility choice.
    */
   const preferenceGeneration = useRef(0);
+
+  useSelfReminderRefresh(state, stateRef, sessionGeneration, mounted);
+
   const preferenceWrites = useRef({
     session: -1, pending: 0, tail: Promise.resolve() as Promise<void>,
   });

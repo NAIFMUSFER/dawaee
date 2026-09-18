@@ -106,6 +106,7 @@ function makeProvider(file) {
       clearSession: async () => { h.clearCalls.push(currentUser); currentUser = null; },
       storeSession: async tokens => { h.storeCalls.push(tokens.accessToken); currentUser = tokens.accessToken; },
     },
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => currentUser },
     '../storage/offline-queue.js': {
       setCacheOwner: id => h.owners.push(id),

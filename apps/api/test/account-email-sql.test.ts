@@ -168,3 +168,55 @@ describe('account email SQL boundaries', () => {
     for(const table of ['user_email_verifications','account_email_challenges']) expect((await owner(`SELECT * FROM ${table} WHERE user_id=$1`,[f.uid])).rows).toHaveLength(0);
   });
 });
+
+async function invitationFixtures(verified = true) {
+  const patient = await fixture(true), recipient = await fixture(verified), unrelated = await fixture(true);
+  const profile = randomUUID(), otherProfile = randomUUID(), id = randomUUID(), token = hash();
+  await owner("INSERT INTO patient_profiles(id,owner_user_id,display_name,is_self) VALUES($1,$2,'Synthetic patient',true),($3,$4,'Private caregiver profile',true)", [profile,patient.uid,otherProfile,recipient.uid]);
+  await query(`INSERT INTO caregiver_relationships(id,patient_profile_id,invited_email,invited_name,role,status,permissions,invitation_token_hash,invitation_expires_at,invited_by_user_id)
+    VALUES($1,$2,$3,'Synthetic caregiver','caregiver','pending',ARRAY['view_medications','view_schedule','view_history','confirm_dose'],$4,now()+interval '3 days',$5)`,[id,profile,recipient.email,token,patient.uid],'dawaee_app',patient.uid);
+  return {patient,recipient,unrelated,profile,otherProfile,id,token};
+}
+
+describe('verified mailbox invitation and linked account boundaries', () => {
+  it('recovers the invitation in a new tab, grants only the patient profile, and supports acceptance retry', async () => {
+    const f = await invitationFixtures();
+    expect((await query('SELECT * FROM app.pending_email_invitations()',[],'dawaee_app',f.recipient.uid)).rows).toEqual([
+      expect.objectContaining({id:f.id,patient_name:'Synthetic patient'})]);
+    expect((await query('SELECT * FROM app.pending_email_invitations()',[],'dawaee_app',f.unrelated.uid)).rows).toHaveLength(0);
+    expect((await query('SELECT * FROM app.accept_email_invitation($1)',[f.id],'dawaee_app',f.unrelated.uid)).rows[0]).toMatchObject({outcome:'invalid'});
+    for (let i=0;i<2;i++) expect((await query('SELECT * FROM app.accept_email_invitation($1)',[f.id],'dawaee_app',f.recipient.uid)).rows[0]).toMatchObject({outcome:'accepted',patient_profile_id:f.profile});
+    expect(await value('SELECT app.has_permission($1,$2)',[f.profile,'view_history'],f.recipient.uid)).toBe(true);
+    expect(await value('SELECT app.has_permission($1,$2)',[f.otherProfile,'view_history'],f.patient.uid)).toBe(false);
+    expect((await query('SELECT id FROM patient_profiles WHERE id=$1',[f.otherProfile],'dawaee_app',f.patient.uid)).rows).toHaveLength(0);
+    await query("UPDATE caregiver_relationships SET status='revoked' WHERE id=$1",[f.id],'dawaee_app',f.patient.uid);
+    expect(await value('SELECT app.has_permission($1,$2)',[f.profile,'view_history'],f.recipient.uid)).toBe(false);
+  });
+  it('a link and typed email without mailbox verification never grant access', async () => {
+    const f = await invitationFixtures(false);
+    expect((await query('SELECT * FROM app.pending_email_invitations()',[],'dawaee_app',f.recipient.uid)).rows).toHaveLength(0);
+    expect((await query('SELECT * FROM app.accept_caregiver_invitation($1,$2)',[f.token,f.recipient.uid],'dawaee_app',f.recipient.uid)).rows[0]).toMatchObject({outcome:'invalid'});
+    await owner('INSERT INTO user_email_verifications(user_id,email) VALUES($1,$2)',[f.recipient.uid,f.recipient.email]);
+    expect((await query('SELECT * FROM app.accept_caregiver_invitation($1,$2)',[f.token,f.recipient.uid],'dawaee_app',f.recipient.uid)).rows[0]).toMatchObject({outcome:'accepted'});
+    await owner('UPDATE users SET email=$2 WHERE id=$1',[f.recipient.uid,'changed-'+f.recipient.email]);
+    expect(await value('SELECT app.has_permission($1,$2)',[f.profile,'view_history'],f.recipient.uid)).toBe(false);
+  });
+  it('preserves the verified-phone requirement for phone invitations', async () => {
+    const f = await invitationFixtures();
+    const phone='+966500098881';
+    await owner('UPDATE users SET phone_e164=$2 WHERE id=$1',[f.recipient.uid,phone]);
+    await owner('UPDATE caregiver_relationships SET invited_email=NULL, invited_phone_e164=$2 WHERE id=$1',[f.id,phone]);
+    expect((await query('SELECT * FROM app.accept_caregiver_invitation($1,$2)',[f.token,f.recipient.uid],'dawaee_app',f.recipient.uid)).rows[0]).toMatchObject({outcome:'verification_required'});
+    await value('SELECT app.record_verified_phone($1,$2,now())',[f.recipient.uid,phone],f.recipient.uid);
+    expect((await query('SELECT * FROM app.accept_caregiver_invitation($1,$2)',[f.token,f.recipient.uid],'dawaee_app',f.recipient.uid)).rows[0]).toMatchObject({outcome:'accepted'});
+  });
+  it('links a missing phone to the same email account without merging identities or claiming verification', async () => {
+    const f=await fixture(true), stranger=await fixture(true), phone='+966500098882';
+    expect(await value('SELECT app.attach_account_phone($1,$2,$3)',[f.uid,phone,'wrong'],f.uid)).toBe(false);
+    expect(await value('SELECT app.attach_account_phone($1,$2,$3)',[f.uid,phone,oldPassword],stranger.uid)).toBe(false);
+    expect(await value('SELECT app.attach_account_phone($1,$2,$3)',[f.uid,phone,oldPassword],f.uid)).toBe(true);
+    expect(await value('SELECT app.has_verified_phone($1)',[f.uid],f.uid)).toBe(false);
+    expect((await owner('SELECT email,phone_e164 FROM users WHERE id=$1',[f.uid])).rows[0]).toEqual({email:f.email,phone_e164:phone});
+    expect(await value('SELECT app.attach_account_phone($1,$2,$3)',[stranger.uid,phone,oldPassword],stranger.uid)).toBe(false);
+  });
+});

@@ -105,6 +105,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/components/ui': hosts,
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
+    '@/components/IncomingInvitations': hosts,
     '@/components/Picker': hosts,
     '@/components/SnoozeSheet': hosts,
     '@/components/DoseNotesSheet': hosts,
@@ -162,6 +163,13 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       exports, Date, Intl, console, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
       ...vmGlobals,
       require: (id) => {
+        if (id === '@/hooks/useScreenRefresh') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/hooks/useScreenRefresh.ts'));
+        }
+        if (id === '../api/clinical-changes') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/api/clinical-changes.ts'));
+          h.notifyClinicalChange = modules[id].notifyClinicalChange;
+        }
         if (id === '@/hooks/useRequestScope') {
           if (!modules[id]) modules[id] = evaluate(hookFile || path.resolve(path.dirname(file), '../../src/hooks/useRequestScope.ts'));
         }

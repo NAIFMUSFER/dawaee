@@ -63,6 +63,7 @@ const WORKER_DEFINER_ALLOWED = [
   'deactivate_push_endpoint', 'erase_due_account', 'has_permission',
   // Read-only eligibility check used before caregiver notification delivery.
   'has_verified_phone',
+  'caregiver_identity_verified',
   'list_abandoned_object_keys', 'list_due_account_ids', 'list_due_account_object_keys',
   'list_live_push_endpoints', 'list_live_push_tokens',
   'owns_profile', 'purge_expired_otp', 'purge_rate_buckets',
@@ -70,6 +71,7 @@ const WORKER_DEFINER_ALLOWED = [
 ];
 
 const WORKER_DEFINER_FORBIDDEN = [
+  'attach_account_phone', 'pending_email_invitations', 'accept_email_invitation',
   'accept_caregiver_invitation', 'clear_login_failures', 'create_session',
   'find_or_create_user_by_phone', 'find_user_for_password_login', 'issue_otp',
   'record_login_failure', 'register_with_password', 'resolve_emergency_qr',

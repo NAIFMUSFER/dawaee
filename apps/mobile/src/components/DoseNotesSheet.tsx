@@ -56,7 +56,7 @@ export function DoseNotesSheet({ profileId, dose, canWrite, canRead, onClose }: 
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: theme.spacing.lg, paddingTop: theme.spacing.xl * 2, gap: theme.spacing.md }}>
         <Txt variant="h2" weight="bold" accessibilityRole="header">{t('notes.title')}</Txt>
         <Txt weight="bold">{dose.medication.name}</Txt>
-        <Txt>{formatDate(dose.scheduledAt)} · {formatTime(dose.scheduledAt, dose.scheduledTimezone)}</Txt>
+        <Txt>{formatDate(dose.scheduledAt, dose.scheduledTimezone)} · {formatTime(dose.scheduledAt, dose.scheduledTimezone)}</Txt>
         <Txt>{t('notes.optional')}</Txt>
         {canWrite ? <View style={{ gap: theme.spacing.md }}>
           <Field label={t('notes.textLabel')} value={text} onChangeText={value => { setText(value); setSaved(false); }} multiline maxLength={2000} editable={!busy} />

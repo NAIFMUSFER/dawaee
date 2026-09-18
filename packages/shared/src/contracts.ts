@@ -26,7 +26,7 @@ export const phoneInput = z
   .trim()
   .min(7)
   .max(24)
-  .regex(/^[+0-9()\-.\s]+$/, 'phone number contains unexpected characters');
+  .regex(/^[+0-9٠-٩۰-۹()\-.\s]+$/, 'phone number contains unexpected characters');
 
 /**
  * One spelling of an email address, decided in one place.
@@ -397,12 +397,15 @@ export const refillSchema = z.object({
 export const inviteCaregiverSchema = z.object({
   patientProfileId: uuid,
   invitedName: safeText(80),
-  invitedPhone: phoneInput,
+  invitedPhone: phoneInput.optional(),
+  invitedEmail: emailInput.optional(),
   role: z.enum(CAREGIVER_ROLES),
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(1).max(CAREGIVER_PERMISSIONS.length),
   escalationPriority: z.number().int().min(1).max(20).default(10),
   channel: z.enum(['link', 'qr']).default('link'),
   expiresInHours: z.number().int().min(1).max(168).default(72),
+}).refine(value => Boolean(value.invitedEmail) !== Boolean(value.invitedPhone), {
+  message: 'Choose one recipient email or phone', path: ['invitedEmail'],
 });
 
 export const acceptInvitationSchema = z.object({ token: z.string().min(20).max(256) });

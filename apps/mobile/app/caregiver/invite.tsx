@@ -127,7 +127,7 @@ function InviteCaregiverProfileScreen() {
     if (name.trim().length === 0) errors.name = t('invite.nameRequired');
     // The server normalises Saudi local format; the client only rejects what
     // could not be a phone number at all.
-    if (normalizeDigits(phone).replace(/\D/g, '').length < 9) errors.phone = t('invite.phoneRequired');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(phone.trim()) && normalizeDigits(phone).replace(/\D/g, '').length < 9) errors.phone = t('invite.recipientRequired');
     setFieldError(errors);
     if (errors.name || errors.phone) return;
 
@@ -142,13 +142,13 @@ function InviteCaregiverProfileScreen() {
       const res = await api.post<InviteResponse>('/v1/caregivers/invite', {
         patientProfileId: activeProfile.id,
         invitedName: name.trim(),
-        invitedPhone: normalizeDigits(phone).trim(),
+        ...(phone.includes('@') ? { invitedEmail: phone.trim().toLowerCase() } : { invitedPhone: normalizeDigits(phone).trim() }),
         role,
         permissions,
         escalationPriority: priority,
         // The API stores how the link was created. SMS is delivered using the
         // device composer, not an unconfigured server messaging channel.
-        channel: channel === 'sms' ? 'link' : channel,
+        channel: phone.includes('@') || channel === 'sms' ? 'link' : channel,
         expiresInHours: INVITE_EXPIRY_HOURS,
       });
       if (current()) setResult(res);
@@ -221,8 +221,8 @@ function InviteCaregiverProfileScreen() {
             <QrCode value={result.invitationLink} size={240} accessibilityLabel={t('invite.qrLabel')} />
             <Txt variant="bodySmall">{t('invite.qrHint')}</Txt>
           </Card>
-          <Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
-          <Txt variant="caption">{t('invite.smsComposerHint')}</Txt>
+          {!phone.includes('@') ? <><Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
+          <Txt variant="caption">{t('invite.smsComposerHint')}</Txt></> : null}
           <Button label={t('invite.share')} tone="secondary" onPress={() => void share()} />
 
           <Card>
@@ -269,13 +269,13 @@ function InviteCaregiverProfileScreen() {
           error={fieldError.name ?? null}
         />
         <Field
-          label={t('invite.phone')}
+          label={t('invite.recipient')}
           value={phone}
           onChangeText={(v) => { setPhone(v); setFieldError((e) => ({ ...e, phone: undefined })); }}
-          keyboardType="phone-pad"
-          hint={t('invite.phoneHint')}
+          keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+          hint={t('invite.recipientHint')}
           error={fieldError.phone ?? null}
-          maxLength={20}
+          maxLength={320}
         />
 
         <SectionTitle>{t('invite.relationship')}</SectionTitle>
@@ -360,7 +360,7 @@ function InviteCaregiverProfileScreen() {
 
         <SectionTitle>{t('invite.channel')}</SectionTitle>
         <Row wrap gap={theme.spacing.sm}>
-          {CHANNELS.map((c) => (
+          {CHANNELS.filter(c => !phone.includes('@') || c === 'link').map((c) => (
             <Button
               key={c}
               label={`${channel === c ? '✓ ' : ''}${t(`channel.${c}`)}`}

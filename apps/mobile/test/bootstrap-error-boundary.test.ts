@@ -67,6 +67,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
       getItem: async () => 'synthetic-device', setItem: async () => undefined,
     },
     'expo-constants': {},
+    './clinical-changes.js': loadModule(fileURLToPath(new URL('../src/api/clinical-changes.ts', import.meta.url)), {}),
     './token-store.js': {
       readSession: async () => tokens,
       writeSession: async (next: NonNullable<typeof tokens>) => { tokens = next; },
@@ -114,6 +115,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
     'react/jsx-runtime': { jsx: (_type: unknown, props: unknown) => props },
     'expo-localization': { getLocales: () => [{ languageCode: 'ar' }] },
     '../api/client.js': client,
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => hasStoredSession ? ACCOUNT : null },
     '../storage/offline-queue.js': {
       flushQueue: async () => ({ offline: false }),

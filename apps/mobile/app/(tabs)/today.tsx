@@ -1,3 +1,5 @@
+import { IncomingInvitations } from '@/components/IncomingInvitations';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, RefreshControl, ScrollView, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
@@ -218,8 +220,9 @@ function TodayProfileScreen() {
     setSnoozeFor(null);
     setServiceUnavailable(false);
     setLoading(true);
-    void load();
   }, [activeProfile?.id, canViewToday]);
+
+  useScreenRefresh(load, `${activeProfile?.id}:${canViewToday}`);
 
   useFocusEffect(useCallback(() => {
     const tick = () => setNow(Date.now());
@@ -404,6 +407,7 @@ function TodayProfileScreen() {
           )
         ) : null}
 
+        <IncomingInvitations />
         {offline ? (
           <Banner
             tone="warning"
