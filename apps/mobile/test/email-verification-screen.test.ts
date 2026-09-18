@@ -10,6 +10,13 @@ function screen() {
 }
 afterEach(() => { for (const h of screens.splice(0)) h.unmount(); });
 describe('email verification settings', () => {
+  it('does not offer a skip when email verification is required', async () => {
+    const h=screen(); h.app.user={id:'synthetic-account',emailVerified:false,emailVerificationRequired:true};h.render();await h.flush();
+    expect(h.find('Button',(p:any)=>p.label==='common.back')).toBeNull();
+    expect(h.find('Button',(p:any)=>p.label==='settings.signOut')).not.toBeNull();
+    h.requests[0].resolve({email:'new@example.test',verified:false,available:true});await h.flush();
+    expect(h.routes).toEqual([]);expect(h.text()).toContain('emailAccount.required');
+  });
   it('preserves edited email while status loads and requires explicit password-backed submission', async () => {
     const h = screen(); h.find('Field', (p: any) => p.label === 'emailAccount.email').onChangeText(' New@Example.com '); await h.flush();
     h.requests[0].resolve({ email: 'old@example.com', verified: false, available: true }); await h.flush();

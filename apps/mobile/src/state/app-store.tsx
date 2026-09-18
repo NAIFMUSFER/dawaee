@@ -67,7 +67,7 @@ const DEFAULT_PREFERENCES: Preferences = {
 export interface AppState {
   ready: boolean;
   signedIn: boolean;
-  user: { id: string; displayName: string; phoneE164: string | null } | null;
+  user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean } | null;
   preferences: Preferences;
   profiles: ProfileSummary[];
   activeProfile: ProfileSummary | null;
@@ -249,7 +249,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    */
   const offlineBootstrapWrites = useRef<Promise<void>>(Promise.resolve());
   const persistOfflineBootstrap = useCallback((
-    user: { id: string; displayName: string; phoneE164: string | null },
+    user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean },
     preferences: Preferences,
     selfProfile: ProfileSummary | null,
   ): Promise<void> => {
@@ -273,7 +273,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const preferencesPendingAtStart = preferenceWrites.current.session === generation
       && preferenceWrites.current.pending > 0;
     const me = await api.get<{
-      user: { id: string; displayName: string; phoneE164: string | null };
+      user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean };
       preferences: Preferences;
     }>('/v1/me');
     if (!isCurrent()) return;

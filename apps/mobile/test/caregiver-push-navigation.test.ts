@@ -93,6 +93,9 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
       case '@dawaee/shared': return { PALETTE: { background: '#fff' } };
       case '@/api/client': return { DEMO_MODE: false };
       case '@/security/AppLockGate': return { AppLockGate: noop };
+      case './settings/email-verification': return { default: noop };
+      case '@/storage/pending-invite': return { landingAfterAuth: async () => '/caregiver/accept' };
+      case '@/security/email-onboarding': return executeSource('apps/mobile/src/security/email-onboarding.ts', requireMock);
       case '@/navigation/private-navigation': return { clearClinicalRouteIntents: noop };
       case '@/storage/medication-draft': return { clearMedicationDrafts: noop };
       case '@/notifications': return {
@@ -121,8 +124,9 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
     render(overrides: Record<string, unknown> = {}, commitEffects = true) {
       Object.assign(state, overrides);
       refIndex = 0; effectIndex = 0; pending = [];
-      shell();
+      const tree = shell();
       if (commitEffects) for (const commit of pending) commit();
+      return tree;
     },
     emit(value: unknown) { last = value; for (const listener of listeners) listener(value); },
     dispose() { for (const effect of effects) effect?.cleanup?.(); },

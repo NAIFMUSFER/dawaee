@@ -55,6 +55,34 @@ const finish = (token: string, purpose='verify', password: string | null=null, r
   value('SELECT app.complete_email_action($1,$2,$3,$4)',[token,purpose,password,request]);
 
 describe('account email SQL boundaries', () => {
+  it('enforces onboarding for new email accounts until the real verification action completes', async () => {
+    const email = `${randomUUID()}@example.test`;
+    const registered = await query('SELECT * FROM app.register_email_account(NULL,$1,$2,$3,$4)', [email,'New email account',oldPassword,'ar']);
+    const uid = (registered.rows[0] as { user_id: string }).user_id;
+    expect(await value('SELECT app.email_verification_required($1)',[uid],uid)).toBe(true);
+    expect(await value('SELECT app.has_verified_email($1)',[uid],uid)).toBe(false);
+    const session=randomUUID();
+    await owner("INSERT INTO auth_sessions(id,user_id,refresh_token_hash,device_id,expires_at) VALUES($1,$2,$3,'new-email',now()+interval '1 day')",[session,uid,hash()]);
+    const token=hash();
+    expect(await requestVerify({uid,session,email},token)).toBe(true);
+    expect(await value('SELECT app.email_verification_required($1)',[uid],uid)).toBe(true);
+    expect(await finish(token)).toBe(uid);
+    expect(await value('SELECT app.email_verification_required($1)',[uid],uid)).toBe(false);
+    // A later raw email change cannot reuse the previous verification.
+    await owner('UPDATE users SET email=$2 WHERE id=$1',[uid,`new-${email}`]);
+    expect(await value('SELECT app.email_verification_required($1)',[uid],uid)).toBe(true);
+  });
+  it('keeps legacy accounts intact and does not expose or allow changing onboarding flags', async () => {
+    const f=await fixture();
+    expect(await value('SELECT app.email_verification_required($1)',[f.uid],f.uid)).toBe(false);
+    const token=hash(); await requestVerify(f,token); expect(await finish(token)).toBe(f.uid);
+    expect(await value('SELECT app.has_verified_email($1)',[f.uid],f.uid)).toBe(true);
+    for (const role of ['dawaee_app','dawaee_worker']) {
+      await expect(query('SELECT * FROM account_email_onboarding',[],role)).rejects.toMatchObject({code:'42501'});
+      await expect(query('DELETE FROM account_email_onboarding',[],role)).rejects.toMatchObject({code:'42501'});
+    }
+    await expect(query('SELECT * FROM app.register_email_account(NULL,NULL,$1,$2,$3)',['No email',oldPassword,'ar'])).rejects.toMatchObject({code:'22023'});
+  });
   it('keeps mail tables and queue functions inaccessible to the worker and raw table reads inaccessible to API', async () => {
     for (const role of ['dawaee_app','dawaee_worker']) {
       await expect(query('SELECT * FROM account_email_challenges',[],role)).rejects.toMatchObject({code:'42501'});

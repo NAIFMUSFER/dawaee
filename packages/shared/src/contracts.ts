@@ -109,16 +109,12 @@ function isKnownTimeZone(value: string): boolean {
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
-    email: emailInput.optional(),
+    email: emailInput,
     displayName: z.string().min(1).max(120),
     password: z.string().min(10).max(200),
     locale: z.enum(LOCALES).default('ar'),
     deviceId: z.string().min(8).max(128),
     deviceName: z.string().max(120).optional(),
-  })
-  .refine((v) => Boolean(v.phone ?? v.email), {
-    message: 'A phone number or an email address is required',
-    path: ['phone'],
   });
 
 /**

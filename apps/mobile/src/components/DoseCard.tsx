@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Badge, Button, Card, Row, Txt } from './ui.js';
 import { useTheme } from '../hooks/useTheme.js';
 import { useI18n } from '../i18n/index.js';
@@ -8,7 +8,7 @@ import type { DoseView } from '../api/types.js';
 import { canUndo } from '@dawaee/core';
 
 export function DoseCard({
-  dose, prominent = false, onTaken, onSnooze, onSkip, onUndo, onPress, busy,
+  dose, prominent = false, onTaken, onSnooze, onSkip, onUndo, onPress, onNote, busy,
 }: {
   dose: DoseView;
   prominent?: boolean;
@@ -17,6 +17,7 @@ export function DoseCard({
   onSkip?: () => void;
   onUndo?: () => void;
   onPress?: () => void;
+  onNote?: () => void;
   busy?: boolean;
 }) {
   const theme = useTheme();
@@ -99,12 +100,14 @@ export function DoseCard({
             ) : null}
           </View>
         )}
+        {onNote ? <Button label={t('notes.title')} tone="secondary" onPress={onNote} /> : null}
       </Card>
     );
   }
 
   return (
-    <Card onPress={onPress} accessibilityLabel={a11yLabel} style={{ paddingVertical: theme.spacing.md }}>
+    <Card style={{ paddingVertical: theme.spacing.md }}>
+      <Pressable onPress={onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={a11yLabel}>
       <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
         <View style={{ flex: 1, gap: 2 }}>
           <Txt variant="bodyLarge" weight="bold" numberOfLines={1}>{dose.medication.name}</Txt>
@@ -117,9 +120,11 @@ export function DoseCard({
           <Badge label={t(`dose.status.${dose.status}` as never)} fg={colors.fg} bg={colors.bg} />
         </View>
       </Row>
+      </Pressable>
       {dose.status === 'taken_late' && dose.minutesLate ? (
         <Txt variant="caption" color={theme.colors.warning700}>{t('dose.lateBy', { minutes: dose.minutesLate })}</Txt>
       ) : null}
+      {onNote ? <Button label={t('notes.title')} tone="secondary" onPress={onNote} /> : null}
       {undoable ? (
         <View style={{ alignItems: 'flex-start', marginTop: theme.spacing.xs }}>
           <Button label={t('today.undo')} tone="ghost" loading={busy} fullWidth={false}

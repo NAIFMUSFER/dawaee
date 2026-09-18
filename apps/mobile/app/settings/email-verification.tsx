@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
+import { AppState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
@@ -14,7 +15,8 @@ export default function EmailVerificationScreen() {
 }
 function EmailForm() {
   const { t } = useI18n();
-  const { user, syncNow } = useApp();
+  const { user, syncNow, signOut } = useApp();
+  const required = user?.emailVerified === false || user?.emailVerificationRequired === true;
   const { capture } = useRequestScope();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,7 +38,11 @@ function EmailForm() {
       if (result.verified) void syncNow();
     } catch { if (current()) setError(t('emailAccount.unavailable')); }
   }, [capture, syncNow, t]);
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useEffect(() => {
+    void load();
+    const listener = AppState.addEventListener('change', state => { if (state === 'active') void load(); });
+    return () => listener.remove();
+  }, [load]);
   useEffect(() => {
     if (!cooldown) return;
     const timer = setTimeout(() => setCooldown(false), 60_000);
@@ -59,6 +65,7 @@ function EmailForm() {
   return <SafeAreaView style={{ flex: 1 }}><Screen>
     <Txt variant="h1" weight="bold" accessibilityRole="header">{t('emailAccount.title')}</Txt>
     <Txt>{t('emailAccount.verifyBody')}</Txt>
+    {required ? <Txt>{t('emailAccount.required')}</Txt> : null}
     {error ? <Banner tone="warning" title={error} /> : null}
     {status?.verified ? <Banner tone="success" title={`${t('emailAccount.verified')}: ${status.email}`} /> : null}
     {status && !status.available ? <Banner tone="warning" title={t('emailAccount.unavailable')} /> : null}
@@ -70,6 +77,7 @@ function EmailForm() {
     {cooldown ? <Txt>{t('recovery.cooldown')}</Txt> : null}
     <Button label={t('emailAccount.sendVerify')} loading={busy} disabled={!status?.available || !password || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || cooldown} onPress={() => void send()} />
     <Button label={t('emailAccount.refresh')} tone="secondary" disabled={busy} onPress={() => void load()} />
-    <Button label={t('common.back')} tone="ghost" disabled={busy} onPress={() => { void landingAfterAuth().then(path => router.replace(path)); }} />
+    {!required ? <Button label={t('common.back')} tone="ghost" disabled={busy} onPress={() => { void landingAfterAuth().then(path => router.replace(path)); }} /> : null}
+    {required ? <Button label={t('settings.signOut')} tone="ghost" disabled={busy} onPress={() => { void signOut(); }} /> : null}
   </Screen></SafeAreaView>;
 }

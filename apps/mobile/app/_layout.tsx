@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Alert, Platform, View } from 'react-native';
+import { Alert, Modal, Platform, View } from 'react-native';
 import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
@@ -15,6 +15,9 @@ import { clearMedicationDrafts } from '@/storage/medication-draft';
 import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
 import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
 import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
+import EmailVerificationScreen from './settings/email-verification';
+import { needsEmailVerification } from '@/security/email-onboarding';
+import { landingAfterAuth } from '@/storage/pending-invite';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -54,6 +57,8 @@ function Shell() {
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
+  const emailRequired = !DEMO_MODE && needsEmailVerification(signedIn, user);
+  const wasEmailRequired = useRef(false);
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
   const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
@@ -78,6 +83,15 @@ function Shell() {
     previousClinicalRouteScope.current = clinicalRouteScope;
   }
 
+  useEffect(() => {
+    let current = true;
+    if (wasEmailRequired.current && !emailRequired && signedIn) {
+      void landingAfterAuth().then(path => { if (current) router.replace(path); });
+    }
+    wasEmailRequired.current = emailRequired;
+    return () => { current = false; };
+  }, [emailRequired, signedIn, user?.id, router]);
+
   useWebAlertAdapter();
 
   useEffect(() => {
@@ -87,9 +101,9 @@ function Shell() {
 
   /** Tell the server which device to reach. */
   useEffect(() => {
-    if (!signedIn || !deviceId) return;
+    if (!signedIn || emailRequired || !deviceId) return;
     void syncPushRegistration(deviceId).catch(() => undefined);
-  }, [signedIn, deviceId]);
+  }, [signedIn, emailRequired, deviceId]);
 
   /** Keep the delivery selection in account-bound memory. The landing resolves
    * its patient through the authenticated API, after the app lock permits it. */
@@ -116,14 +130,14 @@ function Shell() {
 
   /** Act on the reminder's own buttons. */
   useEffect(() => {
-    if (!signedIn) return;
+    if (!signedIn || emailRequired) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
     void startNotificationActionListener(() => { void refreshAfterAction(); })
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, refreshAfterAction]);
+  }, [signedIn, emailRequired, refreshAfterAction]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
@@ -169,6 +183,7 @@ function Shell() {
       ) : null}
       {ready ? (
         <AppLockGate>
+          <View style={{ flex: 1 }}>
           <Stack
             screenOptions={{
               headerShown: false,
@@ -176,6 +191,10 @@ function Shell() {
               animation: 'slide_from_right',
             }}
           />
+          <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
+            {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
+          </Modal>
+          </View>
         </AppLockGate>
       ) : (
         <View style={{ flex: 1, backgroundColor: PALETTE.background, justifyContent: 'center' }}>

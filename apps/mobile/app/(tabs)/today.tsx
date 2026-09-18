@@ -15,6 +15,7 @@ import type { CachedSchedule } from '@/storage/offline-queue';
 import { applyQueuedToCache, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue } from '@/storage/offline-queue';
 import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
+import { DoseNotesSheet } from '@/components/DoseNotesSheet';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import { canActOnTodayDose, groupTodayDoses } from '@/notifications/today-groups';
 
@@ -69,6 +70,8 @@ function TodayProfileScreen() {
   const arabic = preferences.locale === 'ar';
   const canAddMedication = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
   const canConfirmDose = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('confirm_dose')));
+  const canReadNotes = Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.isSelf || activeProfile.permissions?.includes('view_history')));
+  const canOpenNotes = canConfirmDose || canReadNotes;
   const canViewToday = Boolean(activeProfile && (
     activeProfile.role === 'owner'
     || activeProfile.isSelf
@@ -92,6 +95,7 @@ function TodayProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyDoseId, setBusyDoseId] = useState<string | null>(null);
+  const [notesFor, setNotesFor] = useState<DoseView | null>(null);
   const [snoozeFor, setSnoozeFor] = useState<DoseView | null>(null);
   const actionInFlight = useRef(new Set<string>());
   const [actionError, setActionError] = useState<string | null>(null);
@@ -445,6 +449,7 @@ function TodayProfileScreen() {
                         onUndo={canConfirmDose ? () => void undo(dose) : undefined}
                         onSnooze={canConfirmDose ? () => setSnoozeFor(dose) : undefined}
                         onSkip={canConfirmDose ? () => void act(dose, 'skip') : undefined}
+                        onNote={canOpenNotes ? () => setNotesFor(dose) : undefined}
                       />
                     ))}
                   </View>
@@ -457,7 +462,7 @@ function TodayProfileScreen() {
                       <View key={group.scheduledAt} testID="today-upcoming-group" style={{ gap: theme.spacing.sm }}>
                         <SectionTitle>{t('today.timeGroup', { time: formatTime(group.scheduledAt, data?.timezone) })}</SectionTitle>
                         {group.doses.map(dose => (
-                          <DoseCard key={dose.id} dose={dose} onPress={() => openMedication(dose.medicationId)} />
+                          <DoseCard key={dose.id} dose={dose} onNote={canOpenNotes ? () => setNotesFor(dose) : undefined} onPress={() => openMedication(dose.medicationId)} />
                         ))}
                       </View>
                     ))}
@@ -470,6 +475,7 @@ function TodayProfileScreen() {
                     dose={dose}
                     busy={busyDoseId === dose.id}
                     onUndo={canConfirmDose ? () => void undo(dose) : undefined}
+                    onNote={canOpenNotes ? () => setNotesFor(dose) : undefined}
                     onPress={() => openMedication(dose.medicationId)}
                   />
                 ))}
@@ -481,6 +487,10 @@ function TodayProfileScreen() {
         ) : null}
       </ScrollView>
 
+      {notesFor && activeProfile && canOpenNotes ? (
+        <DoseNotesSheet key={notesFor.id} profileId={activeProfile.id} dose={notesFor}
+          canWrite={canConfirmDose} canRead={canReadNotes} onClose={() => setNotesFor(null)} />
+      ) : null}
       {snoozeFor && canConfirmDose ? (
         <SnoozeSheet
           defaultMinutes={preferences.defaultSnoozeMinutes}

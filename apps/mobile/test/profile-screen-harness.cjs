@@ -107,6 +107,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/components/ProfileSwitcher': hosts,
     '@/components/Picker': hosts,
     '@/components/SnoozeSheet': hosts,
+    '@/components/DoseNotesSheet': hosts,
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },

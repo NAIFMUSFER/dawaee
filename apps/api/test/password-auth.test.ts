@@ -31,7 +31,7 @@ const register = (payload: Record<string, unknown>) =>
   h.app.inject({
     method: 'POST', url: '/v1/auth/register',
     remoteAddress: fromNewAddress(),
-    payload: { ...DEVICE, ...payload },
+    payload: { ...DEVICE, ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload },
   });
 
 const login = (identifier: string, password: string) =>
@@ -61,7 +61,7 @@ beforeAll(async () => {
 afterAll(async () => { await h.close(); });
 
 describe('registration', () => {
-  it('creates an account with a phone and signs it in immediately', async () => {
+  it('creates an email account with an optional phone and a verification-pending session', async () => {
     const res = await register({
       phone: '0566000001', displayName: 'محمد', password: 'correct horse battery',
     });
@@ -139,7 +139,7 @@ describe('registration', () => {
     expect(common.json().error.code).toBe('weak_password');
   });
 
-  it('requires a phone or an email — not neither', async () => {
+  it('requires an email', async () => {
     const res = await register({ displayName: 'Nobody', password: 'correct horse battery' });
     expect(res.statusCode).toBe(400);
   });

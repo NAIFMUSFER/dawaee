@@ -22,13 +22,15 @@ export function registerNoteRoutes(app: FastifyInstance): void {
   });
 
   app.get('/v1/notes', async (req) => {
-    const q = req.query as { profileId?: string; from?: string; to?: string };
+    const q = req.query as { profileId?: string; from?: string; to?: string; doseOccurrenceId?: string };
     const profileId = requireUuid(q.profileId, 'profileId');
+    const doseId = q.doseOccurrenceId === undefined ? null : requireUuid(q.doseOccurrenceId, 'doseOccurrenceId');
     const from = optionalDate(q.from, 'from');
     const to = optionalDate(q.to, 'to');
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
       await requireProfileAccess(tx, userId, profileId, 'view_history');
+      if (doseId) await requireOwnDose(tx, profileId, doseId);
       const { rows } = await tx.query(
         `SELECT n.id, n.tags, n.text, n.recorded_at, n.dose_occurrence_id, m.name AS medication_name
            FROM symptom_notes n
@@ -37,8 +39,9 @@ export function registerNoteRoutes(app: FastifyInstance): void {
           WHERE n.patient_profile_id = $1
             AND ($2::date IS NULL OR n.recorded_at >= $2::date)
             AND ($3::date IS NULL OR n.recorded_at < ($3::date + 1))
+            AND ($4::uuid IS NULL OR n.dose_occurrence_id = $4)
           ORDER BY n.recorded_at DESC LIMIT 300`,
-        [profileId, from, to],
+        [profileId, from, to, doseId],
       );
       return {
         notes: rows.map((r) => ({

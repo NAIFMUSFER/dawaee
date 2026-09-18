@@ -15,15 +15,7 @@ interface AuthTokens {
   refreshToken: string;
 }
 
-/** Looks like an email rather than a phone number. */
-const looksLikeEmail = (value: string) => value.includes('@');
-
-/**
- * Create an account.
- *
- * A phone OR an email is enough — the server requires at least one and refuses
- * an identifier that already belongs to someone.
- */
+/** New accounts use an email that must be verified before onboarding ends. */
 export default function SignUpScreen() {
   const { t } = useI18n();
   const theme = useTheme();
@@ -42,7 +34,7 @@ export default function SignUpScreen() {
     const typed = identifier.trim();
     try {
       const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/register', {
-        ...(looksLikeEmail(typed) ? { email: typed.toLowerCase() } : { phone: typed }),
+        email: typed.toLowerCase(),
         displayName: name.trim(),
         password,
         // The language chosen on the first screen, not a hardcoded default:
@@ -64,7 +56,7 @@ export default function SignUpScreen() {
   };
 
   const ready =
-    name.trim().length > 0 && identifier.trim().length >= 3 && password.length >= MIN_PASSWORD;
+    name.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim()) && password.length >= MIN_PASSWORD;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -83,10 +75,10 @@ export default function SignUpScreen() {
         />
 
         <Field
-          label={t('auth.identifier')}
+          label={t('emailAccount.email')}
           value={identifier}
           onChangeText={setIdentifier}
-          placeholder={t('auth.identifierHint')}
+          autoComplete="email"
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}

@@ -46,7 +46,7 @@ const probe = (r: { statusCode: number; body: string }): Probe => {
 };
 
 const register = (payload: Record<string, unknown>) =>
-  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload });
+  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
 const login = (identifier: string, password: string) =>
   h.app.inject({
@@ -63,6 +63,7 @@ async function makeAccount(phone: string, email?: string) {
     deviceId: `enum-dev-${n}-${Date.now() % 100000}`,
   });
   expect(r.statusCode, `account setup failed: ${r.body}`).toBe(200);
+  await owner.query(`INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1 ON CONFLICT DO NOTHING`, [phone]);
   return r;
 }
 

@@ -177,7 +177,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
     const result = await withTransaction(async (tx) => {
       const { rows } = await tx.query<{ user_id: string; created: boolean; self_profile_id: string | null }>(
-        'SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
+        'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
         [phone, email, body.displayName.trim(), passwordHash, body.locale],
       );
       const row = rows[0]!;
