@@ -2,7 +2,7 @@ name: Security scan
 
 on:
   push: { branches: [main, 'prepare/ios-testflight-20260917'] }
-  pull_request: { branches: [main] }
+  pull_request: { branches: [main, 'prepare/ios-testflight-20260917'] }
   schedule: [{ cron: '0 3 * * 1' }]
 
 # Read-only at the top. The one job that needs to write does so explicitly, and
