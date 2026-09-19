@@ -364,7 +364,7 @@ export async function syncPushRegistration(deviceId: string,
   const settings = await N.getPermissionsAsync();
   if (!current()) return false;
   const granted = notificationPermissionGranted(settings)
-    || (options.requestPermission !== false && await requestPermission());
+    || (options.requestPermission === true && await requestPermission());
   if (!granted || !current()) return false;
 
   const token = await registerPushToken();

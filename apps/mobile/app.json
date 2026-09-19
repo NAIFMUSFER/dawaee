@@ -11,6 +11,7 @@
     ],
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "bundleIdentifier": "app.dawaee.mobile",
       "entitlements": {
         "com.apple.developer.usernotifications.time-sensitive": true
@@ -30,6 +31,10 @@
         ]
       },
       "buildNumber": "6"
+    },
+    "locales": {
+      "ar": "./locales/ar.json",
+      "en": "./locales/en.json"
     },
     "android": {
       "package": "app.dawaee.mobile",

@@ -91,7 +91,9 @@ function Shell() {
       catch { /* Foreground/grant events retry transient token/provider errors. */ }
       finally { registering = false; }
     };
-    void register(true);
+    // Registration may reuse an existing grant. The OS prompt belongs to the
+    // explained onboarding/settings action, not the sign-in transition.
+    void register(false);
     const unsubscribe = subscribeNotificationPermissionChanges(() => { void register(false); });
     const subscription = AppState.addEventListener('change', next => { if (next === 'active') void register(false); });
     return () => { disposed = true; unsubscribe(); subscription.remove(); };

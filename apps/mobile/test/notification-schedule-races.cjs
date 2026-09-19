@@ -28,7 +28,7 @@ function loadModule(file, platform = 'ios') {
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
     getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
-    requestPermissionsAsync: async () => { state.notificationGranted = true; return { granted: true }; },
+    requestPermissionsAsync: async () => { state.permissionRequests = (state.permissionRequests || 0) + 1; state.notificationGranted = true; return { granted: true }; },
     getExpoPushTokenAsync: async () => { state.tokenReads++; return state.tokenGate ? state.tokenGate.promise : { data: 'synthetic-token' }; },
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
@@ -84,6 +84,19 @@ function scenarios(file) {
   const add = (name, run, platform) => cases.push({ name, run: async () => {
     const h = loadModule(file, platform); await run(h.api, h.state);
   } });
+  add('background token synchronization never prompts for permission by default', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device'), false);
+    assert.equal(state.permissionRequests || 0, 0);
+    assert.equal(state.tokenReads, 0);
+    assert.equal(state.pushPosts.length, 0);
+  });
+  add('an explicit explained permission action can grant and register', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: true }), true);
+    assert.equal(state.permissionRequests, 1);
+    assert.equal(state.pushPosts.length, 1);
+  });
   add('a later permission grant signals token registration without a new login', async (api, state) => {
     state.notificationGranted = false;
     assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: false }), false);
