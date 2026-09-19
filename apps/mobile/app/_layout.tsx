@@ -21,31 +21,7 @@ import EmailVerificationScreen from './settings/email-verification';
 import { needsEmailVerification } from '@/security/email-onboarding';
 import { landingAfterAuth } from '@/storage/pending-invite';
 import AppNavigator from '@/navigation/AppNavigator';
-
-/**
- * React Native Web does not implement the native multi-button Alert contract.
- * Screens use that contract before destructive actions (revoking caregiver
- * access, leaving a care circle, etc.), so on Safari the button looked alive
- * but its confirmation callback never ran. Install one web-only adapter at the
- * application boundary: native keeps the real Alert, while web maps the same
- * cancel/confirm contract to the browser's blocking confirm dialog.
- */
-function useWebAlertAdapter() {
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof globalThis.confirm !== 'function') return;
-
-    const nativeAlert = Alert.alert;
-    Alert.alert = (title, message, buttons) => {
-      const actions = buttons ?? [];
-      const confirmAction = actions.find((button) => button.style === 'destructive')
-        ?? actions.find((button) => button.style !== 'cancel');
-      const prompt = message ? `${title}\n\n${message}` : title;
-      if (globalThis.confirm(prompt)) confirmAction?.onPress?.();
-    };
-
-    return () => { Alert.alert = nativeAlert; };
-  }, []);
-}
+import WebAlertHost from '@/components/WebAlertHost';
 
 /**
  * Root layout.
@@ -95,8 +71,6 @@ function Shell() {
     wasEmailRequired.current = emailRequired;
     return () => { current = false; };
   }, [emailRequired, signedIn, user?.id, router]);
-
-  useWebAlertAdapter();
 
   useEffect(() => {
     void configureChannels();
@@ -215,6 +189,7 @@ function Shell() {
           <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
             {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
           </Modal>
+          <WebAlertHost scope={clinicalRouteScope} />
           </View>
         </AppLockGate>
       ) : (
