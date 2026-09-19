@@ -49,6 +49,10 @@ finalizes an authorized object before associating its key with medication data.
 The web CSP allows the configured storage origin for image/upload requests.
 The bucket's CORS configuration must also permit the actual app origin; a CSP
 unit test cannot establish that external bucket configuration.
+The upload ticket signs `Content-Type` and `If-None-Match: *`; both headers must
+be allowed by bucket CORS. Configure the API and worker for the same existing
+private bucket. See the [private-storage deployment checks](release/private-image-storage.md)
+and [production R2 policy](release/r2-cors.production.json).
 
 `STORAGE_PROVIDER=local` is for non-production use and is refused in production.
 Secret values, signing keys and live signed image URLs must not enter Git or
