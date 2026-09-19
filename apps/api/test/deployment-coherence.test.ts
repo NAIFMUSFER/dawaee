@@ -79,7 +79,7 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     const declaration = health.match(/const REQUIRED_WORKER_JOBS = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
     const requiredJobs = [...declaration.matchAll(/'([^']+)'/g)].map((match) => match[1]);
     expect(requiredJobs).toEqual([
-      'materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests',
+      'materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping',
     ]);
 
     expect(health).toContain("metadata->>'buildCommit'");

@@ -30,11 +30,12 @@ const client = {
   }, release() {},
 } as unknown as PoolClient;
 const ctx = {
+  config: { isProduction: false },
   pool: { connect: async () => client, query: client.query.bind(client) },
   providers: {
     push: { name: 'captured', send: async (messages: typeof sent) => {
       sent.push(...messages); return messages.map(() => ({ ok: true, providerMessageId: randomUUID() }));
-    } }, storage: { deleteObject: async () => {} },
+    } }, storage: { name: 'local', deleteObject: async () => {} },
   },
   log: { info() {}, warn() {}, error() {} }, now: () => now,
 } as unknown as WorkerContext;
