@@ -69,14 +69,60 @@ Local verification: 40 focused tests passed (route inventory, clinical
 auth/URL boundaries and auth screens), mobile TypeScript and changed-file
 ESLint passed. The inventory test compares the navigator against actual route
 files, so a new private route cannot silently fall outside the declared guard.
-Deployed direct-URL acceptance is pending at this checkpoint.
+Deployed direct-URL acceptance subsequently **passed** on PR source `6dbf100`
+through exact-tree preview merge `8459e3cc0d148e1133f723fbf6ef5aa633b27b31`,
+deploy `dep-dan8lee8bjmc73ab1trg` live at **13:17:10 UTC**. Direct `/family`,
+`/today` and `/settings` each resolved to `/language` without a session. Selecting
+Arabic opened sign-in. The secure `browserAuth` request returned `submitted`;
+fresh visible DOM then showed the synthetic patient's Today screen, saved
+medication note and saved dose note. This is successful reauthentication on the
+new deployed code, not an inference from submission alone.
+
+## Invitation authoring and browser-control blocker
+
+On deployed `6dbf100`, with the test patient authenticated:
+
+- Empty invitation submission showed specific name and recipient validation.
+- Observer preset selected schedule, adherence and notification permissions.
+  Disabling schedule also disabled adherence; enabling adherence restored the
+  required schedule permission. This was checked against rendered switches.
+- Selected the nurse role and preset. It enabled medication/schedule/history/
+  adherence/report access, dose confirmation, medication changes and stock;
+  emergency-card access and caregiver administration stayed disabled.
+- Created a **link-only synthetic nurse invitation** addressed to the reserved
+  `example.test` domain. No SMS/email/share action to another person was sent.
+  The result displayed "invitation created"; Copy link changed to "link copied".
+  The private invitation bearer is not included in evidence or logs.
+- Returned to Family and opened Manage permissions. It correctly said the
+  invitation had not yet been accepted. Disabled dose confirmation, saved,
+  observed the success banner, left and reopened the screen: the permission
+  remained disabled. This verifies persistence, not recipient enforcement.
+- Clicking Revoke access caused the cloud-browser control operation to time
+  out while opening the browser confirmation. `getJsDialog`, a cancel-key
+  attempt and a same-browser fresh-tab attempt also timed out during CDP tab
+  refresh. **Revocation is not verified**; do not claim it succeeded or repeat
+  a destructive action blindly. The synthetic invitation may remain pending.
+  Manual browser recovery is required before further interface trials.
+
+CI `35445151066` for `6dbf100` reported **2,782 passed / 22 failed** on both
+PostgreSQL versions. Failures were limited to two test files: one app-lock
+structural assertion still searched for the extracted `<Stack>` in the root
+layout, and 21 push-listener harness cases lacked the new AppNavigator mock.
+Mobile exports, Docker, dependencies, runtime recovery and Security passed.
+The harness and structural assertion are updated without changing runtime
+logic; the assertion now checks that the navigator is inside both boundaries
+of AppLockGate and actually contains the Stack. New full CI is required.
+After those harness updates, the complete local mobile/shared run passed
+**1,134 tests in 159 files** (74.32 seconds); touched ESLint and diff checks
+also passed. This does not replace the pending PostgreSQL-backed CI rerun.
 
 ## Remaining acceptance gates
 
-- Reauthenticate the test patient after reload; do not claim the empty tabs are
-  an authenticated session. Browser credentials require the secure user handoff.
-- Exercise the newly guarded deployed direct URLs, public invitation entry and
-  recovery paths, then resume the remaining patient controls.
+- Recover browser control after the confirmation dialog. Reauthenticate only
+  if fresh visible evidence shows the session is gone; the preceding secure
+  reauthentication already succeeded.
+- Exercise public invitation entry and recovery paths, then resume the
+  remaining patient controls. Direct private-URL redirection is verified above.
 - Complete caregiver and nurse registration/verified identity, invitation
   acceptance, permission changes/revocation and patient-profile isolation in
   real interfaces.
