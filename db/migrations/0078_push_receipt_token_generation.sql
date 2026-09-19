@@ -22,7 +22,7 @@ RETURNS boolean
 LANGUAGE sql
 VOLATILE
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, pg_catalog, pg_temp
 AS $$
   WITH changed AS (
     UPDATE push_tokens
@@ -33,7 +33,10 @@ AS $$
        AND user_id = p_user_id
        AND active
        AND p_token_fingerprint ~ '^[0-9a-f]{64}$'
-       AND encode(digest(token, 'sha256'), 'hex') = p_token_fingerprint
+       -- PostgreSQL provides sha256(bytea) in pg_catalog. Use the core function
+       -- instead of pgcrypto.digest(), because production Render Postgres does
+       -- not install pgcrypto by default and migrations must be portable.
+       AND encode(pg_catalog.sha256(pg_catalog.convert_to(token, 'UTF8')), 'hex') = p_token_fingerprint
     RETURNING 1
   )
   SELECT EXISTS (SELECT 1 FROM changed)

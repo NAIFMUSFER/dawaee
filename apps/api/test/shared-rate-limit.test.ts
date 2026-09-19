@@ -38,7 +38,7 @@ const login = (app: FastifyInstance, identifier: string, addr: string, password 
   });
 
 const register = (app: FastifyInstance, payload: Record<string, unknown>, addr: string) =>
-  app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload });
+  app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
 beforeAll(async () => {
   resetDatabase();

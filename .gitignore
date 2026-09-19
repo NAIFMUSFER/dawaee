@@ -21,3 +21,10 @@ tour.mjs
 .storage/
 # Production and web-route tests regenerate this from current Expo source.
 apps/api/public/
+
+# Generated Apple project and local signing/Firebase configuration.
+apps/mobile/ios/
+apps/mobile/GoogleService-Info.plist
+*.p8
+*.p12
+*.mobileprovision

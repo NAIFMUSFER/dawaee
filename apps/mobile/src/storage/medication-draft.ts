@@ -17,6 +17,7 @@ import type { MedicationForm, StrengthUnit } from '@dawaee/shared';
 export interface MedicationDetectedField {
   value: string;
   confidence: number;
+  confidenceSource?: 'heuristic' | 'provider';
 }
 
 export interface MedicationConfirmDraft {
@@ -25,6 +26,8 @@ export interface MedicationConfirmDraft {
   kind: 'medication_label' | 'prescription';
   detected: Record<string, MedicationDetectedField | undefined>;
   remainingLines: number;
+  /** Provider text for user review only; never forwarded to medication save. */
+  rawText?: string;
 }
 
 export interface MedicationPrefillDraft {

@@ -13,6 +13,9 @@
 *.pem
 *.key
 *.p12
+*.p8
+*.mobileprovision
+GoogleService-Info.plist
 
 # History and CI metadata: nothing at runtime reads them.
 .git

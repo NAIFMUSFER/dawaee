@@ -31,6 +31,7 @@ interface OpenDoseRow {
   patient_user_id: string | null;
   patient_phone: string | null;
   patient_locale: string;
+  client_event_id: string | null;
 }
 
 function simultaneousKey(dose: OpenDoseRow): string {
@@ -53,31 +54,59 @@ function patientDispatchKey(
 
 export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promise<{ itemsProcessed: number }> {
   const now = ctx.now();
+  let cursor: OpenDoseRow | undefined;
+  let pending: OpenDoseRow[] = [];
+  let itemsProcessed = 0;
+  // A stable keyset visits later doses even when the first page remains open.
+  // Carry the final simultaneous group over the page boundary before emitting
+  // its single notification.
+  while (true) {
+    const { rows } = await client.query<OpenDoseRow>(
+      `SELECT d.id, d.patient_profile_id, d.medication_id, d.scheduled_at, d.status::text AS status,
+              d.snoozed_until, d.notified_at, d.escalation_stage, d.escalation_completed_at, d.client_event_id,
+              d.dose_quantity, d.dose_unit::text AS dose_unit,
+              s.late_after_minutes, s.missed_after_minutes,
+              m.name AS medication_name, m.food_instruction::text AS food_instruction,
+              pp.timezone AS profile_timezone, pp.display_name AS profile_name,
+              COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
+              u.phone_e164 AS patient_phone, COALESCE(u.locale,'ar') AS patient_locale,
+              COALESCE(up.show_medication_in_notifications, false) AS show_medication
+         FROM dose_occurrences d
+         JOIN medication_schedules s ON s.id = d.schedule_id
+         JOIN medications m ON m.id = d.medication_id
+         JOIN patient_profiles pp ON pp.id = d.patient_profile_id
+         LEFT JOIN users u ON u.id = COALESCE(pp.linked_user_id, pp.owner_user_id)
+         LEFT JOIN user_preferences up ON up.user_id = u.id
+        WHERE d.status IN ('upcoming','due','pending_confirmation','snoozed')
+          AND (d.scheduled_at <= $1 OR d.snoozed_until <= $1)
+          AND d.scheduled_at > $1 - interval '24 hours'
+          AND m.status = 'active'
+          AND s.active
+          AND ($2::timestamptz IS NULL OR (d.scheduled_at, d.patient_profile_id, d.id) > ($2::timestamptz, $3::uuid, $4::uuid))
+        ORDER BY d.scheduled_at, d.patient_profile_id, d.id
+        LIMIT 1000`,
+      [now, cursor?.scheduled_at ?? null, cursor?.patient_profile_id ?? null, cursor?.id ?? null],
+    );
+    pending.push(...rows);
+    if (rows.length < 1000) {
+      itemsProcessed += await processDoses(client, pending, now);
+      break;
+    }
+    cursor = rows[rows.length - 1]!;
+    const tailKey = simultaneousKey(cursor);
+    let split = pending.length;
+    while (split > 0 && simultaneousKey(pending[split - 1]!) === tailKey) split--;
+    itemsProcessed += await processDoses(client, pending.slice(0, split), now);
+    pending = pending.slice(split);
+  }
+  return { itemsProcessed };
+}
 
-  const { rows } = await client.query<OpenDoseRow>(
-    `SELECT d.id, d.patient_profile_id, d.medication_id, d.scheduled_at, d.status::text AS status,
-            d.snoozed_until, d.notified_at, d.escalation_stage, d.escalation_completed_at,
-            d.dose_quantity, d.dose_unit::text AS dose_unit,
-            s.late_after_minutes, s.missed_after_minutes,
-            m.name AS medication_name, m.food_instruction::text AS food_instruction,
-            pp.timezone AS profile_timezone, pp.display_name AS profile_name,
-            COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
-            u.phone_e164 AS patient_phone, COALESCE(u.locale,'ar') AS patient_locale,
-            COALESCE(up.show_medication_in_notifications, false) AS show_medication
-       FROM dose_occurrences d
-       JOIN medication_schedules s ON s.id = d.schedule_id
-       JOIN medications m ON m.id = d.medication_id
-       JOIN patient_profiles pp ON pp.id = d.patient_profile_id
-       LEFT JOIN users u ON u.id = COALESCE(pp.linked_user_id, pp.owner_user_id)
-       LEFT JOIN user_preferences up ON up.user_id = u.id
-      WHERE d.status IN ('upcoming','due','pending_confirmation','snoozed')
-        AND d.scheduled_at <= $1
-        AND d.scheduled_at > $1 - interval '24 hours'
-        AND m.status = 'active'
-      ORDER BY d.scheduled_at
-      LIMIT 1000`,
-    [now],
-  );
+async function processDoses(client: PoolClient, rows: OpenDoseRow[], now: Date): Promise<number> {
+  let enqueued = 0;
+  const policies = new Map<string, Awaited<ReturnType<typeof loadPolicy>>>();
+  const circles = new Map<string, Awaited<ReturnType<typeof loadCaregivers>>>();
+  const streaks = new Map<string, number>();
 
   // Evaluate every dose first. Group membership must be based on doses that are
   // actually eligible for the same initial patient dispatch. Otherwise a dose
@@ -86,12 +115,17 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
   const evaluated: Array<{
     dose: OpenDoseRow;
     decision: ReturnType<typeof evaluateEscalation>;
+    snoozeEnqueued: boolean;
   }> = [];
 
   for (const dose of rows) {
-    const policy = await loadPolicy(client, dose.patient_profile_id, dose.medication_id);
-    const caregivers = await loadCaregivers(client, dose.patient_profile_id);
-    const missedStreak = await loadMissedStreak(
+    const policyKey = `${dose.patient_profile_id}:${dose.medication_id}`;
+    const policy = policies.get(policyKey) ?? await loadPolicy(client, dose.patient_profile_id, dose.medication_id);
+    policies.set(policyKey, policy);
+    const caregivers = circles.get(dose.patient_profile_id) ?? await loadCaregivers(client, dose.patient_profile_id);
+    circles.set(dose.patient_profile_id, caregivers);
+    const streakKey = `${simultaneousKey(dose)}:${dose.late_after_minutes}:${dose.missed_after_minutes}`;
+    const missedStreak = streaks.get(streakKey) ?? await loadMissedStreak(
       client,
       dose.patient_profile_id,
       dose.scheduled_at,
@@ -101,9 +135,26 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
         missedAfterMinutes: dose.missed_after_minutes,
       },
     );
+    streaks.set(streakKey, missedStreak);
+
+    let snoozeEnqueued = false;
+    const patientStage = policy.stages.find((stage) => stage.target === 'patient');
+    if (policy.enabled && patientStage && dose.client_event_id && dose.snoozed_until
+      && dose.snoozed_until <= now
+      && now.getTime() < dose.scheduled_at.getTime() + dose.missed_after_minutes * 60_000) {
+      for (const channel of patientStage.channels.filter((c) => ['push', 'local', 'in_app'].includes(c))) {
+        const inserted = await enqueueNotification(client, {
+          dose, channel, stageIndex: 0, stage: patientStage, now, snoozeIntentId: dose.client_event_id,
+          recipient: { kind: 'patient', userId: dose.patient_user_id ?? '', phoneE164: dose.patient_phone,
+            relationshipId: null, channels: [channel], displayName: dose.profile_name },
+        });
+        if (inserted) { enqueued++; snoozeEnqueued = true; }
+      }
+    }
 
     evaluated.push({
       dose,
+      snoozeEnqueued,
       decision: evaluateEscalation({
         occurrence: {
           id: dose.id,
@@ -133,7 +184,8 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
   }
 
   const eligibleInitialGroups = new Map<string, OpenDoseRow[]>();
-  for (const { dose, decision } of evaluated) {
+  for (const { dose, decision, snoozeEnqueued } of evaluated) {
+    if (snoozeEnqueued) continue;
     if (decision.action !== 'dispatch' || decision.stageIndex !== 0) continue;
     for (const recipient of decision.recipients) {
       if (recipient.kind !== 'patient') continue;
@@ -147,17 +199,19 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
   }
 
   const initialPatientGroupsDispatched = new Set<string>();
-  let enqueued = 0;
-
-  for (const { dose, decision } of evaluated) {
+  for (const { dose, decision, snoozeEnqueued } of evaluated) {
     if (decision.action === 'complete') {
       await client.query('UPDATE dose_occurrences SET escalation_completed_at = now() WHERE id = $1', [dose.id]);
       continue;
     }
     if (decision.action !== 'dispatch' || decision.stageIndex === null) continue;
+    // The explicit snooze reminder fulfills a patient stage due in this tick.
+    // An outward stage waits until the next tick, retaining its original clock.
+    if (snoozeEnqueued && decision.stage?.target !== 'patient') continue;
 
     let simultaneousDoseCount = 1;
     for (const recipient of decision.recipients) {
+      if (snoozeEnqueued && recipient.kind === 'patient') continue;
       for (const channel of recipient.channels) {
         const dispatchKey = patientDispatchKey(dose, recipient, channel);
         const eligibleGroup = decision.stageIndex === 0 && recipient.kind === 'patient'
@@ -209,7 +263,7 @@ export async function reminderJob(ctx: WorkerContext, client: PoolClient): Promi
     );
   }
 
-  return { itemsProcessed: enqueued };
+  return enqueued;
 }
 
 async function loadPolicy(client: PoolClient, profileId: string, medicationId: string) {
@@ -250,10 +304,12 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
   const { rows } = await client.query(
     `SELECT cr.id, cr.caregiver_user_id, cr.invited_phone_e164, cr.invited_name,
             cr.status::text AS status, cr.permissions, cr.escalation_priority,
-            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone
+            COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone,
+            COALESCE(u.locale, 'ar') AS caregiver_locale
        FROM caregiver_relationships cr
        LEFT JOIN users u ON u.id = cr.caregiver_user_id
       WHERE cr.patient_profile_id = $1 AND cr.status = 'active'
+        AND app.caregiver_identity_verified(cr.id)
       ORDER BY cr.escalation_priority`,
     [profileId],
   );
@@ -275,6 +331,7 @@ async function loadCaregivers(client: PoolClient, profileId: string): Promise<Ca
       permissions: r.permissions,
       escalationPriority: r.escalation_priority,
     },
+    locale: r.caregiver_locale === 'en' ? 'en' : 'ar',
     rules: ruleRows
       .filter((x) => x.relationship_id === r.id)
       .map((x) => ({
@@ -333,14 +390,17 @@ async function enqueueNotification(
     stage: EscalationStage;
     now: Date;
     groupDoses?: OpenDoseRow[];
+    snoozeIntentId?: string;
   },
 ): Promise<boolean> {
   const { dose, recipient, channel, stageIndex } = input;
-  const locale = (dose.patient_locale === 'en' ? 'en' : 'ar') as Locale;
   const isPatient = recipient.kind === 'patient';
+  const locale = ((isPatient ? dose.patient_locale : recipient.locale) === 'en' ? 'en' : 'ar') as Locale;
   const grouped = isPatient && stageIndex === 0 && (input.groupDoses?.length ?? 0) > 1;
 
-  const dedupeKey = grouped
+  const dedupeKey = input.snoozeIntentId
+    ? ['snooze', dose.id, input.snoozeIntentId, recipient.userId ?? '', channel].join(':')
+    : grouped
     ? [
         'dose-group',
         dose.patient_profile_id,
@@ -353,7 +413,7 @@ async function enqueueNotification(
     : escalationDedupeKey(dose.id, stageIndex, recipient, channel);
 
   const doseText = `${Number(dose.dose_quantity)} ${dose.dose_unit}`;
-  const scheduledLocal = localTimeInZone(dose.scheduled_at, dose.profile_timezone);
+  const scheduledLocal = localTimeInZone(input.snoozeIntentId ? dose.snoozed_until! : dose.scheduled_at, dose.profile_timezone);
   const foodKey = `food.${dose.food_instruction}` as never;
   const food = t(locale, foodKey);
 
@@ -416,6 +476,10 @@ async function enqueueNotification(
       }
     : {
         doseId: dose.id,
+        ...(input.snoozeIntentId ? {
+          reason: 'snooze', intentId: input.snoozeIntentId,
+          expectedSnoozedUntil: dose.snoozed_until!.toISOString(),
+        } : {}),
         medicationId: dose.medication_id,
         scheduledAt: dose.scheduled_at.toISOString(),
         actions: isPatient ? ['taken', 'snooze', 'skip'] : [],
@@ -436,7 +500,7 @@ async function enqueueNotification(
       recipient.userId || null,
       recipient.phoneE164,
       recipient.relationshipId,
-      isPatient ? (stageIndex === 0 ? 'dose_reminder' : 'dose_reminder_repeat') : 'escalation',
+      isPatient ? (stageIndex === 0 && !input.snoozeIntentId ? 'dose_reminder' : 'dose_reminder_repeat') : 'escalation',
       channel,
       dose.id,
       dose.medication_id,
@@ -444,7 +508,11 @@ async function enqueueNotification(
       locale,
       title,
       body,
-      JSON.stringify(payload),
+      JSON.stringify({
+        ...payload,
+        intentVersions: Object.fromEntries((input.groupDoses ?? [dose]).map((item) =>
+          [item.id, item.snoozed_until ? item.client_event_id : null])),
+      }),
       dedupeKey,
       input.now,
     ],

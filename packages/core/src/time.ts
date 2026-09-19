@@ -91,6 +91,17 @@ export function zonedWallTimeToUtc(date: LocalDate, time: LocalTime, tz: TimeZon
   const [hh, mm] = time.split(':').map(Number) as [number, number];
   const naiveUtc = Date.UTC(y, m - 1, d, hh, mm, 0, 0);
 
+  // Both sides of a civil-day transition are candidates even when the first
+  // approximation already round-trips (London/Paris folds otherwise pick the
+  // second occurrence). This also handles half-hour transitions.
+  const offsets = new Set([-48, -24, 0, 24, 48].map((hours) =>
+    zoneOffsetMs(new Date(naiveUtc + hours * 3_600_000), tz)));
+  const candidates = [...offsets].map((offset) => naiveUtc - offset).filter((candidate) => {
+    const p = partsInZone(new Date(candidate), tz);
+    return p.year === y && p.month === m && p.day === d && p.hour === hh && p.minute === mm;
+  });
+  if (candidates.length) return new Date(Math.min(...candidates));
+
   // First approximation using the offset in effect at the naive instant.
   let guess = naiveUtc - zoneOffsetMs(new Date(naiveUtc), tz);
   // Re-evaluate with the offset actually in effect at the guess.
@@ -193,6 +204,17 @@ export function isWithinQuietHours(time: LocalTime, start: LocalTime | null, end
   const e = timeToMinutes(end);
   if (s === e) return false;
   return s < e ? t >= s && t < e : t >= s || t < e;
+}
+
+/** First real minute outside a quiet window, including repeated/skipped hours. */
+export function quietHoursResumeAt(now: Date, tz: TimeZone, start: LocalTime | null, end: LocalTime | null): Date | null {
+  if (!isWithinQuietHours(localTimeInZone(now, tz), start, end)) return null;
+  const nextMinute = Math.floor(now.getTime() / 60_000) * 60_000 + 60_000;
+  for (let minute = 0; minute < 48 * 60; minute++) {
+    const candidate = new Date(nextMinute + minute * 60_000);
+    if (!isWithinQuietHours(localTimeInZone(candidate, tz), start, end)) return candidate;
+  }
+  throw new RangeError('Unable to resolve quiet-hour window');
 }
 
 /** Inclusive list of calendar dates from `from` to `to`. Guards against runaway ranges. */

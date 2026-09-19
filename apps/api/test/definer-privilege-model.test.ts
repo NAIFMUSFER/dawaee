@@ -310,7 +310,7 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
     const res = await send({
       method: 'POST',
       url: '/v1/auth/register',
-      payload: { phone, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
+      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
     });
     // The exact request that returned 404 on a realistic owner before 0030.
     expect(res.statusCode, res.body.slice(0, 200)).toBe(200);
@@ -333,6 +333,8 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
                 WHERE u.phone_e164 = '${phone}') AS creds`,
     );
     expect(r).toEqual({ users: '1', profiles: '1', prefs: '1', creds: '1' });
+    // The clinical authorization cases below start after explicit mailbox proof.
+    await root.query('INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1', [phone]);
   });
 
   it('password login reads the credential through app.find_user_for_password_login', async () => {

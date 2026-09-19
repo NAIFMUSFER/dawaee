@@ -46,7 +46,7 @@ const probe = (r: { statusCode: number; body: string }): Probe => {
 };
 
 const register = (payload: Record<string, unknown>) =>
-  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload });
+  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
 const login = (identifier: string, password: string) =>
   h.app.inject({
@@ -63,6 +63,7 @@ async function makeAccount(phone: string, email?: string) {
     deviceId: `enum-dev-${n}-${Date.now() % 100000}`,
   });
   expect(r.statusCode, `account setup failed: ${r.body}`).toBe(200);
+  await owner.query(`INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1 ON CONFLICT DO NOTHING`, [phone]);
   return r;
 }
 
@@ -215,7 +216,7 @@ describe('rate limiting cannot be sidestepped with a header', () => {
         method: 'POST', url: '/v1/auth/register', remoteAddress: '10.66.0.1',
         ...(hdr ? { headers: hdr } : {}),
         payload: {
-          phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
+          email: `burst-${run}-${i}@example.test`, phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
           deviceId: `burst-${run}-${i}-${Date.now() % 100000}`,
         },
       });
@@ -270,6 +271,7 @@ describe('one phone number is one identity however it is written', () => {
     const same = [
       '+966512345678', '00966512345678', '0512345678', '966512345678',
       '+966 51 234 5678', '+966-51-234-5678', ' +966512345678 ',
+      '+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '۰۵۱۲۳۴۵۶۷۸',
     ];
     const normalised = same.map((v) => normalizePhone(v));
     expect(new Set(normalised).size, `variants disagreed: ${JSON.stringify(normalised)}`).toBe(1);
@@ -278,10 +280,9 @@ describe('one phone number is one identity however it is written', () => {
 
   it('a form that cannot be normalised is refused, never treated as a new identity', async () => {
     const { normalizePhone } = await import('../src/lib/crypto.js');
-    // Arabic-Indic digits and a zero-width space. Neither is accepted as a
-    // second spelling of an existing number — they are rejected outright, which
-    // is the safe direction: no duplicate account, no second rate-limit bucket.
-    for (const odd of ['+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '+966512345678​']) {
+    // Invisible characters and malformed numbers must never create a second
+    // identity. Arabic and Persian digits above share the canonical identity.
+    for (const odd of ['+966512345678​', '٠٥١٢٣٤٥٦٧٨x', '++966512345678']) {
       expect(normalizePhone(odd), `${JSON.stringify(odd)} was accepted as an identifier`).toBeNull();
     }
   });

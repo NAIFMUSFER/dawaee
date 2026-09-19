@@ -20,7 +20,7 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     const app = JSON.parse(read('app.json')) as {
       expo: {
         plugins: Array<string | [string, Record<string, unknown>]>;
-        android: { permissions?: string[] };
+        android: { permissions?: string[]; blockedPermissions?: string[] };
         ios: { infoPlist?: { UIBackgroundModes?: string[] } };
       };
     };
@@ -34,10 +34,11 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     expect(app.expo.android.permissions).toEqual(expect.arrayContaining([
       'POST_NOTIFICATIONS',
       'SCHEDULE_EXACT_ALARM',
-      'USE_EXACT_ALARM',
       'RECEIVE_BOOT_COMPLETED',
       'VIBRATE',
     ]));
+    expect(app.expo.android.permissions).not.toContain('USE_EXACT_ALARM');
+    expect(app.expo.android.blockedPermissions).toContain('android.permission.USE_EXACT_ALARM');
     expect(app.expo.ios.infoPlist?.UIBackgroundModes).toContain('remote-notification');
   });
 
@@ -62,12 +63,18 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     expect(src).toContain("platform: Platform.OS === 'ios' ? 'ios' : 'android'");
   });
 
-  it('starts channel/category configuration, push registration and action handling from the app shell', () => {
+  it('starts notification setup and retries push registration within the current authenticated shell', () => {
     const layout = read('app/_layout.tsx');
 
     expect(layout).toContain('configureChannels');
     expect(layout).toContain('configureCategories');
-    expect(layout).toContain('syncPushRegistration(deviceId)');
+    // This is the durable wiring audit. The mobile Shell and scheduling suites
+    // exercise cold startup, account changes and a later OS permission grant.
+    expect(layout).toMatch(/if \(!ready \|\| !signedIn \|\| !user\?\.id \|\| emailRequired \|\| !deviceId\) return/);
+    expect(layout).toMatch(/syncPushRegistration\(deviceId,\s*\{\s*requestPermission,\s*isCurrent:\s*current\s*\}\)/);
+    expect(layout).toContain('!disposed && caregiverSession.current.generation === generation');
+    expect(layout).toMatch(/subscribeNotificationPermissionChanges\(\(\) => \{ void register\(false\); \}\)/);
+    expect(layout).toMatch(/AppState\.addEventListener\('change', next => \{ if \(next === 'active'\) void register\(false\); \}\)/);
     expect(layout).toContain('startNotificationActionListener');
     expect(layout).toContain("import('expo-notifications')");
   });

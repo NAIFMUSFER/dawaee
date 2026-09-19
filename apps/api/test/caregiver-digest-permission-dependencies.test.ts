@@ -66,9 +66,9 @@ beforeAll(async () => {
 
   await db.query(
     `INSERT INTO caregiver_notification_rules
-       (relationship_id, patient_profile_id, channel, mode, summary_time, enabled)
-     VALUES ($1,$2,'push','daily_summary','00:05',true)`,
-    [relationship.rows[0]!.id, patient.profileId],
+       (relationship_id, patient_profile_id, channel, mode, summary_time, enabled, updated_at)
+     VALUES ($1,$2,'push','daily_summary','00:05',true,$3)`,
+    [relationship.rows[0]!.id, patient.profileId, CREATION_TIME],
   );
 
   h.setWorkerNow(DIGEST_TIME);

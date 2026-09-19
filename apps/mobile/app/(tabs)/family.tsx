@@ -1,4 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { IncomingInvitations } from '@/components/IncomingInvitations';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Alert, Linking, RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -81,6 +83,9 @@ function FamilyProfileScreen() {
     try {
       const res = await api.get<CareCircleResponse>('/v1/care-circle', { profileId: activeProfile.id });
       if (!isCurrent()) return;
+      if (!res || !Array.isArray(res.caregivers) || !['owner', 'caregiver', 'none'].includes(res.viewerRole)) {
+        throw new Error('Invalid care circle response');
+      }
       setData(res);
       setError(null);
       setOffline(false);
@@ -99,7 +104,7 @@ function FamilyProfileScreen() {
     }
   }, [activeProfile, beginLoad, describe, setOffline, t]);
 
-  useEffect(() => { void load(); }, [load]);
+  useScreenRefresh(load, activeProfile?.id ?? '');
 
   const caregivers = data?.caregivers ?? [];
   const isOwner = data?.viewerRole === 'owner';
@@ -188,6 +193,7 @@ function FamilyProfileScreen() {
       >
         <Txt variant="h1" weight="bold" accessibilityRole="header">{t('family.title')}</Txt>
 
+        <IncomingInvitations />
         {offline ? <Banner tone="warning" title={t('notifications.offlineBanner')} /> : null}
         {error ? (
           <Banner
@@ -200,7 +206,7 @@ function FamilyProfileScreen() {
           />
         ) : null}
 
-        {isOwner ? (
+        {data && (isOwner ? (
           <OwnerView
             active={active}
             pending={pending}
@@ -216,7 +222,7 @@ function FamilyProfileScreen() {
             busy={busyId !== null}
             onLeave={you ? () => remove(you, true) : null}
           />
-        )}
+        ))}
       </ScrollView>
     </SafeAreaView>
   );

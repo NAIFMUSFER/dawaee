@@ -22,7 +22,8 @@ const vulnerableFixture = [
   "function second(s){const o=[];const v=n=>s({url:window.location.href,nativeEvent:n});return o.push({listener:s,nativeListener:v}),window.addEventListener('message',v,!1)}",
   'function enc(o,t,n){return o.searchParams.set(t,encodeURIComponent(n))}',
   'function dec(o,n,t){o[n]=decodeURIComponent(t)}',
-  'globalThis.__fixture={first,second,enc,dec};',
+  "async function videoMeta(o){return new Promise(s=>{const n=document.createElement('video');n.preload='metadata',n.onloadedmetadata=()=>{s({width:n.videoWidth,height:n.videoHeight,duration:n.duration})},n.onerror=()=>s({width:0,height:0,duration:0}),n.src=o})}",
+  'globalThis.__fixture={first,second,enc,dec,videoMeta};',
 ].join('\n');
 
 function makeDist(entry = vulnerableFixture) {
@@ -72,6 +73,78 @@ const equivalentFixtures: Array<[string, string]> = [
 ];
 
 describe('web production-bundle hardening', () => {
+  it.each([
+    { label: 'resolves image selection', selected: { type: 'image/png', name: 'medicine.png', size: 12 }, error: undefined },
+    { label: 'rejects unsupported video selection without hanging', selected: { type: 'video/mp4', name: 'video.mp4', size: 12 }, error: 'TADAWEE supports medicine photos only' },
+  ])('$label in the actual bundled Expo picker', async ({ selected, error }) => {
+    const html = readFileSync(join(ROOT, 'apps/api/public/index.html'), 'utf8');
+    const module = html.split('\n').find(line => line.includes('launchImageLibraryAsync:') && line.includes('new FileReader'));
+    expect(module).toBeDefined();
+    const events: Record<string, () => Promise<void>> = {};
+    let removedInputs = 0;
+    const context: Record<string, unknown> = {
+      URL: { createObjectURL: () => 'blob:https://dawaee.test/photo' },
+      MouseEvent: class {},
+      Image: class {
+        naturalWidth = 640; naturalHeight = 480; onload = () => {};
+        set src(_value: string) { this.onload(); }
+      },
+      document: {
+        body: { appendChild: () => {}, removeChild: () => { removedInputs++; } },
+        createElement: (tag: string) => {
+          expect(tag).toBe('input');
+          return { style: {}, files: [selected], setAttribute: () => {},
+            addEventListener: (name: string, callback: () => Promise<void>) => { events[name] = callback; },
+            dispatchEvent: () => {},
+          };
+        },
+      },
+    };
+    // Execute the real SDK module with browser boundaries mocked, not a
+    // replacement implementation of the picker under test.
+    vm.runInNewContext(`var __picker; function __d(factory) {
+      var exports = {};
+      var deps = [{Platform:{isDOMAvailable:true},PermissionStatus:{GRANTED:'granted'}},
+        {CameraType:{front:'front',back:'back'}},{parseMediaTypes: function(x){return x}}];
+      factory({}, function(id){return deps[id]}, null, null, {}, exports, [0,1,2]);
+      __picker = exports.default;
+    }\n${module}`, context);
+    const picker = context.__picker as { launchImageLibraryAsync: (options: object) => Promise<{ canceled: boolean; assets: Array<{ width: number; height: number; fileName: string }> }> };
+    const result = picker.launchImageLibraryAsync({ mediaTypes: ['images'] });
+    // Observe the caller's promise, not only the async event listener. The SDK
+    // catches readFile failures and adopts their rejection via resolve(...).
+    const assertion = error
+      ? expect(result).rejects.toThrow(error)
+      : expect(result).resolves.toMatchObject({ canceled: false, assets: [{ width: 640, height: 480, fileName: 'medicine.png' }] });
+    await events.change();
+    await assertion;
+    expect(removedInputs).toBe(1);
+  }, 5_000);
+  it('rejects unsupported video selection without creating a DOM element', async () => {
+    const fixture = makeDist();
+    try {
+      const result = runInline(fixture.dist, fixture.out);
+      expect(result.status, result.stderr).toBe(0);
+      const seen: string[] = [];
+      const context: Record<string, unknown> = {
+        document: { createElement: () => ({
+          videoWidth: 32, onloadedmetadata: () => {},
+          set src(value: string) { seen.push(value); this.onloadedmetadata(); },
+        }) },
+      };
+      vm.runInNewContext(scriptBody(readFileSync(fixture.out, 'utf8')), context);
+      const api = context.__fixture as { videoMeta: (url: unknown) => Promise<unknown> };
+      let coercions = 0;
+      const changingValue = { toString() { return ++coercions === 1 ? 'blob:https://dawaee.test/id' : 'javascript:alert(1)'; } };
+      for (const url of [changingValue, null, undefined, 42, ['blob:https://dawaee.test/id'], 'javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'https://evil.invalid/media', '//evil.invalid', ' blob:test']) {
+        await expect(api.videoMeta(url)).rejects.toThrow('TADAWEE supports medicine photos only');
+      }
+      expect(seen).toEqual([]);
+      expect(coercions).toBe(0);
+      await expect(api.videoMeta('blob:https://dawaee.test/local-id')).rejects.toThrow('TADAWEE supports medicine photos only');
+      expect(seen).toEqual([]);
+    } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+  });
   for (const [name, entry] of equivalentFixtures) {
     it(`blocks cross-origin Linking signals and preserves URLSearchParams values: ${name}`, () => {
       const fixture = makeDist(entry);
@@ -186,7 +259,7 @@ describe('web production-bundle hardening', () => {
 // changed callback/registration identities must still stop the real bundler.
 describe('web hardening retains fail-closed structure checks', () => {
   const lines = vulnerableFixture.split('\n');
-  for (const index of [0, 1, 2, 3]) {
+  for (const index of [0, 1, 2, 3, 4]) {
     for (const mutation of ['missing', 'duplicate'] as const) {
       it(`rejects ${mutation} snippet ${index}`, () => {
         const entry = mutation === 'missing'

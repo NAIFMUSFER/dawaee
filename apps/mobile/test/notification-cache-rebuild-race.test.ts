@@ -2,13 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const io = vi.hoisted(() => ({
   readCachedSchedule: vi.fn(),
+  readQueue: vi.fn(),
   cancelAll: vi.fn(),
   schedule: vi.fn(),
 }));
 
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 vi.mock('expo-constants', () => ({ default: {} }));
-vi.mock('../src/api/client.js', () => ({ api: { post: vi.fn() } }));
+// Keep the native boundary out of Node; the real scheduler/cache code still runs.
+// Android capability changes are exercised in notification-schedule-races.cjs.
+vi.mock('../modules/exact-alarm-access', () => ({
+  canScheduleExactAlarms: vi.fn(() => false),
+  withExactAlarmScheduleMutation: <T>(operation: () => Promise<T>) => operation(),
+}));
+vi.mock('../src/api/client.js', () => ({ api: { post: vi.fn() }, isSignedIn: () => true }));
 vi.mock('../src/notifications/actions.js', () => ({
   ACTION_SKIP: 'SKIP',
   ACTION_SNOOZE: 'SNOOZE',
@@ -25,6 +32,7 @@ vi.mock('@dawaee/shared', () => ({
   groupedReminderText: () => ({ title: 'GROUP', body: 'GROUP', voice: 'GROUP' }),
 }));
 vi.mock('expo-notifications', () => ({
+  setNotificationHandler: vi.fn(),
   SchedulableTriggerInputTypes: { DATE: 'date' },
   IosAuthorizationStatus: { PROVISIONAL: 3 },
   cancelAllScheduledNotificationsAsync: io.cancelAll,
@@ -32,6 +40,8 @@ vi.mock('expo-notifications', () => ({
 }));
 vi.mock('../src/storage/offline-queue.js', () => ({
   readCachedSchedule: io.readCachedSchedule,
+  readQueue: io.readQueue,
+  applyQueuedToCache: (cache: unknown) => cache,
 }));
 
 const PROFILE = '11111111-2222-4333-8444-555555555555';
@@ -66,12 +76,25 @@ let notifications: typeof import('../src/notifications/index.js');
 beforeEach(async () => {
   vi.resetModules();
   io.readCachedSchedule.mockReset();
+  io.readQueue.mockReset().mockResolvedValue([]);
   io.cancelAll.mockReset().mockResolvedValue(undefined);
   io.schedule.mockReset().mockResolvedValue('native-id');
   notifications = await import('../src/notifications/index.js');
 });
 
 describe('cached reminder rebuild cannot cross a later privacy boundary', () => {
+  it('logout wins while a cached rebuild is waiting for queued actions', async () => {
+    io.readCachedSchedule.mockResolvedValue(cache('QUEUED-READ'));
+    const started = deferred<void>();
+    const finish = deferred<unknown[]>();
+    io.readQueue.mockImplementationOnce(async () => { started.resolve(); return finish.promise; });
+    const rebuild = notifications.rebuildRemindersFromCache(PROFILE, 'en', {});
+    await started.promise;
+    await notifications.cancelAllLocalNotifications();
+    finish.resolve([]);
+    await rebuild;
+    expect(io.schedule).not.toHaveBeenCalled();
+  });
   it('positive control: a current cache rebuild still schedules the cached dose', async () => {
     io.readCachedSchedule.mockResolvedValue(cache('CURRENT-MEDICATION'));
 

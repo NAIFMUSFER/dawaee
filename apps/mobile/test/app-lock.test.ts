@@ -359,9 +359,13 @@ describe('the rule is actually wired to the app', () => {
   it('wraps the router, so no deep link or notification can route around it', () => {
     expect(layout).toContain('<AppLockGate>');
     const gate = layout.indexOf('<AppLockGate>');
-    const stack = layout.indexOf('<Stack');
-    expect(gate, 'the gate is outside the Stack').toBeGreaterThan(-1);
-    expect(stack).toBeGreaterThan(gate);
+    const navigator = layout.indexOf('<AppNavigator');
+    const gateEnd = layout.indexOf('</AppLockGate>');
+    expect(gate, 'the gate is outside the navigator').toBeGreaterThan(-1);
+    expect(navigator).toBeGreaterThan(gate);
+    expect(navigator).toBeLessThan(gateEnd);
+    const navigation = readFileSync(join(ROOT, 'apps/mobile/src/navigation/AppNavigator.tsx'), 'utf8');
+    expect(navigation).toContain('<Stack');
   });
 
   it('loads biometrics through the single shared module, not a private copy', () => {

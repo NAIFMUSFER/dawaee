@@ -2,25 +2,37 @@
 
 `scripts/migrate.sh --preflight-only` answers one question:
 
-> Would this deploy get off the ground, or would it stop half way?
+> Does this connection pass the role and catalogue checks without changing the database?
 
-It applies nothing. Run it before any release that carries a pending migration,
-and again from the operator machine before the deploy window opens.
+It applies nothing. It does not execute pending migration SQL, validate all
+existing application data, or prove an upgrade will succeed. Run it before any
+release that carries a pending migration, then rehearse the actual upgrade on a
+restored copy. Run it again before the deploy window opens.
 
 ```bash
 DATABASE_URL='…'  DAWAEE_APP_PASSWORD='…'  DAWAEE_WORKER_PASSWORD='…' \
   ./scripts/migrate.sh --preflight-only
 ```
 
-A clean run prints four lines and exits 0:
+A clean run exits 0 and includes:
 
 ```
 preflight: connection
 preflight: migrating as 'postgres'
 preflight: role administration OK
-preflight: definer policies
-preflight complete — no migration was applied
+preflight: definer policies (read-only inspection)
+preflight: 0 missing definer policies; created only during migration mode
+preflight complete — no migration was applied; no database changes were made
 ```
+
+The missing-policy count can be nonzero: it records maintenance needed during
+the actual deploy, without performing it. PostgreSQL read-only transactions
+protect the catalogue inspection, including behind poolers that ignore startup
+options. Unrecognized or extra arguments exit 2 before any database connection.
+Only the explicit `MIGRATION_SET_ROLE` handoff may supply a psql startup file.
+When authenticating as the platform administrator for a schema owned by
+`dawaee_owner`, set `MIGRATION_SET_ROLE=dawaee_owner`; do not inspect or migrate
+under a different owner merely because it has broader privileges.
 
 ---
 
@@ -59,7 +71,7 @@ ERROR:  could not create unique index "dose_events_one_missed_idx"
 DETAIL:  Duplicate keys exist.
 ```
 
-Ledger left at 24. The preflight now applies `db/maintenance/definer_policies.sql`
+Ledger left at 24. The normal deploy path applies `db/maintenance/definer_policies.sql`
 *before* the migration loop, which is the only place it can go: nothing numbered
 `0030` can rescue a migration that sorts at `0025`.
 
@@ -103,11 +115,18 @@ role administration entirely and says so.
 > On PostgreSQL 15 and earlier, `WITH ADMIN OPTION` is the whole syntax. This
 > project targets 16 and 17.
 
-### `preflight: definer policies`
+### `preflight: definer policies (read-only inspection)`
 
-Applies `db/maintenance/definer_policies.sql`: creates
-`app.ensure_definer_policies()` and runs it. Idempotent; on a database that is
-already correct it creates nothing.
+Reads `db/maintenance/preflight_checks.sql`: checks role containment, enabled
+RLS and forced-table ownership using the catalogues, and counts missing owner
+policies. It creates no schema, function or policy and does not invoke stored
+application routines. Missing policies are reported as planned maintenance.
+
+Only the normal deploy invocation (without `--preflight-only`) executes
+`db/maintenance/definer_policies.sql`, creates/replaces the maintenance function,
+and runs its sweep before and after migrations. This is a database mutation even
+when all owner policies already exist. Earlier versions mistakenly did this
+during `--preflight-only`; use the corrected candidate for a read-only check.
 
 **Fails** if a runtime role is running migrations, if a runtime role is a member
 of the migration role (so it could `SET ROLE` into the exemption), or if the
@@ -143,7 +162,8 @@ SELECT phone_e164, count(*) FROM auth_otp_challenges
 
 Rows from 3 or 4 are not a problem — those migrations exist to clean them up —
 but they are what makes the definer policy load-bearing rather than theoretical,
-so a non-empty result means the preflight in step 3 above is not optional.
+so a non-empty result means the deploy-time policy maintenance is load-bearing
+and must be included in the restored-copy rehearsal.
 
 ---
 

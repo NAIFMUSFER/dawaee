@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { hasProfilePermission } from '@/security/profile-permissions';
+import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,6 +9,7 @@ import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
@@ -27,7 +29,8 @@ function MedicationsProfileScreen() {
   const theme = useTheme();
   const { activeProfile, offline, setOffline, preferences, user } = useApp();
   const arabic = preferences.locale === 'ar';
-  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canViewSchedule = hasProfilePermission(activeProfile, 'view_schedule');
+  const canAdd = hasProfilePermission(activeProfile, 'add_medication');
 
   const [filter, setFilter] = useState<Filter>('active');
   const [medications, setMedications] = useState<MedicationView[]>([]);
@@ -50,7 +53,7 @@ function MedicationsProfileScreen() {
           profileId: activeProfile.id,
           status: selected === 'all' ? undefined : selected,
         }),
-        api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id }),
+        canViewSchedule ? api.get<TodayResponse>('/v1/today', { profileId: activeProfile.id }) : Promise.resolve({ today: [], prefetch: [] }),
       ]);
       if (!isCurrent()) return;
       const soonest: Record<string, DoseView> = {};
@@ -81,9 +84,12 @@ function MedicationsProfileScreen() {
         setRefreshing(false);
       }
     }
-  }, [beginLoad, activeProfile, setOffline]);
+  }, [beginLoad, activeProfile, setOffline, canViewSchedule]);
 
-  useEffect(() => { void load(filter); }, [load, filter]);
+  // Tab screens stay mounted in Expo Router. Refresh whenever this tab regains
+  // focus so a medication created on /medication/quick-create appears
+  // immediately instead of leaving the pre-create list cached on screen.
+  useScreenRefresh(() => load(filter), `${activeProfile?.id ?? ''}:${filter}`);
 
   const filterOptions = useMemo(() => [
     { value: 'active' as const, label: t('medication.status.active') },

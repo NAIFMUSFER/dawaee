@@ -1,8 +1,8 @@
 name: Security scan
 
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
+  push: { branches: [main, 'prepare/ios-testflight-20260917'] }
+  pull_request: { branches: [main, 'prepare/ios-testflight-20260917'] }
   schedule: [{ cron: '0 3 * * 1' }]
 
 # Read-only at the top. The one job that needs to write does so explicitly, and
@@ -25,6 +25,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       # Generated web HTML is intentionally untracked. Rebuild the actual
       # production artifact before extraction instead of silently dropping it
       # from the scan when the checked-in snapshot disappears.
@@ -60,6 +63,15 @@ jobs:
           output: codeql-results
       - name: Record CodeQL finding locations without source snippets
         run: node scripts/codeql-evidence.cjs
+      - name: Preserve failed scan evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codeql-diagnostic
+          retention-days: 3
+          path: |
+            codeql-results/javascript.sarif
+            apps/api/public/index.html
 
   # Secret scanning as a workflow rather than only as a repository setting.
   # GitHub's own push protection is a repository-level configuration this audit
@@ -73,6 +85,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
           # Full history: a credential removed in a later commit is still in
           # the pack, still clonable, and still has to be rotated.
           fetch-depth: 0
@@ -92,6 +106,9 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build the production image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -102,7 +119,7 @@ jobs:
           load: true
           tags: dawaee:scan
           build-args: |
-            GIT_COMMIT=${{ github.sha }}
+            GIT_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Record the resolved base image digest
         # P15 could not resolve this. Recording it on every run means the exact

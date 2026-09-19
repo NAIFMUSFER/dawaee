@@ -5,13 +5,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Badge, Banner, Button, Card, Divider, Field, Loading, Row, Screen, SafetyNote, SectionTitle, Txt,
 } from '@/components/ui';
+import { TimeField } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverView, TodayResponse } from '@/api/types';
-import type { EscalationStage, NotificationChannel } from '@dawaee/shared';
+import { normalizeDigits, type EscalationStage, type NotificationChannel } from '@dawaee/shared';
 
 /**
  * Smart escalation.
@@ -32,7 +33,7 @@ import type { EscalationStage, NotificationChannel } from '@dawaee/shared';
 
 type StageTarget = EscalationStage['target'];
 
-const PATIENT_CHANNELS: readonly NotificationChannel[] = ['push', 'local'];
+const PATIENT_CHANNELS: readonly NotificationChannel[] = ['push'];
 const CAREGIVER_CHANNELS: readonly NotificationChannel[] = ['push'];
 const TARGETS: readonly StageTarget[] = ['patient', 'primary_caregiver', 'secondary_caregivers', 'all_caregivers'];
 const MAX_STAGES = 8;
@@ -131,7 +132,7 @@ export default function EscalationScreen() {
 }
 
 function EscalationProfileScreen() {
-  const { t, formatNumber, formatTime } = useI18n();
+  const { t, locale, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
 
@@ -142,6 +143,7 @@ function EscalationProfileScreen() {
   const [caregivers, setCaregivers] = useState<CaregiverView[]>([]);
   const [viewerRole, setViewerRole] = useState<CareCircleResponse['viewerRole']>('none');
   const [anchor, setAnchor] = useState<string | null>(null);
+  const [actionWindow, setActionWindow] = useState(120);
 
   const [advanced, setAdvanced] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -178,6 +180,8 @@ function EscalationProfileScreen() {
       setViewerRole(circleRes.viewerRole);
       // A real upcoming dose makes the timeline concrete instead of abstract.
       setAnchor(todayRes?.next?.scheduledAt ?? todayRes?.today[0]?.scheduledAt ?? null);
+      const windows = [...(todayRes?.today ?? []), ...(todayRes?.prefetch ?? [])].map(dose => dose.thresholds?.missedAfterMinutes).filter((value): value is number => typeof value === 'number' && value > 0);
+      setActionWindow(windows.length ? Math.min(...windows) : 120);
       setError(null);
       setOffline(false);
     } catch (err) {
@@ -281,8 +285,12 @@ function EscalationProfileScreen() {
       setError(t('error.validation_failed'));
       return;
     }
-    if (stages.some((s) => s.channels.length === 0)) {
+    if (stages.some((s) => !s.channels.includes('push'))) {
       setError(t('escalation.channelsRequired'));
+      return;
+    }
+    if (stages.some(stage => stage.afterMinutes >= actionWindow)) {
+      setError(locale === 'ar' ? `اختر وقتًا أقل من ${actionWindow} دقيقة حتى يصل التنبيه قبل انتهاء مهلة الجرعة.` : `Choose a time below ${actionWindow} minutes so the alert precedes the dose action deadline.`);
       return;
     }
     if (outOfOrder) {
@@ -304,7 +312,7 @@ function EscalationProfileScreen() {
       // no caregiver stage, never as a disabled policy.
       await api.put('/v1/escalation-policy', {
         enabled: true,
-        stages,
+        stages: stages.map(stage => ({ ...stage, channels: ['push'] })),
         quietHoursStart: quietStart.trim() || null,
         quietHoursEnd: quietEnd.trim() || null,
       }, { profileId: activeProfile.id });
@@ -316,7 +324,7 @@ function EscalationProfileScreen() {
     } finally {
       setBusy(false);
     }
-  }, [activeProfile, describe, outOfOrder, patientFirst, quietEnd, quietStart, setOffline, stages, t]);
+  }, [activeProfile, actionWindow, describe, locale, outOfOrder, patientFirst, quietEnd, quietStart, setOffline, stages, t]);
 
   if (loading) return <SafeAreaView style={{ flex: 1 }}><Loading label={t('common.loading')} /></SafeAreaView>;
 
@@ -337,7 +345,7 @@ function EscalationProfileScreen() {
   };
 
   const setMinutes = (index: number, raw: string) => {
-    const parsed = Number.parseInt(raw.replace(/\D/g, ''), 10);
+    const parsed = Number.parseInt(normalizeDigits(raw).replace(/\D/g, ''), 10);
     const afterMinutes = Number.isNaN(parsed) ? 0 : Math.min(1440, parsed);
     setNotice(null);
     setStages((current) => current.map((stage, i) => (i === index ? { ...stage, afterMinutes } : stage)));
@@ -536,25 +544,24 @@ function EscalationProfileScreen() {
           </View>
         ) : null}
 
+        <Banner tone="info" title={locale === 'ar' ? 'هذه المراحل للتنبيهات عبر الإنترنت. تذكير الجهاز الأساسي يُضبط من إعدادات الإشعارات.' : 'These stages control online push alerts. Basic device reminders are managed in notification settings.'} />
         <SectionTitle>{t('notify.quietHours')}</SectionTitle>
         <Card>
           <Row gap={theme.spacing.md} align="flex-start">
             <View style={{ flex: 1 }}>
-              <Field
+              <TimeField
                 label={t('notify.quietFrom')}
                 value={quietStart}
-                onChangeText={setQuietStart}
-                keyboardType="number-pad"
-                maxLength={5}
+                onChange={setQuietStart}
+                optional
               />
             </View>
             <View style={{ flex: 1 }}>
-              <Field
+              <TimeField
                 label={t('notify.quietTo')}
                 value={quietEnd}
-                onChangeText={setQuietEnd}
-                keyboardType="number-pad"
-                maxLength={5}
+                onChange={setQuietEnd}
+                optional
               />
             </View>
           </Row>

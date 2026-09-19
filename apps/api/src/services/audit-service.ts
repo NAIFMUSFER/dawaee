@@ -23,7 +23,7 @@ export interface AuditEntry {
 }
 
 /** Fields never copied into the audit log, even in a "before" snapshot. */
-const NEVER_AUDITED = new Set(['code', 'codeHash', 'token', 'refreshToken', 'invitationTokenHash', 'qrTokenHash', 'password']);
+const NEVER_AUDITED = new Set(['code', 'codeHash', 'token', 'idToken', 'refreshToken', 'invitationTokenHash', 'qrTokenHash', 'password', 'newPassword', 'currentPassword', 'credentialHash']);
 
 function scrub(value: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
   if (!value) return null;

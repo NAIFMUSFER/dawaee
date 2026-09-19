@@ -33,6 +33,8 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     return withUserReadOnly(userId, async (tx) => {
       const { rows } = await tx.query(
         `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at,
+                app.has_verified_email(u.id) AS email_verified,
+                app.email_verification_required(u.id) AS email_verification_required,
                 p.locale AS pref_locale, p.numeral_system, p.calendar_system, p.elderly_mode,
                 p.text_scale, p.high_contrast, p.voice_reminders_enabled, p.voice_confirmation_enabled,
                 p.show_medication_in_notifications,
@@ -53,6 +55,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       return {
         user: {
           id: u.id, phoneE164: u.phone_e164, email: u.email, displayName: u.display_name,
+          emailVerified: u.email_verified, emailVerificationRequired: u.email_verification_required,
           locale: u.locale, timezone: u.timezone, createdAt: u.created_at,
         },
         preferences: {
@@ -447,7 +450,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       await tx.query('UPDATE patient_profiles SET timezone = $2 WHERE id = $1', [profileId, newTz]);
 
       let regenerated = 0;
-      if (body.decision === 'follow_local_time') {
+      {
         // Re-anchor the wall-clock times to the new zone, then rebuild only
         // the untouched future doses.
         await tx.query(

@@ -15,6 +15,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { CaregiverPermission } from '@dawaee/shared';
+import { PhoneVerification } from '@/components/PhoneVerification';
 
 /**
  * Accepting a care-circle invitation.
@@ -44,17 +45,19 @@ interface AcceptResponse {
 type Outcome =
   | { kind: 'idle' }
   | { kind: 'working' }
+  | { kind: 'verification' }
   | { kind: 'accepted'; profileId: string | null; patientName: string }
   | { kind: 'expired' }
   | { kind: 'used' }
   | { kind: 'invalid'; message: string | null }
-  | { kind: 'offline' };
+  | { kind: 'offline' }
+  | { kind: 'accepted_refresh'; response: AcceptResponse };
 
 export default function AcceptInvitationScreen() {
   const params = useLocalSearchParams<{ token?: string }>();
   const { t } = useI18n();
   const theme = useTheme();
-  const { signedIn, profiles, refreshProfiles, setActiveProfile, setOffline } = useApp();
+  const { user, signedIn, profiles, refreshProfiles, setActiveProfile, setOffline } = useApp();
 
   const [token, setToken] = useState<string | null>(params.token ?? null);
   const [tokenResolved, setTokenResolved] = useState(false);
@@ -81,7 +84,11 @@ export default function AcceptInvitationScreen() {
     try {
       const res = await api.post<AcceptResponse>('/v1/caregivers/accept', { token: value });
       await clearPendingInvite();
-      await refreshProfiles().catch(() => undefined);
+      try { await refreshProfiles(); } catch {
+        setOutcome({ kind: 'accepted_refresh', response: res });
+        return;
+      }
+      if (res.profile?.id) setActiveProfile(res.profile.id);
       setOffline(false);
       setOutcome({
         kind: 'accepted',
@@ -95,7 +102,12 @@ export default function AcceptInvitationScreen() {
         return;
       }
       if (err instanceof ApiError) {
-        // Expired, already used, or invalid: each is a permanent result for
+        if (err.code === 'phone_verification_required') {
+          releaseInviteAttempt(value);
+          setOutcome({ kind: 'verification' });
+          return;
+        }
+        // Expired or already used is a permanent result for
         // this stored bearer. Forget it so the next sign-in cannot route the
         // person back to a capability the server has already refused. Release
         // the process-wide claim too, so reopening the exact same refused link
@@ -115,7 +127,6 @@ export default function AcceptInvitationScreen() {
           return;
         }
         if (err.code === 'invitation_invalid') {
-          await clearPendingInvite();
           releaseInviteAttempt(value);
           const key = `error.${err.code}` as 'error.internal_error';
           const text = t(key);
@@ -129,7 +140,7 @@ export default function AcceptInvitationScreen() {
       }
       setOutcome({ kind: 'invalid', message: t('error.internal_error') });
     }
-  }, [refreshProfiles, setOffline, t]);
+  }, [refreshProfiles, setActiveProfile, setOffline, t]);
 
   /**
    * Accept at most once per token, ever.
@@ -194,6 +205,24 @@ export default function AcceptInvitationScreen() {
 
   if (outcome.kind === 'idle' || outcome.kind === 'working') {
     return <SafeAreaView style={{ flex: 1 }}><Loading label={t('accept.checking')} /></SafeAreaView>;
+  }
+
+  if (outcome.kind === 'verification') {
+    return <SafeAreaView style={{ flex: 1 }}><Screen>
+      <PhoneVerification key={user?.id} onVerified={() => { if (claimInviteAttempt(token)) void accept(token); }} />
+    </Screen></SafeAreaView>;
+  }
+
+  if (outcome.kind === 'accepted_refresh') {
+    const res = outcome.response;
+    return <SafeAreaView style={{ flex: 1 }}><Screen>
+      <Banner tone="success" title={t('accept.acceptedTitle', { name: res.profile?.displayName ?? res.profile?.display_name ?? '' })} />
+      <Txt>{t('accept.refreshRequired')}</Txt>
+      <Button label={t('common.retry')} onPress={() => { void refreshProfiles().then(() => {
+        if (res.profile?.id) setActiveProfile(res.profile.id);
+        setOutcome({ kind: 'accepted', profileId: res.profile?.id ?? null, patientName: res.profile?.displayName ?? res.profile?.display_name ?? '' });
+      }).catch(() => setOffline(true)); }} />
+    </Screen></SafeAreaView>;
   }
 
   if (outcome.kind === 'offline') {

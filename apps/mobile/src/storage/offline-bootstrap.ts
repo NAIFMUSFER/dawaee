@@ -22,7 +22,7 @@ export const OFFLINE_BOOTSTRAP_SLOT: CacheSlot = {
 
 export interface OfflineBootstrapSnapshot {
   version: 1;
-  user: { id: string; displayName: string; phoneE164: string | null };
+  user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean };
   preferences: Preferences;
   selfProfile: ProfileSummary | null;
 }
@@ -101,7 +101,11 @@ function parseUser(value: unknown): OfflineBootstrapSnapshot['user'] | null {
   const u = record(value);
   if (!u || !boundedString(u.id, 1, 128) || !boundedString(u.displayName, 1, 120)) return null;
   if (!nullableString(u.phoneE164, 24)) return null;
-  return { id: u.id, displayName: u.displayName, phoneE164: u.phoneE164 };
+  return {
+    id: u.id, displayName: u.displayName, phoneE164: u.phoneE164,
+    ...(typeof u.emailVerified === 'boolean' ? { emailVerified: u.emailVerified } : {}),
+    ...(typeof u.emailVerificationRequired === 'boolean' ? { emailVerificationRequired: u.emailVerificationRequired } : {}),
+  };
 }
 
 function parseOwnedSelfProfile(value: unknown): ProfileSummary | null | undefined {

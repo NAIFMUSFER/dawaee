@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { closePool } from '../src/lib/db.js';
+import { closePool, withUser } from '../src/lib/db.js';
 import { buildProviders } from '../src/providers/index.js';
 import { loadConfig } from '../src/config.js';
 import type { MockPushProvider } from '../src/providers/index.js';
@@ -125,12 +125,12 @@ export const TEST_PASSWORD = 'correct horse battery staple';
  * endpoint refuses, and a suite that signed in through it would be testing a
  * route no real user can take. This is the way in that actually exists.
  */
-export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`): Promise<TestUser> {
+export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`, options: { verifiedPhone?: boolean } = {}): Promise<TestUser> {
   const remoteAddress = nextRemoteAddress();
 
   const registered = await h.app.inject({
     method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { phone, displayName: phone, password: TEST_PASSWORD, deviceId },
+    payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: phone, password: TEST_PASSWORD, deviceId },
   });
 
   // A suite may sign the same number in twice; the second time it is a login.
@@ -156,13 +156,38 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
     method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
 
+  const account = me.json<{ user: { id: string; phoneE164: string } }>().user;
+  const userId = account.id;
+  confirmTestEmail(userId);
+  // Ordinary clinical scenarios use an explicitly verified fixture. The
+  // external SMS provider is not part of this fixture; its API boundary has
+  // its own tests. Registration alone remains unverified in production.
+  if (options.verifiedPhone !== false) {
+    await withUser(userId, async (tx) => {
+      const proof = await tx.query<{ verified: boolean }>(
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, account.phoneE164],
+      );
+      if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
+    });
+  }
+
   return {
-    userId: me.json<{ user: { id: string } }>().user.id,
+    userId,
     phone,
     token: auth.accessToken,
     refreshToken: auth.refreshToken,
     profileId: profile.id,
   };
+}
+
+/** Owner-only fixture for clinical tests; real email confirmation is exercised
+ * separately by account-email SQL/HTTP and onboarding boundary suites. */
+export function confirmTestEmail(userId: string): void {
+  if (!/^[a-f0-9-]{36}$/i.test(userId)) throw new Error('Invalid fixture user id');
+  execFileSync('psql', ['-d', 'dawaee_test', '-v', 'ON_ERROR_STOP=1', '-c',
+    `INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE id='${userId}' AND email IS NOT NULL ON CONFLICT(user_id) DO UPDATE SET email=excluded.email`], {
+    env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
+  });
 }
 
 export function authHeaders(user: TestUser) {

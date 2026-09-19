@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -12,7 +13,7 @@ import {
 } from '../services/access-service.js';
 import { requireEnum, requireUuid } from '../lib/params.js';
 import { diffFields, recordAudit } from '../services/audit-service.js';
-import { cancelFutureDoses, materializeSchedule, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
+import { cancelFutureDoses, lockMedicationLifecycle, materializeSchedule, reconcileTreatmentDates, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
 import { now as serverNow } from '../lib/clock.js';
 
 const MEDICATION_COLUMNS = `
@@ -38,13 +39,13 @@ function mapMedication(row: Record<string, unknown>) {
   };
 }
 
-async function loadSchedules(tx: PoolClient, medicationId: string) {
+async function loadSchedules(tx: PoolClient, medicationId: string | string[]) {
   const { rows } = await tx.query(
     `SELECT id, medication_id, patient_profile_id, rule, rule_kind::text AS rule_kind, dose_quantity,
             dose_unit::text AS dose_unit, timezone, start_date, end_date, missed_after_minutes,
             late_after_minutes, active, created_by
-       FROM medication_schedules WHERE medication_id = $1 ORDER BY created_at`,
-    [medicationId],
+       FROM medication_schedules WHERE medication_id = ANY($1::uuid[]) ORDER BY created_at`,
+    [Array.isArray(medicationId) ? medicationId : [medicationId]],
   );
   return rows;
 }
@@ -109,9 +110,18 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       );
       const defaultThreshold = prefs[0]?.low_stock_threshold_days ?? 7;
 
+      // One RLS-scoped schedule read for the visible medicines. The previous
+      // per-row query added a network round trip for every medication.
+      const scheduleRows = await loadSchedules(tx, rows.map((row) => row.id as string));
+      const schedulesByMedication = new Map<string, typeof scheduleRows>();
+      for (const schedule of scheduleRows) {
+        const group = schedulesByMedication.get(schedule.medication_id) ?? [];
+        group.push(schedule);
+        schedulesByMedication.set(schedule.medication_id, group);
+      }
       const medications = [];
       for (const row of rows) {
-        const schedules = await loadSchedules(tx, row.id as string);
+        const schedules = schedulesByMedication.get(row.id as string) ?? [];
         const stock = row.tracking_enabled === null ? null : {
           unit: row.stock_unit,
           remainingQuantity: row.remaining_quantity === null ? null : Number(row.remaining_quantity),
@@ -209,6 +219,26 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       if (body.schedule) await requireProfileAccess(tx, userId, body.patientProfileId, 'edit_schedule');
       if (body.stock) await requireProfileAccess(tx, userId, body.patientProfileId, 'update_stock');
 
+      // Serialize legacy duplicate checks as well as keyed retries. The lock is
+      // transaction scoped, acquired only after authorization and contains no PHI.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`medication-create:${body.patientProfileId}`]);
+      const requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+      if (body.clientRequestId) {
+        const { rows: prior } = await tx.query(
+          `SELECT ${MEDICATION_COLUMNS}, m.create_request_hash
+             FROM medications m
+            WHERE m.patient_profile_id = $1 AND m.created_by = $2 AND m.client_request_id = $3`,
+          [body.patientProfileId, userId, body.clientRequestId],
+        );
+        if (prior[0]) {
+          if (prior[0].create_request_hash !== requestHash) {
+            throw AppError.conflict(ERROR_CODES.VALIDATION_FAILED, 'Request identity was already used for different input');
+          }
+          return { medication: mapMedication(prior[0]), idempotentReplay: true };
+        }
+      }
+
       if (!body.acknowledgeDuplicate) {
         const { rows: existing } = await tx.query(
           `SELECT id, name, brand_name, generic_name, strength_value, strength_unit::text AS strength_unit,
@@ -237,9 +267,9 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
         `INSERT INTO medications
            (patient_profile_id, name, brand_name, generic_name, form, strength_value, strength_unit,
             manufacturer, barcode, image_key, instructions, doctor_instructions, food_instruction,
-            notes, start_date, end_date, expiry_date, prescription_id, identity_source, created_by)
+            notes, start_date, end_date, expiry_date, prescription_id, identity_source, created_by, client_request_id, create_request_hash)
          VALUES ($1,$2,$3,$4,$5::medication_form,$6,$7::strength_unit,$8,$9,$10,$11,$12,
-                 $13::food_instruction,$14,$15,$16,$17,$18,$19::identity_source,$20)
+                 $13::food_instruction,$14,$15,$16,$17,$18,$19::identity_source,$20,$21,$22)
          RETURNING ${MEDICATION_COLUMNS.replace(/m\./g, '')}`,
         [
           body.patientProfileId, body.name, body.brandName ?? null, body.genericName ?? null, body.form,
@@ -247,7 +277,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
           body.barcode ?? null, body.imageKey ?? null, body.instructions ?? null,
           body.doctorInstructions ?? null, body.foodInstruction, body.notes ?? null,
           body.startDate, body.endDate ?? null, body.expiryDate ?? null, body.prescriptionId ?? null,
-          body.identitySource, userId,
+          body.identitySource, userId, body.clientRequestId ?? null, body.clientRequestId ? requestHash : null,
         ],
       );
       const medication = mapMedication(rows[0]!);
@@ -316,12 +346,20 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
       const access = await requireProfileAccess(tx, userId, profileId, 'edit_medication');
+      await lockMedicationLifecycle(tx, medicationId);
 
       const { rows: beforeRows } = await tx.query(
         `SELECT ${MEDICATION_COLUMNS} FROM medications m WHERE m.id = $1 FOR UPDATE`, [medicationId],
       );
       if (!beforeRows[0]) throw AppError.notFound('Medication not found');
       const before = mapMedication(beforeRows[0]);
+      const startDate = body.startDate ?? before.startDate as string;
+      const endDate = body.endDate === undefined ? before.endDate as string | null : body.endDate;
+      if (endDate !== null && endDate < startDate) {
+        throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'End date must be on or after start date');
+      }
+      const datesChanged = startDate !== before.startDate || endDate !== before.endDate;
+      if (datesChanged) await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
 
       const highRisk = detectHighRiskChanges({
         before: {
@@ -395,8 +433,14 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const after = mapMedication(rows[0]!);
 
       let cancelled = 0;
+      if (datesChanged) {
+        cancelled += await reconcileTreatmentDates(tx, medicationId, now);
+        for (const schedule of await loadSchedules(tx, medicationId)) {
+          if (schedule.active) await rematerializeSchedule(tx, scheduleFromRow(schedule), now);
+        }
+      }
       if (body.status && ['paused', 'completed', 'archived', 'expired'].includes(body.status)) {
-        cancelled = await cancelFutureDoses(tx, medicationId, now);
+        cancelled += await cancelFutureDoses(tx, medicationId, now);
       }
       let revived = 0;
       if (body.status === 'active' && before.status !== 'active') {
@@ -487,6 +531,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const created = await materializeSchedule(tx, scheduleFromRow(rows[0]!), now);
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.created',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: rows[0]!.id, requestId: req.id, ipHash: req.ipHash,
         newValue: { rule: body.rule, doseQuantity: body.doseQuantity, doseUnit: body.doseUnit },
       });
@@ -502,7 +547,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
-      await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
 
       const { rows: beforeRows } = await tx.query(
         `SELECT id, medication_id, patient_profile_id, rule, rule_kind::text AS rule_kind, dose_quantity,
@@ -562,6 +607,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const result = await rematerializeSchedule(tx, scheduleFromRow(rows[0]!), now);
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.updated',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: scheduleId, requestId: req.id, ipHash: req.ipHash,
         previousValue: { rule: before.rule, doseQuantity: Number(before.dose_quantity), doseUnit: before.dose_unit },
         newValue: { rule: rows[0]!.rule, doseQuantity: Number(rows[0]!.dose_quantity), doseUnit: rows[0]!.dose_unit },
@@ -585,7 +631,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
-      await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
       await tx.query('UPDATE medication_schedules SET active = false WHERE id = $1', [scheduleId]);
       const { rowCount } = await tx.query(
         `UPDATE dose_occurrences SET status = 'cancelled'
@@ -595,6 +641,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       );
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.deleted',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: scheduleId, requestId: req.id, ipHash: req.ipHash,
       });
       return { deactivated: true, futureDosesCancelled: rowCount ?? 0 };

@@ -2,23 +2,27 @@
 /**
  * Explicit opt-in entrypoint for the ONE managed audit preview, never production.
  *   node scripts/audit-preview-start.mjs          # read-only preflight
- *   node scripts/audit-preview-start.mjs --apply  # migrate, verify, start API
+ *   node scripts/audit-preview-start.mjs --apply  # migrate, verify, start API + worker
  *   node scripts/audit-preview-start.mjs --self-test
  *
  * Reuses migrate.sh without changing its ledger, checksums, RLS or grants.
  * No reset/seed is run. Unknown partial schemas are refused before migration.
- * The owner connection is closed and owner credentials are NOT passed to the API.
+ * The owner connection is closed before either runtime starts. Each child
+ * receives only its own database role, never the owner's or its sibling's.
  * Without supplied audit role passwords, fresh passwords are generated on each
  * start. This preview must not share runtime roles with any other service.
- * It uses mock providers and synthetic data; success is not release approval.
+ * Push/OCR remain mocked. Real account email needs the explicit bounded opt-in
+ * below and genuine mailbox confirmation. Success is not release approval.
  */
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { supervisePreview } from './audit-preview-runtime.mjs';
+import { isKnownMigrationHistory } from './migration-history.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SERVICE = 'srv-daipkbuk1f9s73952trg';
@@ -28,6 +32,22 @@ const DB_NAME = 'dawaee_audit_db';
 const DB_OWNER = 'dawaee_audit_db_user';
 const runFile = promisify(execFile);
 const refuse = (code) => { throw new Error(code); };
+
+// Return only repository-owned filenames and fixed categories, never child
+// output, SQL, connection strings, environment variables or error messages.
+export function migrationFailureSummary(error, files) {
+  const known = new Set(files.filter(f => /^\d{4}_[a-z0-9_]+\.sql$/.test(f)));
+  const lines = typeof error?.stderr === 'string' ? error.stderr.split(/\r?\n/) : [];
+  for (const line of lines) {
+    const match = /^ERROR: (\d{4}_[a-z0-9_]+\.sql) was already applied but its contents have changed\.$/.exec(line);
+    if (match && known.has(match[1])) return `AUDIT_MIGRATION_CHECKSUM_MISMATCH file=${match[1]}`;
+  }
+  const output = typeof error?.stdout === 'string' ? error.stdout.split(/\r?\n/) : [];
+  const attempted = output.map(line => /^ {2}applying (\d{4}_[a-z0-9_]+\.sql)$/.exec(line)?.[1])
+    .filter(file => known.has(file));
+  const last = attempted.at(-1);
+  return last ? `AUDIT_MIGRATION_EXECUTION_FAILED file=${last}` : 'AUDIT_MIGRATION_SETUP_FAILED';
+}
 
 export function validateTarget(env) {
   if (env.RENDER_SERVICE_ID !== SERVICE || env.RENDER_EXTERNAL_URL !== ORIGIN) refuse('AUDIT_SERVICE_MISMATCH');
@@ -58,7 +78,27 @@ export function validateSchemaState(ledgerRows, otherTables) {
   if (ledgerRows === 0 && otherTables !== 0) refuse('AUDIT_PARTIAL_SCHEMA_REQUIRES_REVIEW');
 }
 
-export function runtimeEnvironment(env, ownerUrl, appPassword) {
+export function validateAccountEmailOptIn(env) {
+  const flag = env.AUDIT_ACCOUNT_EMAIL_DELIVERY;
+  if (flag === undefined || flag === '0') return false;
+  if (flag !== '1') refuse('AUDIT_ACCOUNT_EMAIL_OPT_IN_INVALID');
+  validateTarget(env);
+  if (env.ACCOUNT_EMAIL_PROVIDER !== 'resend'
+      || env.ACCOUNT_EMAIL_FROM !== 'accounts@mail.tadawee.net'
+      || env.ACCOUNT_EMAIL_SENDER_VERIFIED !== 'true'
+      || env.ACCOUNT_EMAIL_BASE_URL !== ORIGIN
+      || typeof env.RESEND_API_KEY !== 'string' || !env.RESEND_API_KEY.trim()) {
+    refuse('AUDIT_ACCOUNT_EMAIL_CONFIGURATION_INVALID');
+  }
+  return true;
+}
+
+export function runtimeEnvironment(env, ownerUrl, password, role = 'dawaee_app') {
+  if (!['dawaee_app', 'dawaee_worker'].includes(role)) refuse('AUDIT_RUNTIME_ROLE_REFUSED');
+  const emailEnabled = validateAccountEmailOptIn(env);
+  if (emailEnabled && new URL(ownerUrl).toString() !== validateTarget(env).toString()) {
+    refuse('AUDIT_ACCOUNT_EMAIL_DATABASE_MISMATCH');
+  }
   // An allowlist, not a denylist: DATABASE_URL, PG credentials, migration
   // passwords and any unrelated platform secrets cannot leak to the API child.
   const child = {};
@@ -67,9 +107,15 @@ export function runtimeEnvironment(env, ownerUrl, appPassword) {
     'RENDER_SERVICE_ID', 'RENDER_GIT_COMMIT', 'RENDER_EXTERNAL_URL', 'BUILD_TIME']) {
     if (env[key] !== undefined) child[key] = env[key];
   }
+  if (emailEnabled && role === 'dawaee_app') {
+    for (const key of ['AUDIT_ACCOUNT_EMAIL_DELIVERY', 'ACCOUNT_EMAIL_PROVIDER',
+      'ACCOUNT_EMAIL_FROM', 'ACCOUNT_EMAIL_SENDER_VERIFIED', 'ACCOUNT_EMAIL_BASE_URL', 'RESEND_API_KEY']) {
+      child[key] = env[key];
+    }
+  }
   const url = new URL(ownerUrl);
-  url.username = 'dawaee_app';
-  url.password = appPassword;
+  url.username = role;
+  url.password = password;
   return {
     ...child, DATABASE_URL: url.toString(), DATABASE_SSL: env.DATABASE_SSL ?? 'false',
     DATABASE_POOL_MAX: '3', NODE_ENV: 'test', OTP_DEBUG_ECHO: 'false',
@@ -77,11 +123,21 @@ export function runtimeEnvironment(env, ownerUrl, appPassword) {
     PASSWORD_LOGIN_ENABLED: 'true', LOG_LEVEL: 'info', PUBLIC_APP_URL: ORIGIN,
     CORS_ORIGINS: ORIGIN, TRUST_CF_CONNECTING_IP: 'true', TRUST_PROXY_HOPS: '1',
     GIT_COMMIT: env.RENDER_GIT_COMMIT ?? '',
+    WORKER_READINESS_REQUIRED: 'true', WORKER_ENABLED: 'true', WORKER_TICK_SECONDS: '60',
   };
+}
+
+export function validateRuntimeRole(rows, role) {
+  if (!['dawaee_app', 'dawaee_worker'].includes(role)) refuse('AUDIT_RUNTIME_ROLE_REFUSED');
+  if (rows.length !== 1 || rows[0].role !== role || rows[0].super !== false
+      || rows[0].bypass !== false || rows[0].create_role !== false
+      || rows[0].create_db !== false || rows[0].owner_member !== false
+      || rows[0].sibling_member !== false) refuse('AUDIT_RUNTIME_IDENTITY_UNSAFE');
 }
 
 export async function bootstrap(env, apply = false) {
   const ownerUrl = validateTarget(env); // before imports, connections or writes
+  validateAccountEmailOptIn(env); // invalid opt-in must fail before migrations too
   const { default: pg } = await import('pg');
   const { databaseTlsOptions } = await import('../apps/api/dist/lib/db-tls.js');
   const ssl = databaseTlsOptions({ ...env, DATABASE_SSL: env.DATABASE_SSL ?? 'false' });
@@ -129,8 +185,10 @@ export async function bootstrap(env, apply = false) {
     try {
       await runFile('bash', ['scripts/migrate.sh'], { cwd: ROOT, env: migrationEnv,
         timeout: 300000, maxBuffer: 4 * 1024 * 1024 });
-    } catch {
+    } catch (error) {
       // Do not print execFile's Error object: it retains child env/stdout/stderr.
+      const files = await readdir(resolve(ROOT, 'db/migrations'));
+      console.error(migrationFailureSummary(error, files));
       refuse('AUDIT_MIGRATION_FAILED_REVIEW_REQUIRED');
     }
     const expected = new Map();
@@ -138,19 +196,27 @@ export async function bootstrap(env, apply = false) {
       expected.set(file, createHash('md5').update(await readFile(resolve(ROOT, 'db/migrations', file))).digest('hex'));
     }
     const ledger = await owner.query('SELECT filename, checksum FROM public.schema_migrations');
-    if (ledger.rows.length !== expected.size || ledger.rows.some(r => expected.get(r.filename) !== r.checksum)) refuse('AUDIT_LEDGER_VERIFICATION_FAILED');
-    const runtime = runtimeEnvironment(env, ownerUrl, appPassword);
-    const app = new pg.Client({ connectionString: runtime.DATABASE_URL, ssl, connectionTimeoutMillis: 10000 });
-    try {
-      await app.connect();
-      const check = await app.query(`SELECT current_user AS role, r.rolsuper AS super,
-        r.rolbypassrls AS bypass, r.rolcreaterole AS create_role, r.rolcreatedb AS create_db,
-        pg_has_role(current_user, $1, 'MEMBER') AS owner_member
-        FROM pg_roles r WHERE r.rolname = current_user`, [DB_OWNER]);
-      assert.deepEqual(check.rows, [{ role: 'dawaee_app', super: false, bypass: false,
-        create_role: false, create_db: false, owner_member: false }]);
-    } finally { await app.end(); }
-    console.log(`AUDIT_PREVIEW_SCHEMA_READY migrations=${expected.size} runtime=dawaee_app; synthetic data only; NOT_RELEASE_APPROVAL`);
+    if (ledger.rows.length !== expected.size || ledger.rows.some(r => expected.get(r.filename) !== r.checksum
+      && !isKnownMigrationHistory(r.filename, r.checksum, expected.get(r.filename)))) refuse('AUDIT_LEDGER_VERIFICATION_FAILED');
+    const runtime = {
+      api: runtimeEnvironment(env, ownerUrl, appPassword),
+      worker: runtimeEnvironment(env, ownerUrl, workerPassword, 'dawaee_worker'),
+    };
+    for (const [kind, childEnv] of Object.entries(runtime)) {
+      const role = kind === 'api' ? 'dawaee_app' : 'dawaee_worker';
+      const sibling = kind === 'api' ? 'dawaee_worker' : 'dawaee_app';
+      const client = new pg.Client({ connectionString: childEnv.DATABASE_URL, ssl, connectionTimeoutMillis: 10000 });
+      try {
+        await client.connect();
+        const check = await client.query(`SELECT current_user AS role, r.rolsuper AS super,
+          r.rolbypassrls AS bypass, r.rolcreaterole AS create_role, r.rolcreatedb AS create_db,
+          pg_has_role(current_user, $1, 'MEMBER') AS owner_member,
+          pg_has_role(current_user, $2, 'MEMBER') AS sibling_member
+          FROM pg_roles r WHERE r.rolname = current_user`, [DB_OWNER, sibling]);
+        validateRuntimeRole(check.rows, role);
+      } finally { await client.end(); }
+    }
+    console.log(`AUDIT_PREVIEW_SCHEMA_READY migrations=${expected.size} runtime=dawaee_app,dawaee_worker; synthetic data only; NOT_RELEASE_APPROVAL`);
     return runtime;
   } finally {
     if (locked) await owner.query('SELECT pg_advisory_unlock(741209, 17)').catch(() => undefined);
@@ -205,12 +271,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (mode[0] === '--self-test') selfTest();
     else {
       const runtime = await bootstrap(process.env, mode[0] === '--apply');
-      if (runtime) {
-        const child = spawn(process.execPath, ['apps/api/dist/index.js'], { cwd: ROOT, env: runtime, stdio: 'inherit' });
-        for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => child.kill(sig));
-        child.once('error', () => { console.error('AUDIT_API_START_FAILED'); process.exitCode = 1; });
-        child.once('exit', code => { process.exitCode = code ?? 1; });
-      }
+      if (runtime) process.exitCode = await supervisePreview(runtime);
     }
   } catch (error) {
     const code = /^AUDIT_[A-Z_]+$/.test(error?.message ?? '') ? error.message : 'AUDIT_BOOTSTRAP_FAILED';

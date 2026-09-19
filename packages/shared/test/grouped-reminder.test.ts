@@ -44,15 +44,28 @@ describe('simultaneous dose reminder text', () => {
 
   it('consumes handled cold-start actions so an old Snooze is not replayed on a later app launch', () => {
     const mobile = readFileSync(join(ROOT, 'apps/mobile/src/notifications/index.ts'), 'utf8');
-    expect(mobile).toContain('if (outcome) {');
+    expect(mobile).toContain('if (outcome && current()) {');
+    expect(mobile).toContain('latestKey === key');
     expect(mobile).toContain('clearLastNotificationResponseAsync');
   });
 
-  it('routes a grouped notification tap to Today instead of leaving the patient on an unrelated screen', () => {
+  it('resolves the notification patient before opening their Today screen', () => {
     const layout = readFileSync(join(ROOT, 'apps/mobile/app/_layout.tsx'), 'utf8');
-    expect(layout).toContain("data.kind !== 'dose_group_reminder'");
-    expect(layout).toContain("router.replace('/(tabs)/today')");
-    expect(layout).toContain('clearLastNotificationResponseAsync');
+    const landing = readFileSync(join(ROOT, 'apps/mobile/app/notification.tsx'), 'utf8');
+    const listener = readFileSync(join(ROOT, 'apps/mobile/src/notifications/grouped-navigation.ts'), 'utf8');
+    // The Shell owns the fixed route; validation and consumption moved into
+    // the injectable helper. Keep both sides of this wiring contract covered.
+    // Runtime lifecycle coverage also lives in grouped-push-navigation.test.ts
+    // and caregiver-push-navigation.test.ts, which executes the actual Shell.
+    expect(layout).toContain("import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';");
+    expect(layout).toContain('setPatientReminderIntent(user.id, { doseId })');
+    expect(layout).toContain("router.replace('/notification')");
+    expect(landing).toContain('setActiveProfile(selected.profileId)');
+    expect(landing).toContain("router.replace('/(tabs)/today')");
+    expect(listener).toContain('response.actionIdentifier !== defaultAction');
+    expect(listener).toContain("'dose_group_reminder'");
+    expect(listener).toContain('if (groupedResponseKey(latest, native.DEFAULT_ACTION_IDENTIFIER) !== key) return;');
+    expect(listener).toContain('await native.clearLastNotificationResponseAsync();');
   });
 
   it('groups the first server reminder and disables its single-dose category', () => {

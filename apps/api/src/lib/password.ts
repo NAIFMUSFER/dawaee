@@ -123,6 +123,16 @@ export async function hashPassword(password: string): Promise<string> {
   return ['scrypt', N, R, P, salt.toString('base64'), derived.toString('base64')].join('$');
 }
 
+export async function deriveRecoveryRequestKey(password: string, proofKey: string): Promise<Buffer> {
+  // A proof-specific salt preserves retry equality without sharing a password
+  // fingerprint across authentications. Keep the same memory/work cost as login
+  // hashes, even if both the receipt database and the HMAC secret are exposed.
+  if (!/^[a-f0-9]{64}$/.test(proofKey)) throw new Error('Invalid recovery proof key');
+  return scrypt(password.normalize('NFKC'), Buffer.from(proofKey, 'hex'), 32, {
+    N, r: R, p: P, maxmem: MAX_MEMORY,
+  });
+}
+
 /**
  * Verifies a password against a stored hash.
  *

@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { Redirect, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
+import { MedicationImageField } from '@/components/MedicationImageField';
+import { hasProfilePermission } from '@/security/profile-permissions';
 import { Picker } from '@/components/Picker';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { useI18n } from '@/i18n';
@@ -17,7 +20,7 @@ import {
   setMedicationScheduleRouteIntent,
 } from '@/navigation/private-navigation';
 import {
-  FOOD_INSTRUCTIONS, MEDICATION_FORMS, STRENGTH_UNITS,
+  FOOD_INSTRUCTIONS, MEDICATION_FORMS, STRENGTH_UNITS, parseMedicationNumber,
   type FoodInstruction, type MedicationForm, type MessageKey, type StrengthUnit,
 } from '@dawaee/shared';
 
@@ -42,6 +45,7 @@ interface HighRiskPrompt {
 }
 
 interface Draft {
+  imageKey: string | null;
   name: string;
   brandName: string;
   genericName: string;
@@ -61,7 +65,7 @@ interface Draft {
 
 function emptyDraft(timezone: string | undefined): Draft {
   return {
-    name: '', brandName: '', genericName: '', form: 'tablet',
+    imageKey: null, name: '', brandName: '', genericName: '', form: 'tablet',
     strengthValue: '', strengthUnit: 'mg', manufacturer: '', barcode: '',
     instructions: '', doctorInstructions: '', foodInstruction: 'no_preference', notes: '',
     startDate: todayLocalDate(timezone), endDate: '', expiryDate: '',
@@ -71,6 +75,7 @@ function emptyDraft(timezone: string | undefined): Draft {
 function fromMedication(medication: MedicationView, timezone: string | undefined): Draft {
   return {
     ...emptyDraft(timezone),
+    imageKey: medication.imageKey ?? null,
     name: medication.name,
     brandName: medication.brandName ?? '',
     genericName: medication.genericName ?? '',
@@ -91,13 +96,15 @@ function fromMedication(medication: MedicationView, timezone: string | undefined
 
 export default function EditMedicationScreen() {
   const { user, activeProfile } = useApp();
-  // A web reload intentionally drops its in-memory session. Ask for sign-in
-  // before accepting a clinical draft whose Save would otherwise do nothing.
+  // A mounted, same-profile editor keeps its selected record while a person
+  // takes time to review it. Expiry still applies to a new navigation, and a
+  // profile/permission/account change disposes this selection.
+  const scope = profileScopeKey(user?.id, activeProfile);
+  const intent = useMemo(() => user && activeProfile
+    ? getMedicationEditRouteIntent(user.id, activeProfile.id)
+    : null, [scope]);
   if (!user) return <Redirect href="/sign-in" />;
 
-  const intent = user && activeProfile
-    ? getMedicationEditRouteIntent(user.id, activeProfile.id)
-    : null;
   const medicationId = intent?.medicationId;
 
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'new'}`;
@@ -116,6 +123,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
   const [loading, setLoading] = useState(isEdit);
   const [hydrated, setHydrated] = useState(!isEdit);
   const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[] | null>(null);
@@ -166,9 +174,10 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
   }, [t]);
 
   const body = () => {
-    const strength = draft.strengthValue.trim() === '' ? null : Number(draft.strengthValue.replace(',', '.'));
+    const strength = draft.strengthValue.trim() === '' ? null : parseMedicationNumber(draft.strengthValue);
     const valid = strength !== null && Number.isFinite(strength) && strength > 0;
     return {
+      imageKey: draft.imageKey,
       name: draft.name.trim(),
       brandName: draft.brandName.trim() || null,
       genericName: draft.genericName.trim() || null,
@@ -188,9 +197,17 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
   };
 
   const save = async (options: { acknowledgeDuplicate?: boolean; confirmHighRiskChange?: boolean } = {}) => {
-    if (!activeProfile || (isEdit && !hydrated)) return;
+    if (!activeProfile || photoBusy || saving || (isEdit && !hydrated)) return;
     if (!draft.name.trim()) {
       setNameError(t('medication.nameRequired'));
+      return;
+    }
+    const strength = draft.strengthValue.trim() ? parseMedicationNumber(draft.strengthValue) : null;
+    if ((strength !== null && (!Number.isFinite(strength) || strength <= 0))
+      || !isValidLocalDate(draft.startDate)
+      || (draft.endDate && (!isValidLocalDate(draft.endDate) || draft.endDate < draft.startDate))
+      || (draft.expiryDate && !isValidLocalDate(draft.expiryDate))) {
+      setError(t('error.validation_failed'));
       return;
     }
     const isCurrent = captureSave();
@@ -267,7 +284,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
     if (change === 'medication_identity') return draft.name.trim();
     if (change === 'strength') {
       return draft.strengthValue.trim()
-        ? formatMeasure(Number(draft.strengthValue.replace(',', '.')), `strengthUnit.${draft.strengthUnit}`)
+        ? formatMeasure(parseMedicationNumber(draft.strengthValue), `strengthUnit.${draft.strengthUnit}`)
         : t('common.none');
     }
     return '';
@@ -365,6 +382,10 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
           />
         </Card>
 
+        {activeProfile && hasProfilePermission(activeProfile, 'add_medication') ? <MedicationImageField
+          profileId={activeProfile.id} imageKey={draft.imageKey} name={draft.name} disabled={saving}
+          onChange={key => set('imageKey', key)} onBusyChange={setPhotoBusy}
+        /> : null}
         <SectionTitle>{t('medication.instructions')}</SectionTitle>
         <Card>
           <Field
@@ -399,6 +420,7 @@ function EditMedicationProfileScreen({ medicationId }: { medicationId?: string }
           label={t('common.save')}
           size="large"
           loading={saving}
+          disabled={photoBusy}
           onPress={() => void save()}
           testID="save-medication"
         />

@@ -1,8 +1,8 @@
 name: CI
 
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
+  push: { branches: [main, 'prepare/ios-testflight-20260917'] }
+  pull_request: { branches: [main, 'prepare/ios-testflight-20260917'] }
 
 # Read-only by default, at the top level, so a job that needs more has to say
 # so. Without this block a workflow inherits whatever the repository default
@@ -61,6 +61,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -69,6 +72,7 @@ jobs:
 
       - name: Record the toolchain actually in use
         run: |
+          echo "source $(git rev-parse HEAD)"
           echo "node $(node --version), npm $(npm --version)"
           echo "postgres client: $(psql --version 2>/dev/null || echo 'not yet installed')"
 
@@ -188,6 +192,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # The REAL production image, from the real base. P15 could not do this:
@@ -203,7 +210,7 @@ jobs:
           load: true
           tags: dawaee:ci
           build-args: |
-            GIT_COMMIT=${{ github.sha }}
+            GIT_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
             BUILD_TIME=${{ github.event.repository.updated_at }}
           # Cache is scoped per-ref by the action. A fork PR writes to its own
           # scope and cannot poison main's.
@@ -213,6 +220,46 @@ jobs:
       - name: Container security properties
         run: ./scripts/container-checks.sh dawaee:ci
 
+  # Rebuild and execute the exact recorded runtime sources across a restored
+  # synthetic database. This job owns its PostgreSQL container and internal
+  # network; it has no production connection, providers or deploy credentials.
+  runtime-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      NODE_ENV: test
+      RECOVERY_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PGHOST: 127.0.0.1
+      PGPORT: '5433'
+      PGUSER: postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install PostgreSQL 17 client for owned recovery targets
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list \
+            -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          echo '/usr/lib/postgresql/17/bin' >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Rebuilt runtime backup, upgrade and recovery
+        run: node scripts/release-runtime-recovery.mjs
+
   dependencies:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -220,6 +267,9 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
@@ -252,6 +302,9 @@ jobs:
       EXPO_PUBLIC_API_URL: https://dawaee-api.onrender.com
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
