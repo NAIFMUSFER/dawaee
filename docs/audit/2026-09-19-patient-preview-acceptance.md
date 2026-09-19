@@ -116,6 +116,13 @@ After those harness updates, the complete local mobile/shared run passed
 **1,134 tests in 159 files** (74.32 seconds); touched ESLint and diff checks
 also passed. This does not replace the pending PostgreSQL-backed CI rerun.
 
+The rerun on `cb4641c385cab9eddc511c72af1b2a8ed885a30f` subsequently completed:
+CI **35446106156** and Security **35446106160** passed. PostgreSQL 16 and 17
+each passed **2,804 tests in 371 files**; each RLS matrix recorded 110 attempts,
+zero unexplained failures and zero open findings. Mobile, dependencies, Docker
+and runtime recovery passed. This closes the test-harness regression only;
+the remaining real-interface gates below are still open.
+
 ## Remaining acceptance gates
 
 - Recover browser control after the confirmation dialog. Reauthenticate only
