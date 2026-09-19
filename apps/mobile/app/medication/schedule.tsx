@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
@@ -199,7 +200,7 @@ function ScheduleProfileScreen({
       case 'fixed_times':
         return sortedTimes.length > 0 ? { kind: 'fixed_times', times: sortedTimes } : null;
       case 'interval': {
-        const hours = Number(everyHours);
+        const hours = parseMedicationNumber(everyHours);
         if (!Number.isFinite(hours) || hours < 1 || hours > 72 || !isValidTime(anchorTime)) return null;
         const hasFrom = activeFrom.trim() !== '';
         const hasUntil = activeUntil.trim() !== '';
@@ -213,15 +214,15 @@ function ScheduleProfileScreen({
         return { kind: 'days_of_week', weekdays: days, times: sortedTimes };
       }
       case 'cycle': {
-        const on = Number(daysOn);
-        const off = Number(daysOff);
+        const on = parseMedicationNumber(daysOn);
+        const off = parseMedicationNumber(daysOff);
         if (!Number.isInteger(on) || on < 1 || !Number.isInteger(off) || off < 0) return null;
         if (sortedTimes.length === 0 || !isValidLocalDate(cycleAnchorDate)) return null;
         return { kind: 'cycle', daysOn: on, daysOff: off, times: sortedTimes, cycleAnchorDate };
       }
       case 'as_needed': {
-        const max = maxPerDay.trim() === '' ? undefined : Number(maxPerDay);
-        const gap = minHoursBetween.trim() === '' ? undefined : Number(minHoursBetween);
+        const max = maxPerDay.trim() === '' ? undefined : parseMedicationNumber(maxPerDay);
+        const gap = minHoursBetween.trim() === '' ? undefined : parseMedicationNumber(minHoursBetween);
         if (max !== undefined && (!Number.isInteger(max) || max < 1 || max > 24)) return null;
         if (gap !== undefined && (!Number.isFinite(gap) || gap < 0 || gap > 48)) return null;
         return {

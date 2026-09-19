@@ -1,3 +1,4 @@
+import { notifyAccessDenied } from './access-changes.js';
 import { notifyClinicalChange } from './clinical-changes.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -331,11 +332,14 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
   // Start in a microtask so even a synchronously throwing fetch cannot leave
   // a settled promise installed after its own cleanup already ran.
   const promise = Promise.resolve().then(async (): Promise<RefreshResult> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
     try {
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: presented }),
+        signal: controller.signal,
       });
       requireSession(generation);
       if (!res.ok) {
@@ -387,6 +391,7 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
       requireSession(generation);
       return 'offline';
     } finally {
+      clearTimeout(timer);
       if (refreshInFlight?.promise === promise) refreshInFlight = null;
     }
   });
@@ -425,7 +430,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       : null
   );
   const routedScheduleId = privatePath.scheduleId;
-  const routedDoseId = privatePath.doseId;
+  const noteDoseId = privatePath.path === '/v1/notes' && typeof query?.doseOccurrenceId === 'string'
+    ? query.doseOccurrenceId : null;
+  const routedDoseId = privatePath.doseId ?? noteDoseId;
   const routedDeviceId = privatePath.deviceId;
   // Only the signed-read route has an objectKey query contract. Keep arbitrary
   // query fields named objectKey untouched elsewhere, but move this private
@@ -446,6 +453,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     // its established in-memory query contract.
     if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
     if (routedObjectKey && k === 'objectKey') continue;
+    if (!DEMO_MODE && noteDoseId && k === 'doseOccurrenceId') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -554,8 +562,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   const payload = await res.json().catch(() => ({}));
   // Decoding a response is also asynchronous: do not return old-account PHI.
-  if (res.ok) requireCurrentRequest();
+  if (res.ok || res.status === 403) requireCurrentRequest();
   if (!res.ok) {
+    if (!anonymous && res.status === 403) notifyAccessDenied(routedProfileId);
     throw apiErrorFromResponse(res, payload);
   }
   notifyClinicalChange(method, path);

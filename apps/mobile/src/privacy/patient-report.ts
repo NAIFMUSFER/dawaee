@@ -49,7 +49,7 @@ export function buildPatientReport(payload: unknown, locale: Locale): { html: st
       default: return word(value);
     }
   };
-  const title = label('تداوي | تقرير بياناتي', 'TADAWEE | My health record');
+  const title = label('تداوي | ملخص بياناتي', 'TADAWEE | My health summary');
   const subtitle = `${word(profile.display_name)} · ${label('تاريخ التصدير', 'Exported')}: ${date(exported.exportedAt)} · ${zone}`;
   const note = label('هذه البيانات كما أدخلها المستخدم، للتنظيم والمتابعة وليست وصفة طبية أو توصية لتغيير العلاج.',
     'These are user-entered records for tracking. This report is not a prescription or a recommendation to change treatment.');

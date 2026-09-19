@@ -65,6 +65,9 @@ function scenarios(screenFile, hookFile) {
   };
   add('control: a future current-day cached dose stays visible without early confirmation', [today], async h => {
     upcoming(h, ['TODAY']);
+    const item = cards(h.tree)[0].dose;
+    assert.equal(item.scheduledTimezone, 'Asia/Riyadh');
+    assert.doesNotThrow(() => new Intl.DateTimeFormat('ar-SA', { timeZone: item.scheduledTimezone }).format(new Date(item.scheduledAt)));
   });
   add('an unresolved prior-day cached dose cannot hide the current-day schedule', [yesterday, today], async h => {
     upcoming(h, ['TODAY']);

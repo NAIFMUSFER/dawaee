@@ -1,3 +1,4 @@
+import { parseMedicationNumber } from '@dawaee/shared';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
@@ -171,12 +172,12 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
 
   const saveRefill = async () => {
     if (!medicationId || !data || loading) return;
-    const quantity = Number(refillQuantity.replace(',', '.'));
+    const quantity = parseMedicationNumber(refillQuantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       setError(t('error.validation_failed'));
       return;
     }
-    const parsedCost = cost.trim() === '' ? null : Number(cost.replace(',', '.'));
+    const parsedCost = cost.trim() === '' ? null : parseMedicationNumber(cost);
     if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0 || parsedCost > 1_000_000)) {
       setError(t('error.validation_failed'));
       return;
@@ -353,9 +354,9 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
               />
               <Button
                 label={t('common.save')}
-                disabled={exactQuantity.trim() === '' || !Number.isFinite(Number(exactQuantity.replace(',', '.')))}
+                disabled={exactQuantity.trim() === '' || !Number.isFinite(parseMedicationNumber(exactQuantity))}
                 loading={busy}
-                onPress={() => void adjust({ remainingQuantity: Number(exactQuantity.replace(',', '.')) })}
+                onPress={() => void adjust({ remainingQuantity: parseMedicationNumber(exactQuantity) })}
               />
             </Card>
 

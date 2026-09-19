@@ -9,7 +9,14 @@ import {
 // ------------------------------------------------------------- primitives
 
 export const uuid = z.string().uuid();
-export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine((value) => {
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return false;
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }, 'expected a real calendar date');
 export const localTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:mm');
 export const instant = z.string().datetime({ offset: true });
 /** Strict E.164 — used for values that are already normalized and stored. */
@@ -350,12 +357,14 @@ export const confirmDoseSchema = z.object({
 
 export const snoozeDoseSchema = z.object({
   minutes: z.number().int().min(1).max(720),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });
 
 export const skipDoseSchema = z.object({
   reason: z.string().trim().max(300).nullish(),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });

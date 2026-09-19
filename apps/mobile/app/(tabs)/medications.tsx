@@ -1,3 +1,4 @@
+import { hasProfilePermission } from '@/security/profile-permissions';
 import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
@@ -28,8 +29,8 @@ function MedicationsProfileScreen() {
   const theme = useTheme();
   const { activeProfile, offline, setOffline, preferences, user } = useApp();
   const arabic = preferences.locale === 'ar';
-  const canViewSchedule = activeProfile?.role === 'owner' || activeProfile?.isSelf || activeProfile?.permissions?.includes('view_schedule');
-  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canViewSchedule = hasProfilePermission(activeProfile, 'view_schedule');
+  const canAdd = hasProfilePermission(activeProfile, 'add_medication');
 
   const [filter, setFilter] = useState<Filter>('active');
   const [medications, setMedications] = useState<MedicationView[]>([]);

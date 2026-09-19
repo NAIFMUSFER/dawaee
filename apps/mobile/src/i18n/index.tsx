@@ -73,15 +73,15 @@ export function I18nProvider({ locale, numeralSystem = 'latn', calendar = 'grego
 
     const formatTime = (iso: string, timeZone?: string) =>
       new Intl.DateTimeFormat(bcp, {
-        hour: '2-digit', minute: '2-digit', hour12: locale === 'en', timeZone,
+        hour: '2-digit', minute: '2-digit', hour12: locale === 'en', timeZone: timeZone || undefined,
       }).format(new Date(iso));
 
     const formatDate = (iso: string, timeZone?: string, opts?: Intl.DateTimeFormatOptions) =>
-      new Intl.DateTimeFormat(bcp, { day: 'numeric', month: 'long', year: 'numeric', timeZone, ...opts })
+      new Intl.DateTimeFormat(bcp, { day: 'numeric', month: 'long', year: 'numeric', timeZone: timeZone || undefined, ...opts })
         .format(new Date(iso));
 
     const formatWeekday = (iso: string, timeZone?: string) =>
-      new Intl.DateTimeFormat(bcp, { weekday: 'long', timeZone }).format(new Date(iso));
+      new Intl.DateTimeFormat(bcp, { weekday: 'long', timeZone: timeZone || undefined }).format(new Date(iso));
 
     const formatRelativeMinutes = (minutes: number) => {
       const rtf = new Intl.RelativeTimeFormat(locale === 'ar' ? 'ar' : 'en', { numeric: 'auto' });

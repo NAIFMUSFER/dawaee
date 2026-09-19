@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AppState as RNAppState, View } from 'react-native';
 import type { AppStateStatus } from 'react-native';
 import { router, usePathname } from 'expo-router';
@@ -16,6 +16,8 @@ import {
   lockReducer,
 } from './lock-state';
 import type { AppStatus } from './lock-state';
+import { AppLockContext, type AppLockApi } from './AppLockContext';
+export { useAppLock } from './AppLockContext';
 
 /**
  * The app lock, enforced.
@@ -36,23 +38,6 @@ import type { AppStatus } from './lock-state';
  * whichever screen was supposed to be doing the checking. Above the `<Stack>`,
  * every route in the app renders underneath the overlay, whatever opened it.
  */
-
-interface AppLockApi {
-  /** True while the whole-app lock is showing. */
-  locked: boolean;
-  /** Does this area still need its own verification? */
-  needsArea: (area: string) => boolean;
-  /** Prompt for an area. Resolves true if the OS said yes. */
-  verifyArea: (area: string, prompt: string, cancel: string) => Promise<boolean>;
-}
-
-const AppLockContext = createContext<AppLockApi>({
-  locked: false,
-  needsArea: () => false,
-  verifyArea: async () => true,
-});
-
-export const useAppLock = (): AppLockApi => useContext(AppLockContext);
 
 function toStatus(s: AppStateStatus): AppStatus {
   if (s === 'active') return 'active';
@@ -152,7 +137,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  const api = useMemo<AppLockApi>(
+  const api = useMemo<Omit<AppLockApi, 'contentBlocked'>>(
     () => ({
       locked: effective.phase !== 'unlocked',
       needsArea: (area: string) =>
@@ -202,7 +187,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
    * visible flash of skeletons that leaks which screen was open.
    */
   return (
-    <AppLockContext.Provider value={api}>
+    <AppLockContext.Provider value={{ ...api, contentBlocked: contentHiddenFromAccessibility }}>
       <View style={{ flex: 1 }}>
         <View
           style={{ flex: 1 }}

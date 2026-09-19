@@ -1,10 +1,10 @@
-# دوائي · Dawaee
+# تداوي · TADAWEE
 
 A medication reminder, adherence and family-care platform, built Saudi-first:
 Arabic RTL by default, English alongside it, and an elderly mode that is a real
 mode rather than a larger font.
 
-The product promise is narrow and deliberate. Dawaee helps a person **organise
+The product promise is narrow and deliberate. TADAWEE helps a person **organise
 and remember** their medication, and helps the people who care about them know
 when something was missed. It is **not** a doctor, a pharmacist, a prescription
 service or a diagnostic system, and the codebase enforces that boundary in
@@ -17,12 +17,12 @@ several places rather than stating it in a disclaimer — see
 
 | Path | What it is |
 |---|---|
-| `packages/core` | The domain engines as pure functions: schedule expansion, the dose state machine, stock forecasting, adherence, the escalation ladder, duplicate detection, authorization, travel mode. No I/O, exhaustively tested. |
+| `packages/core` | The domain engines as pure functions: schedule expansion, the dose state machine, stock forecasting, adherence, the escalation ladder, duplicate detection, authorization, travel mode. No I/O; verified through domain tests. |
 | `packages/shared` | Types, zod contracts, the AR/EN message catalog, and the design tokens. One source of truth for API, worker, app and portal. |
 | `apps/api` | Fastify + TypeScript HTTP API over PostgreSQL. |
 | `apps/worker` | The reminder, escalation, stock-alert and digest jobs. |
 | `apps/mobile` | Expo / React Native app (iOS, Android, Web). |
-| `db/migrations` | 13 SQL migrations: schema, row-level security, append-only audit, and the SECURITY DEFINER surfaces. |
+| `db/migrations` | Versioned SQL migrations: schema, row-level security, append-only audit, and the SECURITY DEFINER surfaces. |
 | `db/seed/rls_probe.sql` | An adversarial isolation probe that CI runs as a release gate. |
 
 ## Quick start
@@ -33,50 +33,44 @@ cp .env.example .env
 docker compose up --build
 
 # 2. The app
-cd apps/mobile && npm install --legacy-peer-deps && npx expo start
+cd apps/mobile && npm install --legacy-peer-deps
+EXPO_PUBLIC_API_URL=http://localhost:8080 npx expo start
 ```
 
-Without Docker:
+The Compose migration service bootstraps separate application and worker roles
+and runs the repository migration ledger before either runtime starts. It is a
+local development stack; production provider setup follows the release runbook.
+For a physical phone, replace `localhost` with the development computer's LAN
+address. Keep the API override explicit: the normal app configuration points to
+the production service.
+
+## Verification
 
 ```bash
-npm install
-npx tsc -b packages/shared packages/core apps/api apps/worker
-./scripts/dev-pg.sh                      # local Postgres on :5433
-./scripts/db-reset.sh dawaee_dev         # apply migrations
-DAWAEE_APP_PASSWORD=devpass DAWAEE_WORKER_PASSWORD=devpass \
-  ./scripts/db-bootstrap-roles.sh dawaee_dev
-npm run dev:api                          # :8080
-npm run dev:worker
+npm test                    # requires the test PostgreSQL roles and database
+npm run typecheck
+npm run lint
+cd apps/mobile && npm run typecheck
 ```
 
-## Tests
-
-```bash
-npm test                                 # 251 tests: unit + integration
-psql -d dawaee_test -f db/seed/rls_probe.sql   # 30 isolation assertions
-```
-
-The suite is not decorative. Writing it surfaced six real defects, including
-two authentication vulnerabilities and a silent data-loss bug; they are
-documented in [docs/findings.md](docs/findings.md) with what each would have
-cost in production.
+GitHub CI runs PostgreSQL 16/17 integration and isolation checks, mobile exports,
+container checks and security gates. Evidence belongs to an exact commit; see
+[the current audit](docs/audit/2026-09-19-full-audit.md) for what has run and what
+still needs real interface or device verification.
 
 ## Integrations
 
-Every outbound integration is an interface with a real implementation **and** a
-recording mock. The mock is what runs until credentials are configured, and
-`GET /health/ready` lists exactly which integrations are still mocked — a
-deployment never quietly pretends to be sending messages.
-
-| Integration | Real implementation | Configure with |
+| Integration | Implementations | Configuration |
 |---|---|---|
-| SMS (OTP, invitations) | Twilio, Unifonic | `SMS_PROVIDER` |
-| WhatsApp | Meta WhatsApp Cloud API (official only) | `WHATSAPP_PROVIDER` |
-| Push | Expo → APNs + FCM | `PUSH_PROVIDER` |
-| OCR | Google Cloud Vision, Azure Document Intelligence | `OCR_PROVIDER` |
-| Object storage | S3, Cloudflare R2 | `STORAGE_PROVIDER` |
+| Push | Expo transport for native notifications | `PUSH_PROVIDER` |
+| Account email | Disabled or Resend | `ACCOUNT_EMAIL_PROVIDER` |
+| OCR | Mock, Google Vision or Azure Document Intelligence | `OCR_PROVIDER` |
+| Private images | Local development storage, S3 or R2 | `STORAGE_PROVIDER` |
 
-See [docs/integrations.md](docs/integrations.md) for what each one needs.
+Production refuses mock push and local storage at startup. Readiness additionally
+checks database, migration contracts, worker health/build agreement and provider
+configuration. Its public response is minimal; it does not expose provider
+configuration. See [integration setup](docs/integrations.md).
 
 ## Documentation
 

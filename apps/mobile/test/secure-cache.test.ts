@@ -563,8 +563,8 @@ describe('the offline queue keeps its meaning through encryption', () => {
   });
 
   it('keeps snooze minutes and skip reasons intact', async () => {
-    await queue.enqueue({ type: 'snoozed', doseOccurrenceId: 'd1', at: 't', clientEventId: 'e1', minutes: 15 });
-    await queue.enqueue({ type: 'skipped', doseOccurrenceId: 'd2', at: 't', clientEventId: 'e2', reason: 'nausea' });
+    await queue.enqueue({ type: 'snoozed', doseOccurrenceId: 'd1', at: '2026-09-19T12:00:00Z', clientEventId: 'e1', minutes: 15 });
+    await queue.enqueue({ type: 'skipped', doseOccurrenceId: 'd2', at: '2026-09-19T12:00:00Z', clientEventId: 'e2', reason: 'nausea' });
     const read = await queue.readQueue();
     expect(read[0]).toMatchObject({ minutes: 15 });
     expect(read[1]).toMatchObject({ reason: 'nausea' });

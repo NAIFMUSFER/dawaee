@@ -142,7 +142,7 @@ function CaregiverPatientDashboard({
 
   const lateDoses = useMemo(
     () => doses
-      .filter((d) => d.status === 'missed' || d.status === 'taken_late'
+      .filter((d) => d.status === 'missed'
         || (ACTIVE_STATUSES.includes(d.status) && Date.parse(d.scheduledAt) < now))
       .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt)),
     [doses, now],

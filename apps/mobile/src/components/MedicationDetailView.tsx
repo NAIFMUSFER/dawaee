@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { DoseCard } from './DoseCard';
 import { DoseNotesSheet } from './DoseNotesSheet';
-import { Image, Modal, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { Image, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Banner, Button, Card, Divider, Row, SafetyNote, SectionTitle, Txt } from '@/components/ui';

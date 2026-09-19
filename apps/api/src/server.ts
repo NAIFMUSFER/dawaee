@@ -171,7 +171,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAdminRoutes(scope);
   });
 
-  await registerWebAppRoutes(app);
+  await registerWebAppRoutes(app, cfg);
 
   return { app, providers };
 }

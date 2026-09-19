@@ -35,7 +35,7 @@ function loadModule(file: string, mocks: Record<string, unknown>, globals: Recor
   }).outputText;
   vm.runInNewContext(source, {
     module, exports: module.exports, console, URL, Response, AbortController,
-    setTimeout, clearTimeout,
+    setTimeout, clearTimeout, setInterval, clearInterval,
     process: { env: { EXPO_PUBLIC_API_URL: 'https://qa.invalid', EXPO_PUBLIC_DEMO: '0' } },
     require: (name: string) => {
       if (!(name in mocks)) throw new Error(`Unexpected test dependency: ${name}`);
@@ -62,12 +62,16 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   const purged: Array<string | null> = [];
   const destroyed: string[] = [];
   const requested: string[] = [];
+  const accessChanges = loadModule(fileURLToPath(new URL('../src/api/access-changes.ts', import.meta.url)), {});
+  const permissions = loadModule(fileURLToPath(new URL('../src/security/profile-permissions.ts', import.meta.url)), {});
+  const clinicalChanges = loadModule(fileURLToPath(new URL('../src/api/clinical-changes.ts', import.meta.url)), {});
   const client = loadModule(fileURLToPath(new URL('../src/api/client.ts', import.meta.url)), {
     '@react-native-async-storage/async-storage': {
       getItem: async () => 'synthetic-device', setItem: async () => undefined,
     },
     'expo-constants': {},
-    './clinical-changes.js': loadModule(fileURLToPath(new URL('../src/api/clinical-changes.ts', import.meta.url)), {}),
+    './clinical-changes.js': clinicalChanges,
+    './access-changes.js': accessChanges,
     './token-store.js': {
       readSession: async () => tokens,
       writeSession: async (next: NonNullable<typeof tokens>) => { tokens = next; },
@@ -112,12 +116,18 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   };
   const provider = loadModule(fileURLToPath(new URL('../src/state/app-store.tsx', import.meta.url)), {
     react,
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
+    '../api/access-changes.js': accessChanges,
+    '../api/clinical-changes.js': clinicalChanges,
+    '../security/profile-permissions.js': permissions,
     'react/jsx-runtime': { jsx: (_type: unknown, props: unknown) => props },
     'expo-localization': { getLocales: () => [{ languageCode: 'ar' }] },
     '../api/client.js': client,
     '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => hasStoredSession ? ACCOUNT : null },
     '../storage/offline-queue.js': {
+      subscribeQueueChanges: () => () => undefined,
+      invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined,
       flushQueue: async () => ({ offline: false }),
       purgeLocalCaches: async (owner: string | null) => { purged.push(owner); },
       queueSize: async () => 2,
@@ -170,6 +180,7 @@ function renderEntry(state: AppState, sessionRetained = false): unknown {
   const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
   const module = loadModule(fileURLToPath(new URL('../app/index.tsx', import.meta.url)), {
     react,
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'expo-router': { Redirect: 'Redirect' },
     '@/state/app-store': { useApp: () => state },

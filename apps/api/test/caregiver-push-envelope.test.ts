@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PushMessage } from '@dawaee/api/providers';
+import { reminderText, t } from '@dawaee/shared';
 import { claimDeliveries, dispatchJob } from '../../worker/src/jobs/dispatcher.js';
 
 type Delivery = Awaited<ReturnType<typeof claimDeliveries>>[number];
@@ -19,6 +20,7 @@ function harness(options: {
 } = {}) {
   const row: Delivery = {
     id: DELIVERY, patient_profile_id: 'profile', recipient_user_id: 'caregiver',
+    dose_occurrence_id: DOSE,
     recipient_phone_e164: null, relationship_id: 'relationship',
     kind: 'escalation', channel: 'push', locale: 'ar',
     title: `Follow up ${PATIENT}`, body: `${PATIENT}: ${MEDICATION} at 08:00`,
@@ -29,6 +31,11 @@ function harness(options: {
     attempts: 1, max_attempts: 3, lease_token: LEASE,
     ...options.row,
   };
+  if (!row.relationship_id && row.payload.grouped !== true) {
+    const locale = row.locale === 'en' ? 'en' : 'ar';
+    row.body = reminderText({ locale, showMedication: options.showMedication ?? true,
+      medicationName: MEDICATION, doseText: '1 tablet', time: '08:00', food: t(locale, 'food.no_preference') }).body;
+  }
   const messages: PushMessage[] = [];
   const finalizations: string[] = [];
   let stillPending = options.stillPending ?? true;
@@ -39,6 +46,14 @@ function harness(options: {
       return { rows: options.authorized === false ? [] : [{
         permissions: ['receive_notifications', 'view_medications', 'view_adherence', 'view_schedule'],
       }], rowCount: 1 };
+    }
+    if (sql.includes('quiet_hours_start')) return { rows: [{
+      timezone: 'Asia/Riyadh', quiet_hours_start: null, quiet_hours_end: null,
+    }], rowCount: 1 };
+    if (sql.includes('FROM caregiver_notification_rules')) return { rows: [{ id: 'rule' }], rowCount: 1 };
+    if (sql.includes('SET lease_until =')) {
+      expect(sql).toContain('lease_until > $3');
+      return { rows: [], rowCount: 1 }; // live lease renewal is not a terminal finalisation
     }
     if (sql.includes('app.list_live_push_endpoints')) {
       if (options.resolvesDuringDeviceLookup) stillPending = false;
@@ -52,6 +67,11 @@ function harness(options: {
     if (sql.includes('AS can_view_medication')) {
       return { rows: [{ can_view_medication: true }], rowCount: 1 };
     }
+    if (sql.includes('SELECT d.id, d.medication_id')) return { rows: stillPending ? [{
+      id: DOSE, medication_id: 'medicine', name: MEDICATION, dose_quantity: '1', dose_unit: 'tablet',
+      scheduled_at: new Date('2026-09-14T05:00:00Z'), snoozed_until: null, client_event_id: null,
+      timezone: 'Asia/Riyadh', food_instruction: 'no_preference',
+    }] : [], rowCount: stillPending ? 1 : 0 };
     if (sql.includes('AS still_pending')) {
       expect(params).toEqual([DELIVERY, LEASE, new Date('2026-09-14T05:30:00Z')]);
       expect(sql).toContain('JOIN dose_occurrences');

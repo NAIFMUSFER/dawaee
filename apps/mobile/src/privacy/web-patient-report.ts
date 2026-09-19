@@ -1,7 +1,11 @@
 /** A local print preview for the escaped HTML produced by buildPatientReport.
  * No popup, upload, persistent record, or Web Share support is required. */
+let closeCurrentReport: (() => void) | null = null;
+export function closeWebPatientReport(): void { closeCurrentReport?.(); }
+
 export function showWebPatientReport(html: string, title: string, isCurrent: () => boolean): boolean {
-  if (typeof document === 'undefined' || !isCurrent()) return false;
+  if (typeof document === 'undefined' || document.visibilityState === 'hidden' || !isCurrent()) return false;
+  closeWebPatientReport();
   const report = new DOMParser().parseFromString(html, 'text/html');
   const arabic = report.documentElement.lang === 'ar';
   const previousFocus = document.activeElement;
@@ -33,10 +37,15 @@ export function showWebPatientReport(html: string, title: string, isCurrent: () 
   let timer: ReturnType<typeof setInterval> | undefined;
   const cleanup = () => {
     if (timer) clearInterval(timer);
+    document.removeEventListener('visibilitychange', visibilityChanged);
+    window.removeEventListener('pagehide', cleanup);
+    if (closeCurrentReport === cleanup) closeCurrentReport = null;
+    content.replaceChildren();
     preview.remove();
     printStyles.remove();
     if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
   };
+  const visibilityChanged = () => { if (document.visibilityState === 'hidden') cleanup(); };
   close.addEventListener('click', cleanup);
   preview.addEventListener('close', cleanup);
   print.addEventListener('click', () => {
@@ -47,6 +56,9 @@ export function showWebPatientReport(html: string, title: string, isCurrent: () 
   document.body.append(preview);
   try {
     if (!isCurrent()) { cleanup(); return false; }
+    closeCurrentReport = cleanup;
+    document.addEventListener('visibilitychange', visibilityChanged);
+    window.addEventListener('pagehide', cleanup);
     preview.showModal();
     close.focus();
     timer = setInterval(() => { if (!isCurrent()) cleanup(); }, 250);

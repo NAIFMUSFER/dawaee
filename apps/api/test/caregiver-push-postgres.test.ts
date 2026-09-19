@@ -79,6 +79,9 @@ beforeEach(async () => {
     [patient.profileId, caregiver.userId, caregiver.phone, patient.userId],
   );
   relationshipId = relationship.rows[0]!.id;
+  // This delivery was queued while the caregiver opted into this channel.
+  await db.query(`INSERT INTO caregiver_notification_rules(relationship_id,patient_profile_id,channel,mode,enabled)
+    VALUES($1,$2,'push','missed_only',true)`, [relationshipId, patient.profileId]);
   await db.query(
     `UPDATE dose_occurrences SET status = 'pending_confirmation', snoozed_until = NULL,
             snooze_count = 0, confirmed_at = NULL, confirmed_by_user_id = NULL,

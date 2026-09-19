@@ -12,6 +12,8 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { buildPatientReport } from '@/privacy/patient-report';
 import { sharePatientReport } from '@/privacy/share-patient-report';
+import { shareFullExport } from '@/privacy/share-full-export';
+import { usePrivateOutputGuard } from '@/privacy/usePrivateOutputGuard';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -70,6 +72,7 @@ export default function PrivacyScreen() {
   const profileKey = profileScopeKey(user?.id, activeProfile);
   const { begin: beginConsentLoad, capture: captureConsent } = useRequestScope(profileKey);
   const { begin: beginExport } = useRequestScope(profileKey);
+  const guardOutput = usePrivateOutputGuard(profileKey);
 
   const [consentState, setConsentState] = useState<{
     scopeKey: string;
@@ -180,9 +183,11 @@ export default function PrivacyScreen() {
     }
   };
 
-  const exportData = async () => {
-    if (!activeProfile) return;
-    const isCurrent = beginExport();
+  const exportData = async (full = false) => {
+    if (!activeProfile || exporting) return;
+    const requestCurrent = beginExport();
+    const isCurrent = guardOutput(requestCurrent);
+    if (!isCurrent()) return;
     const patientProfileId = activeProfile.id;
     setExporting(true);
     setExportError(null);
@@ -190,6 +195,14 @@ export default function PrivacyScreen() {
     try {
       const payload = await api.get<unknown>('/v1/reports/export', { profileId: patientProfileId });
       if (!isCurrent()) return;
+      if (full) {
+        const shared = await shareFullExport(payload, t('privacy.fullExportTitle'), isCurrent);
+        if (isCurrent()) {
+          if (shared) setExportNotice(t('privacy.fullExportReady'));
+          else setExportError(t('privacy.exportShareUnavailable'));
+        }
+        return;
+      }
       const report = buildPatientReport(payload, locale);
       const sharedFile = await sharePatientReport(report.html, t('privacy.reportTitle'), isCurrent);
       if (!isCurrent()) return;
@@ -210,7 +223,7 @@ export default function PrivacyScreen() {
       else if (err instanceof ApiError) setExportError(t('privacy.exportFailed'));
       else setExportError(t('privacy.exportShareUnavailable'));
     } finally {
-      if (isCurrent()) setExporting(false);
+      if (requestCurrent()) setExporting(false);
     }
   };
 
@@ -288,13 +301,16 @@ export default function PrivacyScreen() {
         <SectionTitle>{t('settings.exportData')}</SectionTitle>
         <Card>
           <Txt variant="bodySmall" color={theme.colors.ink500}>{t('privacy.exportHint')}</Txt>
+          <Txt>{t('privacy.exportFormats')}</Txt>
           <Button
-            label={exporting ? t('privacy.exporting') : t('settings.exportData')}
+            label={t('privacy.reportTitle')}
             tone="secondary"
             loading={exporting}
             disabled={!activeProfile}
             onPress={() => void exportData()}
           />
+          <Button label={t('privacy.fullExportTitle')} tone="secondary" loading={exporting} disabled={!activeProfile}
+            onPress={() => void exportData(true)} />
           {exportNotice ? <Banner tone="success" title={exportNotice} /> : null}
           {exportError ? <Banner tone="danger" title={exportError} /> : null}
         </Card>

@@ -1,7 +1,20 @@
 import type { PoolClient } from 'pg';
-import { localDateInZone, localTimeInZone, summarizeAdherence, addDays } from '@dawaee/core';
+import { localDateInZone, summarizeAdherence, addDays, weekdayOf, zonedWallTimeToUtc } from '@dawaee/core';
 import { t, type Locale } from '@dawaee/shared';
 import type { WorkerContext } from '../context.js';
+
+/** Catch up the latest scheduled period only, without replaying a backlog. */
+export function latestDigestPeriod(now: Date, timezone: string, mode: string, time: string) {
+  const today = localDateInZone(now, timezone);
+  const weekly = mode === 'weekly_summary';
+  let date = weekly ? addDays(today, -weekdayOf(today)) : today;
+  let scheduledAt = zonedWallTimeToUtc(date, time, timezone);
+  if (scheduledAt > now) {
+    date = addDays(date, weekly ? -7 : -1);
+    scheduledAt = zonedWallTimeToUtc(date, time, timezone);
+  }
+  return { date, scheduledAt, from: addDays(date, weekly ? -7 : -1), to: addDays(date, -1) };
+}
 
 /**
  * Daily and weekly caregiver digests.
@@ -15,7 +28,7 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
 
   const { rows } = await client.query(
     `SELECT r.id AS rule_id, r.relationship_id, r.mode::text AS mode, r.channel::text AS channel,
-            r.summary_time, cr.caregiver_user_id, cr.invited_phone_e164,
+            r.summary_time, r.updated_at AS rule_updated_at, cr.caregiver_user_id, cr.invited_phone_e164,
             COALESCE(u.phone_e164, cr.invited_phone_e164) AS contact_phone,
             cr.patient_profile_id, pp.timezone, pp.display_name AS profile_name,
             COALESCE(u.locale,'ar') AS locale
@@ -38,15 +51,10 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
 
   let enqueued = 0;
   for (const row of rows) {
-    const localTime = localTimeInZone(now, row.timezone);
-    const localDate = localDateInZone(now, row.timezone);
-    // Fire within the minute the caregiver asked for, in the PATIENT's
-    // timezone — a son in London still gets his father's Riyadh-evening summary.
-    if (localTime !== String(row.summary_time).slice(0, 5)) continue;
-    if (row.mode === 'weekly_summary' && new Date(`${localDate}T00:00:00Z`).getUTCDay() !== 0) continue;
-
-    const from = row.mode === 'weekly_summary' ? addDays(localDate, -7) : addDays(localDate, -1);
-    const to = addDays(localDate, -1);
+    const period = latestDigestPeriod(now, row.timezone, row.mode, String(row.summary_time).slice(0, 5));
+    // A newly enabled or changed rule does not request a retroactive digest.
+    if (new Date(row.rule_updated_at) > period.scheduledAt) continue;
+    const { from, to } = period;
 
     const { rows: doses } = await client.query(
       `SELECT d.status::text AS status, d.scheduled_at, d.snoozed_until, d.notified_at, d.confirmed_at,
@@ -99,12 +107,13 @@ export async function digestJob(ctx: WorkerContext, client: PoolClient): Promise
         t(locale, 'reports.weeklyFamily'),
         body,
         JSON.stringify({
+          ruleId: row.rule_id, periodDate: period.date,
           patientName: row.profile_name,
           scheduled: summary.scheduled, taken: summary.taken, missed: summary.missed,
           adherencePercent: summary.adherencePercent,
           disclaimerKey: 'adherence.disclaimer',
         }),
-        `digest:${row.rule_id}:${localDate}`,
+        `digest:${row.rule_id}:${period.date}`,
         now,
       ],
     );

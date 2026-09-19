@@ -9,33 +9,36 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: dawaee
+      POSTGRES_DB: postgres
     ports: ['5432:5432']
     volumes:
       - dawaee-db:/var/lib/postgresql/data
-      # Migrations run in filename order on first boot.
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d dawaee']
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
       interval: 5s
       timeout: 5s
       retries: 20
 
   migrate:
-    image: postgres:16-alpine
+    build:
+      context: .
+      target: base
     depends_on:
       db: { condition: service_healthy }
     environment:
       PGHOST: db
+      PGPORT: 5432
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
       DAWAEE_APP_PASSWORD: ${DAWAEE_APP_PASSWORD:-devpass}
       DAWAEE_WORKER_PASSWORD: ${DAWAEE_WORKER_PASSWORD:-devpass}
+      DAWAEE_MIGRATOR_PASSWORD: ${DAWAEE_MIGRATOR_PASSWORD:-migratorpw}
     volumes:
-      - ./scripts:/scripts:ro
-      - ./db:/db:ro
-    # Roles and grants are applied out of band so no password is ever committed.
-    entrypoint: ['/bin/sh', '-c', 'sh /scripts/db-bootstrap-roles.sh dawaee']
+      - ./scripts:/app/scripts:ro
+      - ./db:/app/db:ro
+    # Uses the deployed ledger/preflight path as a non-bypass schema owner.
+    # The base image provides bash, node and psql; runtime services wait for it.
+    entrypoint: ['bash', '/app/scripts/db-compose-init.sh']
 
   api:
     build:

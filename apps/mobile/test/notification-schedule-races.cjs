@@ -21,13 +21,15 @@ function dose(id, minutes = 30) {
 function loadModule(file, platform = 'ios') {
   const state = {
     active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
-    notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
+    pushPosts: [], textInputs: [], tokenReads: 0, tokenGate: null, notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
   };
   const native = {
     setNotificationHandler: handler => { state.foregroundHandler = handler; },
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
     getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
+    requestPermissionsAsync: async () => { state.notificationGranted = true; return { granted: true }; },
+    getExpoPushTokenAsync: async () => { state.tokenReads++; return state.tokenGate ? state.tokenGate.promise : { data: 'synthetic-token' }; },
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
       if (state.cancel) await state.cancel(state.cancellations);
@@ -42,7 +44,7 @@ function loadModule(file, platform = 'ios') {
   };
   // Wording is outside this race test. Preserve disclosure choices as visible
   // sentinels; the existing reminder-text/privacy suites test real translations.
-  const text = (p) => ({ title: p.showMedication ? 'NAMED' : 'PRIVATE', body: p.showMedication ? p.medicationName || 'NAMED-GROUP' : 'GENERIC', voice: p.showMedication ? 'NAMED-VOICE' : 'PRIVATE-VOICE' });
+  const text = (p) => { state.textInputs.push(p); return { title: p.showMedication ? 'NAMED' : 'PRIVATE', body: p.showMedication ? p.medicationName || 'NAMED-GROUP' : 'GENERIC', voice: p.showMedication ? 'NAMED-VOICE' : 'PRIVATE-VOICE' }; };
   const imports = {
     'react-native': { Platform: { OS: platform } },
     'expo-constants': { default: {} },
@@ -52,11 +54,12 @@ function loadModule(file, platform = 'ios') {
       canScheduleExactAlarms: () => { state.exactAlarmChecks++; return state.exactAlarmsAllowed; },
       withExactAlarmScheduleMutation: (operation) => operation(),
     },
-    '../api/client.js': { api: {}, isSignedIn: () => state.signedIn },
+    '../api/client.js': { api: { post: async (path, body) => { state.pushPosts.push({ path, body }); } }, isSignedIn: () => state.signedIn },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
     './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
     'expo-notifications': native,
-    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id) },
+    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id),
+      readQueue: async () => [], applyQueuedToCache: cache => cache },
   };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     fileName: file, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
@@ -81,6 +84,47 @@ function scenarios(file) {
   const add = (name, run, platform) => cases.push({ name, run: async () => {
     const h = loadModule(file, platform); await run(h.api, h.state);
   } });
+  add('a later permission grant signals token registration without a new login', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: false }), false);
+    let registration;
+    const stop = api.subscribeNotificationPermissionChanges(() => {
+      registration = api.syncPushRegistration('synthetic-device', { requestPermission: false });
+    });
+    assert.equal(await api.requestPermission(), true);
+    await registration;
+    assert.equal(state.pushPosts.length, 1);
+    assert.equal(state.pushPosts[0].path, '/v1/devices/push-token');
+    assert.equal(state.pushPosts[0].body.deviceId, 'synthetic-device');
+    stop();
+  });
+  add('a token lookup cannot register a previous account device after a session fence changes', async (api, state) => {
+    let current = true;
+    state.tokenGate = deferred();
+    const registration = api.syncPushRegistration('old-device', { requestPermission: false, isCurrent: () => current });
+    await until(() => state.tokenReads === 1);
+    current = false;
+    state.tokenGate.resolve({ data: 'old-account-token' });
+    assert.equal(await registration, false);
+    assert.equal(state.pushPosts.length, 0);
+  });
+  add('snooze schedules at its selected deadline after the original dose time', async (api, state) => {
+    const original = dose('SNOOZED', -3);
+    const snoozedUntil = new Date(Date.now() + 5 * 60000).toISOString();
+    await api.rescheduleLocalNotifications([{ ...original, status: 'snoozed', snoozedUntil, scheduledTimezone: 'Asia/Riyadh' }], 'en');
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].trigger.date.toISOString(), snoozedUntil);
+    assert.equal(state.textInputs[0].time, new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Riyadh' }).format(new Date(snoozedUntil)));
+  });
+  add('a snooze and ordinary dose sharing the reminder deadline produce one grouped alert', async (api, state) => {
+    const upcoming = dose('REGULAR');
+    await api.rescheduleLocalNotifications([
+      upcoming, { ...dose('SNOOZED', -3), status: 'snoozed', snoozedUntil: upcoming.scheduledAt },
+    ], 'en');
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].content.categoryIdentifier, undefined);
+    assert.equal(state.active[0].content.data.doseIds.length, 2);
+  });
   add('foreground reminders show while signed in and are suppressed immediately after logout', async (api, state) => {
     await api.inspectCapability();
     const enabled = await state.foregroundHandler.handleNotification();

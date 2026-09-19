@@ -117,7 +117,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
-      await requireProfileAccess(tx, userId, profileId, 'update_stock');
+      const access = await requireProfileAccess(tx, userId, profileId, 'update_stock');
 
       const { rows: current } = await tx.query<{ remaining_quantity: string | null; tracking_enabled: boolean; unit: string }>(
         `SELECT remaining_quantity, tracking_enabled, unit::text AS unit
@@ -134,7 +134,12 @@ export function registerStockRoutes(app: FastifyInstance): void {
         ? body.remainingQuantity
         : Math.max(0, before + (body.delta ?? 0));
 
-      await tx.query('UPDATE medication_stock SET remaining_quantity = $2 WHERE medication_id = $1', [medicationId, after]);
+      await tx.query(
+        `UPDATE medication_stock SET remaining_quantity = $2,
+          low_stock_notified_at = CASE WHEN $2 > $3 THEN NULL ELSE low_stock_notified_at END
+          WHERE medication_id = $1`,
+        [medicationId, after, before],
+      );
       await tx.query(
         `INSERT INTO stock_transactions
            (medication_id, patient_profile_id, delta, reason, balance_after, note, actor_user_id)
@@ -143,6 +148,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
       );
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'stock.adjusted',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_stock', entityId: medicationId, requestId: req.id, ipHash: req.ipHash,
         previousValue: { remainingQuantity: before }, newValue: { remainingQuantity: after, reason: body.reason },
       });
@@ -159,7 +165,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
-      await requireProfileAccess(tx, userId, profileId, 'update_stock');
+      const access = await requireProfileAccess(tx, userId, profileId, 'update_stock');
 
       const { rows: current } = await tx.query<{ remaining_quantity: string | null; unit: string }>(
         `SELECT remaining_quantity, unit::text AS unit FROM medication_stock WHERE medication_id = $1 FOR UPDATE`,
@@ -205,6 +211,7 @@ export function registerStockRoutes(app: FastifyInstance): void {
       );
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'stock.refilled',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_stock', entityId: medicationId, requestId: req.id, ipHash: req.ipHash,
         previousValue: { remainingQuantity: before }, newValue: { remainingQuantity: after, quantityAdded: body.quantityAdded },
       });

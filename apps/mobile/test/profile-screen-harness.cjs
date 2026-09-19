@@ -103,12 +103,18 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       return () => { if (focusCleanups.delete(cleanup)) cleanup?.(); };
     }, [fn]) },
     '@/components/ui': hosts,
+    '@/security/PrivacyModal': { PrivacyModal: 'Modal' },
+    '@/security/AppLockContext': { useAppLock: () => ({ contentBlocked: false }) },
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
     '@/components/IncomingInvitations': hosts,
     '@/components/Picker': hosts,
+    '@/components/TimeField': hosts,
     '@/components/SnoozeSheet': hosts,
     '@/components/DoseNotesSheet': hosts,
+    '@/components/MedicationImageField': hosts,
+    '@/components/MedicationPhoto': hosts,
+    '@/components/DateField': hosts,
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
@@ -117,13 +123,15 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/storage/offline-queue': {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },
-      readQueue: async () => h.queued,
+      readQueue: async () => [...h.queued],
       enqueue: async (value) => { h.queued.push(value); },
       applyQueuedToCache: (value) => value,
+      subscribeQueueChanges: () => () => undefined,
       newClientEventId: () => `event-${h.requests.length}`,
     },
     '@/storage/emergency-qr': { readEmergencyQr: async () => null, saveEmergencyQr: async () => false },
     '@/privacy/share-patient-report': { sharePatientReport: async () => false },
+    '@/privacy/share-full-export': { shareFullExport: async () => false },
     '@/notifications': {
       captureLocalReminderContext: () => () => true,
       inspectCapability: async () => ({ supported: false }),
@@ -163,6 +171,18 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       exports, Date, Intl, console, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
       ...vmGlobals,
       require: (id) => {
+        if (id === '@/privacy/usePrivateOutputGuard') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/privacy/usePrivateOutputGuard.ts'));
+        }
+        if (id === './web-patient-report') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/privacy/web-patient-report.ts'));
+        }
+        if (id === '@/medication/upload-image') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/medication/upload-image.ts'));
+        }
+        if (id === '@/security/profile-permissions') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/security/profile-permissions.ts'));
+        }
         if (id === '@/hooks/useScreenRefresh') {
           modules[id] ??= evaluate(path.resolve(__dirname, '../src/hooks/useScreenRefresh.ts'));
         }
@@ -184,6 +204,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/medication-input.ts')),
     ...modules['@dawaee/shared'],
   };
+  Object.assign(modules['@/storage/offline-queue'], evaluate(path.resolve(__dirname, '../src/storage/dose-cache.ts')));
   modules['@/components/DoseUnitPicker'] ??= hosts;
   modules['@/security/phone-proof-errors'] ??= evaluate(path.resolve(__dirname, '../src/security/phone-proof-errors.ts'));
   modules['@/notifications/today-groups'] ??= evaluate(path.resolve(__dirname, '../src/notifications/today-groups.ts'));

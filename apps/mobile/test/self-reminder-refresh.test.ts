@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { cacheDose, applyQueuedToDoses } from '../src/storage/dose-cache.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /** Executes the real reminder coordinator with controlled network and OS I/O.
@@ -30,7 +31,8 @@ function harness() {
     } },
     '../api/client.js': { isSignedIn: () => stateRef.current.signedIn, api: { get: (_: string, query: any) =>
       new Promise((resolve, reject) => calls.push({ query, resolve, reject })) } },
-    '../storage/offline-queue.js': { cacheSchedule: async (data: any) => { cached.push(data); } },
+    '../storage/offline-queue.js': { cacheDose, applyQueuedToDoses, readQueue: async () => [],
+      cacheSchedule: async (data: any) => { cached.push(data); } },
     '../notifications/index.js': { captureLocalReminderContext: () => () => true,
       rescheduleLocalNotifications: async (doses: any, locale: any, prefs: any) => {
         scheduled.push({ doses, locale, prefs }); return { scheduled: doses.length, failed: 0 };

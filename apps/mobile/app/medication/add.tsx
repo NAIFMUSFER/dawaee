@@ -1,3 +1,4 @@
+import { hasProfilePermission } from '@/security/profile-permissions';
 import React from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
@@ -28,7 +29,7 @@ export default function AddMedicationScreen() {
   const theme = useTheme();
   const { activeProfile, preferences } = useApp();
   const arabic = preferences.locale === 'ar';
-  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canAdd = hasProfilePermission(activeProfile, 'add_medication');
 
   return (
     <SafeAreaView style={{ flex: 1 }}>

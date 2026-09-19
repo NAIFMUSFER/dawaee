@@ -1,3 +1,4 @@
+import { parseMedicationNumber } from '@dawaee/shared';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Platform, Pressable, Switch, View } from 'react-native';
 import { router } from 'expo-router';
@@ -165,7 +166,7 @@ export default function NotificationSettingsScreen() {
   };
 
   const saveCustomLowStock = () => {
-    const days = Number(customDays);
+    const days = parseMedicationNumber(customDays);
     if (!Number.isInteger(days) || days < 1 || days > 60) {
       setCustomError(t('error.validation_failed'));
       return;

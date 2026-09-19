@@ -3,8 +3,9 @@ import { ScrollView, Share, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  Badge, Banner, Button, Card, Divider, EmptyState, Field, Loading, Row, SafetyNote, SectionTitle, Txt,
+  Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, SafetyNote, SectionTitle, Txt,
 } from '@/components/ui';
+import { DateField } from '@/components/DateField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
@@ -55,8 +56,9 @@ interface ClinicianReport {
     audience: 'clinician';
   };
   summary: ReportSummary;
-  medications: Array<{ name: string; strength: string | null; form: string; summary: ReportSummary }>;
+  medications: Array<{ medicationId: string; name: string; strength: string | null; form: string; summary: ReportSummary }>;
   doses: Array<{
+    medicationId: string;
     medicationName: string;
     scheduledDate: string;
     scheduledTime: string;
@@ -121,7 +123,7 @@ function ClinicianReportProfileScreen() {
     try {
       // The report payload carries strength and form but not the schedule, so
       // the current schedules come from the medication list and are matched by
-      // name — the same name the report itself prints.
+      // stable identity; equal names can have different strengths and schedules.
       const [reportRes, medRes] = await Promise.all([
         api.get<ClinicianReport>('/v1/reports/clinician', { profileId: activeProfile.id, from, to }),
         api.get<{ medications: MedicationView[] }>('/v1/medications', { profileId: activeProfile.id }),
@@ -163,8 +165,8 @@ function ClinicianReportProfileScreen() {
     [formatTime],
   );
 
-  const scheduleText = useCallback((medicationName: string): string => {
-    const match = medications.find((medication) => medication.name === medicationName);
+  const scheduleText = useCallback((medicationId: string): string => {
+    const match = medications.find((medication) => medication.id === medicationId);
     const schedules = match?.schedules.filter((schedule) => schedule.active) ?? [];
     if (schedules.length === 0) return t('schedule.noSchedule');
     return schedules.map((schedule) => describeRule(schedule.rule)).join(' · ');
@@ -204,7 +206,7 @@ function ClinicianReportProfileScreen() {
       '',
       t('reports.medications'),
       ...report.medications.map((medication) =>
-        `- ${[medication.name, medication.strength, t(`form.${medication.form}` as MessageKey)].filter(Boolean).join(' ')} — ${scheduleText(medication.name)}`),
+        `- ${[medication.name, medication.strength, t(`form.${medication.form}` as MessageKey)].filter(Boolean).join(' ')} — ${scheduleText(medication.medicationId)}`),
       '',
       t('reports.confirmationHistory'),
       ...report.doses.map((dose) => [
@@ -258,21 +260,17 @@ function ClinicianReportProfileScreen() {
 
         <Card style={{ gap: theme.spacing.md }}>
           <Txt variant="bodySmall" color={theme.colors.ink500}>{t('reports.doctorDescription')}</Txt>
-          <Field
+          <DateField
             label={t('reports.from')}
             value={from}
-            onChangeText={setFrom}
+            onChange={setFrom}
             hint={t('reports.dateHint')}
-            maxLength={10}
-            keyboardType="number-pad"
           />
-          <Field
+          <DateField
             label={t('reports.to')}
             value={to}
-            onChangeText={setTo}
+            onChange={setTo}
             hint={t('reports.dateHint')}
-            maxLength={10}
-            keyboardType="number-pad"
             error={rangeError}
           />
           <Row wrap gap={theme.spacing.sm}>
@@ -329,7 +327,7 @@ function ClinicianReportProfileScreen() {
                   <Txt variant="bodySmall" color={theme.colors.ink700}>
                     {[medication.strength, t(`form.${medication.form}` as MessageKey)].filter(Boolean).join(' · ')}
                   </Txt>
-                  <Txt variant="bodySmall" color={theme.colors.ink500}>{scheduleText(medication.name)}</Txt>
+                  <Txt variant="bodySmall" color={theme.colors.ink500}>{scheduleText(medication.medicationId)}</Txt>
                 </Card>
               ))
             )}

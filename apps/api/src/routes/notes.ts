@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import type { FastifyInstance } from 'fastify';
 import { AppError, MEASUREMENT_TYPES, createMeasurementSchema, createSymptomNoteSchema } from '@dawaee/shared';
-import { optionalDate, requireEnum, requireUuid } from '../lib/params.js';
+import { optionalDate, requireEnum, requireRoutedUuid, requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { requireProfileAccess, requireProfileOwner } from '../services/access-service.js';
@@ -22,14 +22,19 @@ export function registerNoteRoutes(app: FastifyInstance): void {
   });
 
   app.get('/v1/notes', async (req) => {
-    const q = req.query as { profileId?: string; from?: string; to?: string; doseOccurrenceId?: string };
+    const q = req.query as { profileId?: string; from?: string; to?: string; doseOccurrenceId?: string; own?: string };
     const profileId = requireUuid(q.profileId, 'profileId');
-    const doseId = q.doseOccurrenceId === undefined ? null : requireUuid(q.doseOccurrenceId, 'doseOccurrenceId');
+    const doseId = q.doseOccurrenceId === undefined && req.headers['x-dawaee-dose-id'] === undefined
+      ? null : requireRoutedUuid(q.doseOccurrenceId, req.headers, 'x-dawaee-dose-id', 'doseOccurrenceId');
+    if (q.own !== undefined && q.own !== 'true' && q.own !== 'false') {
+      throw AppError.badRequest('validation_failed', 'own must be true or false');
+    }
+    const ownOnly = q.own === 'true';
     const from = optionalDate(q.from, 'from');
     const to = optionalDate(q.to, 'to');
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
-      const access = await requireProfileAccess(tx, userId, profileId, 'view_history');
+      const access = await requireProfileAccess(tx, userId, profileId, ownOnly ? 'confirm_dose' : 'view_history');
       if (doseId) await requireOwnDose(tx, profileId, doseId);
       const { rows } = await tx.query(
         `SELECT n.id, n.tags, n.text, n.recorded_at, n.dose_occurrence_id, m.name AS medication_name
@@ -40,10 +45,12 @@ export function registerNoteRoutes(app: FastifyInstance): void {
             AND ($2::date IS NULL OR n.recorded_at >= ($2::date::timestamp AT TIME ZONE $5))
             AND ($3::date IS NULL OR n.recorded_at < (($3::date + 1)::timestamp AT TIME ZONE $5))
             AND ($4::uuid IS NULL OR n.dose_occurrence_id = $4)
+            AND ($6::uuid IS NULL OR n.created_by = $6)
           ORDER BY n.recorded_at DESC LIMIT 300`,
-        [profileId, from, to, doseId, access.profileTimezone],
+        [profileId, from, to, doseId, access.profileTimezone, ownOnly ? userId : null],
       );
       return {
+        ownOnly,
         notes: rows.map((r) => ({
           id: r.id, tags: r.tags, text: r.text, recordedAt: r.recorded_at,
           doseOccurrenceId: r.dose_occurrence_id, medicationName: r.medication_name,

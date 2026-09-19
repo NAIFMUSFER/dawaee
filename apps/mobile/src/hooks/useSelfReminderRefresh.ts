@@ -4,7 +4,7 @@ import { subscribeClinicalChanges } from '../api/clinical-changes.js';
 import { api, isSignedIn } from '../api/client.js';
 import type { TodayResponse } from '../api/types.js';
 import type { AppState } from '../state/app-store.js';
-import { cacheSchedule } from '../storage/offline-queue.js';
+import { cacheSchedule, cacheDose, readQueue, applyQueuedToDoses } from '../storage/offline-queue.js';
 import { captureLocalReminderContext, rescheduleLocalNotifications } from '../notifications/index.js';
 
 export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObject<AppState>,
@@ -28,16 +28,15 @@ export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObje
       try {
         const res = await api.get<TodayResponse>('/v1/today', { profileId: self.id });
         if (!current()) return;
-        const doses = [...res.today, ...res.prefetch];
+        const queued = await readQueue();
+        if (!current()) return;
+        const doses = applyQueuedToDoses([...res.today, ...res.prefetch], queued);
         await cacheSchedule({ profileId: self.id, cachedAt: new Date().toISOString(), timezone: res.timezone,
-          doses: doses.map(d => ({ id: d.id, scheduledAt: d.scheduledAt,
-            scheduledLocalTime: d.scheduledLocalTime, scheduledLocalDate: d.scheduledLocalDate,
-            medicationName: d.medication.name, doseQuantity: d.doseQuantity, doseUnit: d.doseUnit,
-            foodInstruction: d.medication.foodInstruction, status: d.status })) });
+          doses: [...res.today, ...res.prefetch].map(cacheDose) });
         if (!current()) return;
         const prefs = stateRef.current.preferences;
         const signature = JSON.stringify([self.id, prefs.locale, prefs.voiceRemindersEnabled,
-          prefs.showMedicationInNotifications, doses.map(d => [d.id, d.scheduledAt,
+          prefs.showMedicationInNotifications, doses.map(d => [d.id, d.scheduledAt, d.snoozedUntil,
             ['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(d.status),
             d.medication.name, d.medication.foodInstruction, d.doseQuantity, d.doseUnit])]);
         if (signature === lastSchedule) return;

@@ -78,7 +78,8 @@ export async function attemptPasswordLogin(
    * The failure is still recorded while locked. Skipping it would hand an
    * attacker a free guessing window: no counter moves during the lock, so they
    * could spend fifteen minutes guessing and watch for the response to change.
-   * Recording pushes `locked_until` further out on every wrong guess instead.
+   * The database keeps the original lock deadline; wrong guesses cannot extend
+   * another user's lock indefinitely.
    */
   if (row.locked_until && row.locked_until.getTime() > Date.now()) {
     const correct = await verifyPassword(password, row.password_hash);
@@ -94,14 +95,12 @@ export async function attemptPasswordLogin(
   const ok = await verifyPassword(password, row.password_hash);
 
   if (!ok) {
-    const { rows: lockRows } = await tx.query<{ record_login_failure: Date | null }>(
+    await tx.query(
       'SELECT app.record_login_failure($1,$2,$3) AS record_login_failure',
       [row.user_id, MAX_LOGIN_ATTEMPTS, LOCK_MINUTES],
     );
-    const lockedUntil = lockRows[0]?.record_login_failure ?? null;
-    if (lockedUntil && lockedUntil.getTime() > Date.now()) {
-      return { outcome: 'locked', until: lockedUntil };
-    }
+    // The attempt that starts a lock must be indistinguishable from every
+    // other incorrect password. Only a correct password may reveal a lock.
     return { outcome: 'invalid' };
   }
 

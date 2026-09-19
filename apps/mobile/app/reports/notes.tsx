@@ -1,3 +1,4 @@
+import { parseMedicationNumber } from '@dawaee/shared';
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
@@ -57,7 +58,7 @@ interface MeasurementRow {
 }
 
 function parseNumber(raw: string): number | null {
-  const value = Number(raw.trim().replace(',', '.'));
+  const value = parseMedicationNumber(raw);
   return raw.trim().length > 0 && Number.isFinite(value) ? value : null;
 }
 

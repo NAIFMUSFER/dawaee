@@ -82,12 +82,13 @@ function EmergencyQrView() {
     setLoading(true);
     setLoaded(false);
     setError(null);
+    const savedRead = user ? readEmergencyQr(user.id, activeProfile.id).catch(() => null) : Promise.resolve(null);
     try {
       const res = await api.get<{ card: EmergencyCardState | null }>('/v1/emergency/card', {
         profileId: activeProfile.id,
       });
       if (!current()) return;
-      const saved = user ? await readEmergencyQr(user.id, activeProfile.id) : null;
+      const saved = await savedRead;
       if (!current()) return;
       if (saved && res.card?.qrEnabled && saved.rotatedAt === res.card.qrRotatedAt) {
         setQrUrl(saved.url); setSavedOnDevice(true);
@@ -100,7 +101,12 @@ function EmergencyQrView() {
       setOffline(false);
     } catch (err) {
       if (!current()) return;
-      if (err instanceof NetworkError) setOffline(true);
+      if (err instanceof NetworkError) {
+        const saved = await savedRead;
+        if (!current()) return;
+        if (saved) { setQrUrl(saved.url); setSavedOnDevice(true); }
+        setOffline(true);
+      }
       else if (err instanceof ApiError) setError(apiErrorText(err));
       else setError(t('error.internal_error'));
     } finally {
@@ -277,6 +283,7 @@ function EmergencyQrView() {
             </Text>
 
             <Button label={t('emergency.qrCopy')} tone="secondary" onPress={copyLink} />
+            {offline ? <Txt variant="bodySmall" color={theme.colors.ink500}>{t('emergency.qrOfflineCopy')}</Txt> : null}
             {copied ? <Txt variant="bodySmall" color={theme.colors.success700}>{t('emergency.qrCopied')}</Txt> : null}
             <Txt variant="caption" color={theme.colors.ink500}>{t(savedOnDevice ? 'emergency.qrSavedOnDevice' : 'emergency.qrTokenOnce')}</Txt>
           </Card>

@@ -6,6 +6,20 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require(process.env.TYPESCRIPT_PATH || 'typescript');
+// Evaluate pure production policy/event modules; only native and storage I/O are stubs.
+function pureProviderModules() {
+ const modules = {};
+ for (const [id, path] of Object.entries({
+  '../api/access-changes.js': '../src/api/access-changes.ts',
+  '../api/clinical-changes.js': '../src/api/clinical-changes.ts',
+  '../security/profile-permissions.js': '../src/security/profile-permissions.ts',
+ })) {
+  const output = ts.transpileModule(fs.readFileSync(require('node:path').resolve(__dirname, path), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  modules[id] = {}; vm.runInNewContext(output, { exports: modules[id] });
+ }
+ return modules;
+}
+
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return { promise,resolve,reject }; }
 async function flush() { for(let i=0;i<100;i++) await Promise.resolve(); }
 async function until(p) { for(let i=0;i<300&&!p();i++) await Promise.resolve(); assert.ok(p(), 'controlled boundary not reached'); }
@@ -25,7 +39,7 @@ function harness(file) {
  const request=(method,route,payload)=>{const r={method,route,payload,account:h.account,done:false,...deferred()};h.requests.push(r);
   if(method==='DELETE'||method==='POST'||method==='PATCH')Promise.resolve().then(()=>h.remote(r)).then(v=>{r.done=true;r.resolve(v);},r.reject);
   return r.promise;};
- const imports={react:hooks,'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+ const imports={...pureProviderModules(), 'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },react:hooks,'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
   'expo-localization':{getLocales:()=>[{languageCode:'en'}]},
   '../api/client.js':{api:{get:r=>request('GET',r),post:(r,p)=>request('POST',r,p),delete:r=>request('DELETE',r),patch:(r,p)=>request('PATCH',r,p)},
    NetworkError:class NetworkError extends Error{},isSignedIn:()=>h.account!==null,
@@ -34,7 +48,7 @@ function harness(file) {
    clearSession:async()=>{h.events.push(['clear',h.account]);h.account=null;await h.clear();}},
   '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js':{getRestoredSessionUserId:async()=>h.account},
-  '../storage/offline-queue.js':{setCacheOwner:id=>{h.owner=id;h.events.push(['owner',id]);},purgeLocalCaches:id=>{h.events.push(['purge',id]);return h.purge(id);},queueSize:async()=>0,flushQueue:async()=>{h.flushCalls++;return{offline:true};},readOfflineBootstrap:async()=>null,writeOfflineBootstrap:async()=>true},
+  '../storage/offline-queue.js':{subscribeQueueChanges:()=>()=>undefined,invalidateCachedProfile:async()=>undefined,restoreCachedProfiles:()=>undefined,setCacheOwner:id=>{h.owner=id;h.events.push(['owner',id]);},purgeLocalCaches:id=>{h.events.push(['purge',id]);return h.purge(id);},queueSize:async()=>0,flushQueue:async()=>{h.flushCalls++;return{offline:true};},readOfflineBootstrap:async()=>null,writeOfflineBootstrap:async()=>true},
   '../storage/notification-privacy-intent.js':{acknowledgePrivacyHide:async()=>undefined,cancelPrivacyHidePending:async()=>undefined,markPrivacyHidePending:async()=>'synthetic-privacy-intent',privacyHidePendingCount:async()=>0,purgePrivacyHideIntents:async()=>undefined,readPrivacyHideIntent:async()=>({kind:'none'})},
   '../storage/cache-key.js':{destroyCacheKey:id=>{h.events.push(['destroy',id]);return h.destroy(id);}},
   '../notifications/index.js':{cancelAllLocalNotifications:()=>{h.events.push(['cancel']);return h.cancel();},rebuildRemindersFromCache:async()=>{}},
@@ -42,7 +56,7 @@ function harness(file) {
  };
  const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{fileName:file,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
  const exports={};class Clock extends Date{static now(){return ++h.clock;}}
- vm.runInNewContext(code,{exports,Date:Clock,console,require:id=>{if(!(id in imports))throw Error(`unmocked import ${id}`);return imports[id];}},{filename:file});
+ vm.runInNewContext(code,{exports,Date:Clock,console,setInterval:()=>1,clearInterval:()=>undefined,require:id=>{if(!(id in imports))throw Error(`unmocked import ${id}`);return imports[id];}},{filename:file});
  let value;h.render=()=>{cursor=0;value=exports.AppProvider({children:null}).props.value;return value;};h.actions=()=>value;h.state=()=>slots[0];
  h.pending=route=>h.requests.filter(r=>r.method==='GET'&&r.route===route&&!r.done);
  h.reply=(r,b)=>{assert.ok(r,'pending request');r.done=true;r.resolve(b);};

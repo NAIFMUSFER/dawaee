@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { Banner, Button, Card, Field, Loading, Txt } from '@/components/ui';
 import { useTheme } from '@/hooks/useTheme';
 import { useI18n } from '@/i18n';
@@ -16,26 +17,27 @@ export interface DoseNotesProps {
  * or health identifier is placed in URLs, logs or unencrypted local storage. */
 export function DoseNotesSheet({ profileId, dose, canWrite, canRead, onClose }: DoseNotesProps) {
   const theme = useTheme();
-  const { t, formatDate, formatTime } = useI18n();
+  const { t, locale, formatDate, formatTime } = useI18n();
+  const showNotes = canRead || canWrite;
   const { capture, begin } = useRequestScope(`${profileId}:${dose.id}:${canWrite}:${canRead}`);
   const [text, setText] = useState('');
   const [notes, setNotes] = useState<DoseNote[]>([]);
-  const [loading, setLoading] = useState(canRead);
+  const [loading, setLoading] = useState(showNotes);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const locked = useRef(false);
   const load = useCallback(async () => {
-    if (!canRead) return;
+    if (!showNotes) return;
     const current = begin();
     setLoading(true); setLoadError(false);
     try {
-      const result = await api.get<{ notes: DoseNote[] }>('/v1/notes', { profileId, doseOccurrenceId: dose.id });
+      const result = await api.get<{ notes: DoseNote[] }>('/v1/notes', { profileId, doseOccurrenceId: dose.id, ...(!canRead ? { own: 'true' } : {}) });
       if (current()) setNotes(result.notes);
     } catch { if (current()) setLoadError(true); }
     finally { if (current()) setLoading(false); }
-  }, [begin, canRead, profileId, dose.id]);
+  }, [begin, showNotes, canRead, profileId, dose.id]);
   useEffect(() => { void load(); }, [load]);
   const save = async () => {
     const value = text.trim();
@@ -64,13 +66,14 @@ export function DoseNotesSheet({ profileId, dose, canWrite, canRead, onClose }: 
           {saved ? <Banner tone="success" title={t('notes.saved')} /> : null}
           <Button label={t('notes.save')} onPress={() => void save()} loading={busy} disabled={!text.trim() || busy} />
         </View> : null}
-        {canRead && loading ? <Loading /> : null}
-        {canRead && loadError ? <Banner tone="warning" title={t('notes.loadFailed')} action={<Button label={t('common.retry')} onPress={() => void load()} />} /> : null}
-        {canRead && !loading && !loadError && notes.length === 0 ? <Txt>{t('notes.empty')}</Txt> : null}
-        {canRead ? notes.map(note => <Card key={note.id}>
+        {!canRead && canWrite ? <Txt>{locale === 'ar' ? 'تظهر هنا الملاحظات التي كتبتها أنت فقط.' : 'Only notes you wrote are shown here.'}</Txt> : null}
+        {showNotes && loading ? <Loading /> : null}
+        {showNotes && loadError ? <Banner tone="warning" title={t('notes.loadFailed')} action={<Button label={t('common.retry')} onPress={() => void load()} />} /> : null}
+        {showNotes && !loading && !loadError && notes.length === 0 ? <Txt>{t('notes.empty')}</Txt> : null}
+        {showNotes ? notes.map(note => <Card key={note.id}>
           <Txt>{note.text}</Txt>
           {note.tags.length ? <Txt>{note.tags.map(tag => t(`symptom.${tag}` as never)).join('، ')}</Txt> : null}
-          <Txt variant="caption">{formatDate(note.recordedAt)} · {formatTime(note.recordedAt)}</Txt>
+          <Txt variant="caption">{formatDate(note.recordedAt, dose.scheduledTimezone)} · {formatTime(note.recordedAt, dose.scheduledTimezone)}</Txt>
         </Card>) : null}
         <Button label={t('common.close')} tone="ghost" disabled={busy} onPress={() => { if (!locked.current) onClose(); }} />
       </ScrollView>

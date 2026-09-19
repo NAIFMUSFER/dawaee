@@ -1,9 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useSyncExternalStore } from 'react';
 import { Linking, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Loading } from '@/components/ui';
 import { stashPendingInvite } from '@/storage/pending-invite';
+import { clearNativeInviteSelection, getNativeInviteSelection, subscribeNativeInvite } from '@/navigation/native-invite';
+
+let handoffTail: Promise<void> = Promise.resolve();
 
 /**
  * Read the caregiver invitation bearer from a URL fragment and erase it from
@@ -37,15 +40,24 @@ async function consumeInviteCapability(): Promise<string | null> {
 }
 
 export default function InviteCapabilityEntry() {
+  const selected = useSyncExternalStore(subscribeNativeInvite, getNativeInviteSelection, () => null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const token = await consumeInviteCapability();
-      if (token) await stashPendingInvite(token);
-      if (!cancelled) router.replace('/caregiver/accept');
+      const token = selected?.token ?? await consumeInviteCapability();
+      if (cancelled) return;
+      const work = handoffTail.then(async () => {
+        if (cancelled) return;
+        if (token) await stashPendingInvite(token);
+        if (!cancelled) {
+          router.replace('/caregiver/accept');
+        }
+      });
+      handoffTail = work.catch(() => undefined);
+      await work;
     })();
-    return () => { cancelled = true; };
-  }, []);
+    return () => { cancelled = true; if (selected) clearNativeInviteSelection(selected); };
+  }, [selected]);
 
   return (
     <SafeAreaView style={{ flex: 1 }}>

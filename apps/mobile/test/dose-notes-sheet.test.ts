@@ -27,14 +27,14 @@ describe('dose note entry',()=>{
     expect(h.text()).toContain('ملاحظة لهذه الجرعة');
   });
   it('keeps a failed save draft and disallows empty notes',async()=>{
-    const h=sheet(true,false);h.find('Button',(p:any)=>p.label==='notes.save').onPress();expect(h.requests).toHaveLength(0);
+    const h=sheet(true,false);h.requests[0].resolve({notes:[],ownOnly:true});await h.flush();h.find('Button',(p:any)=>p.label==='notes.save').onPress();expect(h.requests).toHaveLength(1);
     h.find('Field').onChangeText('Keep my draft');await h.flush();h.find('Button',(p:any)=>p.label==='notes.save').onPress();await h.flush();
-    h.requests[0].reject(new Error('offline'));await h.flush();
+    h.requests[1].reject(new Error('offline'));await h.flush();
     expect(h.find('Field').value).toBe('Keep my draft'); expect(h.text()).toContain('notes.failed');
   });
   it('honors read and write permissions separately',()=>{
     const readOnly=sheet(false,true);expect(readOnly.find('Field')).toBeNull();expect(readOnly.find('Button',(p:any)=>p.label==='notes.save')).toBeNull();
-    const writeOnly=sheet(true,false);expect(writeOnly.requests).toHaveLength(0);
+    const writeOnly=sheet(true,false);expect(writeOnly.requests).toHaveLength(1);expect(writeOnly.requests[0].payload).toEqual({profileId:'patient-A',doseOccurrenceId:'dose-A',own:'true'});
   });
   it('does not apply a previous dose response after the sheet closes',async()=>{
     const h=sheet();h.unmount();h.requests[0].resolve({notes:[{id:'private',text:'PRIVATE-OLD-NOTE',tags:[],recordedAt:''}]});await h.flush();

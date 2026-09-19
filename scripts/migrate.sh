@@ -257,6 +257,9 @@ DROP SCHEMA IF EXISTS app CASCADE;
 DROP SCHEMA IF EXISTS public CASCADE;
 CREATE SCHEMA public;
 SQL
+  # Clearing app also removed the helper installed above. Recreate it before
+  # numbered migrations need it (0030 asserts this deployment prerequisite).
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$ROOT/db/maintenance/definer_policies.sql"
 fi
 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q <<'SQL'

@@ -46,7 +46,7 @@ export async function housekeepingJob(
 
   await runStep(ctx, client, outcome, 'deliveries', async () => (await client.query(
     `DELETE FROM notification_deliveries
-      WHERE created_at < now() - interval '90 days' AND status IN ('sent','delivered','read','skipped')`,
+      WHERE created_at < now() - interval '90 days' AND status IN ('sent','delivered','read','skipped','failed','expired')`,
   )).rowCount ?? 0);
 
   // Rate-limit windows are minutes long; a day is already generous.

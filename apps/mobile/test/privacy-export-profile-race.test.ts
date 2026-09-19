@@ -38,7 +38,7 @@ describe('privacy data export profile isolation', () => {
     });
 
     try {
-      const exportButton = h.find('Button', (props: any) => props.label === 'settings.exportData');
+      const exportButton = h.find('Button', (props: any) => props.label === 'privacy.reportTitle');
       expect(exportButton).toBeTruthy();
       exportButton.onPress();
       await h.flush();

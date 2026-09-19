@@ -45,6 +45,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
   const view = viewOf(occ, now, thresholds);
   return {
     id: row.id,
+    patientProfileId: row.patient_profile_id,
     medicationId: row.medication_id,
     scheduleId: row.schedule_id,
     scheduledAt: occ.scheduledAt,
@@ -218,9 +219,10 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return snoozeDose(tx, {
         doseId, userId, minutes: body.minutes, clientEventId: body.clientEventId,
+        actionAt: body.actionAt, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -232,9 +234,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return skipDoseAction(tx, {
         doseId, userId, reason: body.reason, clientEventId: body.clientEventId,
+        actionAt: body.actionAt,
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -245,8 +249,8 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
-      return undoDose(tx, { doseId, userId, ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      return undoDose(tx, { doseId, userId, actorRole: access.role === 'owner' ? 'patient' : 'caregiver', ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
     });
   });
 
@@ -261,11 +265,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const body = syncDoseActionsSchema.parse(req.body);
     const { userId } = currentUser(req);
     const now = serverNow();
-    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean }> = [];
+    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean; snoozedUntil?: string | null; snoozeCount?: number }> = [];
 
     for (const action of body.actions) {
       try {
-        const outcome = await withUser(userId, async (tx) => {
+        const outcome: { status: string; idempotentReplay: boolean; snoozedUntil?: string | null; snoozeCount?: number } = await withUser(userId, async (tx) => {
           const profileId = await profileIdForDose(tx, action.doseOccurrenceId);
           const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
           if (action.type === 'taken') {
@@ -273,18 +277,21 @@ export function registerDoseRoutes(app: FastifyInstance): void {
               doseId: action.doseOccurrenceId, userId,
               actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, takenAt: action.at,
-              method: 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
+              method: access.role === 'caregiver' ? 'caregiver' : 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
             });
           }
           if (action.type === 'skipped') {
             return skipDoseAction(tx, {
               doseId: action.doseOccurrenceId, userId, reason: action.reason,
+              actionAt: action.at,
+              actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, deviceId: body.deviceId, now,
               requestId: req.id, ipHash: req.ipHash,
             });
           }
           return snoozeDose(tx, {
             doseId: action.doseOccurrenceId, userId, minutes: action.minutes,
+            actionAt: action.at, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
             clientEventId: action.clientEventId, deviceId: body.deviceId, now,
             requestId: req.id, ipHash: req.ipHash,
           });
@@ -294,6 +301,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
           ok: true,
           status: 'status' in outcome ? String(outcome.status) : 'snoozed',
           replay: 'idempotentReplay' in outcome ? outcome.idempotentReplay : false,
+          ...(outcome.snoozedUntil !== undefined ? { snoozedUntil: outcome.snoozedUntil, snoozeCount: outcome.snoozeCount } : {}),
         });
       } catch (err) {
         results.push({

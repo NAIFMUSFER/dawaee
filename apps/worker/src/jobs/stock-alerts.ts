@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { dosesPerDay, localDateInZone } from '@dawaee/core';
+import { dosesPerDay } from '@dawaee/core';
 import { t, type Locale } from '@dawaee/shared';
 import type { WorkerContext } from '../context.js';
 
@@ -17,7 +17,7 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
   const { rows } = await client.query(
     `SELECT m.id AS medication_id, m.name, m.patient_profile_id, m.expiry_date,
             st.remaining_quantity, st.unit::text AS unit, st.low_stock_threshold_days,
-            st.low_stock_notified_at,
+            st.low_stock_notified_at, st.updated_at::text AS stock_revision,
             pp.timezone, pp.display_name AS profile_name,
             COALESCE(pp.linked_user_id, pp.owner_user_id) AS patient_user_id,
             COALESCE(up.low_stock_threshold_days, 7) AS default_threshold,
@@ -31,7 +31,8 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
       WHERE m.status = 'active'
         AND st.tracking_enabled
         AND st.remaining_quantity IS NOT NULL
-        AND (st.low_stock_notified_at IS NULL OR st.low_stock_notified_at < now() - interval '3 days')`,
+        AND st.low_stock_notified_at IS NULL
+      FOR UPDATE OF st`,
   );
 
   for (const row of rows) {
@@ -73,15 +74,16 @@ export async function stockAlertJob(ctx: WorkerContext, client: PoolClient): Pro
         t(locale, 'stock.lowTitle'),
         body,
         JSON.stringify(payload),
-        // One alert per medication per local day, whatever the tick rate.
-        `stock:${row.medication_id}:${localDateInZone(now, row.timezone)}`,
+        // A refill/adjustment rearms the condition even within the same day.
+        // The locked stock revision stays stable until this enqueue commits.
+        `stock:${row.medication_id}:${row.stock_revision}`,
         now,
       ],
     );
     if (inserted.rowCount) {
       enqueued += 1;
-      await client.query('UPDATE medication_stock SET low_stock_notified_at = now() WHERE medication_id = $1', [
-        row.medication_id,
+      await client.query('UPDATE medication_stock SET low_stock_notified_at = $2 WHERE medication_id = $1', [
+        row.medication_id, now,
       ]);
     }
   }
