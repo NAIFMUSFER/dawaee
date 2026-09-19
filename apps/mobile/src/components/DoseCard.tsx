@@ -6,6 +6,7 @@ import { useI18n } from '../i18n/index.js';
 import { statusColors } from '../theme/index.js';
 import type { DoseView } from '../api/types.js';
 import { canUndo } from '@dawaee/core';
+import { MedicationPhoto } from './MedicationPhoto.js';
 
 export function DoseCard({
   dose, prominent = false, onTaken, onSnooze, onSkip, onUndo, onPress, onNote, busy,
@@ -64,6 +65,7 @@ export function DoseCard({
           </Txt>
         </Row>
 
+        <MedicationPhoto imageKey={dose.medication.imageKey} name={dose.medication.name} prominent />
         <View
           accessible
           accessibilityLabel={a11yLabel}
@@ -122,6 +124,7 @@ export function DoseCard({
     <Card style={{ paddingVertical: theme.spacing.md }}>
       <Pressable onPress={onPress} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={a11yLabel}>
       <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
+        <MedicationPhoto imageKey={dose.medication.imageKey} name={dose.medication.name} />
         <View style={{ flex: 1, gap: 2 }}>
           <Txt variant="bodyLarge" weight="bold" numberOfLines={1}>{dose.medication.name}</Txt>
           <Txt variant="bodySmall" color={theme.colors.ink500}>

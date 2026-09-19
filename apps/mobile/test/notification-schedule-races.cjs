@@ -21,9 +21,10 @@ function dose(id, minutes = 30) {
 function loadModule(file, platform = 'ios') {
   const state = {
     active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
-    notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0,
+    notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
   };
   const native = {
+    setNotificationHandler: handler => { state.foregroundHandler = handler; },
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
     getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
@@ -51,7 +52,7 @@ function loadModule(file, platform = 'ios') {
       canScheduleExactAlarms: () => { state.exactAlarmChecks++; return state.exactAlarmsAllowed; },
       withExactAlarmScheduleMutation: (operation) => operation(),
     },
-    '../api/client.js': { api: {} },
+    '../api/client.js': { api: {}, isSignedIn: () => state.signedIn },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
     './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
     'expo-notifications': native,
@@ -80,6 +81,18 @@ function scenarios(file) {
   const add = (name, run, platform) => cases.push({ name, run: async () => {
     const h = loadModule(file, platform); await run(h.api, h.state);
   } });
+  add('foreground reminders show while signed in and are suppressed immediately after logout', async (api, state) => {
+    await api.inspectCapability();
+    const enabled = await state.foregroundHandler.handleNotification();
+    assert.equal(enabled.shouldShowBanner, true);
+    assert.equal(enabled.shouldShowList, true);
+    assert.equal(enabled.shouldPlaySound, true);
+    state.signedIn = false;
+    const disabled = await state.foregroundHandler.handleNotification();
+    assert.equal(disabled.shouldShowBanner, false);
+    assert.equal(disabled.shouldShowList, false);
+    assert.equal(disabled.shouldPlaySound, false);
+  });
   add('current schedule still creates one future single-dose action', async (api, state) => {
     const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
     assert.equal(result.scheduled, 1); assert.equal(result.failed, 0); assert.equal(state.active.length, 1);

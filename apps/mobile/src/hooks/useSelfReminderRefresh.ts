@@ -12,6 +12,8 @@ export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObje
   useEffect(() => {
     let disposed = false;
     let revision = 0;
+    let inFlight = 0;
+    let lastSchedule: string | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       const snapshot = stateRef.current;
@@ -22,6 +24,7 @@ export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObje
       const remindersCurrent = captureLocalReminderContext();
       const current = () => !disposed && mounted.current && attempt === revision
         && generation === sessionGeneration.current && isSignedIn() && remindersCurrent();
+      inFlight++;
       try {
         const res = await api.get<TodayResponse>('/v1/today', { profileId: self.id });
         if (!current()) return;
@@ -33,10 +36,17 @@ export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObje
             foodInstruction: d.medication.foodInstruction, status: d.status })) });
         if (!current()) return;
         const prefs = stateRef.current.preferences;
-        await rescheduleLocalNotifications(doses, prefs.locale, {
+        const signature = JSON.stringify([self.id, prefs.locale, prefs.voiceRemindersEnabled,
+          prefs.showMedicationInNotifications, doses.map(d => [d.id, d.scheduledAt,
+            ['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(d.status),
+            d.medication.name, d.medication.foodInstruction, d.doseQuantity, d.doseUnit])]);
+        if (signature === lastSchedule) return;
+        const scheduled = await rescheduleLocalNotifications(doses, prefs.locale, {
           voiceEnabled: prefs.voiceRemindersEnabled, showMedication: prefs.showMedicationInNotifications,
         });
-      } catch { /* Preserve existing reminders offline; foreground/focus retries. */ }
+        if (scheduled.failed === 0 && !disposed && attempt === revision) lastSchedule = signature;
+      } catch { /* Preserve existing reminders offline; foreground/poll retries. */ }
+      finally { inFlight--; }
     };
     const invalidate = () => {
       revision++;
@@ -44,9 +54,16 @@ export function useSelfReminderRefresh(state: AppState, stateRef: MutableRefObje
       timer = setTimeout(() => { void refresh(); }, 100);
     };
     const unsubscribe = subscribeClinicalChanges(invalidate);
-    const sub = NativeAppState.addEventListener('change', state => { if (state === 'active') invalidate(); });
+    const sub = NativeAppState.addEventListener('change', state => {
+      if (state === 'active') { lastSchedule = undefined; invalidate(); }
+    });
+    // Web/caregiver writes do not emit this device's clinical-change event.
+    // Refresh the owner's schedule even while another screen/profile is open.
+    const poll = setInterval(() => {
+      if (NativeAppState.currentState === 'active' && inFlight === 0) void refresh();
+    }, 30_000);
     invalidate();
-    return () => { disposed = true; revision++; if (timer) clearTimeout(timer); unsubscribe(); sub.remove(); };
+    return () => { disposed = true; revision++; if (timer) clearTimeout(timer); clearInterval(poll); unsubscribe(); sub.remove(); };
   }, [state.user?.id, state.signedIn, state.user?.emailVerificationRequired, state.profiles.some(p => p.isSelf)]);
 
 }

@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { api } from '../api/client.js';
+import { api, isSignedIn } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
@@ -47,6 +47,13 @@ async function load(): Promise<NotificationsModule | null> {
   }
   try {
     cached = (await import('expo-notifications')) as NotificationsModule;
+    // Expo suppresses foreground presentation unless a handler opts in. Read
+    // auth at delivery time to suppress foreground presentation after logout.
+    cached.setNotificationHandler?.({ handleNotification: async () => {
+      const present = isSignedIn();
+      return { shouldShowBanner: present, shouldShowList: present,
+        shouldPlaySound: present, shouldSetBadge: false };
+    } });
   } catch {
     cached = null;
   }

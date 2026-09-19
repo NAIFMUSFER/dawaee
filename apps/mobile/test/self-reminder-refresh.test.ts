@@ -22,7 +22,7 @@ function harness() {
   const generation = { current: 1 }, mounted = { current: true };
   const dependencies: Record<string, unknown> = {
     react: { useEffect: (fn: () => () => void) => effects.push(fn) },
-    'react-native': { AppState: { addEventListener: (_: string, fn: (s: string) => void) => {
+    'react-native': { AppState: { currentState: 'active', addEventListener: (_: string, fn: (s: string) => void) => {
       foreground.add(fn); return { remove: () => foreground.delete(fn) };
     } } },
     '../api/clinical-changes.js': { subscribeClinicalChanges: (fn: () => void) => {
@@ -32,7 +32,9 @@ function harness() {
       new Promise((resolve, reject) => calls.push({ query, resolve, reject })) } },
     '../storage/offline-queue.js': { cacheSchedule: async (data: any) => { cached.push(data); } },
     '../notifications/index.js': { captureLocalReminderContext: () => () => true,
-      rescheduleLocalNotifications: async (doses: any, locale: any, prefs: any) => { scheduled.push({ doses, locale, prefs }); } },
+      rescheduleLocalNotifications: async (doses: any, locale: any, prefs: any) => {
+        scheduled.push({ doses, locale, prefs }); return { scheduled: doses.length, failed: 0 };
+      } },
   };
   const module = { exports: {} as any };
   const source = ts.transpileModule(readFileSync(resolve('apps/mobile/src/hooks/useSelfReminderRefresh.ts'), 'utf8'), {
@@ -40,10 +42,11 @@ function harness() {
   }).outputText;
   vm.runInNewContext(source, { module, exports: module.exports, require: (name: string) => {
     if (!(name in dependencies)) throw new Error(`Unexpected dependency: ${name}`); return dependencies[name];
-  }, setTimeout, clearTimeout, Date });
+  }, setTimeout, clearTimeout, setInterval, clearInterval, Date });
   module.exports.useSelfReminderRefresh(stateRef.current, stateRef, generation, mounted);
   const cleanup = effects.map(fn => fn());
   return { calls, scheduled, cached, stateRef, generation,
+    background: () => { (dependencies['react-native'] as any).AppState.currentState = 'background'; },
     change: () => listeners.forEach(fn => fn()),
     foreground: () => foreground.forEach(fn => fn('active')),
     close: () => cleanup.forEach(fn => fn()),
@@ -57,6 +60,26 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('self reminder refresh after clinical writes', () => {
+  it('fetches remote medication changes while active without a local event, but not in background', async () => {
+    const h = harness();
+    try {
+      await h.wait(); await h.resolve(0, 'old-drug');
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(h.calls).toHaveLength(2);
+      await h.resolve(1, 'added-on-web');
+      expect(h.scheduled.at(-1).doses[0].id).toBe('added-on-web');
+      h.background(); await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.calls).toHaveLength(2);
+    } finally { h.close(); }
+  });
+  it('does not repeatedly cancel and rebuild unchanged reminders on polling', async () => {
+    const h = harness();
+    try {
+      await h.wait(); await h.resolve(0, 'same-drug');
+      await vi.advanceTimersByTimeAsync(30_000); await h.resolve(1, 'same-drug');
+      expect(h.scheduled).toHaveLength(1);
+    } finally { h.close(); }
+  });
   it('refreshes the owner schedule even when viewing another patient, and includes a newly added drug', async () => {
     const h = harness();
     try {
