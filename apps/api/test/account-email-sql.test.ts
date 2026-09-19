@@ -13,6 +13,7 @@ import { registerAuthRoutes } from '../src/routes/auth.js';
 import { registerErrorHandler } from '../src/middleware/error-handler.js';
 import { signAccessToken } from '../src/auth/tokens.js';
 import { hashPassword } from '../src/lib/password.js';
+import { BUDGETS } from '../src/auth/rate-budget.js';
 
 // Exercise the real HTTP contracts, JWT/session middleware and audit writes
 // against this same PostgreSQL engine; only the connection pool is adapted.
@@ -153,6 +154,30 @@ describe('locked sign-in refusal through real HTTP, password service and SQL', (
     expect((await http.inject({url:'/v1/me',headers:await headersFor(f)})).statusCode).toBe(401);
     expect((await login(f.email, password)).statusCode).toBe(401);
     expect((await login(f.email, replacement)).statusCode).toBe(200);
+  });
+});
+
+describe('authenticated account request budget through real middleware and SQL', () => {
+  it('persists a refusal and leaves logout available to end the live session', async () => {
+    await owner("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+    const f = await fixture(true), headers = await headersFor(f);
+    expect((await http.inject({url:'/v1/me',headers})).statusCode).toBe(200);
+    const bucket = (await owner("SELECT key_hash,window_start FROM auth_rate_buckets WHERE scope='api:account'")).rows[0] as {key_hash:string;window_start:Date};
+    expect(bucket.key_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(bucket.key_hash).not.toContain(f.uid);
+    await owner("UPDATE auth_rate_buckets SET count=$2 WHERE scope='api:account' AND key_hash=$1", [bucket.key_hash,BUDGETS['api:account'].max]);
+    await owner(`INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+      VALUES('api:account',$1,$2::timestamptz+make_interval(secs=>$3),$4)
+      ON CONFLICT(scope,key_hash,window_start) DO UPDATE SET count=EXCLUDED.count`,
+      [bucket.key_hash,bucket.window_start,BUDGETS['api:account'].windowSeconds,BUDGETS['api:account'].max]);
+    const refused = await http.inject({url:'/v1/me',headers});
+    const observed = (await owner("SELECT key_hash,window_start,count FROM auth_rate_buckets WHERE scope='api:account' ORDER BY window_start")).rows;
+    expect(refused.statusCode,`${refused.body} buckets=${JSON.stringify(observed)}`).toBe(429);
+    expect(refused.json()).toMatchObject({error:{code:'rate_limited'},meta:{retryAfterSeconds:expect.any(Number)}});
+    expect((await owner("SELECT count FROM auth_rate_buckets WHERE scope='api:account' AND key_hash=$1",[bucket.key_hash])).rows.map((row:{count:number})=>Number(row.count)))
+      .toContain(BUDGETS['api:account'].max+1);
+    expect((await http.inject({method:'POST',url:'/v1/auth/logout',headers})).statusCode).toBe(200);
+    expect((await http.inject({url:'/v1/me',headers})).statusCode).toBe(401);
   });
 });
 

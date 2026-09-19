@@ -1,9 +1,10 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { AppError } from '@dawaee/shared';
+import { AppError, ERROR_CODES } from '@dawaee/shared';
 import { verifyAccessToken } from '../auth/tokens.js';
 import { assertSessionLive, } from '../auth/session-service.js';
 import { hashIp, withTransaction, withUserReadOnly } from '../lib/db.js';
 import { loadConfig } from '../config.js';
+import { consumeBudgetInTransaction } from '../auth/rate-budget.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -21,18 +22,33 @@ declare module 'fastify' {
  * "signed out everywhere" meaning something and not.
  */
 export async function authenticate(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  // A few compatibility routes sit under both a prefix hook and their own
+  // route-level preHandler. Once this request has been authenticated, do not
+  // repeat the session/email reads or charge the account budget twice.
+  if (req.auth) return;
+
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) throw AppError.unauthenticated();
 
   const claims = await verifyAccessToken(header.slice(7).trim());
-  await withTransaction(async (tx) => {
+  const route = `${req.method} ${req.routeOptions.url}`;
+  const accountBudget = await withTransaction(async (tx) => {
     await assertSessionLive(tx, claims.sid);
+    return AUTHENTICATED_BUDGET_EXEMPT_ROUTES.has(route)
+      ? null
+      : consumeBudgetInTransaction(tx, 'api:account', claims.sub);
   });
+  // Deliberately after COMMIT. Throwing inside the transaction would undo the
+  // refused hit, allowing every later request to retry the same last count.
+  if (accountBudget && !accountBudget.allowed) {
+    throw new AppError(ERROR_CODES.RATE_LIMITED, 429, 'Too many requests. Please slow down.', {
+      meta: { retryAfterSeconds: accountBudget.retryAfterSeconds },
+    });
+  }
 
   req.auth = { userId: claims.sub, sessionId: claims.sid, isAdmin: claims.role === 'admin' };
   // Use the matched route, never a client-controlled prefix or query string.
   // Bootstrap contains only the caller's identity/profiles, not clinical rows.
-  const route = `${req.method} ${req.routeOptions.url}`;
   if (!EMAIL_ONBOARDING_ROUTES.has(route)) {
     const required = await withUserReadOnly(claims.sub, async (tx) => {
       const { rows } = await tx.query<{ required: boolean; deletion_pending: boolean }>(
@@ -44,6 +60,16 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
     if (required) throw AppError.forbidden('Verify your email address to continue.');
   }
 }
+
+// A spent account budget must not trap somebody in a possibly compromised
+// session. These routes still require a valid, live signed session and remain
+// under the early address limiter; they merely retain the ability to end that
+// session/account and remove this installation's notification endpoint.
+const AUTHENTICATED_BUDGET_EXEMPT_ROUTES = new Set([
+  'POST /v1/auth/logout', 'POST /v1/auth/logout-all',
+  'POST /v1/me/deletion-request',
+  'DELETE /v1/devices/push-token/:deviceId',
+]);
 
 const EMAIL_ONBOARDING_ROUTES = new Set([
   'GET /v1/me', 'GET /v1/profiles', 'GET /v1/auth/email',

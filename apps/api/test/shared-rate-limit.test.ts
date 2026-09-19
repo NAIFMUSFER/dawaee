@@ -40,6 +40,20 @@ const login = (app: FastifyInstance, identifier: string, addr: string, password 
 const register = (app: FastifyInstance, payload: Record<string, unknown>, addr: string) =>
   app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
+async function authenticatedAccount(app: FastifyInstance, addr: string) {
+  const email = `api-budget-${seq++}-${Date.now()}@example.test`;
+  const created = await register(app, {
+    email, displayName: 'API budget fixture', password: PW, locale: 'ar',
+    deviceId: `api-budget-device-${seq++}`,
+  }, addr);
+  expect(created.statusCode, created.body).toBe(200);
+  const accessToken = created.json<{ accessToken: string }>().accessToken;
+  const headers = { authorization: `Bearer ${accessToken}` };
+  const me = await app.inject({ method: 'GET', url: '/v1/me', headers });
+  expect(me.statusCode, me.body).toBe(200);
+  return { accessToken, headers, email, userId: me.json().user.id as string };
+}
+
 beforeAll(async () => {
   resetDatabase();
   const cfg = loadConfig();
@@ -134,6 +148,100 @@ describe('a restart does not hand back a fresh budget', () => {
       const after = await login(restarted, phone, '192.0.2.100');
       expect(after.statusCode, 'restarting the service reset the attacker\'s budget').toBe(429);
     } finally { await restarted.close(); }
+  });
+});
+
+// ══════════════════════════════════════ authenticated API
+
+describe('a verified session receives a shared account budget after the address guard', () => {
+  it('one account spends one database-backed bucket across replicas and caller-controlled identity hints', async () => {
+    const account = await authenticatedAccount(alpha, '198.51.100.210');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+
+    for (const [app, forged] of [[alpha, 'victim-a'], [beta, 'victim-b']] as const) {
+      const response = await app.inject({
+        method: 'GET', url: '/v1/me', remoteAddress: '10.55.0.1',
+        headers: { ...account.headers, ...from(`198.51.100.${211 + Number(forged.endsWith('b'))}`), 'x-user-id': forged },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+
+    const { rows } = await owner.query<{ key_hash: string; count: number }>(
+      "SELECT key_hash,count FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.count)).toBe(2);
+    expect(rows[0]!.key_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(rows)).not.toContain(account.userId);
+  });
+
+  it('two accounts behind one address do not share their post-authentication budget', async () => {
+    const first = await authenticatedAccount(alpha, '198.51.100.220');
+    const second = await authenticatedAccount(alpha, '198.51.100.220');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+    for (const account of [first, second]) {
+      expect((await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers })).statusCode).toBe(200);
+    }
+    const { rows } = await owner.query<{ key_hash: string }>(
+      "SELECT key_hash FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(new Set(rows.map((row) => row.key_hash)).size).toBe(2);
+  });
+
+  it('commits the refused hit, reports retry guidance, and never blocks session teardown', async () => {
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+    const account = await authenticatedAccount(alpha, '198.51.100.230');
+    const budget = BUDGETS['api:account'];
+    const { rows } = await owner.query<{ key_hash: string; window_start: Date }>(
+      "SELECT key_hash,window_start FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(rows).toHaveLength(1);
+    await owner.query(
+      "UPDATE auth_rate_buckets SET count=$2 WHERE scope='api:account' AND key_hash=$1",
+      [rows[0]!.key_hash, budget.max],
+    );
+    // Cover the immediately following fixed window as well. Without this, a
+    // test starting in the final millisecond of a minute legitimately receives
+    // a fresh production window between setup and request.
+    await owner.query(
+      `INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+       VALUES('api:account',$1,$2::timestamptz+make_interval(secs=>$3),$4)
+       ON CONFLICT(scope,key_hash,window_start) DO UPDATE SET count=EXCLUDED.count`,
+      [rows[0]!.key_hash, rows[0]!.window_start, budget.windowSeconds, budget.max],
+    );
+
+    const refused = await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers });
+    expect(refused.statusCode, refused.body).toBe(429);
+    expect(refused.json()).toMatchObject({
+      error: { code: 'rate_limited' },
+      meta: { retryAfterSeconds: expect.any(Number) },
+    });
+    const persisted = await owner.query<{ count: number }>(
+      "SELECT count FROM auth_rate_buckets WHERE scope='api:account' AND key_hash=$1", [rows[0]!.key_hash],
+    );
+    expect(persisted.rows.map((row) => Number(row.count))).toContain(budget.max + 1);
+
+    const logout = await alpha.inject({ method:'POST', url:'/v1/auth/logout', headers: account.headers });
+    expect(logout.statusCode, logout.body).toBe(200);
+    expect((await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers })).statusCode).toBe(401);
+  });
+
+  it('charges a route with overlapping auth hooks once and never trusts an invalid bearer as an account', async () => {
+    const account = await authenticatedAccount(alpha, '198.51.100.240');
+    await owner.query('INSERT INTO user_email_verifications(user_id,email) VALUES($1,$2) ON CONFLICT DO NOTHING', [account.userId, account.email]);
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+
+    const invalid = await alpha.inject({ method:'GET', url:'/v1/me', headers:{authorization:'Bearer not-a-jwt'} });
+    expect(invalid.statusCode).toBe(401);
+    expect(Number((await owner.query("SELECT count(*) AS n FROM auth_rate_buckets WHERE scope='api:account'")).rows[0].n)).toBe(0);
+
+    const overlap = await alpha.inject({
+      method:'POST', url:'/v1/caregivers/notification/resolve', headers:account.headers, payload:{},
+    });
+    expect(overlap.statusCode).toBe(400);
+    const { rows } = await owner.query<{ count: number }>("SELECT count FROM auth_rate_buckets WHERE scope='api:account'");
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.count), 'one request was charged by both auth hooks').toBe(1);
   });
 });
 
