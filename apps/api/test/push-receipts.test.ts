@@ -60,7 +60,7 @@ async function queuePush(phone: string, deviceId: string, dedupe: string) {
         dose_occurrence_id,medication_id)
      VALUES ($1, $2, 'dose_reminder', 'push', 'Receipt test', 'Synthetic body',
        jsonb_build_object('doseId',$4::text,'actions',jsonb_build_array('taken','snooze','skip')),
-       $3, '1970-01-01T00:00:00Z',$4,$5)
+       $3, '1970-01-01T00:00:00Z',$4::uuid,$5::uuid)
      RETURNING id`,
     [user.profileId, user.userId, dedupe, dose.rows[0]!.id, dose.rows[0]!.medication_id],
   );

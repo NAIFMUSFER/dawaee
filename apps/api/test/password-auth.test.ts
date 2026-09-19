@@ -229,20 +229,31 @@ describe('brute-force resistance', () => {
     const phone = '+966566000002';
     await seedAccount(phone, 'Locked', 'correct horse battery');
 
-    let locked: Date | null = null;
     for (let i = 0; i < MAX_LOGIN_ATTEMPTS + 1; i += 1) {
       // Each attempt runs in its OWN transaction, exactly as the route does.
       // If the failure counter were rolled back by the refusal it reports, this
       // loop would never lock — an unlimited guessing budget.
       const r = await withTransaction((tx) => attemptPasswordLogin(tx, phone, `guess-${i}`));
-      if (r.outcome === 'locked') { locked = r.until; break; }
+      // Wrong passwords never disclose whether an identifier has an account,
+      // including the precise attempt that starts its lock.
+      expect(r).toEqual({ outcome: 'invalid' });
     }
-    expect(locked).not.toBeNull();
+    const locked = await withTransaction(async (tx) => {
+      const { rows } = await tx.query<{ locked_until: Date; failed_login_count: number; lock_active: boolean }>(
+        `SELECT locked_until, failed_login_count, locked_until > now() AS lock_active
+           FROM app.find_user_for_password_login($1)`, [phone],
+      );
+      return rows[0]!;
+    });
+    expect(locked.failed_login_count).toBeGreaterThanOrEqual(MAX_LOGIN_ATTEMPTS);
+    expect(locked.lock_active).toBe(true);
+    expect(locked.locked_until).toBeInstanceOf(Date);
 
     // The correct password is refused too, while the lock stands.
     const correct = await withTransaction((tx) =>
       attemptPasswordLogin(tx, phone, 'correct horse battery'));
     expect(correct.outcome).toBe('locked');
+    if (correct.outcome === 'locked') expect(correct.until.getTime()).toBe(locked.locked_until.getTime());
   });
 
   it('a successful sign-in clears the failure count', async () => {
