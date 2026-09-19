@@ -83,7 +83,18 @@ of medication notifications.
 - The probe account's own deletion request was recorded at 19:57:09 UTC,
   scheduled for October 3 at 19:57:09 UTC. Logout succeeded and reuse of its
   access token returned 401. Its image remains under normal erasure retention.
+- First post-deployment housekeeping started at **20:35:22.198 UTC** and
+  succeeded. The new production worker instance logged completion at
+  **20:35:23.273 UTC**, with **605 total retention items and zero failures**.
+  That aggregate is not an image count. Read-only object counts changed from
+  **9 total / 2 unfinalized / 7 finalized** before the run to
+  **7 total / 0 unfinalized / 7 finalized** afterwards. The two abandoned upload
+  metadata rows were removed through the worker's provider-delete-first path,
+  with no manual SQL deletion. This resolves the previously observed
+  unconfigured-provider errors for this run. Original object bytes and bucket
+  identity were not independently checked before deletion; successful
+  idempotent DELETE does not prove those bytes previously existed there.
 
 These are protocol and lifecycle results. The cloud-browser timeout left the
-new UI trial incomplete, and the first post-deployment worker cleanup result
-was still pending at this checkpoint. PR #32 records subsequent acceptance.
+new UI trial incomplete. Full account erasure remains subject to the original
+14-day grace; finalized images were retained. PR #32 records subsequent acceptance.

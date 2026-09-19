@@ -33,6 +33,11 @@ describe('isolated installed audit build', () => {
     const audit = configure({ config });
     expect(audit.android.package).toBe('app.dawaee.audit');
     expect(audit.ios.bundleIdentifier).toBe('app.dawaee.audit');
+    expect(audit.ios.infoPlist.CFBundleDisplayName).toBe('تداوي تجريبي');
+    expect(audit.locales.ar.ios.CFBundleDisplayName).toBe('تداوي تجريبي');
+    expect(audit.locales.en.ios.CFBundleDisplayName).toBe('TADAWEE Audit');
+    expect(audit.locales.en.ios.NSCameraUsageDescription).toBeTruthy();
+    expect(config.locales.en).toBe('./locales/en.json');
     expect(audit.scheme).toBe('dawaee-audit');
     expect(audit.extra.apiBaseUrl).toBe(profile.env.EXPO_PUBLIC_API_URL);
     expect(audit.android.allowBackup).toBe(false);
