@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Alert, AppState, Platform, View } from 'react-native';
@@ -20,6 +20,7 @@ import { bindPatientReminderAccount, setPatientReminderIntent } from '@/notifica
 import EmailVerificationScreen from './settings/email-verification';
 import { needsEmailVerification } from '@/security/email-onboarding';
 import { landingAfterAuth } from '@/storage/pending-invite';
+import AppNavigator from '@/navigation/AppNavigator';
 
 /**
  * React Native Web does not implement the native multi-button Alert contract.
@@ -210,13 +211,7 @@ function Shell() {
       {ready ? (
         <AppLockGate>
           <View style={{ flex: 1 }}>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: PALETTE.background },
-              animation: 'slide_from_right',
-            }}
-          />
+          <AppNavigator />
           <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
             {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
           </Modal>
