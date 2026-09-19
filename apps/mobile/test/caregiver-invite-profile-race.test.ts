@@ -26,13 +26,16 @@ const shared = {
 function harness() {
   return createHarness(screen, hook, {}, {
     '@dawaee/shared': shared,
+    'expo-clipboard': { setStringAsync: async () => undefined },
+    'expo-sms': { isAvailableAsync: async () => false },
+    '@/components/QrCode': { QrCode: 'QrCode' },
     'expo-router': { router: { back: () => undefined, replace: () => undefined, push: () => undefined } },
   });
 }
 
 async function beginInvite(h: any) {
   const name = h.find('Field', (props: any) => props.label === 'invite.name');
-  const phone = h.find('Field', (props: any) => props.label === 'invite.phone');
+  const phone = h.find('Field', (props: any) => props.label === 'invite.recipient');
   expect(name).toBeTruthy();
   expect(phone).toBeTruthy();
   name.onChangeText('Synthetic caregiver A');

@@ -51,43 +51,60 @@ function scenarios(screenFile, hookFile) {
   const later = cachedDose('LATER', '2026-09-10', '2026-09-10T06:00:00.000Z');
   const tomorrow = cachedDose('TOMORROW', '2026-09-11', '2026-09-11T05:00:00.000Z');
   const hero = h => h.find('DoseCard', p => p.prominent);
-  add('control: one current-day cached dose is actionable offline', [today], async h => {
-    assert.equal(hero(h)?.dose.id, 'TODAY');
-    assert.equal(typeof hero(h).onTaken, 'function');
+  // These rollover fixtures are after local midnight but before their dose
+  // times. The grouped Today screen must show them without early actions.
+  const upcoming = (h, ids) => {
+    assert.equal(hero(h), null, 'a future cached dose became actionable');
+    const pending = cards(h.tree).filter(p => p.dose.status === 'upcoming');
+    assert.deepEqual(pending.map(p => p.dose.id), ids);
+    for (const card of pending) {
+      for (const action of ['onTaken', 'onSkip', 'onSnooze', 'onUndo']) {
+        assert.equal(card[action], undefined, `${card.dose.id} offers ${action} before its scheduled time`);
+      }
+    }
+  };
+  add('control: a future current-day cached dose stays visible without early confirmation', [today], async h => {
+    upcoming(h, ['TODAY']);
+    const item = cards(h.tree)[0].dose;
+    assert.equal(item.scheduledTimezone, 'Asia/Riyadh');
+    assert.doesNotThrow(() => new Intl.DateTimeFormat('ar-SA', { timeZone: item.scheduledTimezone }).format(new Date(item.scheduledAt)));
   });
-  add('an unresolved prior-day cached dose cannot hide the current-day action card', [yesterday, today], async h => {
-    assert.equal(hero(h)?.dose.id, 'TODAY', 'prior local day stole the next-dose selection');
+  add('an unresolved prior-day cached dose cannot hide the current-day schedule', [yesterday, today], async h => {
+    upcoming(h, ['TODAY']);
     assert.doesNotMatch(h.text(), /SYNTHETIC-YESTERDAY/);
   });
   add('overlapping today/prefetch cache entries render only one list row per occurrence', [today, { ...today }], async h => {
-    const listed = cards(h.tree).filter(p => !p.prominent);
+    const listed = cards(h.tree);
     assert.equal(listed.length, 1, 'same occurrence is rendered twice in the daily list');
     assert.equal(listed[0].dose.id, 'TODAY');
   });
   add('cached ordering cannot promote a later dose ahead of the earliest current-day dose', [later, today], async h => {
-    assert.equal(hero(h)?.dose.id, 'TODAY');
+    upcoming(h, ['TODAY', 'LATER']);
   });
-  add('future prefetch entries cannot hide an actionable current local day', [tomorrow, today], async h => {
-    assert.equal(hero(h)?.dose.id, 'TODAY');
+  add('future prefetch entries cannot hide the current local day schedule', [tomorrow, today], async h => {
+    upcoming(h, ['TODAY']);
     assert.doesNotMatch(h.text(), /SYNTHETIC-TOMORROW/);
   });
   add('control: resolved cached doses remain resolved and do not become the hero', [
     { ...today, id: 'TAKEN', status: 'taken' }, { ...today, id: 'SKIPPED', status: 'skipped' }, later,
   ], async h => {
-    assert.equal(hero(h)?.dose.id, 'LATER');
+    upcoming(h, ['LATER']);
     assert.equal(cards(h.tree).find(p => !p.prominent && p.dose.id === 'TAKEN').dose.status, 'taken');
+    assert.equal(cards(h.tree).find(p => !p.prominent && p.dose.id === 'SKIPPED').dose.status, 'skipped');
   });
   add('day selection follows an east-of-UTC profile, not the UTC calendar date', [
     cachedDose('EAST-OLD', '2026-09-09', '2026-09-08T18:00:00.000Z'),
     cachedDose('EAST-TODAY', '2026-09-10', '2026-09-09T18:00:00.000Z'),
   ], async h => {
-    assert.equal(hero(h)?.dose.id, 'EAST-TODAY');
+    upcoming(h, ['EAST-TODAY']);
+    assert.equal(cards(h.tree).length, 1);
   }, { timezone: 'Pacific/Kiritimati', now: '2026-09-09T12:30:00.000Z' });
   add('day selection follows a west-of-UTC profile after the UTC date has changed', [
     cachedDose('WEST-OLD', '2026-09-08', '2026-09-09T04:00:00.000Z'),
     cachedDose('WEST-TODAY', '2026-09-09', '2026-09-10T04:00:00.000Z'),
   ], async h => {
-    assert.equal(hero(h)?.dose.id, 'WEST-TODAY');
+    upcoming(h, ['WEST-TODAY']);
+    assert.equal(cards(h.tree).length, 1);
   }, { timezone: 'Pacific/Honolulu', now: '2026-09-10T01:30:00.000Z' });
   add('the recovered current-day action submits its own occurrence and queues it on network failure', [yesterday, today], async h => {
     assert.ok(hero(h), 'no current-day confirmation control');

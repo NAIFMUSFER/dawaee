@@ -153,6 +153,12 @@ type Exposure =
  */
 const EXPOSURE: Record<string, Exposure> = {
   'GET /': 'public',
+  'GET /account-email': 'public',
+  'GET /v1/auth/password/recovery-options': 'auth-plane',
+  'POST /v1/auth/password/recovery/request': 'auth-plane',
+  'POST /v1/auth/email/complete': 'auth-plane',
+  'GET /v1/auth/email': 'authenticated',
+  'POST /v1/auth/email/request': 'authenticated',
   'GET /health': 'public',
   'GET /health/ready': 'public',
   'GET /app': 'public',
@@ -173,6 +179,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/logout-all': 'authenticated',
   'POST /v1/auth/password': 'authenticated',
   'GET /v1/auth/sessions': 'authenticated',
+  'POST /v1/auth/phone': 'authenticated',
   'GET /v1/auth/phone-verification': 'authenticated',
   'POST /v1/auth/phone-verification': 'authenticated',
 
@@ -234,6 +241,8 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/care-circle': 'authenticated',
   'POST /v1/caregivers/invite': 'authenticated',
   'POST /v1/caregivers/accept': 'authenticated',
+  'GET /v1/caregivers/incoming': 'authenticated',
+  'POST /v1/caregivers/incoming/accept': 'authenticated',
   'DELETE /v1/caregivers/:relationshipId': 'authenticated',
   'PATCH /v1/caregivers/:relationshipId/permissions': 'authenticated',
   'PUT /v1/caregivers/:relationshipId/notification-rules': 'authenticated',

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { Image, Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,7 +9,8 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
-import { clearMedicationDrafts, setMedicationConfirmDraft, type MedicationConfirmDraft } from '@/storage/medication-draft';
+import { clearMedicationDrafts, setMedicationConfirmDraft, setMedicationPrefillDraft, type MedicationConfirmDraft } from '@/storage/medication-draft';
+import { uploadMedicationImage } from '@/medication/upload-image';
 import type { MessageKey } from '@dawaee/shared';
 
 type CaptureMode = 'photo' | 'upload' | 'barcode' | 'prescription';
@@ -19,18 +20,7 @@ interface LabelResponse { kind: 'medication_label'; detected: Record<string, Ocr
 interface PrescriptionLine { medicationName?: OcrField; dosage?: OcrField; frequency?: OcrField; duration?: OcrField }
 interface PrescriptionResponse { kind: 'prescription'; lines: PrescriptionLine[] }
 type OcrResponse = (LabelResponse | PrescriptionResponse) & { rawText?: string };
-interface UploadTicket { objectKey: string; upload: { uploadUrl: string; method: 'PUT' | 'POST'; headers: Record<string, string> } }
-
 const MODES = new Set<string>(['photo', 'upload', 'barcode', 'prescription']);
-const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic']);
-
-function imageType(blobType: string, pickerType?: string | null): string | null {
-  const blob = blobType.trim().toLowerCase();
-  if (blob && IMAGE_TYPES.has(blob)) return blob;
-  const picker = pickerType?.trim().toLowerCase() ?? '';
-  if (picker) return IMAGE_TYPES.has(picker) ? picker : null;
-  return blob ? null : 'image/jpeg';
-}
 
 function field(source?: OcrField): { value: string; confidence: number; confidenceSource?: 'heuristic' | 'provider' } | null {
   if (!source) return null;
@@ -64,7 +54,7 @@ export default function CaptureScreen() {
 function CaptureProfileScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode: CaptureMode = MODES.has(params.mode ?? '') ? params.mode as CaptureMode : 'photo';
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
   const { capture: captureAction } = useRequestScope();
@@ -82,6 +72,7 @@ function CaptureProfileScreen() {
       if (!alive || !pending || 'code' in pending || pending.canceled) return;
       const asset = pending.assets?.[0];
       if (!asset) return;
+      setImageKey(null);
       setPhotoUri(asset.uri);
       setPhotoMimeType(asset.mimeType ?? null);
     }).catch(() => undefined);
@@ -135,31 +126,11 @@ function CaptureProfileScreen() {
     setBusyLabel(t('capture.uploading'));
     setStage('working');
     try {
-      const blob = await (await fetch(uri)).blob();
-      if (!current()) return;
-      const contentType = imageType(blob.type, pickerType);
-      if (!contentType) throw new ApiError('upload_rejected', 400, 'Unsupported image type');
-      const ticket = await api.post<UploadTicket>('/v1/uploads/request', {
-        purpose: mode === 'prescription' ? 'prescription_image' : 'medication_image',
-        contentType,
-        byteSize: blob.size,
-        patientProfileId: activeProfile.id,
-      });
-      if (!current()) return;
-      const controller = new AbortController();
-      const uploadTimeout = setTimeout(() => controller.abort(), 45_000);
-      let uploaded: Response;
-      try {
-        uploaded = await fetch(ticket.upload.uploadUrl, { method: ticket.upload.method, headers: ticket.upload.headers, body: blob, signal: controller.signal });
-      } catch {
-        throw new ApiError('upload_failed', 503, 'Image upload did not complete');
-      } finally { clearTimeout(uploadTimeout); }
-      if (!current()) return;
-      if (!uploaded.ok) throw new ApiError('upload_failed', uploaded.status, 'Image upload did not complete');
-      await api.post('/v1/uploads/finalize', { objectKey: ticket.objectKey });
-      if (!current()) return;
-      setImageKey(ticket.objectKey);
-      await analyze(ticket.objectKey);
+      const key = await uploadMedicationImage({ uri, mimeType: pickerType, patientProfileId: activeProfile.id,
+        purpose: mode === 'prescription' ? 'prescription_image' : 'medication_image', isCurrent: current });
+      if (!current() || !key) return;
+      setImageKey(key);
+      await analyze(key);
     } catch (err) {
       if (!current()) return;
       failWith(err);
@@ -180,6 +151,7 @@ function CaptureProfileScreen() {
       if (!current() || result.canceled) return;
       const asset = result.assets?.[0];
       if (!asset) return;
+      setImageKey(null);
       setPhotoUri(asset.uri);
       setPhotoMimeType(asset.mimeType ?? null);
     } catch { if (current()) setError(t('capture.failed')); }
@@ -197,6 +169,7 @@ function CaptureProfileScreen() {
       if (!current() || result.canceled) return;
       const asset = result.assets?.[0];
       if (!asset) return;
+      setImageKey(null);
       setPhotoUri(asset.uri);
       setPhotoMimeType(asset.mimeType ?? null);
       await uploadAndAnalyze(asset.uri, asset.mimeType);
@@ -215,7 +188,26 @@ function CaptureProfileScreen() {
     finally { if (current()) setBusyLabel(null); }
   }, [activeProfile, analyze, captureAction, failWith, imageKey, t]);
 
-  const goManual = useCallback(() => { clearMedicationDrafts(); router.replace('/medication/quick-create'); }, []);
+  const goManual = useCallback(() => {
+    clearMedicationDrafts();
+    if (activeProfile && imageKey && mode !== 'prescription') {
+      setMedicationPrefillDraft({ patientProfileId: activeProfile.id, imageKey, identitySource: 'user' });
+      router.replace({ pathname: '/medication/quick-create', params: { source: 'capture' } });
+    } else router.replace('/medication/quick-create');
+  }, [activeProfile, imageKey, mode]);
+
+  const keepPhotoWithoutOcr = async () => {
+    if (!activeProfile || !photoUri || mode === 'prescription') return;
+    const current = captureAction();
+    setStage('working'); setBusyLabel(t('capture.uploading')); setError(null);
+    try {
+      const key = imageKey ?? await uploadMedicationImage({ uri: photoUri, mimeType: photoMimeType, patientProfileId: activeProfile.id, isCurrent: current });
+      if (!current() || !key) return;
+      setMedicationPrefillDraft({ patientProfileId: activeProfile.id, imageKey: key, identitySource: 'user' });
+      router.replace({ pathname: '/medication/quick-create', params: { source: 'capture' } });
+    } catch (err) { if (current()) failWith(err); }
+    finally { if (current()) { setStage('preview'); setBusyLabel(null); } }
+  };
   const cancelCapture = useCallback(() => { clearMedicationDrafts(); router.back(); }, []);
   const instructionKey: MessageKey = mode === 'barcode' ? 'capture.instructionBarcode' : mode === 'prescription' ? 'capture.instructionPrescription' : 'capture.instructionLabel';
   const titleKey: MessageKey = mode === 'barcode' ? 'medication.scanBarcode' : mode === 'prescription' ? 'medication.scanPrescription' : mode === 'upload' ? 'medication.uploadImage' : 'medication.takePhoto';
@@ -226,12 +218,14 @@ function CaptureProfileScreen() {
   return <SafeAreaView style={{ flex: 1 }}><Screen>
     <Txt variant="h2" weight="bold">{t(titleKey)}</Txt>
     <Txt variant="body" color={theme.colors.ink500}>{t(instructionKey)}</Txt>
+    {photoUri ? <Image source={{ uri: photoUri }} accessibilityLabel={t('medication.imageAlt', { name: '' })} resizeMode="contain" style={{ width: '100%', height: 220, borderRadius: 12 }} /> : null}
     {error ? <Banner tone="danger" title={error} body={t('capture.unavailableBody')} /> : null}
     {mode === 'upload'
       ? <Button label={t('capture.chooseFile')} size="large" onPress={() => void pickImage()} />
       : photoUri
-        ? <><Button label={t('capture.use')} size="large" onPress={() => void uploadAndAnalyze(photoUri, photoMimeType)} /><Button label={t('capture.retake')} tone="secondary" onPress={() => { setPhotoUri(null); setPhotoMimeType(null); void takePhoto(); }} /></>
+        ? <><Button label={t('capture.use')} size="large" onPress={() => void uploadAndAnalyze(photoUri, photoMimeType)} /><Button label={t('capture.retake')} tone="secondary" onPress={() => { setImageKey(null); setPhotoUri(null); setPhotoMimeType(null); void takePhoto(); }} /></>
         : <Button label={t('capture.shutter')} size="large" onPress={() => void takePhoto()} testID="capture-shutter" />}
+    {photoUri && mode !== 'prescription' ? <Button label={locale === 'ar' ? 'استخدام الصورة وإدخال الدواء يدويًا' : 'Keep photo and enter medication manually'} onPress={() => void keepPhotoWithoutOcr()} /> : null}
     <Button label={t('medication.manualEntry')} tone="secondary" onPress={goManual} />
     <Button label={t('common.cancel')} tone="ghost" onPress={cancelCapture} />
   </Screen></SafeAreaView>;

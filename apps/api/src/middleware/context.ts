@@ -30,7 +30,26 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
   });
 
   req.auth = { userId: claims.sub, sessionId: claims.sid, isAdmin: claims.role === 'admin' };
+  // Use the matched route, never a client-controlled prefix or query string.
+  // Bootstrap contains only the caller's identity/profiles, not clinical rows.
+  const route = `${req.method} ${req.routeOptions.url}`;
+  if (!EMAIL_ONBOARDING_ROUTES.has(route)) {
+    const required = await withUserReadOnly(claims.sub, async (tx) => {
+      const { rows } = await tx.query<{ required: boolean }>(
+        'SELECT app.email_verification_required($1) AS required', [claims.sub],
+      );
+      return rows[0]?.required === true;
+    });
+    if (required) throw AppError.forbidden('Verify your email address to continue.');
+  }
 }
+
+const EMAIL_ONBOARDING_ROUTES = new Set([
+  'GET /v1/me', 'GET /v1/profiles', 'GET /v1/auth/email',
+  'POST /v1/auth/email/request', 'POST /v1/auth/logout', 'POST /v1/auth/logout-all',
+  'POST /v1/me/deletion-request', 'POST /v1/auth/password', 'GET /v1/auth/sessions',
+  'DELETE /v1/devices/push-token/:deviceId',
+]);
 
 export async function requireAdmin(req: FastifyRequest): Promise<void> {
   // The signed claim is a necessary fast-fail, never the live source of truth.

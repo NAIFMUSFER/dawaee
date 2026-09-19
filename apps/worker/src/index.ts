@@ -6,7 +6,7 @@ import { pushReceiptJob } from './jobs/push-receipts.js';
 import { markMissedJob } from './jobs/mark-missed.js';
 import { stockAlertJob } from './jobs/stock-alerts.js';
 import { digestJob } from './jobs/digests.js';
-import { housekeepingJob } from './jobs/housekeeping.js';
+import { createHousekeepingSchedule } from './housekeeping-schedule.js';
 
 /**
  * The background worker.
@@ -76,8 +76,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  let ticksSinceHousekeeping = 0;
-  const housekeepingEveryTicks = Math.max(1, Math.round(3600 / tickSeconds));
+  const runHousekeeping = createHousekeepingSchedule(ctx);
 
   const loop = async () => {
     if (stopping) return;
@@ -85,10 +84,7 @@ async function main(): Promise<void> {
       try {
         const result = await runTick(ctx);
         if (Object.values(result).some((v) => v > 0)) ctx.log.info(result, 'tick completed');
-        if (++ticksSinceHousekeeping >= housekeepingEveryTicks) {
-          ticksSinceHousekeeping = 0;
-          await runJob(ctx, 'housekeeping', (c) => housekeepingJob(ctx, c));
-        }
+        await runHousekeeping();
       } catch (err) {
         ctx.log.error({ err: (err as Error).message }, 'tick failed');
       }

@@ -16,6 +16,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerPhoneVerificationRoutes } from './routes/phone-verification.js';
+import { registerAccountEmailRoutes } from './routes/account-email.js';
 import { registerPasswordRecoveryRoutes } from './routes/password-recovery.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
@@ -155,6 +156,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAuthRoutes(scope);
     registerPhoneVerificationRoutes(scope);
     registerPasswordRecoveryRoutes(scope);
+    registerAccountEmailRoutes(scope);
     registerProfileRoutes(scope);
     registerMedicationRoutes(scope);
     registerDoseRoutes(scope);
@@ -169,7 +171,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAdminRoutes(scope);
   });
 
-  await registerWebAppRoutes(app);
+  await registerWebAppRoutes(app, cfg);
 
   return { app, providers };
 }

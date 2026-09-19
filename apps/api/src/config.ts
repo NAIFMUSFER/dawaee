@@ -126,6 +126,13 @@ const schema = z.object({
   PUSH_PROVIDER: z.enum(['mock', 'expo']).default('mock'),
   EXPO_ACCESS_TOKEN: z.string().optional(),
 
+  ACCOUNT_EMAIL_PROVIDER: z.enum(['disabled', 'resend']).default('disabled'),
+  RESEND_API_KEY: z.string().optional(),
+  ACCOUNT_EMAIL_FROM: z.string().optional(),
+  ACCOUNT_EMAIL_SENDER_VERIFIED: envBoolean(false),
+  // Public HTTPS origin of this API, which serves /account-email.
+  ACCOUNT_EMAIL_BASE_URL: z.string().optional(),
+
   OCR_PROVIDER: z.enum(['mock', 'google_vision', 'azure_document_intelligence']).default('mock'),
   GOOGLE_VISION_API_KEY: z.string().optional(),
   AZURE_DI_ENDPOINT: z.string().optional(),

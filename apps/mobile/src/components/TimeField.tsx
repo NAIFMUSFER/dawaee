@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Keyboard, Modal, Pressable, ScrollView, View } from 'react-native';
+import { Keyboard, Pressable, ScrollView, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Row, Txt } from './ui.js';
 import { useTheme } from '../hooks/useTheme.js';

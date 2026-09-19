@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Linking, Platform, ScrollView, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Linking, Platform, Pressable, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PALETTE } from '@dawaee/shared';
 import { api } from '@/api/client';
@@ -81,16 +81,22 @@ async function consumeCapability(): Promise<string | null> {
 
 export default function EmergencyScan() {
   const [state, setState] = useState<State>({ kind: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+  // A retry needs the capability after its browser fragment has been erased.
+  // Keep it only for this mounted scan; never persist it or put it in a URL.
+  const capability = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
-      const token = await consumeCapability();
-      if (!token) { if (!cancelled) setState({ kind: 'inactive' }); return; }
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15_000);
       try {
+        const token = capability.current ?? await consumeCapability();
+        if (cancelled) return;
+        if (!token) { setState({ kind: 'inactive' }); return; }
+        capability.current = token;
+        timer = setTimeout(() => controller.abort(), 15_000);
         const res = await fetch(`${api.baseUrl}/v1/emergency/scan/card`, {
           method: 'GET',
           headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
@@ -98,17 +104,20 @@ export default function EmergencyScan() {
           signal: controller.signal,
         });
         if (cancelled) return;
-        if (!res.ok) { setState({ kind: 'inactive' }); return; }
+        if (!res.ok) {
+          setState({ kind: res.status === 429 || res.status >= 500 ? 'offline' : 'inactive' });
+          return;
+        }
         const card = await res.json() as ScanResult;
-        setState({ kind: 'ok', card });
+        if (!cancelled) setState({ kind: 'ok', card });
       } catch {
         if (!cancelled) setState({ kind: 'offline' });
       } finally {
         clearTimeout(timer);
       }
     })();
-    return () => { cancelled = true; };
-  }, []);
+    return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
+  }, [attempt]);
 
   const shell = (children: React.ReactNode) => (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#F4F7F6' }}>
@@ -120,15 +129,23 @@ export default function EmergencyScan() {
 
   if (state.kind === 'offline' || state.kind === 'inactive') {
     const en = state.kind === 'offline'
-      ? 'No connection. This card cannot be read right now.'
+      ? 'This card cannot be read right now. Check the connection and try again.'
       : 'This emergency code is not active.';
     const ar = state.kind === 'offline'
-      ? 'لا يوجد اتصال. تعذّر قراءة البطاقة الآن.'
+      ? 'تعذّر قراءة البطاقة الآن. تحقق من الاتصال وحاول مجددًا.'
       : 'رمز الطوارئ هذا غير مُفعّل.';
     return shell(
       <View style={{ paddingVertical: 40, gap: 10 }}>
         <Txt size={19} weight="700" align="center">{en}</Txt>
         <Txt size={19} weight="700" align="center">{ar}</Txt>
+        {state.kind === 'offline' ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Retry · إعادة المحاولة"
+            testID="emergency-scan-retry" onPress={() => {
+              setState({ kind: 'loading' }); setAttempt(value => value + 1);
+            }} style={{ padding: 16, minHeight: 56, backgroundColor: C.ground, borderRadius: 12 }}>
+            <Txt size={19} weight="700" align="center" color={C.brand}>Retry · إعادة المحاولة</Txt>
+          </Pressable>
+        ) : null}
       </View>,
     );
   }
@@ -150,7 +167,7 @@ export default function EmergencyScan() {
         {card.allergies.length ? (
           card.allergies.map((a) => <Txt key={a} size={24} weight="700" color={C.alert}>{a}</Txt>)
         ) : (
-          <Txt size={17} color={C.muted}>None recorded · لا شيء مُسجَّل</Txt>
+          <Txt size={17} color={C.muted}>No allergy information displayed · لا توجد معلومات حساسية معروضة</Txt>
         )}
       </View>
 

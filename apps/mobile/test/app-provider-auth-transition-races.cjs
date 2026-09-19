@@ -7,6 +7,20 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require(process.env.TYPESCRIPT_PATH || 'typescript');
+// Evaluate pure production policy/event modules; only native and storage I/O are stubs.
+function pureProviderModules() {
+ const modules = {};
+ for (const [id, path] of Object.entries({
+  '../api/access-changes.js': '../src/api/access-changes.ts',
+  '../api/clinical-changes.js': '../src/api/clinical-changes.ts',
+  '../security/profile-permissions.js': '../src/security/profile-permissions.ts',
+ })) {
+  const output = ts.transpileModule(fs.readFileSync(require('node:path').resolve(__dirname, path), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  modules[id] = {}; vm.runInNewContext(output, { exports: modules[id] });
+ }
+ return modules;
+}
+
 
 const self = (account = 'A') => ({
   id: `SELF-${account}`,
@@ -85,6 +99,8 @@ function makeProvider(file) {
   };
 
   const imports = {
+    ...pureProviderModules(),
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
     react: hooks,
     'react/jsx-runtime': {
       jsx: (type, props) => ({ type, props }),
@@ -106,8 +122,10 @@ function makeProvider(file) {
       clearSession: async () => { h.clearCalls.push(currentUser); currentUser = null; },
       storeSession: async tokens => { h.storeCalls.push(tokens.accessToken); currentUser = tokens.accessToken; },
     },
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => currentUser },
     '../storage/offline-queue.js': {
+      subscribeQueueChanges: () => () => undefined, invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined,
       setCacheOwner: id => h.owners.push(id),
       purgeLocalCaches: id => { h.purgeCalls.push(id); return h.purge(id); },
       flushQueue: async () => ({ offline: false }),

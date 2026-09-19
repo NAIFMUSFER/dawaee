@@ -11,7 +11,8 @@
  * receives only its own database role, never the owner's or its sibling's.
  * Without supplied audit role passwords, fresh passwords are generated on each
  * start. This preview must not share runtime roles with any other service.
- * It uses mock providers and synthetic data; success is not release approval.
+ * Push/OCR remain mocked. Real account email needs the explicit bounded opt-in
+ * below and genuine mailbox confirmation. Success is not release approval.
  */
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
@@ -77,8 +78,27 @@ export function validateSchemaState(ledgerRows, otherTables) {
   if (ledgerRows === 0 && otherTables !== 0) refuse('AUDIT_PARTIAL_SCHEMA_REQUIRES_REVIEW');
 }
 
+export function validateAccountEmailOptIn(env) {
+  const flag = env.AUDIT_ACCOUNT_EMAIL_DELIVERY;
+  if (flag === undefined || flag === '0') return false;
+  if (flag !== '1') refuse('AUDIT_ACCOUNT_EMAIL_OPT_IN_INVALID');
+  validateTarget(env);
+  if (env.ACCOUNT_EMAIL_PROVIDER !== 'resend'
+      || env.ACCOUNT_EMAIL_FROM !== 'accounts@mail.tadawee.net'
+      || env.ACCOUNT_EMAIL_SENDER_VERIFIED !== 'true'
+      || env.ACCOUNT_EMAIL_BASE_URL !== ORIGIN
+      || typeof env.RESEND_API_KEY !== 'string' || !env.RESEND_API_KEY.trim()) {
+    refuse('AUDIT_ACCOUNT_EMAIL_CONFIGURATION_INVALID');
+  }
+  return true;
+}
+
 export function runtimeEnvironment(env, ownerUrl, password, role = 'dawaee_app') {
   if (!['dawaee_app', 'dawaee_worker'].includes(role)) refuse('AUDIT_RUNTIME_ROLE_REFUSED');
+  const emailEnabled = validateAccountEmailOptIn(env);
+  if (emailEnabled && new URL(ownerUrl).toString() !== validateTarget(env).toString()) {
+    refuse('AUDIT_ACCOUNT_EMAIL_DATABASE_MISMATCH');
+  }
   // An allowlist, not a denylist: DATABASE_URL, PG credentials, migration
   // passwords and any unrelated platform secrets cannot leak to the API child.
   const child = {};
@@ -86,6 +106,12 @@ export function runtimeEnvironment(env, ownerUrl, password, role = 'dawaee_app')
     'JWT_SECRET', 'JWT_ISSUER', 'IP_HASH_SALT', 'DATABASE_CA_CERT', 'DATABASE_CA_CERT_FILE',
     'RENDER_SERVICE_ID', 'RENDER_GIT_COMMIT', 'RENDER_EXTERNAL_URL', 'BUILD_TIME']) {
     if (env[key] !== undefined) child[key] = env[key];
+  }
+  if (emailEnabled && role === 'dawaee_app') {
+    for (const key of ['AUDIT_ACCOUNT_EMAIL_DELIVERY', 'ACCOUNT_EMAIL_PROVIDER',
+      'ACCOUNT_EMAIL_FROM', 'ACCOUNT_EMAIL_SENDER_VERIFIED', 'ACCOUNT_EMAIL_BASE_URL', 'RESEND_API_KEY']) {
+      child[key] = env[key];
+    }
   }
   const url = new URL(ownerUrl);
   url.username = role;
@@ -111,6 +137,7 @@ export function validateRuntimeRole(rows, role) {
 
 export async function bootstrap(env, apply = false) {
   const ownerUrl = validateTarget(env); // before imports, connections or writes
+  validateAccountEmailOptIn(env); // invalid opt-in must fail before migrations too
   const { default: pg } = await import('pg');
   const { databaseTlsOptions } = await import('../apps/api/dist/lib/db-tls.js');
   const ssl = databaseTlsOptions({ ...env, DATABASE_SSL: env.DATABASE_SSL ?? 'false' });

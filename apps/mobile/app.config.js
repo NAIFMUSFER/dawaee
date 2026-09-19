@@ -25,7 +25,14 @@ module.exports = ({ config }) => {
     name: 'تداوي | TADAWEE تجريبي',
     scheme: 'dawaee-audit',
     android: { ...config.android, package: 'app.dawaee.audit', googleServicesFile: undefined },
-    ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit', googleServicesFile: undefined },
+    ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit', googleServicesFile: undefined,
+      infoPlist: { ...config.ios?.infoPlist, CFBundleDisplayName: 'تداوي تجريبي' } },
+    // Localized metadata overrides the ordinary display name on iOS. Keep the
+    // isolated installation visibly distinct in both supported languages.
+    locales: {
+      ar: { ios: { ...require('./locales/ar.json').ios, CFBundleDisplayName: 'تداوي تجريبي' } },
+      en: { ios: { ...require('./locales/en.json').ios, CFBundleDisplayName: 'TADAWEE Audit' } },
+    },
     extra: { ...config.extra, apiBaseUrl: origin, iosPhoneVerificationEnabled: false },
     // The production Firebase client is registered to app.dawaee.mobile.
     // Do not reuse its configuration for an isolated audit installation.

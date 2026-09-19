@@ -1,13 +1,14 @@
 import React, { useEffect, useRef } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Alert, Platform, View } from 'react-native';
+import { Alert, AppState, Platform, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
-import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
+import { PALETTE, t } from '@dawaee/shared';
+import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration, subscribeNotificationPermissionChanges } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
@@ -15,31 +16,12 @@ import { clearMedicationDrafts } from '@/storage/medication-draft';
 import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
 import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
 import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
-
-/**
- * React Native Web does not implement the native multi-button Alert contract.
- * Screens use that contract before destructive actions (revoking caregiver
- * access, leaving a care circle, etc.), so on Safari the button looked alive
- * but its confirmation callback never ran. Install one web-only adapter at the
- * application boundary: native keeps the real Alert, while web maps the same
- * cancel/confirm contract to the browser's blocking confirm dialog.
- */
-function useWebAlertAdapter() {
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof globalThis.confirm !== 'function') return;
-
-    const nativeAlert = Alert.alert;
-    Alert.alert = (title, message, buttons) => {
-      const actions = buttons ?? [];
-      const confirmAction = actions.find((button) => button.style === 'destructive')
-        ?? actions.find((button) => button.style !== 'cancel');
-      const prompt = message ? `${title}\n\n${message}` : title;
-      if (globalThis.confirm(prompt)) confirmAction?.onPress?.();
-    };
-
-    return () => { Alert.alert = nativeAlert; };
-  }, []);
-}
+import { bindPatientReminderAccount, setPatientReminderIntent } from '@/notifications/patient-intent';
+import EmailVerificationScreen from './settings/email-verification';
+import { needsEmailVerification } from '@/security/email-onboarding';
+import { landingAfterAuth } from '@/storage/pending-invite';
+import AppNavigator from '@/navigation/AppNavigator';
+import WebAlertHost from '@/components/WebAlertHost';
 
 /**
  * Root layout.
@@ -54,10 +36,13 @@ function Shell() {
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
+  const emailRequired = !DEMO_MODE && needsEmailVerification(signedIn, user);
+  const wasEmailRequired = useRef(false);
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
   const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
   bindCaregiverNotificationAccount(caregiverOwner);
+  bindPatientReminderAccount(caregiverOwner);
   const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
   if (caregiverSession.current.owner !== caregiverOwner) {
     caregiverSession.current = {
@@ -78,7 +63,14 @@ function Shell() {
     previousClinicalRouteScope.current = clinicalRouteScope;
   }
 
-  useWebAlertAdapter();
+  useEffect(() => {
+    let current = true;
+    if (wasEmailRequired.current && !emailRequired && signedIn) {
+      void landingAfterAuth().then(path => { if (current) router.replace(path); });
+    }
+    wasEmailRequired.current = emailRequired;
+    return () => { current = false; };
+  }, [emailRequired, signedIn, user?.id, router]);
 
   useEffect(() => {
     void configureChannels();
@@ -87,9 +79,25 @@ function Shell() {
 
   /** Tell the server which device to reach. */
   useEffect(() => {
-    if (!signedIn || !deviceId) return;
-    void syncPushRegistration(deviceId).catch(() => undefined);
-  }, [signedIn, deviceId]);
+    if (!ready || !signedIn || !user?.id || emailRequired || !deviceId) return;
+    const generation = caregiverSession.current.generation;
+    let disposed = false;
+    let registering = false;
+    const current = () => !disposed && caregiverSession.current.generation === generation;
+    const register = async (requestPermission: boolean) => {
+      if (registering || !current()) return;
+      registering = true;
+      try { await syncPushRegistration(deviceId, { requestPermission, isCurrent: current }); }
+      catch { /* Foreground/grant events retry transient token/provider errors. */ }
+      finally { registering = false; }
+    };
+    // Registration may reuse an existing grant. The OS prompt belongs to the
+    // explained onboarding/settings action, not the sign-in transition.
+    void register(false);
+    const unsubscribe = subscribeNotificationPermissionChanges(() => { void register(false); });
+    const subscription = AppState.addEventListener('change', next => { if (next === 'active') void register(false); });
+    return () => { disposed = true; unsubscribe(); subscription.remove(); };
+  }, [ready, signedIn, emailRequired, deviceId, user?.id]);
 
   /** Keep the delivery selection in account-bound memory. The landing resolves
    * its patient through the authenticated API, after the app lock permits it. */
@@ -116,14 +124,19 @@ function Shell() {
 
   /** Act on the reminder's own buttons. */
   useEffect(() => {
-    if (!signedIn) return;
+    if (!ready || !signedIn || !user?.id || emailRequired) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void startNotificationActionListener(() => { void refreshAfterAction(); })
+    const generation = caregiverSession.current.generation;
+    void startNotificationActionListener(outcome => {
+      if (outcome.rejected) Alert.alert(t(preferences.locale, 'today.actionSaveFailed'));
+      void refreshAfterAction();
+    },
+      () => !cancelled && caregiverSession.current.generation === generation)
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, refreshAfterAction]);
+  }, [ready, signedIn, user?.id, emailRequired, refreshAfterAction, preferences.locale]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
@@ -146,7 +159,11 @@ function Shell() {
       if (!isCurrent()) return;
       stop = startGroupedNotificationListener(
         native,
-        () => router.replace('/(tabs)/today'),
+        (doseId) => {
+          if (!isCurrent()) return;
+          setPatientReminderIntent(user.id, { doseId });
+          router.replace('/notification');
+        },
         isCurrent,
       );
     }).catch(() => undefined);
@@ -169,13 +186,13 @@ function Shell() {
       ) : null}
       {ready ? (
         <AppLockGate>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: PALETTE.background },
-              animation: 'slide_from_right',
-            }}
-          />
+          <View style={{ flex: 1 }}>
+          <AppNavigator />
+          <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
+            {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
+          </Modal>
+          <WebAlertHost scope={clinicalRouteScope} />
+          </View>
         </AppLockGate>
       ) : (
         <View style={{ flex: 1, backgroundColor: PALETTE.background, justifyContent: 'center' }}>

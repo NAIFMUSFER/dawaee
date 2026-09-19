@@ -275,7 +275,7 @@ describe('a code does not outrank an operator', () => {
     const phone = newPhone();
     const reg = await h.app.inject({
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, displayName: 'D', password: PW, locale: 'ar', deviceId: `otp-reg-${seq}-${Date.now() % 10000}` },
+      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D', password: PW, locale: 'ar', deviceId: `otp-reg-${seq}-${Date.now() % 10000}` },
     });
     expect(reg.statusCode).toBe(200);
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
@@ -298,7 +298,7 @@ describe('a code does not outrank an operator', () => {
     const phone = newPhone();
     await h.app.inject({
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, displayName: 'D2', password: PW, locale: 'ar', deviceId: `otp-reg2-${seq}-${Date.now() % 10000}` },
+      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D2', password: PW, locale: 'ar', deviceId: `otp-reg2-${seq}-${Date.now() % 10000}` },
     });
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
     const before = await owner.query<{ n: string }>(
@@ -321,7 +321,7 @@ describe('a code does not outrank an operator', () => {
     const phone = newPhone();
     await h.app.inject({
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, displayName: 'L', password: PW, locale: 'ar', deviceId: `otp-lk-${seq}-${Date.now() % 10000}` },
+      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'L', password: PW, locale: 'ar', deviceId: `otp-lk-${seq}-${Date.now() % 10000}` },
     });
     for (let i = 0; i < 9; i++) {
       await h.app.inject({
@@ -424,7 +424,7 @@ describe('there is no delivery provider, and the API says so', () => {
     const known = newPhone();
     await h.app.inject({
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone: known, displayName: 'R', password: PW, locale: 'ar', deviceId: `otp-req-${seq}-${Date.now() % 10000}` },
+      payload: { phone: known, email: `fixture-${known.replace(/\D/g, '')}@example.test`, displayName: 'R', password: PW, locale: 'ar', deviceId: `otp-req-${seq}-${Date.now() % 10000}` },
     });
     const ask = (p: string) => h.app.inject({
       method: 'POST', url: '/v1/auth/otp/request', remoteAddress: '10.55.0.1', headers: client(),

@@ -29,8 +29,10 @@ export type RateScope =
   | 'login:ip' | 'login:identifier'
   | 'register:ip' | 'register:identifier'
   | 'otp-verify:ip' | 'otp-verify:identifier'
+  | 'phone-link:ip' | 'phone-link:account'
   | 'phone-proof:ip' | 'phone-proof:account'
   | 'recovery:ip' | 'recovery:phone'
+  | 'email:ip' | 'email:account' | 'email:recipient' | 'email:hour' | 'email:global' | 'email:token'
   | 'refresh:ip';
 
 export interface Budget {
@@ -47,12 +49,20 @@ export interface Budget {
  * minutes.
  */
 export const BUDGETS: Record<RateScope, Budget> = {
+  'email:ip': { windowSeconds: 3600, max: 10 },
+  'email:account': { windowSeconds: 3600, max: 5 },
+  'email:recipient': { windowSeconds: 60, max: 1 },
+  'email:hour': { windowSeconds: 3600, max: 3 },
+  'email:global': { windowSeconds: 86400, max: 100 },
+  'email:token': { windowSeconds: 900, max: 10 },
   'login:ip': { windowSeconds: 600, max: 30 },
   'login:identifier': { windowSeconds: 600, max: 10 },
   'register:ip': { windowSeconds: 600, max: 10 },
   'register:identifier': { windowSeconds: 3600, max: 5 },
   'otp-verify:ip': { windowSeconds: 600, max: 30 },
   'otp-verify:identifier': { windowSeconds: 600, max: 10 },
+  'phone-link:ip': { windowSeconds: 600, max: 10 },
+  'phone-link:account': { windowSeconds: 600, max: 5 },
   'phone-proof:ip': { windowSeconds: 600, max: 30 },
   'phone-proof:account': { windowSeconds: 600, max: 10 },
   'recovery:ip': { windowSeconds: 600, max: 30 },

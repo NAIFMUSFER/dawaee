@@ -47,7 +47,7 @@ function resolveInitialLoad(calls: Array<{ route: string; gate: ReturnType<typeo
 describe('medication detail first-frame profile isolation', () => {
   it('does not render patient A medication data on the first patient B frame', async () => {
     const io = deferredApi();
-    const h = createHarness(screen, hook, {}, {
+    const h = createHarness(screen, hook, { role: 'owner' }, {
       'expo-router': {
         router: { back: () => undefined, push: () => undefined, replace: () => undefined },
       },

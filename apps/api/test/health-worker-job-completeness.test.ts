@@ -31,7 +31,7 @@ function expectPublicWorkerFailure(bodyText: string): void {
   }
 }
 
-describe('production readiness covers every per-tick safety-critical worker prerequisite', () => {
+describe('production readiness covers reminders and account erasure', () => {
   beforeAll(async () => {
     vi.stubEnv('RENDER_GIT_COMMIT', COMMIT);
     h.query.mockImplementation(async (sqlLike: unknown) => {
@@ -55,11 +55,12 @@ describe('production readiness covers every per-tick safety-critical worker prer
       { job_name: 'mark-missed', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'stock-alerts', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'digests', started_at: new Date(), succeeded: true, build_commit: COMMIT },
+      { job_name: 'housekeeping', started_at: new Date(), succeeded: true, build_commit: COMMIT },
     ];
   });
   afterAll(async () => { vi.unstubAllEnvs(); await app.close(); });
 
-  it.each(['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'])(
+  it.each(['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'])(
     'returns 503 when %s is the only failed prerequisite',
     async (jobName) => {
       workerRows = workerRows.map((row) => row.job_name === jobName ? { ...row, succeeded: false } : row);
@@ -68,6 +69,41 @@ describe('production readiness covers every per-tick safety-critical worker prer
       expectPublicWorkerFailure(response.body);
     },
   );
+
+  it('does not report ready when cleanup has never run after a worker restart', async () => {
+    workerRows = workerRows.filter(row => row.job_name !== 'housekeeping');
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expectPublicWorkerFailure(response.body);
+    expect(response.body).not.toContain('housekeeping');
+    const live = await app.inject({ method: 'GET', url: '/health' });
+    expect(live.statusCode).toBe(200);
+    expect(live.json().status).toBe('ok');
+  });
+
+  it('accepts a successful hourly cleanup while per-minute reminder jobs stay fresh', async () => {
+    workerRows = workerRows.map(row => row.job_name === 'housekeeping'
+      ? { ...row, started_at: new Date(Date.now() - 65 * 60_000) } : row);
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(200);
+    expectPublicReady(response.body);
+  });
+
+  it('rejects cleanup that stopped running while reminders still succeed', async () => {
+    workerRows = workerRows.map(row => row.job_name === 'housekeeping'
+      ? { ...row, started_at: new Date(Date.now() - 121 * 60_000) } : row);
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expectPublicWorkerFailure(response.body);
+  });
+
+  it('requires cleanup from the same release as the API', async () => {
+    workerRows = workerRows.map(row => row.job_name === 'housekeeping'
+      ? { ...row, build_commit: 'b'.repeat(40) } : row);
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expectPublicWorkerFailure(response.body);
+  });
 
   it('requires current successful worker jobs in an opted-in non-production preview', async () => {
     h.env = 'development';

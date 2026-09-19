@@ -39,6 +39,8 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
   let readLast: () => Promise<unknown> = async () => last;
   let clearCount = 0;
   let nativeImports = 0;
+  let registrations = 0;
+  let actionSubscriptions = 0;
   const native = {
     DEFAULT_ACTION_IDENTIFIER: DEFAULT_ACTION,
     getLastNotificationResponseAsync: () => readLast(),
@@ -80,25 +82,33 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
   };
   const noop = () => undefined;
   let intentModule: Record<string, unknown> | undefined;
+  let patientIntentModule: Record<string, unknown> | undefined;
   const requireMock = (id: string): unknown => {
     switch (id) {
       case 'react': return react;
       case 'expo-router': return { Stack: noop, useRouter: () => router };
       case 'expo-status-bar': return { StatusBar: noop };
       case 'react-native-safe-area-context': return { SafeAreaProvider: noop };
-      case 'react-native': return { Platform: { OS: options.platform ?? 'android' }, View: noop, Alert: {} };
+      case 'react-native': return { Platform: { OS: options.platform ?? 'android' }, View: noop, Alert: {}, AppState: { addEventListener: () => ({ remove: noop }) } };
       case '@/state/app-store': return { AppProvider: noop, useApp: () => state };
       case '@/i18n': return { I18nProvider: noop };
       case '@/components/ui': return { Loading: noop, PreviewBanner: noop };
       case '@dawaee/shared': return { PALETTE: { background: '#fff' } };
       case '@/api/client': return { DEMO_MODE: false };
       case '@/security/AppLockGate': return { AppLockGate: noop };
+      case '@/security/PrivacyModal': return { PrivacyModal: noop };
+      case './settings/email-verification': return { default: noop };
+      case '@/storage/pending-invite': return { landingAfterAuth: async () => '/caregiver/accept' };
+      case '@/security/email-onboarding': return executeSource('apps/mobile/src/security/email-onboarding.ts', requireMock);
       case '@/navigation/private-navigation': return { clearClinicalRouteIntents: noop };
+      case '@/navigation/AppNavigator': return { default: noop };
+      case '@/components/WebAlertHost': return { default: noop };
       case '@/storage/medication-draft': return { clearMedicationDrafts: noop };
       case '@/notifications': return {
         configureCategories: async () => undefined, configureChannels: async () => undefined,
-        syncPushRegistration: async () => undefined,
-        startNotificationActionListener: async () => noop,
+        syncPushRegistration: async () => { registrations++; },
+        subscribeNotificationPermissionChanges: () => noop,
+        startNotificationActionListener: async () => { actionSubscriptions++; return noop; },
       };
       case '@/notifications/caregiver-navigation':
         return executeSource('apps/mobile/src/notifications/caregiver-navigation.ts', requireMock);
@@ -106,6 +116,8 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
         return executeSource('apps/mobile/src/notifications/grouped-navigation.ts', requireMock);
       case '@/notifications/caregiver-intent':
         return intentModule ??= executeSource('apps/mobile/src/notifications/caregiver-intent.ts', requireMock);
+      case '@/notifications/patient-intent':
+        return patientIntentModule ??= executeSource('apps/mobile/src/notifications/patient-intent.ts', requireMock);
       case 'expo-notifications': nativeImports += 1; return native;
       default: throw new Error(`Unexpected test dependency: ${id}`);
     }
@@ -116,13 +128,17 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
     routes, listeners,
     get clears() { return clearCount; },
     get imports() { return nativeImports; },
+    get registrations() { return registrations; },
+    get actionSubscriptions() { return actionSubscriptions; },
+    get patientIntent() { return (patientIntentModule?.getPatientReminderIntent as () => unknown)?.(); },
     get intent() { return (intentModule?.getCaregiverNotificationIntent as () => unknown)?.(); },
     setReadLast: (read: () => Promise<unknown>) => { readLast = read; },
     render(overrides: Record<string, unknown> = {}, commitEffects = true) {
       Object.assign(state, overrides);
       refIndex = 0; effectIndex = 0; pending = [];
-      shell();
+      const tree = shell();
       if (commitEffects) for (const commit of pending) commit();
+      return tree;
     },
     emit(value: unknown) { last = value; for (const listener of listeners) listener(value); },
     dispose() { for (const effect of effects) effect?.cleanup?.(); },
@@ -135,6 +151,28 @@ async function flush() { for (let i = 0; i < 30; i += 1) await Promise.resolve()
 // Delivery selection is handed off in memory; only the authenticated landing
 // can resolve identity. Never guess the active or first followed patient.
 describe('caregiver push navigation from the shipped Shell', () => {
+  it('starts registration and action consumption only after the authenticated owner is ready', async () => {
+    const h = harness({ ready: false });
+    h.render({ deviceId: 'synthetic-device' }); await flush();
+    assert.equal(h.registrations, 0);
+    assert.equal(h.actionSubscriptions, 0);
+    h.render({ ready: true }); await flush();
+    assert.equal(h.registrations, 1);
+    assert.equal(h.actionSubscriptions, 1);
+    h.render({ user: { id: 'new-account' } }); await flush();
+    assert.equal(h.registrations, 2);
+    assert.equal(h.actionSubscriptions, 2);
+    h.dispose();
+  });
+  it('routes a single patient reminder through the account-bound patient resolver', async () => {
+    const value = response('dose_reminder');
+    Object.assign(value.notification.request.content.data, { doseId: 'synthetic-patient-dose' });
+    const h = harness({ last: value }); h.render(); await flush();
+    assert.deepEqual(h.routes, ['/notification']);
+    assert.equal((h.patientIntent as any).doseId, 'synthetic-patient-dose');
+    assert.equal((h.patientIntent as any).userId, 'caregiver-A');
+    h.dispose();
+  });
   it('opens the neutral landing for a live Android escalation without a doseId', async () => {
     const h = harness(); h.render(); await flush(); h.emit(response()); await flush();
     const selected = h.intent as Record<string, unknown>;
@@ -215,9 +253,9 @@ describe('caregiver push navigation from the shipped Shell', () => {
     for (const callback of callbacks) callback(response());
     finish(response()); await flush(); assert.deepEqual(h.routes, []);
   });
-  it('preserves the existing grouped patient reminder route', async () => {
+  it('routes grouped patient reminders through patient selection', async () => {
     const h = harness({ last: response('dose_group_reminder') }); h.render(); await flush();
-    assert.deepEqual(h.routes, ['/(tabs)/today']); h.dispose();
+    assert.deepEqual(h.routes, ['/notification']); h.dispose();
   });
 });
 
@@ -233,7 +271,7 @@ it('loads both real default-tap listeners and keeps their routing and consumptio
   for (const kind of ['dose_group_reminder', 'daily_summary', 'weekly_summary']) {
     h.emit(response(kind, `integration-${kind}`)); await flush();
   }
-  assert.deepEqual(h.routes, ['/(tabs)/today', '/caregiver/notification', '/caregiver/notification']);
+  assert.deepEqual(h.routes, ['/notification', '/caregiver/notification', '/caregiver/notification']);
   assert.equal(h.clears, 3, 'each matching response is consumed by exactly one listener');
   h.dispose();
   assert.equal(h.listeners.size, 0);

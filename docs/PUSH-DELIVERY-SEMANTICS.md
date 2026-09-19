@@ -6,7 +6,11 @@ Expo's *Sending notifications* documentation, retrieved 2026-09-05.
 
 ## The guarantee
 
-**At-least-once, with a bounded and documented duplicate window.**
+**Retry-oriented dispatch, with a documented duplicate window.**
+
+This describes eligible outbox work, not a guarantee of handset delivery.
+Revoked access, obsolete dose state, expiry or terminal provider failures may
+stop an intent without a successful send.
 
 Not exactly-once. Exactly-once delivery to an external push provider is not
 achievable here and is not claimed anywhere in the code.
@@ -61,27 +65,33 @@ Note the ceiling: a receipt confirms one hop further than a ticket — Expo to
 FCM/APNs — and still stops short of the handset. Neither is a delivery
 confirmation in the sense a patient or a caregiver would mean.
 
-## What receipts would buy, if implemented
+## Implemented receipt reconciliation
 
-**Not implemented today.** No receipt polling exists in this codebase.
+`apps/worker/src/jobs/push-receipts.ts` polls accepted Expo tickets after the
+code-defined 15-minute delay, in batches of 100, with a 24-hour expiry window.
+The 13 September [receipt audit](audit/2026-09-13-push-provider-receipts.md)
+records its introduction.
 
-If added — as a separate scheduled job, since receipts must be read minutes
-later and cannot be awaited inside the dispatch loop — it would give:
+A successful receipt marks the row `delivered`; this means the provider handoff
+succeeded. It does not mean that the phone displayed it. A matching
+`DeviceNotRegistered` receipt retires the original endpoint using its stored
+fingerprint, so an old receipt cannot deactivate a replacement token. Terminal
+errors and expired receipts are recorded as failures. Missing ticket IDs after
+an ambiguous send still cannot be reconciled by this job.
 
-1. **A truer delivered-ish signal** than a ticket, distinguishing "accepted by
-   Expo" from "handed to FCM/APNs".
-2. **Faster retirement of dead tokens.** `DeviceNotRegistered` surfaces in
-   receipts for sends that ticketed `ok`, so tokens currently deactivated only
-   when the send itself reports them would be caught sooner.
-3. **Per-message error detail** (`MessageRateExceeded`, `MessageTooBig`) that a
-   ticket does not carry.
+## Current intent and local reminders
 
-It would **not**:
+The 19 September audit adds a last eligibility check before dose dispatch:
+completed/cancelled/paused doses and superseded snoozes must not send an obsolete
+message. Grouped reminders are rebuilt from their remaining eligible members.
+Snooze reminders retain their own frozen deadline and event identity rather than
+reusing a consumed escalation stage. Lease renewal uses a separate committed
+connection, like finalisation; native PostgreSQL concurrency proof is required.
 
-- provide idempotency — a retry is still a second message;
-- close the ambiguous window — a timed-out send has no ticket id, so there is no
-  receipt to fetch;
-- prove the patient saw the reminder.
+Local native notifications use the authorized cached dose window and pending
+offline actions. They are separate from remote push and remain subject to device
+permission and operating-system behavior. A real foreground/locked/offline
+matrix is required; source tests do not establish presentation on iOS.
 
 ## Crash behaviour
 
@@ -110,7 +120,8 @@ cannot overwrite the result of the worker that took it.
 - Exactly-once delivery.
 - That `sent` means the patient received or saw the notification.
 - That Expo provides any idempotency or deduplication guarantee.
-- Real end-to-end delivery through Expo/APNs/FCM — **NOT RUN**. Every test above
-  runs against the database and a stubbed provider. Provider network delivery
-  has not been executed from this environment and no mocked response has been
-  counted as a production delivery PASS.
+- Universal or exactly-timed delivery in foreground, background or locked states.
+  On 19 September one synthetic iOS reminder received a successful provider
+  receipt and the user confirmed a visible alert after APNs configuration was
+  repaired. That single observation does not validate every device state, token
+  rotation, group, snooze or offline scenario, nor the newer audit revision.

@@ -1,5 +1,8 @@
-import React from 'react';
-import { Image, Modal, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import React, { useState } from 'react';
+import { DoseCard } from './DoseCard';
+import { DoseNotesSheet } from './DoseNotesSheet';
+import { Image, Pressable, RefreshControl, ScrollView, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Banner, Button, Card, Divider, Row, SafetyNote, SectionTitle, Txt } from '@/components/ui';
@@ -12,7 +15,6 @@ import {
   setMedicationStockRouteIntent,
 } from '@/navigation/private-navigation';
 import type { DoseView, MedicationScheduleView, MedicationView } from '@/api/types';
-import { statusColors } from '@/theme';
 import type { DoseUnit, MessageKey, ScheduleRule, StockForecast } from '@dawaee/shared';
 
 export type MedicationDetail = Omit<MedicationView, 'schedules' | 'stock' | 'stockForecast'> & {
@@ -63,9 +65,11 @@ export function MedicationDetailView({
   onRemove,
   summarize,
 }: Props) {
-  const { t, formatDate, formatNumber, formatTime, formatMeasure } = useI18n();
+  const { t, formatDate, formatNumber, formatMeasure } = useI18n();
   const theme = useTheme();
   const { activeProfile, user } = useApp();
+  const can = (permission: string) => Boolean(activeProfile && (activeProfile.role === 'owner' || activeProfile.permissions?.includes(permission as never)));
+  const [notesFor, setNotesFor] = useState<DoseView | null>(null);
 
   if (!medication) {
     return (
@@ -119,6 +123,10 @@ export function MedicationDetailView({
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: theme.spacing.lg, backgroundColor: theme.colors.background }}>
+        <Button label={t('common.back')} tone="ghost" fullWidth={false}
+          onPress={() => router.replace('/(tabs)/medications')} />
+      </View>
       <ScrollView
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: theme.spacing.xxxl }}
@@ -177,6 +185,7 @@ export function MedicationDetailView({
           {medication.foodInstruction !== 'no_preference' ? (
             <DetailRow label={t('medication.foodInstruction')} value={t(`food.${medication.foodInstruction}` as MessageKey)} />
           ) : null}
+          {medication.notes ? <DetailRow label={t('medication.notes')} value={medication.notes} /> : null}
           {medication.instructions ? <DetailRow label={t('medication.instructions')} value={medication.instructions} /> : null}
           {medication.doctorInstructions ? (
             <DetailRow label={t('medication.doctorInstructions')} value={medication.doctorInstructions} />
@@ -197,13 +206,13 @@ export function MedicationDetailView({
         </Card>
 
         <SectionTitle
-          action={
+          action={can('edit_schedule') ?
             <Button
               label={schedules.length > 0 ? t('schedule.change') : t('schedule.add')}
               tone="ghost"
               fullWidth={false}
               onPress={() => openSchedule(schedules.length > 0 ? 'edit' : 'create')}
-            />
+            /> : undefined
           }
         >
           {t('schedule.title')}
@@ -214,7 +223,7 @@ export function MedicationDetailView({
           schedules.map((schedule) => (
             <Card
               key={schedule.id}
-              onPress={() => openSchedule('edit', schedule.id)}
+              onPress={can('edit_schedule') ? () => openSchedule('edit', schedule.id) : undefined}
               accessibilityLabel={summarize(schedule.rule)}
             >
               <Txt variant="bodyLarge" weight="medium">{summarize(schedule.rule)}</Txt>
@@ -232,13 +241,13 @@ export function MedicationDetailView({
         )}
 
         <SectionTitle
-          action={
+          action={can('update_stock') ?
             <Button
               label={t('stock.markRefilled')}
               tone="ghost"
               fullWidth={false}
               onPress={openStock}
-            />
+            /> : undefined
           }
         >
           {t('stock.title')}
@@ -270,36 +279,21 @@ export function MedicationDetailView({
           )}
         </Card>
 
+        {can('view_history') ? <>
         <SectionTitle>{t('medication.recentDoses')}</SectionTitle>
         {doses.length === 0 ? (
           <Card><Txt variant="body" color={theme.colors.ink500}>{t('medication.noDoseHistory')}</Txt></Card>
         ) : (
           <Card>
-            {doses.map((dose, index) => {
-              const colors = statusColors(dose.status);
-              return (
-                <View key={dose.id} style={{ gap: theme.spacing.xs }}>
-                  {index > 0 ? <Divider /> : null}
-                  <Row style={{ justifyContent: 'space-between' }} gap={theme.spacing.md}>
-                    <View style={{ flex: 1 }}>
-                      <Txt variant="body" weight="medium">
-                        {formatDate(dose.scheduledAt, dose.scheduledTimezone, { day: 'numeric', month: 'short' })}
-                      </Txt>
-                      <Txt variant="bodySmall" color={theme.colors.ink500}>
-                        {formatTime(dose.scheduledAt, dose.scheduledTimezone)}
-                      </Txt>
-                    </View>
-                    <Badge label={t(`dose.status.${dose.status}` as MessageKey)} fg={colors.fg} bg={colors.bg} />
-                  </Row>
-                </View>
-              );
-            })}
+            {doses.map(dose => <DoseCard key={dose.id} dose={dose} onNote={() => setNotesFor(dose)} />)}
           </Card>
         )}
 
+        </> : null}
+        {can('edit_medication') ? <>
         <SectionTitle>{t('common.edit')}</SectionTitle>
         <Button label={t('common.edit')} onPress={openEdit} />
-        <Button label={t('refill.title')} tone="secondary" onPress={openStock} />
+        {can('update_stock') ? <Button label={t('refill.title')} tone="secondary" onPress={openStock} /> : null}
         <Button
           label={medication.status === 'paused' ? t('medication.resume') : t('medication.pause')}
           tone="secondary"
@@ -311,10 +305,15 @@ export function MedicationDetailView({
         ) : null}
         <Button label={t('medication.deleteTitle')} tone="danger" onPress={() => onConfirmingDeleteChange(true)} />
 
+        </> : null}
         <SafetyNote textKey="safety.notMedicalAdvice" />
       </ScrollView>
 
-      {confirmingDelete ? (
+      {notesFor && activeProfile ? <DoseNotesSheet key={notesFor.id} profileId={activeProfile.id} dose={notesFor}
+        canRead={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('view_history'))}
+        canWrite={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('confirm_dose'))}
+        onClose={() => { setNotesFor(null); onRefresh(); }} /> : null}
+      {confirmingDelete && can('edit_medication') ? (
         <Modal transparent animationType="fade" visible onRequestClose={() => onConfirmingDeleteChange(false)}>
           <Pressable
             onPress={() => onConfirmingDeleteChange(false)}

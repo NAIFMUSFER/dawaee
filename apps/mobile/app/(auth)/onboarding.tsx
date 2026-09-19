@@ -104,7 +104,7 @@ export default function OnboardingScreen() {
       await createProfiles();
       goTo('elderly');
     } catch (err) {
-      if (err instanceof NetworkError) setError(t('notifications.offlineBanner'));
+      if (err instanceof NetworkError) setError(t('auth.connectionFailed'));
       else if (err instanceof ApiError) setError(t('onboarding.profileFailed'));
       else setError(t('error.internal_error'));
     } finally {

@@ -79,7 +79,7 @@ await h.app.inject({
 // its `detail` is raised on a real code path.
 await h.app.inject({
   method: 'POST', url: '/v1/auth/register', remoteAddress: ip(),
-  payload: { phone: user.phone, displayName: 'dup', password: 'correct horse battery staple', deviceId: 'dup-device' },
+  payload: { phone: user.phone, email: 'duplicate@example.test', displayName: 'dup', password: 'correct horse battery staple', deviceId: 'dup-device' },
 });
 
 void med;

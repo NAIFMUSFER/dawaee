@@ -3,8 +3,9 @@ import { Alert, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  Badge, Banner, Button, Card, Divider, EmptyState, Field, Loading, Row, Screen, SectionTitle, Txt,
+  Badge, Banner, Button, Card, Divider, EmptyState, Loading, Row, Screen, SectionTitle, Txt,
 } from '@/components/ui';
+import { TimeField } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
@@ -390,13 +391,13 @@ function ChannelRuleCard({ channel, rule, editable, saving, onChange, onSave }: 
         </Row>
       ) : null}
 
-      {showsSummaryTime ? <Field label={t('notify.summaryTime')} value={rule.summaryTime} onChangeText={(v) => onChange({ summaryTime: v })} keyboardType="number-pad" hint={t('notify.timeHint')} maxLength={5} /> : null}
+      {showsSummaryTime ? <TimeField label={t('notify.summaryTime')} value={rule.summaryTime} onChange={(v) => onChange({ summaryTime: v })} /> : null}
 
       <Divider />
       <Txt variant="caption" weight="bold" color={theme.colors.ink700}>{t('notify.quietHours')}</Txt>
       <Row gap={theme.spacing.md} align="flex-start">
-        <View style={{ flex: 1 }}><Field label={t('notify.quietFrom')} value={rule.quietHoursStart} onChangeText={(v) => onChange({ quietHoursStart: v })} keyboardType="number-pad" maxLength={5} /></View>
-        <View style={{ flex: 1 }}><Field label={t('notify.quietTo')} value={rule.quietHoursEnd} onChangeText={(v) => onChange({ quietHoursEnd: v })} keyboardType="number-pad" maxLength={5} /></View>
+        <View style={{ flex: 1 }}><TimeField label={t('notify.quietFrom')} value={rule.quietHoursStart} onChange={(v) => onChange({ quietHoursStart: v })} optional /></View>
+        <View style={{ flex: 1 }}><TimeField label={t('notify.quietTo')} value={rule.quietHoursEnd} onChange={(v) => onChange({ quietHoursEnd: v })} optional /></View>
       </Row>
       <Txt variant="caption" color={theme.colors.ink500}>{t('notify.timeHint')}</Txt>
       <Txt variant="caption" color={theme.colors.ink500}>{t('escalation.quietHoursNote')}</Txt>

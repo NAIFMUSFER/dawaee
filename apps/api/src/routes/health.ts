@@ -29,7 +29,7 @@ export function assessIntegrationReadiness(providers: Providers, isProduction: b
     : { ok: false, detail: `unavailable or non-production providers: ${mockedIntegrations.join(', ')}` } };
 }
 
-const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'] as const;
+const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'] as const;
 
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
@@ -63,13 +63,17 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
         const apiCommit = runtimeCommit();
         for (const jobName of REQUIRED_WORKER_JOBS) {
           const row = rows.find((candidate) => candidate.job_name === jobName);
-          const result = assessWorkerHeartbeat({ apiCommit, heartbeat: row ? {
+          const result = assessWorkerHeartbeat({ apiCommit,
+            // Cleanup runs on startup and hourly, unlike the per-minute jobs.
+            // A recent reminder tick must not hide failed or abandoned erasure.
+            maxAgeMs: jobName === 'housekeeping' ? 2 * 60 * 60_000 : undefined,
+            heartbeat: row ? {
             startedAt: row.started_at, succeeded: row.succeeded, buildCommit: row.build_commit,
           } : null });
           if (!result.ok) failures.push(`${jobName}: ${result.detail ?? 'unhealthy'}`);
         }
         checks.worker = failures.length === 0
-          ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, stock-alerts, and digests healthy' }
+          ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, stock-alerts, digests, and housekeeping healthy' }
           : { ok: false, detail: failures.join('; ') };
       } catch { checks.worker = { ok: false, detail: 'unverifiable' }; }
     }

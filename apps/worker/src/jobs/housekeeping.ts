@@ -16,6 +16,14 @@ export async function housekeepingJob(
 ): Promise<{ itemsProcessed: number; failures: Array<{ step: string; error: string }> }> {
   const outcome: StepOutcome = { removed: 0, failures: [] };
 
+  // An empty object queue is not evidence that erasure is ready. Production
+  // had no due accounts while its storage provider could not delete anything.
+  // Record the configuration fault without blocking unrelated retention work.
+  if (ctx.config.isProduction && !['s3', 'r2'].includes(ctx.providers.storage.name)) {
+    outcome.failures.push({ step: 'storageConfiguration',
+      error: 'Private image storage is not configured for production.' });
+  }
+
   await runStep(ctx, client, outcome, 'otp', async () => {
     const { rows } = await client.query<{ purge_expired_otp: number }>('SELECT app.purge_expired_otp(24)');
     return rows[0]?.purge_expired_otp ?? 0;
@@ -46,7 +54,7 @@ export async function housekeepingJob(
 
   await runStep(ctx, client, outcome, 'deliveries', async () => (await client.query(
     `DELETE FROM notification_deliveries
-      WHERE created_at < now() - interval '90 days' AND status IN ('sent','delivered','read','skipped')`,
+      WHERE created_at < now() - interval '90 days' AND status IN ('sent','delivered','read','skipped','failed','expired')`,
   )).rowCount ?? 0);
 
   // Rate-limit windows are minutes long; a day is already generous.

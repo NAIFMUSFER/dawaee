@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, Share, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -7,10 +7,14 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
-import { profileScopeKey } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { errorMessageKey, type MessageKey } from '@dawaee/shared';
+import { buildPatientReport } from '@/privacy/patient-report';
+import { sharePatientReport } from '@/privacy/share-patient-report';
+import { shareFullExport } from '@/privacy/share-full-export';
+import { usePrivateOutputGuard } from '@/privacy/usePrivateOutputGuard';
 import { addDays, localDateInZone } from '@dawaee/core';
 
 /**
@@ -57,7 +61,7 @@ export default function ReportsHubScreen() {
 }
 
 function ReportsHubProfileView() {
-  const { t, formatDate, formatNumber, formatTime } = useI18n();
+  const { t, locale, formatDate, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
   const { activeProfile, offline, setOffline } = useApp();
   const timezone = activeProfile?.timezone ?? 'UTC';
@@ -65,6 +69,9 @@ function ReportsHubProfileView() {
   const [exportData, setExportData] = useState<ExportResponse | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const exportScope = useRequestScope();
+  const guardOutput = usePrivateOutputGuard();
 
   const openClinician = useCallback((days: number) => {
     const to = todayIn(timezone);
@@ -73,13 +80,16 @@ function ReportsHubProfileView() {
 
   const runExport = useCallback(async () => {
     if (!activeProfile) return;
+    const isCurrent = exportScope.begin();
     setExporting(true);
     setError(null);
     try {
       const res = await api.get<ExportResponse>('/v1/reports/export', { profileId: activeProfile.id });
+      if (!isCurrent()) return;
       setExportData(res);
       setOffline(false);
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
       } else if (err instanceof ApiError) {
@@ -89,9 +99,31 @@ function ReportsHubProfileView() {
         setError(t('error.internal_error'));
       }
     } finally {
-      setExporting(false);
+      if (isCurrent()) setExporting(false);
     }
-  }, [activeProfile, setOffline, t]);
+  }, [activeProfile, exportScope, setOffline, t]);
+
+  const shareExport = async (full = false) => {
+    if (!exportData || sharing) return;
+    const requestCurrent = exportScope.capture();
+    const isCurrent = guardOutput(requestCurrent);
+    if (!isCurrent()) return;
+    setSharing(true); setError(null);
+    try {
+      if (full) {
+        if (!await shareFullExport(exportData, t('privacy.fullExportTitle'), isCurrent) && isCurrent()) {
+          setError(t('privacy.exportShareUnavailable'));
+        }
+        return;
+      }
+      const report = buildPatientReport(exportData, locale);
+      if (!await sharePatientReport(report.html, t('privacy.reportTitle'), isCurrent) && isCurrent()) {
+        await Share.share({ message: report.text, title: t('privacy.reportTitle') });
+      }
+    } catch {
+      if (isCurrent()) setError(t('privacy.exportShareUnavailable'));
+    } finally { if (requestCurrent()) setSharing(false); }
+  };
 
   if (!activeProfile) {
     return (
@@ -142,7 +174,7 @@ function ReportsHubProfileView() {
         <Card style={{ gap: theme.spacing.md }}>
           <Txt variant="h3" weight="bold" accessibilityRole="header">{t('reports.dataExport')}</Txt>
           <Txt variant="body" color={theme.colors.ink700}>{t('reports.dataExportDescription')}</Txt>
-          <Button label={t('reports.prepareExport')} onPress={() => void runExport()} loading={exporting} />
+          <Button label={t('reports.prepareExport')} onPress={() => void runExport()} loading={exporting} disabled={sharing} />
 
           {exporting ? <Loading label={t('common.loading')} /> : null}
 
@@ -167,6 +199,9 @@ function ReportsHubProfileView() {
                   </Row>
                 );
               })}
+              <Txt>{t('privacy.exportFormats')}</Txt>
+              <Button label={t('privacy.reportTitle')} onPress={() => void shareExport()} loading={sharing} disabled={exporting} />
+              <Button label={t('privacy.fullExportTitle')} onPress={() => void shareExport(true)} loading={sharing} disabled={exporting} />
               <Banner tone="info" title={t('reports.exportNotice')} />
             </View>
           ) : null}
