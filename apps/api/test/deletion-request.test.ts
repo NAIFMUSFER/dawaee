@@ -102,8 +102,8 @@ describe('requesting account deletion', () => {
 
 describe('deletion grace and session recovery', () => {
   it('revokes access/refresh on all devices, and fresh sign-in does not silently cancel deletion', async () => {
-    const a = await signIn(h,'0577000004','erase-a');
-    const b = await signIn(h,'0577000004','erase-b');
+    const a = await signIn(h,'0577000004','erase-device-a');
+    const b = await signIn(h,'0577000004','erase-device-b');
     const deletion = await request({confirm:true},a);
     expect(deletion.statusCode,deletion.body).toBe(200);
     for (const u of [a,b]) {
