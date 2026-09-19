@@ -1,3 +1,4 @@
+import { hasProfilePermission } from '@/security/profile-permissions';
 import React, { useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -6,6 +7,7 @@ import { Banner, Button, Card, Divider, Field, Row, Screen, SectionTitle, Txt } 
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { MultiPicker, Picker } from '@/components/Picker';
 import { DoseUnitPicker } from '@/components/DoseUnitPicker';
+import { MedicationImageField } from '@/components/MedicationImageField';
 import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { TimeField, isValidTime } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
@@ -57,9 +59,12 @@ function QuickCreateMedicationProfileScreen() {
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
   const arabic = preferences.locale === 'ar';
-  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canAdd = hasProfilePermission(activeProfile, 'add_medication');
   const { capture: captureSave } = useRequestScope();
 
+  const [notes, setNotes] = useState('');
+  const [imageKey, setImageKey] = useState(prefill.imageKey ?? null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
   const [form, setForm] = useState<MedicationForm>(prefill.form ?? 'tablet');
@@ -102,7 +107,7 @@ function QuickCreateMedicationProfileScreen() {
   };
 
   const save = async (acknowledgeDuplicate = false) => {
-    if (!activeProfile || !canAdd || saveInFlight.current) return;
+    if (!activeProfile || !canAdd || photoBusy || saveInFlight.current) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setNameError(t('medication.nameRequired'));
@@ -143,8 +148,9 @@ function QuickCreateMedicationProfileScreen() {
         strengthUnit: prefill.strengthUnit ?? null,
         manufacturer: prefill.manufacturer ?? null,
         barcode: prefill.barcode ?? null,
-        imageKey: prefill.imageKey ?? null,
+        imageKey,
         instructions: prefill.instructions ?? null,
+        notes: notes.trim() || null,
         startDate,
         endDate: endDate || null,
         expiryDate: prefill.expiryDate ?? null,
@@ -217,6 +223,7 @@ function QuickCreateMedicationProfileScreen() {
             title={arabic ? 'لا تملك صلاحية إضافة دواء لهذا الملف' : 'You cannot add medication to this profile'}
           />
         ) : null}
+        {activeProfile && canAdd ? <MedicationImageField profileId={activeProfile.id} imageKey={imageKey} name={name} disabled={saving} onChange={setImageKey} onBusyChange={setPhotoBusy} /> : null}
         {error ? <Banner tone="danger" title={error} /> : null}
         {duplicate ? (
           <Banner
@@ -277,7 +284,10 @@ function QuickCreateMedicationProfileScreen() {
               </Txt>
             </Card>
 
-            <SectionTitle>{t('schedule.title')}</SectionTitle>
+            <Field label={t('medication.notes')} value={notes} onChangeText={setNotes}
+          multiline maxLength={2000} hint={t('notes.medicationHint')} />
+
+        <SectionTitle>{t('schedule.title')}</SectionTitle>
             <Card>
               <Txt weight="bold">{t('schedule.dailyTimesCount', { count: formatNumber(times.length), max: formatNumber(MAX_DAILY_TIMES) })}</Txt>
               <MultiPicker

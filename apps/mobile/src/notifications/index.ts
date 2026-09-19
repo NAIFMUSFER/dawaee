@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { api } from '../api/client.js';
+import { api, isSignedIn } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
@@ -9,6 +9,7 @@ import {
   withExactAlarmScheduleMutation,
 } from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
+import { notificationPermissionGranted } from './permission.js';
 
 /**
  * Local notifications.
@@ -46,6 +47,13 @@ async function load(): Promise<NotificationsModule | null> {
   }
   try {
     cached = (await import('expo-notifications')) as NotificationsModule;
+    // Expo suppresses foreground presentation unless a handler opts in. Read
+    // auth at delivery time to suppress foreground presentation after logout.
+    cached.setNotificationHandler?.({ handleNotification: async () => {
+      const present = isSignedIn();
+      return { shouldShowBanner: present, shouldShowList: present,
+        shouldPlaySound: present, shouldSetBadge: false };
+    } });
   } catch {
     cached = null;
   }
@@ -65,7 +73,7 @@ export async function inspectCapability(): Promise<NotificationCapability> {
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
-  const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
+  const granted = notificationPermissionGranted(settings);
   const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
@@ -75,13 +83,21 @@ export async function inspectCapability(): Promise<NotificationCapability> {
   };
 }
 
+const permissionListeners = new Set<() => void>();
+export function subscribeNotificationPermissionChanges(listener: () => void): () => void {
+  permissionListeners.add(listener);
+  return () => { permissionListeners.delete(listener); };
+}
+
 export async function requestPermission(): Promise<boolean> {
   const N = await load();
   if (!N) return false;
   const res = await N.requestPermissionsAsync({
     ios: { allowAlert: true, allowSound: true, allowBadge: true, allowProvisional: false },
   });
-  return res.granted;
+  const granted = notificationPermissionGranted(res);
+  if (granted) for (const listener of permissionListeners) listener();
+  return granted;
 }
 
 export async function configureChannels(): Promise<void> {
@@ -111,34 +127,49 @@ export async function configureCategories(locale: Locale): Promise<void> {
 
 export async function startNotificationActionListener(
   onHandled?: (outcome: ActionOutcome) => void,
+  isCurrent: () => boolean = () => isSignedIn(),
 ): Promise<() => void> {
   const N = await load();
   if (!N) return () => undefined;
 
+  let active = true;
+  let revision = 0;
+  let liveSeen = false;
+  const handled = new Set<string>();
+  const current = () => active && isCurrent();
   const handle = async (response: {
     actionIdentifier: string;
-    notification: { request: { content: { data: Record<string, unknown> } } };
+    notification: { date?: number; request: { identifier?: string; content: { data: Record<string, unknown> } } };
   }): Promise<void> => {
+    if (!current()) return;
+    const key = JSON.stringify([response.notification.request.identifier, response.notification.date, response.actionIdentifier]);
+    if (handled.has(key)) return;
+    handled.add(key);
+    const observed = revision;
     const outcome = await applyNotificationAction(
       response.actionIdentifier,
-      response.notification.request.content.data ?? {},
+      response.notification.request.content.data ?? {}, current,
     );
-    if (outcome) {
+    if (outcome && current()) {
       onHandled?.(outcome);
       // Expo keeps the cold-start response available until explicitly cleared.
       // Without consuming it, reopening the app can replay the same Snooze with
       // a brand-new clientEventId and move the reminder again.
-      await N.clearLastNotificationResponseAsync?.();
+      const latest = await N.getLastNotificationResponseAsync();
+      const latestKey = latest ? JSON.stringify([latest.notification.request.identifier, latest.notification.date, latest.actionIdentifier]) : null;
+      if (current() && observed === revision && latestKey === key) await N.clearLastNotificationResponseAsync?.();
     }
   };
 
-  const last = await N.getLastNotificationResponseAsync();
-  if (last) await handle(last as Parameters<typeof handle>[0]);
-
   const sub = N.addNotificationResponseReceivedListener((response) => {
-    void handle(response as Parameters<typeof handle>[0]);
+    liveSeen = true;
+    revision++;
+    void handle(response as Parameters<typeof handle>[0]).catch(() => undefined);
   });
-  return () => sub.remove();
+  void N.getLastNotificationResponseAsync().then(last => {
+    if (last && !liveSeen) return handle(last as Parameters<typeof handle>[0]);
+  }).catch(() => undefined);
+  return () => { active = false; sub.remove(); handled.clear(); };
 }
 
 // Native scheduling/cancellation are asynchronous. A cancellation must run
@@ -182,6 +213,18 @@ export interface ScheduleResult {
   exactAlarmsUnavailable: boolean;
 }
 
+function reminderAt(dose: DoseView): string {
+  return dose.status === 'snoozed' && dose.snoozedUntil ? dose.snoozedUntil : dose.scheduledAt;
+}
+
+function reminderTime(dose: DoseView, locale: Locale): string {
+  if (dose.status !== 'snoozed' || !dose.snoozedUntil) return dose.scheduledLocalTime;
+  return new Intl.DateTimeFormat(locale, {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: dose.scheduledTimezone || undefined,
+  }).format(new Date(dose.snoozedUntil));
+}
+
 function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
   const groups = new Map<string, DoseView[]>();
   const seenDoseIds = new Set<string>();
@@ -194,14 +237,15 @@ function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
     if (seenDoseIds.has(dose.id)) continue;
     seenDoseIds.add(dose.id);
 
-    const at = new Date(dose.scheduledAt).getTime();
-    if (at <= now) continue;
+    const instant = reminderAt(dose);
+    const at = Date.parse(instant);
+    if (!Number.isFinite(at) || at <= now) continue;
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
-    const bucket = groups.get(dose.scheduledAt);
+    const bucket = groups.get(instant);
     if (bucket) bucket.push(dose);
-    else groups.set(dose.scheduledAt, [dose]);
+    else groups.set(instant, [dose]);
   }
-  return [...groups.values()].sort((a, b) => a[0]!.scheduledAt.localeCompare(b[0]!.scheduledAt));
+  return [...groups.values()].sort((a, b) => reminderAt(a[0]!).localeCompare(reminderAt(b[0]!)));
 }
 
 /**
@@ -249,7 +293,7 @@ async function scheduleCurrentNotifications(
       ? groupedReminderText({
           locale,
           showMedication: opts.showMedication,
-          time: first.scheduledLocalTime,
+          time: reminderTime(first, locale),
           medications: group.map((dose) => ({
             name: dose.medication.name,
             doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
@@ -260,7 +304,7 @@ async function scheduleCurrentNotifications(
           showMedication: opts.showMedication,
           medicationName: first.medication.name,
           doseText: `${first.doseQuantity} ${first.doseUnit}`,
-          time: first.scheduledLocalTime,
+          time: reminderTime(first, locale),
           food: t(locale, `food.${first.medication.foodInstruction}` as never),
         });
 
@@ -282,7 +326,7 @@ async function scheduleCurrentNotifications(
         },
         trigger: {
           type: N.SchedulableTriggerInputTypes.DATE,
-          date: new Date(first.scheduledAt),
+          date: new Date(reminderAt(first)),
           channelId: MEDICATION_CHANNEL_ID,
         },
       });
@@ -310,18 +354,21 @@ export async function registerPushToken(): Promise<string | null> {
   }
 }
 
-export async function syncPushRegistration(deviceId: string): Promise<boolean> {
+export async function syncPushRegistration(deviceId: string,
+  options: { requestPermission?: boolean; isCurrent?: () => boolean } = {}): Promise<boolean> {
+  const current = options.isCurrent ?? (() => isSignedIn());
+  if (!current()) return false;
   const N = await load();
   if (!N) return false;
 
   const settings = await N.getPermissionsAsync();
-  const granted = settings.granted
-    || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL
-    || (await requestPermission());
-  if (!granted) return false;
+  if (!current()) return false;
+  const granted = notificationPermissionGranted(settings)
+    || (options.requestPermission !== false && await requestPermission());
+  if (!granted || !current()) return false;
 
   const token = await registerPushToken();
-  if (!token) return false;
+  if (!token || !current()) return false;
 
   await api.post('/v1/devices/push-token', {
     token,
@@ -345,15 +392,20 @@ export async function rebuildRemindersFromCache(
   // suppress a newer privacy choice. Storage must stay outside scheduleTail so
   // cancellation never waits on a stalled cache read.
   const expectedGeneration = ++scheduleGeneration;
-  const { readCachedSchedule } = await import('../storage/offline-queue.js');
-  const cache = await readCachedSchedule(profileId);
-  if (!cache || expectedGeneration !== scheduleGeneration) return empty;
+  const { readCachedSchedule, readQueue, applyQueuedToCache } = await import('../storage/offline-queue.js');
+  const stored = await readCachedSchedule(profileId);
+  if (!stored || expectedGeneration !== scheduleGeneration) return empty;
+  const queued = await readQueue();
+  if (expectedGeneration !== scheduleGeneration) return empty;
+  const cache = applyQueuedToCache(stored, queued);
 
   return rescheduleLocalNotifications(
     cache.doses.map((d) => ({
       id: d.id,
       scheduledAt: d.scheduledAt,
       scheduledLocalTime: d.scheduledLocalTime,
+      scheduledTimezone: d.scheduledTimezone || cache.timezone,
+      snoozedUntil: d.snoozedUntil ?? null,
       status: d.status,
       doseQuantity: d.doseQuantity,
       doseUnit: d.doseUnit,

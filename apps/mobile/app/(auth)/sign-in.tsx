@@ -75,6 +75,7 @@ export default function SignInScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={320}
+          autoComplete="username"
           autoFocus
         />
 
@@ -87,6 +88,9 @@ export default function SignInScreen() {
           autoCorrect={false}
           maxLength={200}
           error={error}
+          autoComplete="current-password"
+          returnKeyType="go"
+          onSubmitEditing={() => { if (ready && !busy) void submit(); }}
         />
 
         <Pressable

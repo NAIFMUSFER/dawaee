@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo } from 'react';
-import { I18nManager } from 'react-native';
+import { I18nManager, Platform } from 'react-native';
 import { isRtl, t as translate, type Locale, type MessageKey } from '@dawaee/shared';
 import { syncWebDocumentDirection } from './web-document-direction.js';
 
@@ -73,15 +73,15 @@ export function I18nProvider({ locale, numeralSystem = 'latn', calendar = 'grego
 
     const formatTime = (iso: string, timeZone?: string) =>
       new Intl.DateTimeFormat(bcp, {
-        hour: '2-digit', minute: '2-digit', hour12: locale === 'en', timeZone,
+        hour: '2-digit', minute: '2-digit', hour12: locale === 'en', timeZone: timeZone || undefined,
       }).format(new Date(iso));
 
     const formatDate = (iso: string, timeZone?: string, opts?: Intl.DateTimeFormatOptions) =>
-      new Intl.DateTimeFormat(bcp, { day: 'numeric', month: 'long', year: 'numeric', timeZone, ...opts })
+      new Intl.DateTimeFormat(bcp, { day: 'numeric', month: 'long', year: 'numeric', timeZone: timeZone || undefined, ...opts })
         .format(new Date(iso));
 
     const formatWeekday = (iso: string, timeZone?: string) =>
-      new Intl.DateTimeFormat(bcp, { weekday: 'long', timeZone }).format(new Date(iso));
+      new Intl.DateTimeFormat(bcp, { weekday: 'long', timeZone: timeZone || undefined }).format(new Date(iso));
 
     const formatRelativeMinutes = (minutes: number) => {
       const rtf = new Intl.RelativeTimeFormat(locale === 'ar' ? 'ar' : 'en', { numeric: 'auto' });
@@ -137,6 +137,8 @@ export function useI18n(): I18nValue {
  * is required rather than the app silently rendering half-mirrored.
  */
 export function applyNativeDirection(locale: Locale): { restartRequired: boolean } {
+  // The web document updates direction immediately; forceRTL is native-only.
+  if (Platform.OS === 'web') return { restartRequired: false };
   const want = isRtl(locale);
   if (I18nManager.isRTL === want) return { restartRequired: false };
   I18nManager.allowRTL(want);

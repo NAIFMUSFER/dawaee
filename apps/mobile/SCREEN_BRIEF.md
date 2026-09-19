@@ -3,7 +3,7 @@
 Read this before adding a screen. Everything here already exists and works.
 
 ## Stack
-Expo SDK 52 + expo-router (file-based routing) + React Native 0.76 + TypeScript strict.
+Expo SDK 55 + expo-router (file-based routing) + React Native 0.83 + TypeScript strict.
 No state library: `useApp()` for global state, `useState` locally.
 
 ## Import aliases (configured in tsconfig + metro)

@@ -6,7 +6,7 @@ import {
 } from '../src/privacy/export-file.js';
 
 function fileSystemHarness(events: string[]) {
-  const cache = { kind: 'cache' };
+  const cache = 'file:///cache';
   const fileSystem: ExportFileSystemModule = {
     Paths: { cache },
     File: class {
@@ -39,6 +39,7 @@ describe('privacy export temporary-file retention boundary', () => {
       fileName: 'dawaee-export-profile.json',
       contents: '{"medical":"private"}',
       dialogTitle: 'Export',
+      isCurrent: () => true,
     })).resolves.toBe(true);
 
     expect(events).toEqual([
@@ -66,6 +67,7 @@ describe('privacy export temporary-file retention boundary', () => {
       fileName: 'dawaee-export-profile.json',
       contents: '{"medical":"private"}',
       dialogTitle: 'Export',
+      isCurrent: () => true,
     })).rejects.toThrow('synthetic share failure');
 
     expect(events.at(-1)).toBe('delete');
@@ -85,7 +87,41 @@ describe('privacy export temporary-file retention boundary', () => {
       fileName: 'dawaee-export-profile.json',
       contents: '{"medical":"private"}',
       dialogTitle: 'Export',
+      isCurrent: () => true,
     })).resolves.toBe(false);
     expect(events).toEqual([]);
   });
+});
+
+
+it('does not write or share after scope cancellation while checking native availability', async () => {
+  const events: string[] = [];
+  let current = true;
+  const shared = await shareTemporaryExportFile({
+    fileSystem: fileSystemHarness(events),
+    sharing: { isAvailableAsync: async () => { current = false; return true; }, shareAsync: async () => { events.push('share'); } },
+    fileName: 'data.json', contents: '{}', dialogTitle: 'Export', isCurrent: () => current,
+  });
+  expect(shared).toBe(false);
+  expect(events).toEqual([]);
+});
+
+it('cleans up without sharing when the scope is cancelled during the file write', async () => {
+  const events: string[] = [];
+  let current = true;
+  const fileSystem: ExportFileSystemModule = {
+    Paths: { cache: 'file:///cache' },
+    File: class {
+      uri = 'file:///cache/data.json';
+      write() { events.push('write'); current = false; }
+      delete() { events.push('delete'); }
+    },
+  };
+  const shared = await shareTemporaryExportFile({
+    fileSystem,
+    sharing: { isAvailableAsync: async () => true, shareAsync: async () => { events.push('share'); } },
+    fileName: 'data.json', contents: '{}', dialogTitle: 'Export', isCurrent: () => current,
+  });
+  expect(shared).toBe(false);
+  expect(events).toEqual(['write', 'delete']);
 });

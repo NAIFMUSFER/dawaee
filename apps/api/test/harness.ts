@@ -130,7 +130,7 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
 
   const registered = await h.app.inject({
     method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { phone, displayName: phone, password: TEST_PASSWORD, deviceId },
+    payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: phone, password: TEST_PASSWORD, deviceId },
   });
 
   // A suite may sign the same number in twice; the second time it is a login.
@@ -158,6 +158,7 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
 
   const account = me.json<{ user: { id: string; phoneE164: string } }>().user;
   const userId = account.id;
+  confirmTestEmail(userId);
   // Ordinary clinical scenarios use an explicitly verified fixture. The
   // external SMS provider is not part of this fixture; its API boundary has
   // its own tests. Registration alone remains unverified in production.
@@ -177,6 +178,16 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
     refreshToken: auth.refreshToken,
     profileId: profile.id,
   };
+}
+
+/** Owner-only fixture for clinical tests; real email confirmation is exercised
+ * separately by account-email SQL/HTTP and onboarding boundary suites. */
+export function confirmTestEmail(userId: string): void {
+  if (!/^[a-f0-9-]{36}$/i.test(userId)) throw new Error('Invalid fixture user id');
+  execFileSync('psql', ['-d', 'dawaee_test', '-v', 'ON_ERROR_STOP=1', '-c',
+    `INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE id='${userId}' AND email IS NOT NULL ON CONFLICT(user_id) DO UPDATE SET email=excluded.email`], {
+    env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
+  });
 }
 
 export function authHeaders(user: TestUser) {

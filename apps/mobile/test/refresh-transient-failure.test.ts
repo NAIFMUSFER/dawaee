@@ -75,6 +75,24 @@ function storedSession(): { accessToken: string; refreshToken: string } | null {
 }
 
 describe('transient refresh failures do not destroy authentication state', () => {
+  it('bounds a hanging refresh and retains the session for a later retry', async () => {
+    const previousFetch = globalThis.fetch;
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
+      if (url.endsWith('/v1/auth/refresh')) return new Promise((_resolve, reject) => {
+        options.signal!.addEventListener('abort', () => reject(new Error('synthetic timeout')));
+      });
+      const payload = { error: { code: 'token_expired' } };
+      return { ok: false, status: 401, json: async () => payload, clone: () => ({ json: async () => payload }) };
+    }));
+    try {
+      const pending = client.api.get('/v1/doses').catch(error => error);
+      await vi.advanceTimersByTimeAsync(15_001);
+      expect(await pending).toBeInstanceOf(client.NetworkError);
+      expect(storedSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1' });
+      expect(signedOut).toBe(0);
+    } finally { vi.useRealTimers(); vi.stubGlobal('fetch', previousFetch); }
+  });
   it('preserves the session on 429 rate limiting', async () => {
     refreshStatus = 429;
     await attemptExpiredRequest();

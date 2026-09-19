@@ -174,20 +174,6 @@ export default function AccessibilityScreen() {
           onChange={(next) => void updatePreferences({ highContrast: next })}
         />
 
-        <ToggleRow
-          label={t('settings.voiceReminders')}
-          hint={t('accessibility.voiceRemindersHint')}
-          value={preferences.voiceRemindersEnabled}
-          onChange={(next) => void updatePreferences({ voiceRemindersEnabled: next })}
-        />
-
-        <ToggleRow
-          label={t('settings.voiceConfirmation')}
-          hint={t('accessibility.voiceConfirmationHint')}
-          value={preferences.voiceConfirmationEnabled}
-          onChange={(next) => void updatePreferences({ voiceConfirmationEnabled: next })}
-        />
-
         <SectionTitle>{t('accessibility.livePreview')}</SectionTitle>
         {/* Inert on purpose: this is what a reminder will look like, not one to act on. */}
         <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">

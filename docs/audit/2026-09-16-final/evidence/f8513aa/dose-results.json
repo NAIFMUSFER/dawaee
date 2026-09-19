@@ -1,0 +1,18 @@
+{
+  "results": [
+    {
+      "case": "dose-tracked",
+      "status": "PASS",
+      "detail": "native take/undo/retake, inventory, process restart and history agree"
+    },
+    {
+      "case": "dose-untracked",
+      "status": "PASS",
+      "detail": "native take/undo/retake, inventory, process restart and history agree"
+    }
+  ],
+  "limits": [
+    "emulator only",
+    "real push and offline synchronization NOT VERIFIED"
+  ]
+}

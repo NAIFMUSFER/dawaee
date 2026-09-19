@@ -1,5 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Clipboard, Switch, View } from 'react-native';
+import { Share, Switch, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import * as SMS from 'expo-sms';
+import { QrCode } from '@/components/QrCode';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -7,12 +10,12 @@ import {
 } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
-import { profileScopeKey } from '@/hooks/useRequestScope';
+import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import {
   CAREGIVER_PERMISSIONS, CAREGIVER_ROLES, CAREGIVER_ROLE_PRESETS,
-  toggleCaregiverPermission,
+  normalizeDigits, toggleCaregiverPermission,
   type CaregiverPermission, type CaregiverRole,
 } from '@dawaee/shared';
 
@@ -23,24 +26,15 @@ import {
  * checkboxes, but the checkboxes stay one tap away because "my nurse, but she
  * cannot delete anything" is a real request.
  *
- * The link is always shown at the end because the patient is the one who
- * sends it. The app cannot: both channels it could have used need a Saudi
- * commercial registration first. A patient sitting next to their daughter
- * would rather just hand her the link anyway.
+ * The result shows a locally rendered QR and an explicit SMS/share action.
+ * Opening the SMS composer does not mean a message has been sent or delivered.
  */
 
 const PRESET_KEYS = ['observer', 'family', 'nurse', 'emergency_only'] as const;
 type PresetKey = (typeof PRESET_KEYS)[number];
 
-/**
- * How the invitation reaches the caregiver.
- *
- * The app does not send it. Both channels it could have sent on — SMS and
- * WhatsApp — need a Saudi commercial registration before a single message
- * leaves, so the patient forwards the link or shows the code themselves, over
- * whichever messenger they already use.
- */
-const CHANNELS = ['link', 'qr'] as const;
+// SMS opens the device composer; the API only creates a link/QR invitation.
+const CHANNELS = ['link', 'qr', 'sms'] as const;
 type InviteChannel = (typeof CHANNELS)[number];
 
 const PRIORITIES: ReadonlyArray<{ value: number; labelKey: 'invite.priorityFirst' | 'invite.priorityBackup' | 'invite.priorityLast' }> = [
@@ -80,6 +74,7 @@ function InviteCaregiverProfileScreen() {
   const { t, formatNumber } = useI18n();
   const theme = useTheme();
   const { activeProfile, setOffline } = useApp();
+  const { capture } = useRequestScope();
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -94,6 +89,7 @@ function InviteCaregiverProfileScreen() {
   const [fieldError, setFieldError] = useState<{ name?: string; phone?: string }>({});
   const [result, setResult] = useState<InviteResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
 
   const describe = useCallback((err: unknown): string => {
     if (!(err instanceof ApiError)) return t('error.internal_error');
@@ -125,12 +121,13 @@ function InviteCaregiverProfileScreen() {
 
   const submit = useCallback(async () => {
     if (!activeProfile) return;
+    const current = capture();
 
     const errors: { name?: string; phone?: string } = {};
     if (name.trim().length === 0) errors.name = t('invite.nameRequired');
     // The server normalises Saudi local format; the client only rejects what
     // could not be a phone number at all.
-    if (phone.replace(/\D/g, '').length < 9) errors.phone = t('invite.phoneRequired');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(phone.trim()) && normalizeDigits(phone).replace(/\D/g, '').length < 9) errors.phone = t('invite.recipientRequired');
     setFieldError(errors);
     if (errors.name || errors.phone) return;
 
@@ -145,26 +142,57 @@ function InviteCaregiverProfileScreen() {
       const res = await api.post<InviteResponse>('/v1/caregivers/invite', {
         patientProfileId: activeProfile.id,
         invitedName: name.trim(),
-        invitedPhone: phone.trim(),
+        ...(phone.includes('@') ? { invitedEmail: phone.trim().toLowerCase() } : { invitedPhone: normalizeDigits(phone).trim() }),
         role,
         permissions,
         escalationPriority: priority,
-        channel,
+        // The API stores how the link was created. SMS is delivered using the
+        // device composer, not an unconfigured server messaging channel.
+        channel: phone.includes('@') || channel === 'sms' ? 'link' : channel,
         expiresInHours: INVITE_EXPIRY_HOURS,
       });
-      setResult(res);
+      if (current()) setResult(res);
     } catch (err) {
+      if (!current()) return;
       if (err instanceof NetworkError) setOffline(true);
       else setError(describe(err));
     } finally {
-      setBusy(false);
+      if (current()) setBusy(false);
     }
-  }, [activeProfile, channel, describe, name, permissions, phone, priority, role, setOffline, t]);
+  }, [activeProfile, capture, channel, describe, name, permissions, phone, priority, role, setOffline, t]);
 
-  const copyLink = useCallback((link: string) => {
-    Clipboard.setString(link);
-    setCopied(true);
-  }, []);
+  const copyLink = async (link: string) => {
+    try { await Clipboard.setStringAsync(link); setCopied(true); }
+    catch { setError(t('invite.shareFailed')); }
+  };
+
+  const sendSms = async () => {
+    if (!result || busy) return;
+    const current = capture();
+    if (!current()) return;
+    setBusy(true); setError(null); setShareNotice(null);
+    try {
+      const available = await SMS.isAvailableAsync();
+      if (!current()) return;
+      if (!available) { setError(t('invite.smsUnavailable')); return; }
+      let recipient = normalizeDigits(phone).replace(/[\s().-]/g, '');
+      if (/^05\d{8}$/.test(recipient)) recipient = `+966${recipient.slice(1)}`;
+      else if (/^5\d{8}$/.test(recipient)) recipient = `+966${recipient}`;
+      else if (/^9665\d{8}$/.test(recipient)) recipient = `+${recipient}`;
+      else if (recipient.startsWith('00')) recipient = `+${recipient.slice(2)}`;
+      const outcome = await SMS.sendSMSAsync([recipient], result.invitationMessage);
+      // iOS can confirm send/cancel, Android may return unknown. Neither is a
+      // receipt from the recipient, and cancellation must never show success.
+      if (current() && outcome.result === 'sent') setShareNotice(t('invite.smsSent'));
+    } catch { if (current()) setError(t('invite.shareFailed')); }
+    finally { if (current()) setBusy(false); }
+  };
+
+  const share = async () => {
+    if (!result) return;
+    try { await Share.share({ message: result.invitationMessage }); }
+    catch { setError(t('invite.shareFailed')); }
+  };
 
   if (!activeProfile) {
     return (
@@ -187,13 +215,23 @@ function InviteCaregiverProfileScreen() {
             {t('invite.createdBody', { name: name.trim(), hours: formatNumber(INVITE_EXPIRY_HOURS) })}
           </Txt>
 
+          {error ? <Banner tone="warning" title={error} /> : null}
+          {shareNotice ? <Banner tone="success" title={shareNotice} /> : null}
+          <Card style={{ alignItems: 'center' }}>
+            <QrCode value={result.invitationLink} size={240} accessibilityLabel={t('invite.qrLabel')} />
+            <Txt variant="bodySmall">{t('invite.qrHint')}</Txt>
+          </Card>
+          {!phone.includes('@') ? <><Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
+          <Txt variant="caption">{t('invite.smsComposerHint')}</Txt></> : null}
+          <Button label={t('invite.share')} tone="secondary" onPress={() => void share()} />
+
           <Card>
             <Txt variant="caption" color={theme.colors.ink500}>{t('invite.copyLink')}</Txt>
             <Txt variant="bodySmall" style={{ writingDirection: 'ltr' }}>{result.invitationLink}</Txt>
             <Button
               label={copied ? t('invite.linkCopied') : t('invite.copyLink')}
               tone={copied ? 'success' : 'primary'}
-              onPress={() => copyLink(result.invitationLink)}
+              onPress={() => void copyLink(result.invitationLink)}
             />
           </Card>
 
@@ -204,6 +242,7 @@ function InviteCaregiverProfileScreen() {
             onPress={() => {
               setResult(null);
               setCopied(false);
+              setShareNotice(null); setError(null);
               setName('');
               setPhone('');
             }}
@@ -230,13 +269,13 @@ function InviteCaregiverProfileScreen() {
           error={fieldError.name ?? null}
         />
         <Field
-          label={t('invite.phone')}
+          label={t('invite.recipient')}
           value={phone}
-          onChangeText={(v) => { setPhone(v); setFieldError((e) => ({ ...e, phone: undefined })); }}
-          keyboardType="phone-pad"
-          hint={t('invite.phoneHint')}
+          onChangeText={(v) => { setPhone(v); if (v.includes('@')) setChannel('link'); setFieldError((e) => ({ ...e, phone: undefined })); }}
+          keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+          hint={t('invite.recipientHint')}
           error={fieldError.phone ?? null}
-          maxLength={20}
+          maxLength={320}
         />
 
         <SectionTitle>{t('invite.relationship')}</SectionTitle>
@@ -321,7 +360,7 @@ function InviteCaregiverProfileScreen() {
 
         <SectionTitle>{t('invite.channel')}</SectionTitle>
         <Row wrap gap={theme.spacing.sm}>
-          {CHANNELS.map((c) => (
+          {CHANNELS.filter(c => !phone.includes('@') || c === 'link').map((c) => (
             <Button
               key={c}
               label={`${channel === c ? '✓ ' : ''}${t(`channel.${c}`)}`}

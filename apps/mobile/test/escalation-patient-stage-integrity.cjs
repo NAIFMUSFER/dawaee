@@ -106,9 +106,9 @@ test('stage 0 cannot be removed through its guarded callback', async () => {
 test('a legacy caregiver-first policy is fail-closed in the editor', async () => {
   const ctx = await setup([caregiver(0), patient(10)]);
   try {
-    const quiet = ctx.h.find('Field', p => p.label === 'notify.quietFrom');
+    const quiet = ctx.h.find('TimeField', p => p.label === 'notify.quietFrom');
     assert.ok(quiet);
-    quiet.onChangeText('22:00');
+    quiet.onChange('22:00');
     await ctx.h.flush();
     assert.equal(ctx.save().disabled, true);
     ctx.save().onPress();

@@ -107,7 +107,7 @@ PW='SmokeTest!Pass123'
 register() {
   curl -sS -o /tmp/smoke-reg.json -w '%{http_code}' -X POST "$BASE/v1/auth/register" \
     -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-    -d "{\"phone\":\"$1\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
+    -d "{\"phone\":\"$1\",\"email\":\"smoke-$2@example.test\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
 }
 
 step "POST /v1/auth/register  (SECURITY DEFINER write: 4 FORCE-RLS tables)"
@@ -140,6 +140,15 @@ d=json.load(open("/tmp/smoke-prof.json"))
 items = d["profiles"] if isinstance(d, dict) and "profiles" in d else d
 print(items[0]["id"])')"
 [ -n "$PROFILE_A" ] || fail "no profile was created for the new account"
+
+step "new accounts cannot read clinical data before email verification"
+CODE="$(curl -sS -o /tmp/smoke-pending.json -w '%{http_code}' "$BASE/v1/notes?profileId=$PROFILE_A" \
+  -H "authorization: Bearer $TOKEN_A" -H "x-forwarded-for: $(ip)")"
+[ "$CODE" = "403" ] || fail "unverified account accessed clinical data (got $CODE)"
+# Synthetic mailbox proof in the disposable smoke database. The real token
+# lifecycle is covered by the account-email SQL/HTTP integration suites.
+psql -d "$DB" -v ON_ERROR_STOP=1 -qc "INSERT INTO user_email_verifications(user_id,email)
+  SELECT id,lower(email) FROM users WHERE email IN ('smoke-a@example.test','smoke-b@example.test')"
 
 step "POST /v1/medications  (ordinary RLS write)"
 TODAY="$(date -u +%F)"

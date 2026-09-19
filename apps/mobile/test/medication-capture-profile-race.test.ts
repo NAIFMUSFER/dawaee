@@ -10,10 +10,12 @@ const { createHarness } = require('./profile-screen-harness.cjs') as {
 const screen = fileURLToPath(new URL('../app/medication/capture.tsx', import.meta.url));
 const hook = fileURLToPath(new URL('../src/hooks/useRequestScope.ts', import.meta.url));
 
-function makeHarness() {
+function makeHarness(mode = 'upload') {
   const uploadPuts: Array<{ url: string; init: Record<string, unknown> | undefined }> = [];
   const drafts: unknown[] = [];
+  const prefills: unknown[] = [];
   const replacements: string[] = [];
+  let cameraCalls = 0;
 
   const fetch = async (input: string, init?: Record<string, unknown>) => {
     if (input === 'file://synthetic-medication-label') {
@@ -38,9 +40,13 @@ function makeHarness() {
         replace: (route: string) => { replacements.push(route); },
         back: () => undefined,
       },
-      useLocalSearchParams: () => ({ mode: 'upload' }),
+      useLocalSearchParams: () => ({ mode }),
     },
     'expo-image-picker': {
+      requestCameraPermissionsAsync: async () => ({ granted: true }),
+      launchCameraAsync: async () => ++cameraCalls === 1
+        ? { canceled: false, assets: [{ uri: 'file://synthetic-medication-label', mimeType: 'image/jpeg' }] }
+        : { canceled: true },
       requestMediaLibraryPermissionsAsync: async () => ({ granted: true }),
       launchImageLibraryAsync: async () => ({
         canceled: false,
@@ -50,10 +56,11 @@ function makeHarness() {
     '@/storage/medication-draft': {
       clearMedicationDrafts: () => undefined,
       setMedicationConfirmDraft: (payload: unknown) => { drafts.push(payload); },
+      setMedicationPrefillDraft: (payload: unknown) => { prefills.push(payload); },
     },
   });
 
-  return { h, uploadPuts, drafts, replacements };
+  return { h, uploadPuts, drafts, prefills, replacements };
 }
 
 function chooseFile(h: any) {
@@ -226,5 +233,38 @@ it('carries complete OCR text in the profile draft while keeping navigation free
     expect(drafts[0]).toMatchObject({ patientProfileId: 'A', rawText });
     expect(replacements).toEqual(['/medication/confirm']);
     expect(JSON.stringify(replacements)).not.toContain(rawText);
+  } finally { h.unmount(); }
+});
+
+
+it('preserves a finalized photo through OCR failure and manual entry without leaking it into the route', async () => {
+  const { h, prefills, replacements, uploadPuts } = makeHarness();
+  try {
+    chooseFile(h); await h.flush();
+    resolveTicket(pending(h, '/v1/uploads/request')[0]); await h.flush();
+    resolveFinalize(pending(h, '/v1/uploads/finalize')[0]); await h.flush();
+    pending(h, '/v1/ocr/analyze')[0].reject(new Error('Synthetic provider unavailable')); await h.flush();
+    h.find('Button', (p: any) => p.label === 'medication.manualEntry').onPress(); await h.flush();
+    expect(prefills).toEqual([{ patientProfileId: 'A', imageKey: 'profiles/A/synthetic-label.jpg', identitySource: 'user' }]);
+    expect(uploadPuts).toHaveLength(1);
+    expect(replacements).toEqual([{ pathname: '/medication/quick-create', params: { source: 'capture' } }]);
+    expect(JSON.stringify(replacements)).not.toContain('synthetic-label');
+  } finally { h.unmount(); }
+});
+
+
+it('does not attach the discarded image after cancelling a retake and choosing manual entry', async () => {
+  const { h, prefills, replacements } = makeHarness('photo');
+  try {
+    h.find('Button', (p: any) => p.label === 'capture.shutter').onPress(); await h.flush();
+    h.find('Button', (p: any) => p.label === 'capture.use').onPress(); await h.flush();
+    resolveTicket(pending(h, '/v1/uploads/request')[0]); await h.flush();
+    resolveFinalize(pending(h, '/v1/uploads/finalize')[0]); await h.flush();
+    pending(h, '/v1/ocr/analyze')[0].reject(new Error('Synthetic provider unavailable')); await h.flush();
+    h.find('Button', (p: any) => p.label === 'capture.retake').onPress(); await h.flush();
+    expect(h.find('Image')).toBeNull();
+    h.find('Button', (p: any) => p.label === 'medication.manualEntry').onPress(); await h.flush();
+    expect(prefills).toEqual([]);
+    expect(replacements).toEqual(['/medication/quick-create']);
   } finally { h.unmount(); }
 });

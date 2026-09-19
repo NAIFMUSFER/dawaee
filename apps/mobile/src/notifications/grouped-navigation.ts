@@ -17,7 +17,7 @@ function groupedResponseKey(response: unknown, defaultAction: string): string | 
   if (!record(notification) || !record(notification.request)) return null;
   const { identifier, content } = notification.request;
   if (typeof identifier !== 'string' || identifier.length === 0 || identifier.length > 1024) return null;
-  if (!record(content) || !record(content.data) || content.data.kind !== 'dose_group_reminder') return null;
+  if (!record(content) || !record(content.data) || !['dose_group_reminder', 'dose_reminder', 'dose_reminder_repeat'].includes(String(content.data.kind))) return null;
   // Repeating local notifications can reuse a request id on another date.
   // Deduplicate one response, not all future occurrences of that request.
   const date = notification.date;
@@ -26,7 +26,7 @@ function groupedResponseKey(response: unknown, defaultAction: string): string | 
 }
 
 /**
- * Route only a default grouped-reminder tap to the caller's fixed Today view.
+ * Route patient reminder default taps through the caller's account-bound intent.
  * Never turn payload URLs/ids into routes or treat the tap as a dose action.
  *
  * The caller's synchronous generation fence invalidates old-account callbacks
@@ -36,7 +36,7 @@ function groupedResponseKey(response: unknown, defaultAction: string): string | 
  */
 export function startGroupedNotificationListener(
   native: GroupedNotificationApi,
-  onOpen: () => void,
+  onOpen: (doseId: string | null) => void,
   isCurrent: () => boolean,
 ): () => void {
   let active = true;
@@ -62,7 +62,20 @@ export function startGroupedNotificationListener(
     const key = groupedResponseKey(response, native.DEFAULT_ACTION_IDENTIFIER);
     if (key === null) return;
     if (!seen.has(key)) {
-      try { onOpen(); } catch { return; }
+      const data = (response as { notification: { request: { content: { data: Record<string, unknown> } } } }).notification.request.content.data;
+      let ids: unknown = data.doseIds;
+      // Remote push providers serialize arrays, while Expo local delivery keeps
+      // them as arrays. Bound the input before parsing untrusted payload data.
+      if (typeof ids === 'string') {
+        if (ids.length > 16_384) return;
+        try { ids = JSON.parse(ids); } catch { return; }
+      }
+      const isGroup = data.kind === 'dose_group_reminder';
+      if (isGroup && ids !== undefined && (!Array.isArray(ids) || ids.length === 0 || ids.length > 100)) return;
+      const selected = isGroup ? (Array.isArray(ids) ? ids[0] : null) : data.doseId;
+      const doseId = typeof selected === 'string' && selected.length > 0 && selected.length <= 128 ? selected : null;
+      if ((!isGroup || ids !== undefined) && !doseId) return;
+      try { onOpen(doseId); } catch { return; }
       seen.add(key);
       if (seen.size > 128) seen.delete(seen.values().next().value!);
     }

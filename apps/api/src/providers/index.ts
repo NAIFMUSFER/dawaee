@@ -8,19 +8,7 @@ import type {
   MedicationOcrResult, OcrProvider, PrescriptionOcrResult, PushProvider, StorageProvider,
 } from './types.js';
 
-/**
- * Outbound integrations.
- *
- * There is exactly one messaging channel — push — and that is a deliberate,
- * externally forced choice rather than an unfinished one. Reaching a Saudi
- * phone by SMS requires an alphanumeric Sender ID registered against a
- * commercial registration, and no long or short codes are available; reaching
- * one by WhatsApp requires a Meta-verified business and an approved
- * AUTHENTICATION template. Neither can be turned on by configuration, so
- * neither is offered as configuration. When a commercial registration exists,
- * the channel goes back in as a new provider against the same interfaces —
- * the notification pipeline is already channel-shaped.
- */
+/** Push, OCR and storage. Account email has a separate authentication-only queue. */
 export interface Providers {
   push: PushProvider;
   ocr: OcrProvider;

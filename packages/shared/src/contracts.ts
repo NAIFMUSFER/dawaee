@@ -9,7 +9,14 @@ import {
 // ------------------------------------------------------------- primitives
 
 export const uuid = z.string().uuid();
-export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine((value) => {
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return false;
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }, 'expected a real calendar date');
 export const localTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:mm');
 export const instant = z.string().datetime({ offset: true });
 /** Strict E.164 — used for values that are already normalized and stored. */
@@ -26,7 +33,7 @@ export const phoneInput = z
   .trim()
   .min(7)
   .max(24)
-  .regex(/^[+0-9()\-.\s]+$/, 'phone number contains unexpected characters');
+  .regex(/^[+0-9٠-٩۰-۹()\-.\s]+$/, 'phone number contains unexpected characters');
 
 /**
  * One spelling of an email address, decided in one place.
@@ -109,16 +116,12 @@ function isKnownTimeZone(value: string): boolean {
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
-    email: emailInput.optional(),
+    email: emailInput,
     displayName: z.string().min(1).max(120),
     password: z.string().min(10).max(200),
     locale: z.enum(LOCALES).default('ar'),
     deviceId: z.string().min(8).max(128),
     deviceName: z.string().max(120).optional(),
-  })
-  .refine((v) => Boolean(v.phone ?? v.email), {
-    message: 'A phone number or an email address is required',
-    path: ['phone'],
   });
 
 /**
@@ -354,12 +357,14 @@ export const confirmDoseSchema = z.object({
 
 export const snoozeDoseSchema = z.object({
   minutes: z.number().int().min(1).max(720),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });
 
 export const skipDoseSchema = z.object({
   reason: z.string().trim().max(300).nullish(),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });
@@ -401,12 +406,15 @@ export const refillSchema = z.object({
 export const inviteCaregiverSchema = z.object({
   patientProfileId: uuid,
   invitedName: safeText(80),
-  invitedPhone: phoneInput,
+  invitedPhone: phoneInput.optional(),
+  invitedEmail: emailInput.optional(),
   role: z.enum(CAREGIVER_ROLES),
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(1).max(CAREGIVER_PERMISSIONS.length),
   escalationPriority: z.number().int().min(1).max(20).default(10),
   channel: z.enum(['link', 'qr']).default('link'),
   expiresInHours: z.number().int().min(1).max(168).default(72),
+}).refine(value => Boolean(value.invitedEmail) !== Boolean(value.invitedPhone), {
+  message: 'Choose one recipient email or phone', path: ['invitedEmail'],
 });
 
 export const acceptInvitationSchema = z.object({ token: z.string().min(20).max(256) });

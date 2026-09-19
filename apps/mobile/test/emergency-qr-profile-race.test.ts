@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
-const { createHarness } = require('./profile-screen-harness.cjs') as {
+const { createHarness, NetworkError } = require('./profile-screen-harness.cjs') as {
   createHarness: (file: string, hookFile: string, profile?: object, overrides?: object) => any;
+  NetworkError: new () => Error;
 };
 
 const screen = path.resolve(process.cwd(), 'apps/mobile/app/settings/emergency-qr.tsx');
@@ -28,6 +29,52 @@ const theme = {
 };
 
 describe('emergency QR profile isolation', () => {
+  it('shows only the saved account/profile QR offline, then removes it if the server reports a different rotation', async () => {
+    const url = 'https://example.invalid/e#01234567890123456789012345678901';
+    const writes: unknown[] = [];
+    const h = createHarness(screen, hook, {}, {
+      '@/hooks/useTheme': { useTheme: () => theme },
+      '@/components/QrCode': { QrCode: 'QrCode', encodeQr: () => ({ ok: true }) },
+      '@/storage/emergency-qr': {
+        readEmergencyQr: async (user: string, profile: string) => user === 'synthetic-account' && profile === 'A'
+          ? { url, rotatedAt: '2026-09-18T01:00:00Z' } : null,
+        saveEmergencyQr: async (_user: string, _profile: string, value: unknown) => { writes.push(value); return true; },
+      },
+    });
+    try {
+      h.requests[0].reject(new NetworkError()); await h.flush();
+      expect(h.find('QrCode').value).toBe(url);
+      expect(h.text()).toContain('emergency.qrOfflineCopy');
+      expect(h.find('Button', (p: any) => p.label === 'emergency.qrEnable')).toBeNull();
+      expect(h.find('Button', (p: any) => p.label === 'emergency.qrRotate')).toBeNull();
+      h.find('Button', (p: any) => p.label === 'common.retry').onPress(); await h.flush();
+      h.requests[1].resolve({ card: { ...disabledCard.card, qrEnabled: true, qrRotatedAt: '2026-09-18T02:00:00Z' } });
+      await h.flush(); expect(h.text()).not.toContain(url); expect(writes).toEqual([null]);
+      h.switchProfile('B', false); expect(h.text()).not.toContain(url);
+    } finally { h.unmount(); }
+  });
+  it.each([true, false])('redisplays only a cached code matching the live rotation (matching=%s)', async matching => {
+    const rotatedAt = '2026-09-18T01:00:00.000Z';
+    const url = 'https://example.invalid/e#01234567890123456789012345678901';
+    const writes: unknown[] = [];
+    const h = createHarness(screen, hook, {}, {
+      '@/hooks/useTheme': { useTheme: () => theme },
+      '@/components/QrCode': { QrCode: 'QrCode', encodeQr: () => ({ ok: true }) },
+      '@/storage/emergency-qr': {
+        readEmergencyQr: async () => ({ url, rotatedAt }),
+        saveEmergencyQr: async (_user: string, _profile: string, value: unknown) => { writes.push(value); return true; },
+      },
+    });
+    try {
+      h.requests[0].resolve({ card: { ...disabledCard.card, qrEnabled: true, qrRotatedAt: matching ? rotatedAt : '2026-09-18T02:00:00.000Z' } });
+      await h.flush();
+      expect(h.text().includes(url)).toBe(matching);
+      if (matching) expect(h.text()).toContain('emergency.qrSavedOnDevice');
+      else expect(writes).toEqual([null]);
+      expect(h.requests.filter((r: any) => r.method === 'POST')).toHaveLength(0);
+    } finally { h.unmount(); }
+  });
+
   it('does not expose patient A one-time emergency QR capability on the first patient B frame', async () => {
     const h = createHarness(screen, hook, {}, {
       '@/hooks/useTheme': { useTheme: () => theme },

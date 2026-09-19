@@ -164,6 +164,7 @@ export function snooze(
   occ: Pick<DoseOccurrence, 'status' | 'scheduledAt' | 'snoozeCount'>,
   minutes: number,
   now: Date,
+  options: { actionAt?: Date; missedAfterMinutes?: number } = {},
 ): SnoozeResult {
   if (isRecorded(occ.status)) {
     throw new AppError(ERROR_CODES.DOSE_ALREADY_RESOLVED, 409, `Dose already recorded as ${occ.status}`);
@@ -171,11 +172,21 @@ export function snooze(
   if (occ.status === 'missed') {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'This dose is already missed and cannot be snoozed');
   }
-  assertNotTooEarly(occ.scheduledAt, now);
+  const actionAt = options.actionAt ?? now;
+  const until = actionAt.getTime() + minutesToMs(minutes);
+  const missedAt = new Date(occ.scheduledAt).getTime()
+    + minutesToMs(options.missedAfterMinutes ?? DEFAULT_THRESHOLDS.missedAfterMinutes);
+  if (!Number.isFinite(actionAt.getTime()) || actionAt.getTime() > now.getTime()
+    || !Number.isInteger(minutes) || minutes < 1 || minutes > 720
+    || until <= now.getTime() || until >= missedAt) {
+    throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422,
+      'Choose a reminder time that is still ahead and before this dose becomes missed.');
+  }
+  assertNotTooEarly(occ.scheduledAt, actionAt);
   if (occ.snoozeCount >= MAX_SNOOZES) {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'Snooze limit reached for this dose');
   }
-  return { snoozedUntil: new Date(now.getTime() + minutesToMs(minutes)), snoozeCount: occ.snoozeCount + 1 };
+  return { snoozedUntil: new Date(until), snoozeCount: occ.snoozeCount + 1 };
 }
 
 export function skip(

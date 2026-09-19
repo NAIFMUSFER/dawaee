@@ -7,6 +7,20 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require(process.env.TYPESCRIPT_PATH || 'typescript');
+// Evaluate pure production policy/event modules; only native and storage I/O are stubs.
+function pureProviderModules() {
+ const modules = {};
+ for (const [id, path] of Object.entries({
+  '../api/access-changes.js': '../src/api/access-changes.ts',
+  '../api/clinical-changes.js': '../src/api/clinical-changes.ts',
+  '../security/profile-permissions.js': '../src/security/profile-permissions.ts',
+ })) {
+  const output = ts.transpileModule(fs.readFileSync(require('node:path').resolve(__dirname, path), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  modules[id] = {}; vm.runInNewContext(output, { exports: modules[id] });
+ }
+ return modules;
+}
+
 const self = (account = 'A') => ({ id: `SELF-${account}`, displayName: `Self ${account}`, isSelf: true, role: 'owner', timezone: 'Asia/Riyadh', permissions: null });
 const patient = (permissions = ['view_medications', 'view_schedule', 'confirm_dose']) => ({ id: 'PATIENT', displayName: 'SYNTHETIC-PATIENT', isSelf: false, role: 'caregiver', timezone: 'Asia/Riyadh', permissions });
 const me = (account = 'A', preferences = {}) => ({ user: { id: `ACCOUNT-${account}`, displayName: `User ${account}`, phoneE164: null }, preferences: { locale: 'en', showMedicationInNotifications: false, ...preferences } });
@@ -22,9 +36,9 @@ async function until(predicate) {
 }
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 function makeProvider(file) {
-  const h = { requests: [], owners: [], directions: [], flushCalls: [], sizeCalls: 0, deviceCalls: 0,
+  const h = { requests: [], owners: [], directions: [], flushCalls: [], invalidated: [], rebuilds: [], sizeCalls: 0, deviceCalls: 0,
     flushQueue: async () => ({ offline: true }), queueSize: async () => 0, device: async () => 'SYNTHETIC-DEVICE' };
-  const slots = []; let cursor = 0; let currentUser = 'ACCOUNT-A';
+  const slots = [], effects = [], cleanups = [], foreground = new Set(), queueChanges = new Set(); let cursor = 0; let currentUser = 'ACCOUNT-A';
   const hooks = {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => null,
     useState: initial => {
@@ -35,9 +49,9 @@ function makeProvider(file) {
     useRef: initial => { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
     useMemo: (fn, deps) => { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { deps, value: fn() }; return slots[i].value; },
     useCallback: (fn, deps) => hooks.useMemo(() => fn, deps),
-    // Scenarios begin with an already-authenticated provider; mount/bootstrap
-    // effects are not run or represented as verified by this harness.
-    useEffect: (_effect, _deps) => { cursor++; },
+    // Most request scenarios do not mount. Event-boundary scenarios explicitly
+    // mount all production effects and complete the controlled bootstrap reads.
+    useEffect: (effect, deps) => { const i = cursor++; if (!slots[i] || !same(slots[i].deps, deps)) { slots[i] = { deps }; effects.push(effect); } },
   };
   const request = (method, route, payload) => {
     const gate = deferred();
@@ -47,6 +61,8 @@ function makeProvider(file) {
     return entry.promise;
   };
   const imports = {
+    ...pureProviderModules(),
+    'react-native': { AppState: { currentState: 'active', addEventListener: (_name, listener) => { foreground.add(listener); return { remove() { foreground.delete(listener); } }; } } },
     react: hooks,
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
     'expo-localization': { getLocales: () => [{ languageCode: 'en' }] },
@@ -55,8 +71,11 @@ function makeProvider(file) {
     }, NetworkError: class NetworkError extends Error {}, isSignedIn: () => currentUser !== null,
     getDeviceId: () => { h.deviceCalls++; return h.device(); }, loadStoredSession: async () => true, setUnauthenticatedHandler: () => {},
     clearSession: async () => { currentUser = null; }, storeSession: async tokens => { currentUser = tokens.accessToken; } },
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => currentUser },
     '../storage/offline-queue.js': {
+      subscribeQueueChanges: listener => { queueChanges.add(listener); return () => queueChanges.delete(listener); },
+      invalidateCachedProfile: async id => { h.invalidated.push(id); }, restoreCachedProfiles: () => undefined,
       setCacheOwner: id => h.owners.push(id), purgeLocalCaches: async () => {},
       flushQueue: id => { h.flushCalls.push({ id, account: currentUser }); return h.flushQueue(); },
       queueSize: () => { h.sizeCalls++; return h.queueSize(); },
@@ -72,7 +91,7 @@ function makeProvider(file) {
       readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
-    '../notifications/index.js': { cancelAllLocalNotifications: async () => {}, rebuildRemindersFromCache: async () => {} },
+    '../notifications/index.js': { cancelAllLocalNotifications: async () => {}, rebuildRemindersFromCache: async id => { h.rebuilds.push(id); } },
     '../i18n/index.js': { applyNativeDirection: locale => { h.directions.push(locale); return { restartRequired: locale === 'ar' }; } },
   };
   const source = fs.readFileSync(file, 'utf8');
@@ -80,7 +99,7 @@ function makeProvider(file) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
   });
   const exports = {};
-  vm.runInNewContext(result.outputText, { exports, Date, console, require: id => {
+  vm.runInNewContext(result.outputText, { exports, Date, console, setInterval: () => 1, clearInterval: () => undefined, require: id => {
     if (!(id in imports)) throw new Error(`unmocked provider dependency: ${id}`); return imports[id];
   } }, { filename: file });
   let value;
@@ -89,6 +108,11 @@ function makeProvider(file) {
   h.state = () => slots[0];
   h.pending = route => h.requests.filter(r => r.method === 'GET' && r.route === route && !r.done);
   h.reply = (entry, body) => { assert.ok(entry, 'expected request'); entry.done = true; entry.resolve(body); };
+  h.mount = () => { for (const effect of effects.splice(0)) { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); } };
+  h.stop = () => { for (const cleanup of cleanups.splice(0)) cleanup(); };
+  h.deny = id => imports['../api/access-changes.js'].notifyAccessDenied(id);
+  h.queueChanged = () => { for (const listener of queueChanges) listener(); };
+  h.foreground = () => { for (const listener of foreground) listener('active'); };
   h.render();
   return h;
 }
@@ -112,6 +136,35 @@ async function loginB(h) {
 function scenarios(file) {
   const cases = [];
   const add = (name, run) => cases.push({ name, run: () => run(makeProvider(file)) });
+  add('a denied patient scope disappears immediately and repeated refusals cannot recurse into reads', async h => {
+    h.mount();
+    h.reply(await prepareProfiles(h), { profiles: [self(), patient()] }); await flush(); h.render();
+    h.deny('PATIENT');
+    assert.equal(h.state().activeProfile.id, 'SELF-A');
+    assert.equal(h.state().profiles.some(p => p.id === 'PATIENT'), false);
+    assert.deepEqual(h.invalidated, ['PATIENT']);
+    await until(() => h.pending('/v1/me').length === 1);
+    h.deny('PATIENT'); h.deny('PATIENT'); await flush();
+    assert.equal(h.pending('/v1/me').length, 1, 'verification refusal recursively started profile reads');
+    h.reply(await prepareProfiles(h), { profiles: [self()] }); await flush();
+    assert.equal(h.state().profiles.some(p => p.id === 'PATIENT'), false);
+    h.stop();
+  });
+  add('durable queue changes update pending state and foreground retries while Today is unmounted', async h => {
+    h.mount();
+    h.reply(await prepareProfiles(h), { profiles: [self(), patient()] }); await flush(); h.render();
+    h.queueSize = async () => 1;
+    h.queueChanged(); await flush(); h.render();
+    assert.equal(h.state().pendingSyncCount, 1);
+    assert.deepEqual(h.rebuilds, ['SELF-A']);
+    h.flushQueue = async () => ({ attempted: 1, applied: 1, failed: 0, offline: false });
+    h.queueSize = async () => 0;
+    h.foreground();
+    h.reply(await prepareProfiles(h), { profiles: [self(), patient()] }); await flush();
+    assert.equal(h.flushCalls.length, 1);
+    assert.equal(h.state().pendingSyncCount, 0);
+    h.stop();
+  });
   add('positive: uncontended refresh preserves selected patient and applies current fields', async h => {
     const work = h.actions().refreshProfiles();
     h.reply(await prepareProfiles(h, 'A', { locale: 'ar' }), { profiles: [self(), { ...patient(), displayName: 'CURRENT' }] });
@@ -192,16 +245,18 @@ function scenarios(file) {
     await loginB(h); gate.resolve('SYNTHETIC-DEVICE'); await old;
     assert.equal(h.flushCalls.length, 0, 'A sync began flushing B queue');
   });
-  add('the newest same-account sync result wins out-of-order flushes', async h => {
-    const first = deferred(), second = deferred(); let calls = 0;
-    h.flushQueue = () => (++calls === 1 ? first.promise : second.promise);
+  add('overlapping same-account sync callers share one flush and its authoritative result', async h => {
+    const first = deferred(); let calls = 0;
+    h.flushQueue = () => { calls++; return first.promise; };
     h.queueSize = async () => 3;
     const old = h.actions().syncNow(); await until(() => calls === 1);
-    const current = h.actions().syncNow(); await until(() => calls === 2);
-    second.resolve({ offline: false });
-    h.reply(await prepareProfiles(h), { profiles: [self()] }); await current; h.render();
-    first.resolve({ offline: true }); await old;
-    assert.equal(h.state().offline, false, 'older sync overwrote current online result');
+    const current = h.actions().syncNow(); await flush();
+    assert.equal(calls, 1, 'overlapping callers dispatched duplicate sync requests');
+    assert.equal(current, old, 'same-account callers must await the same completion');
+    first.resolve({ offline: false });
+    h.reply(await prepareProfiles(h), { profiles: [self()] }); await Promise.all([current, old]); h.render();
+    assert.equal(h.state().offline, false);
+    assert.equal(h.state().pendingSyncCount, 3);
   });
   add('positive: current offline sync publishes the actual remaining queue count', async h => {
     h.queueSize = async () => 7;
@@ -215,6 +270,19 @@ function scenarios(file) {
     h.reply(await prepareProfiles(h), { profiles: [self()] }); await work;
     assert.equal(h.state().offline, false); assert.equal(h.state().pendingSyncCount, 0);
     assert.equal(h.state().activeProfile.id, 'SELF-A');
+  });
+  add('a refused sync remains visible until dismissed and cannot leak into the next account', async h => {
+    h.flushQueue = async () => ({ attempted: 1, applied: 0, failed: 1, offline: false });
+    const work = h.actions().syncNow();
+    h.reply(await prepareProfiles(h), { profiles: [self()] }); await work;
+    assert.equal(h.state().syncFailureCount, 1);
+    h.actions().dismissSyncFailure();
+    assert.equal(h.state().syncFailureCount, 0);
+    const retry = h.actions().syncNow();
+    h.reply(await prepareProfiles(h), { profiles: [self()] }); await retry;
+    assert.equal(h.state().syncFailureCount, 1);
+    await h.actions().signOut();
+    assert.equal(h.state().syncFailureCount, 0);
   });
   add('a signed-out stale sync callback performs no queue operations', async h => {
     await h.actions().signOut(); h.render(); const count = h.deviceCalls;
