@@ -94,6 +94,41 @@ async function fixture(name = 'Medicine') {
 async function queued() { return (await owner('SELECT * FROM notification_deliveries ORDER BY created_at,id')).rows as any[]; }
 
 describe('worker reminders use the current clinical and reminder intent state', () => {
+  it('delivers the expired snooze to the patient before resuming the due caregiver stage on the next tick', async () => {
+    const f = await fixture(), caregiver = randomUUID(), relationship = randomUUID(), session = randomUUID();
+    await owner("INSERT INTO users(id,email,display_name) VALUES($1,$2,'Nurse')", [caregiver, `${caregiver}@example.test`]);
+    await owner('INSERT INTO user_email_verifications(user_id,email) SELECT id,email FROM users WHERE id=$1', [caregiver]);
+    await owner("INSERT INTO auth_sessions(id,user_id,refresh_token_hash,device_id,expires_at) VALUES($1,$2,$3,'caregiver-device',now()+interval '1 day')",
+      [session, caregiver, randomUUID()]);
+    await owner("INSERT INTO push_tokens(user_id,token,platform,device_id,session_id) VALUES($1,$2,'ios','caregiver-device',$3)",
+      [caregiver, `ExponentPushToken[${caregiver}]`, session]);
+    await owner(`INSERT INTO caregiver_relationships(id,patient_profile_id,caregiver_user_id,invited_email,invited_name,role,status,permissions,invited_by_user_id)
+      VALUES($1,$2,$3,$4,'Nurse','nurse','active',ARRAY['receive_notifications'],$5)`,
+    [relationship, f.profile, caregiver, `${caregiver}@example.test`, f.user]);
+    await owner(`INSERT INTO caregiver_notification_rules(relationship_id,patient_profile_id,mode,channel,enabled)
+      VALUES($1,$2,'missed_only','push',true)`, [relationship, f.profile]);
+    await owner('UPDATE escalation_policies SET stages=$2 WHERE patient_profile_id=$1', [f.profile, JSON.stringify([
+      { afterMinutes: 0, target: 'patient', channels: ['push'] },
+      { afterMinutes: 10, target: 'patient', channels: ['push'] },
+      { afterMinutes: 60, target: 'primary_caregiver', channels: ['push'] },
+    ])]);
+    await reminderJob(ctx, client); await dispatchJob(ctx, client);
+    expect(sent).toHaveLength(1);
+    const intent = randomUUID();
+    await owner("UPDATE dose_occurrences SET status='snoozed',snoozed_until=$2,client_event_id=$3,snooze_count=1 WHERE id=$1",
+      [f.dose, new Date('2026-09-19T07:00:00Z'), intent]);
+    now = new Date('2026-09-19T06:30:00Z');
+    await reminderJob(ctx, client); await dispatchJob(ctx, client); expect(sent).toHaveLength(1);
+    now = new Date('2026-09-19T07:10:00Z');
+    await reminderJob(ctx, client); await dispatchJob(ctx, client);
+    expect(sent).toHaveLength(2); expect(sent[1]!.data.intentId).toBe(intent);
+    now = new Date('2026-09-19T07:11:00Z');
+    await reminderJob(ctx, client); await dispatchJob(ctx, client);
+    expect(sent).toHaveLength(3); expect(sent[2]!.data.kind).toBe('escalation');
+    now = new Date('2026-09-19T07:12:00Z');
+    await reminderJob(ctx, client); await dispatchJob(ctx, client); expect(sent).toHaveLength(3);
+  });
+
   it('sends an independent snooze once after the ordinary ladder completed', async () => {
     const f = await fixture();
     await reminderJob(ctx, client); await dispatchJob(ctx, client);

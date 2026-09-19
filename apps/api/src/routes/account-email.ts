@@ -10,6 +10,7 @@ import { hashNewPassword, passwordLoginEnabled } from '../auth/password-service.
 import { enforceAuthBudget } from '../auth/rate-budget.js';
 import { recordAudit } from '../services/audit-service.js';
 import { accountEmailReady, drainAccountEmails, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
+import { auditAccountEmailDeliveryAllowed } from '../providers/audit-account-email.js';
 import { registerAccountEmailPage } from './account-email-page.js';
 
 const email = z.string().trim().toLowerCase().email().max(320);
@@ -86,7 +87,8 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
   let timer: ReturnType<typeof setInterval> | undefined;
   let inflight: Promise<unknown> | null = null;
   app.addHook('onReady', async () => {
-    if (!accountEmailReady() || loadConfig().NODE_ENV === 'test') return;
+    const cfg = loadConfig();
+    if (!accountEmailReady(cfg) || (cfg.NODE_ENV === 'test' && !auditAccountEmailDeliveryAllowed(cfg))) return;
     const tick = () => {
       if (inflight) return;
       inflight = drainAccountEmails().catch(() => app.log.warn('Account email delivery temporarily unavailable'))

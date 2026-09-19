@@ -31,7 +31,7 @@ import { registerDosePrivateRoutes } from '../src/routes/dose-private.js';
 import { registerStockRoutes } from '../src/routes/stock.js';
 import { registerErrorHandler } from '../src/middleware/error-handler.js';
 import { setClockSource, resetClockSource } from '../src/lib/clock.js';
-import { attemptPasswordLogin } from '../src/auth/password-service.js';
+import { attemptPasswordLogin, MAX_LOGIN_ATTEMPTS } from '../src/auth/password-service.js';
 import { hashPassword } from '../src/lib/password.js';
 
 let db: PGlite;
@@ -187,8 +187,14 @@ describe('reviewed API workflows and clinical output', () => {
   it('does not disclose a known identifier on the failed-password lock transition', async () => {
     await owner('INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)',[patient,await hashPassword(password)]);
     const outcomes=[];
-    for(let i=0;i<9;i++) outcomes.push(await h.run(patient,(tx:PoolClient)=>attemptPasswordLogin(tx,`${patient}@example.test`,'Incorrect secret 813!')));
-    expect(outcomes).toEqual(Array.from({length:9},()=>({outcome:'invalid'})));
+    for(let i=0;i<MAX_LOGIN_ATTEMPTS+1;i++) outcomes.push(await h.run(patient,(tx:PoolClient)=>attemptPasswordLogin(tx,`${patient}@example.test`,'Incorrect secret 813!')));
+    expect(outcomes).toEqual(Array.from({length:MAX_LOGIN_ATTEMPTS+1},()=>({outcome:'invalid'})));
+    const locked = await h.run(patient,(tx:PoolClient)=>tx.query(
+      'SELECT locked_until,failed_login_count,locked_until > now() AS lock_active FROM app.find_user_for_password_login($1)',
+      [`${patient}@example.test`],
+    ));
+    expect(locked.rows[0].failed_login_count).toBeGreaterThanOrEqual(MAX_LOGIN_ATTEMPTS);
+    expect(locked.rows[0].lock_active).toBe(true);
     expect((await h.run(patient,(tx:PoolClient)=>attemptPasswordLogin(tx,`${patient}@example.test`,password))).outcome).toBe('locked');
   });
 
@@ -408,5 +414,22 @@ describe('reviewed API workflows and clinical output', () => {
     expect(taken.statusCode,taken.body).toBe(200); expect(taken.json().stock).toBeNull();
     const stock = await owner('SELECT remaining_quantity,unit FROM medication_stock WHERE medication_id=$1',[med.medication.id]);
     expect(Number(stock.rows[0].remaining_quantity)).toBe(20); expect(stock.rows[0].unit).toBe('ml');
+  });
+
+  it('updates stock over HTTP and rearms the low-stock alert only after an increase', async () => {
+    const med = await medication();
+    const marker = now.toISOString();
+    await owner('UPDATE medication_stock SET low_stock_notified_at=$2 WHERE medication_id=$1',[med.medication.id,marker]);
+    const decrease = await request('PUT',`/v1/medications/${med.medication.id}/stock`,{remainingQuantity:10},caregiver);
+    expect(decrease.statusCode,`${decrease.body} ${queryFailure}`).toBe(200);
+    expect(decrease.json()).toMatchObject({remainingQuantity:10,delta:-10,unit:'tablet'});
+    const afterDecrease = await owner('SELECT low_stock_notified_at FROM medication_stock WHERE medication_id=$1',[med.medication.id]);
+    expect(afterDecrease.rows[0].low_stock_notified_at.toISOString()).toBe(marker);
+    const increase = await request('PUT',`/v1/medications/${med.medication.id}/stock`,{delta:5},caregiver);
+    expect(increase.statusCode,increase.body).toBe(200);
+    expect(increase.json()).toMatchObject({remainingQuantity:15,delta:5,unit:'tablet'});
+    const afterIncrease = await owner('SELECT remaining_quantity,low_stock_notified_at FROM medication_stock WHERE medication_id=$1',[med.medication.id]);
+    expect(Number(afterIncrease.rows[0].remaining_quantity)).toBe(15);
+    expect(afterIncrease.rows[0].low_stock_notified_at).toBeNull();
   });
 });

@@ -135,8 +135,8 @@ export function registerStockRoutes(app: FastifyInstance): void {
         : Math.max(0, before + (body.delta ?? 0));
 
       await tx.query(
-        `UPDATE medication_stock SET remaining_quantity = $2,
-          low_stock_notified_at = CASE WHEN $2 > $3 THEN NULL ELSE low_stock_notified_at END
+        `UPDATE medication_stock SET remaining_quantity = $2::numeric,
+          low_stock_notified_at = CASE WHEN $2::numeric > $3::numeric THEN NULL ELSE low_stock_notified_at END
           WHERE medication_id = $1`,
         [medicationId, after, before],
       );
