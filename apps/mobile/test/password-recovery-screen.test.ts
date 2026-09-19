@@ -15,7 +15,10 @@ function screen() {
 afterEach(() => { for (const h of setups.splice(0)) h.unmount(); });
 describe('email password recovery screen', () => {
   it('keeps recovery reachable from sign in', () => {
-    const h = createHarness(resolve('apps/mobile/app/(auth)/sign-in.tsx'), undefined, {}, { '@/storage/pending-invite': { landingAfterAuth: async () => '/(tabs)/today' } });
+    const h = createHarness(resolve('apps/mobile/app/(auth)/sign-in.tsx'), undefined, {}, {
+      '@/storage/pending-invite': { landingAfterAuth: async () => '/(tabs)/today' },
+      '@/api/auth-connection': { waitForAuthServer: async () => undefined },
+    });
     setups.push(h); h.find('Button', (p: any) => p.label === 'recovery.title').onPress();
     expect(h.routes).toEqual(['/(auth)/forgot-password']);
   });

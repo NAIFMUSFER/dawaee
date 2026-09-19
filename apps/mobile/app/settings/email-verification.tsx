@@ -59,7 +59,7 @@ function EmailForm() {
       if (result.accepted !== true) throw new Error('Invalid response');
       setPassword(''); setSent(true);
     } catch (err) {
-      if (current()) setError(t(err instanceof NetworkError ? 'notifications.offlineBanner' : err instanceof ApiError && err.code === 'invalid_credentials' ? 'auth.currentPasswordWrong' : err instanceof ApiError && err.code === 'rate_limited' ? 'error.rate_limited' : 'emailAccount.failed'));
+      if (current()) setError(t(err instanceof NetworkError ? 'auth.connectionFailed' : err instanceof ApiError && err.code === 'invalid_credentials' ? 'auth.currentPasswordWrong' : err instanceof ApiError && err.code === 'rate_limited' ? 'error.rate_limited' : 'emailAccount.failed'));
     } finally { locked.current = false; if (current()) setBusy(false); }
   };
   return <SafeAreaView style={{ flex: 1 }}><Screen>
