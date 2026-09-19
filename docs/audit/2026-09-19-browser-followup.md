@@ -2,6 +2,17 @@
 
 Baseline: PR #32, production `63b5b8d`, iOS 0.1.0 (6). This is an incomplete acceptance pass; automated checks below do not replace the remaining browser/device work.
 
+## APNs follow-up after explicit approval
+
+- User approved creation and upload. Registered APNs key `SDDPGMN9LW`, Production / Topic Specific `app.dawaee.mobile`, team `A92SD96D4Q`; Expo now lists that key on `@naif789/dawaee`'s iOS configuration. The private key is not included in source, logs, this report, or PR text.
+- Added **04:35 Riyadh** to the existing same-day synthetic medication through the live schedule editor and its confirmation dialog. Existing recorded doses were retained.
+- Production push was accepted at **2026-09-19 01:35:49Z**; Expo returned a ticket, with no `InvalidCredentials` error. A direct read of that ticket's Expo receipt returned **`status: ok`**. The worker will reconcile receipts after its existing 15-minute delay. Provider acceptance does not prove lock-screen display; awaiting the user's physical-device confirmation.
+- Prepared iOS build 7 on source commit `bed05a8` (local build-number base 6, EAS auto-increments). Build ID `c724ccc6-b4d8-49b1-aa87-8e452718b90e` is running with `ios-testflight`, iOS only, production environment. **Automatic submission is off.** Automatic approval review rejected starting with auto-submit because TestFlight/App Store submission had not been explicitly authorized; the safer build-only action succeeded. Ask for explicit TestFlight submission approval after the build is ready.
+- Read the actual Emergency Card and QR screens. Existing QR is disabled; it was not activated, shared, or regenerated. No emergency medical fields/disclosure choices were changed.
+- Render plugin lists one workspace, `My Workspace` (`tea-d9qth1iju40c73btab90`). Its tool requires user confirmation of the workspace before further service actions; no web deployment has been initiated.
+
+The earlier preparation-only statements below record the previous checkpoint and are superseded by this section.
+
 ## Live patient browser results
 
 - Signed in through the user's browser handoff. Exercised Today, medication lists/filtering, History periods/date navigation/status and medication filters, Family, and Settings.
