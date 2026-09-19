@@ -907,10 +907,10 @@ describe('password change and account state versus live sessions', () => {
 
   /**
    * Deletion is a REQUEST with a grace period, not an immediate erase, so the
-   * account intentionally keeps working during it. Pinned so the semantics are
-   * on record rather than assumed either way.
+   * data remains during it, but every current session is revoked. A fresh
+   * sign-in can inspect/cancel the request within grace.
    */
-  it('a deletion request leaves the session usable during the grace period', async () => {
+  it('a deletion request revokes the session and refresh token during grace', async () => {
     const tara = await signIn(h, '+966500002024');
     const s = await login(tara.phone, 'device-del-00001');
     const headers = { authorization: `Bearer ${s.accessToken}` };
@@ -919,7 +919,8 @@ describe('password change and account state versus live sessions', () => {
       method: 'POST', url: '/v1/me/deletion-request', headers, payload: { confirm: true },
     });
     expect(req.statusCode).toBe(200);
-    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/me', headers })).statusCode).toBe(401);
+    expect((await refresh(s.refreshToken)).statusCode).toBe(401);
 
     const { rows } = await owner.query<{ deletion_requested_at: Date | null }>(
       'SELECT deletion_requested_at FROM users WHERE id=$1', [tara.userId],

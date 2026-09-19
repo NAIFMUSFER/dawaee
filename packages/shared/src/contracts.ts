@@ -419,6 +419,16 @@ export const inviteCaregiverSchema = z.object({
 
 export const acceptInvitationSchema = z.object({ token: z.string().min(20).max(256) });
 
+export const previewInvitationSchema = z.union([
+  acceptInvitationSchema.strict(),
+  z.object({ relationshipId: uuid }).strict(),
+]);
+export const acceptReviewedInvitationSchema = z.object({
+  relationshipId: uuid,
+  role: z.enum(CAREGIVER_ROLES),
+  permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).max(CAREGIVER_PERMISSIONS.length),
+});
+
 export const updateCaregiverPermissionsSchema = z.object({
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(0).max(CAREGIVER_PERMISSIONS.length),
   escalationPriority: z.number().int().min(1).max(20).optional(),

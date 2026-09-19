@@ -34,6 +34,27 @@ import { notificationPermissionGranted } from './permission.js';
 
 export const MEDICATION_CHANNEL_ID = 'medication-critical';
 export const MEDICATION_CATEGORY_ID = 'MEDICATION_REMINDER';
+export const IOS_PENDING_NOTIFICATION_LIMIT = 64;
+
+export type PushRegistrationStatus = 'unknown' | 'registering' | 'registered' | 'denied' | 'failed' | 'unsupported';
+let pushRegistrationStatus: PushRegistrationStatus = 'unknown';
+const statusListeners = new Set<() => void>();
+export const getPushRegistrationStatus = () => pushRegistrationStatus;
+export const getLocalScheduleStatus = () => localScheduleStatus;
+export function subscribeNotificationStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => { statusListeners.delete(listener); };
+}
+function setPushStatus(status: PushRegistrationStatus): void {
+  pushRegistrationStatus = status;
+  for (const listener of statusListeners) listener();
+}
+export function resetPushRegistrationStatus(): void { setPushStatus('unknown'); }
+let localScheduleStatus: ScheduleResult | null = null;
+function publishSchedule(result: ScheduleResult | null): void {
+  localScheduleStatus = result;
+  for (const listener of statusListeners) listener();
+}
 
 type NotificationsModule = typeof import('expo-notifications');
 
@@ -200,6 +221,7 @@ function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promis
 }
 
 export async function cancelAllLocalNotifications(): Promise<void> {
+  publishSchedule(null);
   return withScheduleMutation(async () => {
     const N = await load();
     if (!N) return;
@@ -211,6 +233,8 @@ export interface ScheduleResult {
   scheduled: number;
   failed: number;
   exactAlarmsUnavailable: boolean;
+  deferred?: number;
+  nextUnscheduledAt?: string | null;
 }
 
 function reminderAt(dose: DoseView): string {
@@ -245,7 +269,7 @@ function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
     if (bucket) bucket.push(dose);
     else groups.set(instant, [dose]);
   }
-  return [...groups.values()].sort((a, b) => reminderAt(a[0]!).localeCompare(reminderAt(b[0]!)));
+  return [...groups.values()].sort((a, b) => Date.parse(reminderAt(a[0]!)) - Date.parse(reminderAt(b[0]!)));
 }
 
 /**
@@ -285,7 +309,11 @@ async function scheduleCurrentNotifications(
   let exactAlarmsUnavailable = Platform.OS === 'android' && !canScheduleExactAlarmsOnDevice();
   const now = Date.now();
 
-  for (const group of groupSchedulableDoses(doses, now)) {
+  const groups = groupSchedulableDoses(doses, now);
+  const limit = Platform.OS === 'ios' ? IOS_PENDING_NOTIFICATION_LIMIT : groups.length;
+  const deferred = Math.max(0, groups.length - limit);
+  const nextUnscheduledAt = deferred ? reminderAt(groups[limit]![0]!) : null;
+  for (const group of groups.slice(0, limit)) {
     if (!isCurrent()) break;
     const first = group[0]!;
     const grouped = group.length > 1;
@@ -337,7 +365,9 @@ async function scheduleCurrentNotifications(
     }
   }
 
-  return { scheduled, failed, exactAlarmsUnavailable };
+  const result = { scheduled, failed, exactAlarmsUnavailable, deferred, nextUnscheduledAt };
+  if (isCurrent()) publishSchedule(result);
+  return result;
 }
 
 export async function registerPushToken(): Promise<string | null> {
@@ -358,25 +388,33 @@ export async function syncPushRegistration(deviceId: string,
   options: { requestPermission?: boolean; isCurrent?: () => boolean } = {}): Promise<boolean> {
   const current = options.isCurrent ?? (() => isSignedIn());
   if (!current()) return false;
-  const N = await load();
-  if (!N) return false;
-
-  const settings = await N.getPermissionsAsync();
-  if (!current()) return false;
-  const granted = notificationPermissionGranted(settings)
-    || (options.requestPermission === true && await requestPermission());
-  if (!granted || !current()) return false;
-
-  const token = await registerPushToken();
-  if (!token || !current()) return false;
-
-  await api.post('/v1/devices/push-token', {
-    token,
-    platform: Platform.OS === 'ios' ? 'ios' : 'android',
-    deviceId,
-    appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
-  });
-  return true;
+  setPushStatus('registering');
+  try {
+    const N = await load();
+    if (!current()) return false;
+    if (!N) { setPushStatus('unsupported'); return false; }
+    const settings = await N.getPermissionsAsync();
+    if (!current()) return false;
+    const granted = notificationPermissionGranted(settings)
+      || (options.requestPermission === true && await requestPermission());
+    if (!current()) return false;
+    if (!granted) { setPushStatus('denied'); return false; }
+    const token = await registerPushToken();
+    if (!current()) return false;
+    if (!token) { setPushStatus('failed'); return false; }
+    await api.post('/v1/devices/push-token', {
+      token,
+      platform: Platform.OS === 'ios' ? 'ios' : 'android',
+      deviceId,
+      appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
+    });
+    if (!current()) return false;
+    setPushStatus('registered');
+    return true;
+  } catch (err) {
+    if (current()) setPushStatus('failed');
+    throw err;
+  }
 }
 
 export async function rebuildRemindersFromCache(

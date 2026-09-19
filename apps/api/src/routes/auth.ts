@@ -440,6 +440,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         [userId],
       );
       await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1', [userId]);
+      await recordAudit(tx, { actorUserId: userId, patientProfileId: null, action: 'auth.logout_all',
+        entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash,
+        newValue: { sessionsRevoked: rowCount ?? 0 } });
       return rowCount ?? 0;
     });
     return { ok: true, sessionsRevoked: revoked };

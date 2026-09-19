@@ -8,7 +8,7 @@ import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
 import { PALETTE, t } from '@dawaee/shared';
-import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration, subscribeNotificationPermissionChanges } from '@/notifications';
+import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration, resetPushRegistrationStatus, subscribeNotificationPermissionChanges } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
@@ -22,6 +22,8 @@ import { needsEmailVerification } from '@/security/email-onboarding';
 import { landingAfterAuth } from '@/storage/pending-invite';
 import AppNavigator from '@/navigation/AppNavigator';
 import WebAlertHost from '@/components/WebAlertHost';
+import { NotificationHealthNotice } from '@/components/NotificationHealthNotice';
+import { DeletionReceiptNotice, PendingDeletionScreen } from '@/components/AccountDeletionNotice';
 
 /**
  * Root layout.
@@ -36,11 +38,12 @@ function Shell() {
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
-  const emailRequired = !DEMO_MODE && needsEmailVerification(signedIn, user);
+  const deletionPending = Boolean(signedIn && user?.deletionScheduledFor);
+  const emailRequired = !deletionPending && !DEMO_MODE && needsEmailVerification(signedIn, user);
   const wasEmailRequired = useRef(false);
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
-  const caregiverOwner = ready && signedIn && user?.id ? user.id : null;
+  const caregiverOwner = ready && signedIn && !deletionPending && user?.id ? user.id : null;
   bindCaregiverNotificationAccount(caregiverOwner);
   bindPatientReminderAccount(caregiverOwner);
   const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
@@ -79,7 +82,8 @@ function Shell() {
 
   /** Tell the server which device to reach. */
   useEffect(() => {
-    if (!ready || !signedIn || !user?.id || emailRequired || !deviceId) return;
+    resetPushRegistrationStatus();
+    if (!ready || !signedIn || deletionPending || !user?.id || emailRequired || !deviceId) return;
     const generation = caregiverSession.current.generation;
     let disposed = false;
     let registering = false;
@@ -97,12 +101,12 @@ function Shell() {
     const unsubscribe = subscribeNotificationPermissionChanges(() => { void register(false); });
     const subscription = AppState.addEventListener('change', next => { if (next === 'active') void register(false); });
     return () => { disposed = true; unsubscribe(); subscription.remove(); };
-  }, [ready, signedIn, emailRequired, deviceId, user?.id]);
+  }, [ready, signedIn, deletionPending, emailRequired, deviceId, user?.id]);
 
   /** Keep the delivery selection in account-bound memory. The landing resolves
    * its patient through the authenticated API, after the app lock permits it. */
   useEffect(() => {
-    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;
     const generation = caregiverSession.current.generation;
     let cancelled = false;
     let stop: (() => void) | undefined;
@@ -120,11 +124,11 @@ function Shell() {
       );
     }).catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [ready, signedIn, user?.id, router]);
+  }, [ready, signedIn, deletionPending, user?.id, router]);
 
   /** Act on the reminder's own buttons. */
   useEffect(() => {
-    if (!ready || !signedIn || !user?.id || emailRequired) return;
+    if (!ready || !signedIn || deletionPending || !user?.id || emailRequired) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
     const generation = caregiverSession.current.generation;
@@ -136,7 +140,7 @@ function Shell() {
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [ready, signedIn, user?.id, emailRequired, refreshAfterAction, preferences.locale]);
+  }, [ready, signedIn, deletionPending, user?.id, emailRequired, refreshAfterAction, preferences.locale]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
@@ -149,7 +153,7 @@ function Shell() {
    * the patient to the doses they were being asked to review.
    */
   useEffect(() => {
-    if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;
+    if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;
     const generation = caregiverSession.current.generation;
     let cancelled = false;
     let stop: (() => void) | undefined;
@@ -168,7 +172,7 @@ function Shell() {
       );
     }).catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [ready, signedIn, user?.id, router]);
+  }, [ready, signedIn, deletionPending, user?.id, router]);
 
   return (
     <I18nProvider
@@ -187,7 +191,9 @@ function Shell() {
       {ready ? (
         <AppLockGate>
           <View style={{ flex: 1 }}>
-          <AppNavigator />
+          {deletionPending ? <PendingDeletionScreen /> : <AppNavigator />}
+          {signedIn && !deletionPending && !emailRequired ? <NotificationHealthNotice /> : null}
+          <DeletionReceiptNotice />
           <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
             {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
           </Modal>

@@ -20,7 +20,7 @@ describe('caregiver dashboard browser URL privacy', () => {
 
   it('opens an accepted patient through application state without rebuilding the removed query URL', () => {
     expect(accept).toMatch(/const\s*\{[^}]*\bsetActiveProfile\b[^}]*\}\s*=\s*useApp\(\)/);
-    expect(accept).toContain('if (outcome.profileId) setActiveProfile(outcome.profileId)');
+    expect(accept).toContain('setActiveProfile(accepted.profileId)');
     expect(accept).toContain("router.replace('/caregiver/dashboard')");
     expect(accept).not.toContain('/caregiver/dashboard?profileId=');
   });

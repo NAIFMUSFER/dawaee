@@ -5,8 +5,9 @@ This continues [PR #32](https://github.com/NAIFMUSFER/dawaee/pull/32).
 
 The later [legacy-audit reconciliation](2026-09-19-legacy-audit-reconciliation.md)
 supersedes broad closure claims below. In particular, public lockout responses,
-invitation consent, deletion presentation/session closure, notification capacity,
-and legal/release prerequisites remain open. Baseline evidence below is historical.
+legal/release prerequisites and device/UI acceptance remain open. The later
+[invitation/deletion/notification checkpoint](2026-09-19-invitation-deletion-notification-review.md)
+records source repairs and their bounded evidence for those paths. Baseline evidence below is historical.
 
 ## Baseline and method
 

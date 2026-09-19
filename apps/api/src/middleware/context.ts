@@ -35,9 +35,10 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
   const route = `${req.method} ${req.routeOptions.url}`;
   if (!EMAIL_ONBOARDING_ROUTES.has(route)) {
     const required = await withUserReadOnly(claims.sub, async (tx) => {
-      const { rows } = await tx.query<{ required: boolean }>(
-        'SELECT app.email_verification_required($1) AS required', [claims.sub],
+      const { rows } = await tx.query<{ required: boolean; deletion_pending: boolean }>(
+        'SELECT app.email_verification_required($1) AS required, deletion_requested_at IS NOT NULL AS deletion_pending FROM users WHERE id = $1', [claims.sub],
       );
+      if (rows[0]?.deletion_pending) throw AppError.forbidden('Account deletion is pending. Cancel the request before continuing.');
       return rows[0]?.required === true;
     });
     if (required) throw AppError.forbidden('Verify your email address to continue.');
@@ -47,7 +48,7 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
 const EMAIL_ONBOARDING_ROUTES = new Set([
   'GET /v1/me', 'GET /v1/profiles', 'GET /v1/auth/email',
   'POST /v1/auth/email/request', 'POST /v1/auth/logout', 'POST /v1/auth/logout-all',
-  'POST /v1/me/deletion-request', 'POST /v1/auth/password', 'GET /v1/auth/sessions',
+  'POST /v1/me/deletion-request', 'POST /v1/me/deletion-cancel', 'POST /v1/auth/password', 'GET /v1/auth/sessions',
   'DELETE /v1/devices/push-token/:deviceId',
 ]);
 
