@@ -252,8 +252,11 @@ describe('brute-force resistance', () => {
     // The correct password is refused too, while the lock stands.
     const correct = await withTransaction((tx) =>
       attemptPasswordLogin(tx, phone, 'correct horse battery'));
-    expect(correct.outcome).toBe('locked');
-    if (correct.outcome === 'locked') expect(correct.until.getTime()).toBe(locked.locked_until.getTime());
+    expect(correct).toEqual({ outcome: 'invalid' });
+    const after = await withTransaction((tx) => tx.query<{ locked_until: Date }>(
+      'SELECT locked_until FROM app.find_user_for_password_login($1)', [phone],
+    ));
+    expect(after.rows[0]!.locked_until.getTime()).toBe(locked.locked_until.getTime());
   });
 
   it('a successful sign-in clears the failure count', async () => {

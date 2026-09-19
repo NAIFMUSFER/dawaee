@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { phoneInput } from '@dawaee/shared';
+import { phoneInput, t } from '@dawaee/shared';
 
 const require = createRequire(import.meta.url);
 const { createHarness, deferred, NetworkError, ApiError } = require('./profile-screen-harness.cjs');
@@ -31,6 +31,23 @@ function setup(kind: 'sign-in' | 'sign-up') {
   };
   return { h, gate, response, wait, post, getDeviceId, signedIn, press, fill };
 }
+
+describe('generic sign-in refusal output', () => {
+  it.each(['ar', 'en'] as const)('displays the server guidance and keeps explicit recovery reachable (%s)', async locale => {
+    const s = setup('sign-in'); await s.fill(); s.press(); s.gate.resolve(); await s.h.flush();
+    const error = new ApiError('invalid_credentials');
+    error.status = 401;
+    error.message = t(locale, 'auth.signInRefused', { minutes: '15' });
+    s.response.reject(error); await s.h.flush();
+    expect(s.h.find('Banner').title).toBe(error.message);
+    expect(s.h.find('Field', (p: any) => p.label === 'auth.password').editable).toBe(true);
+    expect(s.signedIn).not.toHaveBeenCalled(); expect(s.h.routes).toEqual([]);
+    const recovery = s.h.find('Button', (p: any) => p.label === 'recovery.title');
+    expect(recovery.disabled).toBe(false); recovery.onPress();
+    expect(s.h.routes).toEqual(['/(auth)/forgot-password']);
+    expect(s.post).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind => {
   it('waits before sending credentials, blocks duplicate clicks and completes one accepted request', async () => {

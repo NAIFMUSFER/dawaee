@@ -9,8 +9,10 @@ import Fastify from 'fastify';
 import type { PoolClient } from 'pg';
 import { registerProfileRoutes } from '../src/routes/profiles.js';
 import { registerCaregiverRoutes } from '../src/routes/caregivers.js';
+import { registerAuthRoutes } from '../src/routes/auth.js';
 import { registerErrorHandler } from '../src/middleware/error-handler.js';
 import { signAccessToken } from '../src/auth/tokens.js';
+import { hashPassword } from '../src/lib/password.js';
 
 // Exercise the real HTTP contracts, JWT/session middleware and audit writes
 // against this same PostgreSQL engine; only the connection pool is adapted.
@@ -74,6 +76,7 @@ beforeAll(async () => {
   registerErrorHandler(http);
   registerProfileRoutes(http);
   registerCaregiverRoutes(http);
+  registerAuthRoutes(http);
   await http.ready();
 }, 60_000);
 afterAll(async () => { await http.close(); await db?.close(); });
@@ -91,6 +94,67 @@ const requestVerify = (f: Awaited<ReturnType<typeof fixture>>, token: string, em
 const requestReset = (email: string, token: string) => query('SELECT app.request_email_recovery($1,$2,$3)',[email,token,'encrypted-fixture']);
 const finish = (token: string, purpose='verify', password: string | null=null, request: string | null=null) =>
   value('SELECT app.complete_email_action($1,$2,$3,$4)',[token,purpose,password,request]);
+
+describe('locked sign-in refusal through real HTTP, password service and SQL', () => {
+  let caller = 0;
+  const password = 'Synthetic lockout secret 8291!';
+  const login = (identifier: string, candidate: string, locale = 'ar') => http.inject({
+    method: 'POST', url: '/v1/auth/login', remoteAddress: `198.18.10.${++caller}`,
+    headers: { 'accept-language': locale },
+    payload: { identifier, password: candidate, deviceId: 'lockout-review-device' },
+  });
+  const refusal = (response: Awaited<ReturnType<typeof login>>) => {
+    const { requestId: _requestId, ...error } = response.json().error;
+    expect(response.json().accessToken).toBeUndefined();
+    expect(response.json().refreshToken).toBeUndefined();
+    return { status: response.statusCode, error, meta: response.json().meta, retry: response.headers['retry-after'] };
+  };
+  it.each(['ar', 'en'])('does not disclose correct guesses, lock deadlines or account state (%s)', async locale => {
+    const locked = await fixture(true), disabled = await fixture(true), passwordless = await fixture();
+    const credential = await hashPassword(password);
+    const phone = locale === 'ar' ? '+12025550181' : '+12025550182';
+    await owner('UPDATE users SET phone_e164=$2 WHERE id=$1', [locked.uid, phone]);
+    await owner("UPDATE user_credentials SET password_hash=$2,failed_login_count=8,locked_until=now()+interval '15 minutes' WHERE user_id=$1", [locked.uid, credential]);
+    await owner('UPDATE user_credentials SET password_hash=$2 WHERE user_id=$1', [disabled.uid, credential]);
+    await owner('UPDATE users SET disabled_at=now() WHERE id=$1', [disabled.uid]);
+    await owner('DELETE FROM user_credentials WHERE user_id=$1', [passwordless.uid]);
+    const readLock = async () => (await owner('SELECT locked_until,failed_login_count FROM user_credentials WHERE user_id=$1', [locked.uid])).rows[0] as {locked_until: Date; failed_login_count: number};
+    const before = await readLock();
+    const baseline = refusal(await login(`${randomUUID()}@example.test`, password, locale));
+    expect(baseline.status).toBe(401); expect(baseline.error.code).toBe('invalid_credentials');
+    expect(baseline.error.message).toContain(locale === 'ar' ? 'نسيت كلمة المرور' : 'Forgot password');
+    expect(baseline.error.message).toContain('15');
+    expect(baseline.error.message).not.toContain('{minutes}');
+    for (const identifier of [locked.email.toUpperCase(), phone, disabled.email, passwordless.email]) {
+      for (const candidate of [password, 'Incorrect synthetic guess']) {
+        expect(refusal(await login(identifier, candidate, locale))).toEqual(baseline);
+      }
+    }
+    const after = await readLock();
+    expect(after.locked_until).toEqual(before.locked_until);
+    expect(after.failed_login_count).toBe(before.failed_login_count + 4);
+    expect((await owner('SELECT id FROM auth_sessions WHERE user_id=$1', [locked.uid])).rows).toHaveLength(1);
+  });
+  it('allows a correct password after the fixed lock expires, clearing failures and issuing a usable session', async () => {
+    const f = await fixture(true);
+    await owner("UPDATE user_credentials SET password_hash=$2,failed_login_count=12,locked_until=now()-interval '1 second' WHERE user_id=$1", [f.uid, await hashPassword(password)]);
+    const signedIn = await login(f.email, password);
+    expect(signedIn.statusCode, signedIn.body).toBe(200);
+    const me = await http.inject({url:'/v1/me', headers:{authorization:`Bearer ${signedIn.json().accessToken}`}});
+    expect(me.statusCode, me.body).toBe(200);
+    const row = (await owner('SELECT locked_until,failed_login_count FROM user_credentials WHERE user_id=$1', [f.uid])).rows[0];
+    expect(row).toMatchObject({locked_until:null,failed_login_count:0});
+  });
+  it('verified email recovery clears the lock without reviving the old password or sessions', async () => {
+    const f = await fixture(true), token = hash(), replacement = 'Recovered synthetic secret 9724!';
+    await owner("UPDATE user_credentials SET password_hash=$2,failed_login_count=8,locked_until=now()+interval '15 minutes' WHERE user_id=$1", [f.uid, await hashPassword(password)]);
+    await requestReset(f.email, token);
+    expect(await finish(token, 'reset', await hashPassword(replacement), hash())).toBe(f.uid);
+    expect((await http.inject({url:'/v1/me',headers:await headersFor(f)})).statusCode).toBe(401);
+    expect((await login(f.email, password)).statusCode).toBe(401);
+    expect((await login(f.email, replacement)).statusCode).toBe(200);
+  });
+});
 
 describe('account email SQL boundaries', () => {
   it('enforces onboarding for new email accounts until the real verification action completes', async () => {

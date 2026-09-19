@@ -8,7 +8,7 @@ import { maskPhone, normalizePhone } from '../lib/crypto.js';
 import { assertOtpVerified, checkOtp } from '../auth/otp-service.js';
 import { assertRotated, createSession, revokeSession, rotateSessionAttempt } from '../auth/session-service.js';
 import {
-  assertLogin, attemptPasswordLogin, hashNewPassword, passwordLoginEnabled,
+  assertLogin, attemptPasswordLogin, hashNewPassword, passwordLoginEnabled, LOCK_MINUTES,
 } from '../auth/password-service.js';
 import { verifyPassword } from '../lib/password.js';
 import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
@@ -257,7 +257,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 20260912))', [attempt.userId]);
       const credential = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [attempt.userId]);
       if (credential.rows[0]?.hash !== attempt.credentialHash) {
-        throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.invalidCredentials'));
+        throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.signInRefused', { minutes: String(LOCK_MINUTES) }));
       }
       const created = await createSession(tx, attempt.userId, {
         deviceId: body.deviceId,

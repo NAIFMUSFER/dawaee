@@ -132,16 +132,17 @@ describe('sign-in tells nobody which accounts exist', () => {
     expect(lockedWrongPw.status).toBe(401);
   });
 
-  it('the account holder is still told they are locked out', async () => {
+  it('a correct guess during a lock reveals neither the password nor the lock', async () => {
     const phone = newPhone();
     await makeAccount(phone);
     for (let i = 0; i < 9; i++) await login(phone, `wrong-guess-${i}`);
 
-    // Whoever can supply the password is the holder in every practical sense,
-    // and a password that silently stops working is a support call.
+    // A correct candidate is not proof that the requester is the owner. A
+    // different response would keep password guessing useful during the lock.
     const holder = probe(await login(phone, PW));
-    expect(holder.status, 'the real user gets no explanation for the lockout').toBe(429);
-    expect(holder.code).toBe('account_locked');
+    expect(holder).toEqual(probe(await login(newPhone(), PW)));
+    expect(holder.status).toBe(401);
+    expect(holder.code).toBe('invalid_credentials');
   });
 
   /**

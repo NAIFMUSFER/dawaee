@@ -12,8 +12,7 @@ export const LOCK_MINUTES = 15;
 
 export type LoginOutcome =
   | { outcome: 'ok'; userId: string; rehashed: boolean; credentialHash: string }
-  | { outcome: 'invalid' }
-  | { outcome: 'locked'; until: Date };
+  | { outcome: 'invalid' };
 
 interface LoginRow {
   user_id: string;
@@ -56,40 +55,17 @@ export async function attemptPasswordLogin(
     return { outcome: 'invalid' };
   }
 
-  /**
-   * A locked account is disclosed only to someone who already knows the
-   * password.
-   *
-   * The lock used to be announced to whoever asked: eight wrong guesses turned
-   * the ninth response from 401 `invalid_credentials` into 429
-   * `account_locked`. Only a real account can be locked, so that was a
-   * definitive account-existence oracle costing nine unauthenticated requests —
-   * and it charged the victim for the lookup, since the same nine requests lock
-   * them out for fifteen minutes. For a medication app, "this number has an
-   * account here" is itself a disclosure about someone's health.
-   *
-   * Verifying the password first splits the two audiences. Someone who cannot
-   * supply it gets the same 401 as for a phone number that was never
-   * registered, so nothing distinguishes a locked account from a non-existent
-   * one. Someone who CAN supply it is the account holder in every practical
-   * sense, and telling them "locked for N minutes" is the difference between a
-   * clear message and a password that mysteriously stops working.
-   *
-   * The failure is still recorded while locked. Skipping it would hand an
-   * attacker a free guessing window: no counter moves during the lock, so they
-   * could spend fifteen minutes guessing and watch for the response to change.
-   * The database keeps the original lock deadline; wrong guesses cannot extend
-   * another user's lock indefinitely.
-   */
+  // Do not verify a candidate against the real credential during a lock.
+  // Returning account_locked only for a correct guess was a password oracle:
+  // an attacker could keep testing guesses even though no session was issued.
+  // Use the same decoy work as an unknown account, record every refused attempt
+  // without branching on the password, and keep the original lock deadline.
+  // The public refusal includes generic retry/recovery advice for everybody;
+  // neither the existence of a lock nor its deadline is disclosed.
   if (row.locked_until && row.locked_until.getTime() > Date.now()) {
-    const correct = await verifyPassword(password, row.password_hash);
-    if (!correct) {
-      await tx.query('SELECT app.record_login_failure($1,$2,$3)', [row.user_id, MAX_LOGIN_ATTEMPTS, LOCK_MINUTES]);
-      return { outcome: 'invalid' };
-    }
-    // Disabled outranks locked, and is never disclosed either way.
-    if (row.disabled) return { outcome: 'invalid' };
-    return { outcome: 'locked', until: row.locked_until };
+    await burnVerificationTime();
+    await tx.query('SELECT app.record_login_failure($1,$2,$3)', [row.user_id, MAX_LOGIN_ATTEMPTS, LOCK_MINUTES]);
+    return { outcome: 'invalid' };
   }
 
   const ok = await verifyPassword(password, row.password_hash);
@@ -100,7 +76,7 @@ export async function attemptPasswordLogin(
       [row.user_id, MAX_LOGIN_ATTEMPTS, LOCK_MINUTES],
     );
     // The attempt that starts a lock must be indistinguishable from every
-    // other incorrect password. Only a correct password may reveal a lock.
+    // other refused sign-in, including correct guesses during a lock.
     return { outcome: 'invalid' };
   }
 
@@ -125,18 +101,8 @@ export async function attemptPasswordLogin(
 export function assertLogin(result: LoginOutcome, locale: Locale): asserts result is Extract<LoginOutcome, { outcome: 'ok' }> {
   if (result.outcome === 'ok') return;
 
-  if (result.outcome === 'locked') {
-    const minutes = Math.max(1, Math.ceil((result.until.getTime() - Date.now()) / 60_000));
-    throw new AppError(
-      ERROR_CODES.ACCOUNT_LOCKED, 429,
-      t(locale, 'auth.accountLocked', { minutes: String(minutes) }),
-    );
-  }
-
-  // One message for a wrong identifier and a wrong password alike. Telling them
-  // apart would reveal whether a given person has an account here, and for a
-  // medication app that is itself a disclosure about their health.
-  throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.invalidCredentials'));
+  // One message for unknown, wrong, disabled, passwordless and locked accounts.
+  throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.signInRefused', { minutes: String(LOCK_MINUTES) }));
 }
 
 /** Validates a new password and returns its hash, or throws a localized reason. */

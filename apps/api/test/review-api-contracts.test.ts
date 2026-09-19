@@ -195,7 +195,7 @@ describe('reviewed API workflows and clinical output', () => {
     ));
     expect(locked.rows[0].failed_login_count).toBeGreaterThanOrEqual(MAX_LOGIN_ATTEMPTS);
     expect(locked.rows[0].lock_active).toBe(true);
-    expect((await h.run(patient,(tx:PoolClient)=>attemptPasswordLogin(tx,`${patient}@example.test`,password))).outcome).toBe('locked');
+    expect(await h.run(patient,(tx:PoolClient)=>attemptPasswordLogin(tx,`${patient}@example.test`,password))).toEqual({outcome:'invalid'});
   });
 
   it('rejects expired and future snooze intents and the actual schedule missed boundary', async () => {
