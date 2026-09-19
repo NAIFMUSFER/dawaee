@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Field, Screen, Txt } from '@/components/ui';
+import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
+import { waitForAuthServer } from '@/api/auth-connection';
 
 import { phoneInput } from '@dawaee/shared';
 
@@ -30,12 +31,24 @@ export default function SignUpScreen() {
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const action = useRef<AbortController | null>(null);
+  useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
 
   const submit = async () => {
+    if (action.current) return;
+    const controller = new AbortController();
+    action.current = controller;
+    const current = () => action.current === controller && !controller.signal.aborted;
+    let submitted = false;
     setBusy(true);
     setError(null);
     const typed = identifier.trim();
     try {
+      await waitForAuthServer(controller.signal);
+      if (!current()) return;
+      const deviceId = await getDeviceId();
+      if (!current()) return;
+      submitted = true;
       const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/register', {
         email: typed.toLowerCase(),
         phone: phone.trim(),
@@ -44,18 +57,23 @@ export default function SignUpScreen() {
         // The language chosen on the first screen, not a hardcoded default:
         // it is the account's locale from the first notification onward.
         locale: preferences.locale,
-        deviceId: await getDeviceId(),
+        deviceId,
       });
+      if (!current()) return;
       await signInWithTokens(tokens);
+      if (!current()) return;
       // Add and verify recovery email before leaving onboarding. Pending caregiver
       // invitations remain stored and can be continued from email settings.
       router.replace('/settings/email-verification');
     } catch (err) {
-      if (err instanceof NetworkError) setError(t('notifications.offlineBanner'));
+      if (!current()) return;
+      if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) {
+        setError(t(submitted ? 'auth.registrationUnconfirmed' : 'auth.connectionFailed'));
+      }
       else if (err instanceof ApiError) setError(err.message);
       else setError(t('error.internal_error'));
     } finally {
-      setBusy(false);
+      if (current()) { action.current = null; setBusy(false); }
     }
   };
 
@@ -75,11 +93,13 @@ export default function SignUpScreen() {
           value={name}
           onChangeText={setName}
           maxLength={120}
+          editable={!busy}
           autoFocus
         />
 
         <Field label={t('invite.phone')} value={phone} onChangeText={setPhone}
           autoComplete="tel" keyboardType="phone-pad" maxLength={20}
+          editable={!busy}
           hint={t('auth.linkedPhoneHint')} />
 
         <Field
@@ -91,6 +111,7 @@ export default function SignUpScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={320}
+          editable={!busy}
         />
 
         <Field
@@ -101,12 +122,13 @@ export default function SignUpScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={200}
+          editable={!busy}
           hint={t('auth.passwordHint', { min: String(MIN_PASSWORD) })}
-          error={error}
         />
 
         <Pressable
           onPress={() => setReveal((v) => !v)}
+          disabled={busy}
           accessibilityRole="button"
           accessibilityLabel={reveal ? t('auth.hidePassword') : t('auth.showPassword')}
           hitSlop={12}
@@ -116,6 +138,8 @@ export default function SignUpScreen() {
           </Txt>
         </Pressable>
 
+        {error ? <Banner tone="warning" title={error} /> : null}
+        {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
         <Button
           label={t('auth.signUp')}
           onPress={() => void submit()}
@@ -126,6 +150,7 @@ export default function SignUpScreen() {
 
         <Pressable
           onPress={() => router.replace('/(auth)/sign-in')}
+          disabled={busy}
           accessibilityRole="button"
           hitSlop={12}
           style={{ paddingVertical: theme.spacing.sm }}

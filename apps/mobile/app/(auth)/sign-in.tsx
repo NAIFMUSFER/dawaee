@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Field, Screen, Txt } from '@/components/ui';
+import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
+import { waitForAuthServer } from '@/api/auth-connection';
 import { landingAfterAuth } from '@/storage/pending-invite';
 
 interface AuthTokens {
@@ -31,28 +32,42 @@ export default function SignInScreen() {
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const action = useRef<AbortController | null>(null);
+  useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
 
   const submit = async () => {
+    if (action.current) return;
+    const controller = new AbortController();
+    action.current = controller;
+    const current = () => action.current === controller && !controller.signal.aborted;
     setBusy(true);
     setError(null);
     try {
+      await waitForAuthServer(controller.signal);
+      if (!current()) return;
+      const deviceId = await getDeviceId();
+      if (!current()) return;
       const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/login', {
         identifier: identifier.trim(),
         password,
-        deviceId: await getDeviceId(),
+        deviceId,
       });
+      if (!current()) return;
       await signInWithTokens(tokens);
       // Someone who arrived through a caregiver invitation came here to finish
       // it. The token was already being stashed before this detour and nothing
       // ever read it back, so they landed on Today and the invitation sat in
       // storage forever — the care circle could not be formed at all.
-      router.replace(await landingAfterAuth());
+      if (!current()) return;
+      const landing = await landingAfterAuth();
+      if (current()) router.replace(landing);
     } catch (err) {
-      if (err instanceof NetworkError) setError(t('notifications.offlineBanner'));
+      if (!current()) return;
+      if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) setError(t('auth.connectionFailed'));
       else if (err instanceof ApiError) setError(err.message);
       else setError(t('error.internal_error'));
     } finally {
-      setBusy(false);
+      if (current()) { action.current = null; setBusy(false); }
     }
   };
 
@@ -75,6 +90,7 @@ export default function SignInScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={320}
+          editable={!busy}
           autoComplete="username"
           autoFocus
         />
@@ -87,7 +103,7 @@ export default function SignInScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={200}
-          error={error}
+          editable={!busy}
           autoComplete="current-password"
           returnKeyType="go"
           onSubmitEditing={() => { if (ready && !busy) void submit(); }}
@@ -95,6 +111,7 @@ export default function SignInScreen() {
 
         <Pressable
           onPress={() => setReveal((v) => !v)}
+          disabled={busy}
           accessibilityRole="button"
           accessibilityLabel={reveal ? t('auth.hidePassword') : t('auth.showPassword')}
           hitSlop={12}
@@ -104,6 +121,8 @@ export default function SignInScreen() {
           </Txt>
         </Pressable>
 
+        {error ? <Banner tone="warning" title={error} /> : null}
+        {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
         <Button
           label={t('auth.signIn')}
           onPress={() => void submit()}
@@ -117,6 +136,7 @@ export default function SignInScreen() {
 
         <Pressable
           onPress={() => router.push('/(auth)/sign-up')}
+          disabled={busy}
           accessibilityRole="button"
           hitSlop={12}
           style={{ paddingVertical: theme.spacing.sm }}

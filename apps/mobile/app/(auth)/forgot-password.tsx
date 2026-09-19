@@ -42,7 +42,7 @@ export default function ForgotPasswordScreen() {
       if (result.accepted !== true) throw new Error('Invalid response');
       setSent(true);
     } catch (err) {
-      if (current()) setError(t(err instanceof NetworkError ? 'notifications.offlineBanner' : err instanceof ApiError && err.code === 'rate_limited' ? 'error.rate_limited' : 'emailAccount.unavailable'));
+      if (current()) setError(t(err instanceof NetworkError ? 'auth.connectionFailed' : err instanceof ApiError && err.code === 'rate_limited' ? 'error.rate_limited' : 'emailAccount.unavailable'));
     } finally { locked.current = false; if (current()) setBusy(false); }
   };
   return <SafeAreaView style={{ flex: 1 }}><Screen>
