@@ -1,5 +1,11 @@
 # iOS 10 Apple upload and distribution hold — 20 September 2026
 
+**Follow-up, 19:30 UTC:** Apple processing was independently confirmed Complete
+at 19:12. The matching `e59f864` worker/API are now live in production with
+schema 0095 and passing readiness. This resolves the backend mismatch described
+below; it does not certify native acceptance or change tester distribution.
+See [the production incident/update evidence](2026-09-20-ios10-production-backend.md).
+
 ## Verified before upload
 
 The owner completed Apple sign-in in the shared browser. App Store Connect
