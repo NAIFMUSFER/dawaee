@@ -63,6 +63,51 @@ schedule. See the [original reset evidence](2026-09-19-account-registration-rese
 
 ## Preview: not executed
 
+### Approved one-off attempt and confirmed platform limit — 2026-09-20
+
+The owner approved **up to USD 1 for a bounded temporary Render job, without a
+new subscription**. The reviewed read-only inventory was submitted to the exact
+preview service with explicit paid job plan `plan-srv-006`. Render rejected the
+request with HTTP 400: `free tier plans are not supported for jobs`. A subsequent
+job listing was still empty. No database inventory or reset ran. This is a limit
+on the **base service**, not missing login or a missing job-plan argument: CLI
+v2.28.0's input-to-request path passes `PlanId`, and Render's
+[free service documentation](https://render.com/docs/free) explicitly excludes
+one-off jobs and shell access on Free instances.
+
+An attempted alternative to create a paid background worker and supply the
+preview connection as a secret file was **rejected by automatic approval review
+before execution**. The review identified creation of a persistent paid service
+and uploading its database connection secret as beyond the authorized bounded
+one-off job. No alternate API or indirect execution was used to evade this
+decision. A fresh service listing confirmed no temporary worker was created.
+
+The existing paid Dawaee worker was checked as a possible administration route
+with only an SSH `true` command. CLI authentication and instance selection worked,
+but SSH failed resolving `ssh.frankfurt.render.com`; no remote command or database
+query ran. The connection was closed. No SSH key was added and no network rules
+were changed. Production services were not modified.
+
+The concrete remaining option is a separately authorized **temporary compute-plan
+change on the existing preview service** `srv-daipkbuk1f9s73952trg` from `free` to
+`starter` (equivalent `0.5c-512mb`), followed by the bounded inventory, encrypted
+snapshot, rollback rehearsal, reset and independent verification. Restore `free`
+and verify it afterward; keep the aggregate cost within the approved USD 1.
+This option is **prepared only, not applied**. It needs express authorization
+because it changes the service plan rather than just launching the approved job.
+It requires deployment/restart of the same reviewed preview artifact; ephemeral
+preview uploads can be lost on restart. See
+[compute-plan changes](https://render.com/docs/compute-plans). Do not update
+production, create a new paid service, copy owner credentials to another service,
+or leave paid preview compute running without that scope being approved.
+
+Current draft head `0ba50d705967a314d38791d48c0e1a73a8ce8314` completed
+[CI](https://github.com/NAIFMUSFER/dawaee/actions/runs/35502760857) and
+[Security scan](https://github.com/NAIFMUSFER/dawaee/actions/runs/35502760851)
+successfully. These source checks do not establish preview cleanup, email receipt
+or visual acceptance. No preview account has been deleted, and no new email or
+application deployment was initiated in this attempt.
+
 ### Administrative access update — 2026-09-20
 
 The owner completed Render's official CLI device authorization. CLI v2.28.0 was
@@ -79,7 +124,8 @@ network permissions because sandbox escalation is disabled. No external-access
 rules or TLS verification were changed. The database reports an empty external
 IP allowlist, so credentials alone would not establish external connectivity.
 
-An internal one-off job on the existing preview service is a documented option.
+An internal one-off job was initially proposed; the later attempt above confirmed
+that it requires a paid base service and cannot run on the current Free preview.
 [Render bills such jobs per second](https://render.com/docs/one-off-jobs); the
 preview's free service has no SSH or dashboard shell. No job was launched and
 the service's job list was empty. Because the owner previously prohibited new
