@@ -278,6 +278,7 @@ describe('a code does not outrank an operator', () => {
       payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D', password: PW, locale: 'ar', deviceId: `otp-reg-${seq}-${Date.now() % 10000}` },
     });
     expect(reg.statusCode).toBe(200);
+    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
 
     await issue(phone, '191919');
@@ -300,6 +301,7 @@ describe('a code does not outrank an operator', () => {
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
       payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D2', password: PW, locale: 'ar', deviceId: `otp-reg2-${seq}-${Date.now() % 10000}` },
     });
+    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
     const before = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM auth_sessions WHERE user_id=(SELECT id FROM users WHERE phone_e164=$1) AND revoked_at IS NULL', [phone],
@@ -323,6 +325,7 @@ describe('a code does not outrank an operator', () => {
       method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
       payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'L', password: PW, locale: 'ar', deviceId: `otp-lk-${seq}-${Date.now() % 10000}` },
     });
+    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
     for (let i = 0; i < 9; i++) {
       await h.app.inject({
         method: 'POST', url: '/v1/auth/login', remoteAddress: '10.55.0.1', headers: client(),

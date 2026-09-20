@@ -61,13 +61,18 @@ beforeAll(async () => {
 afterAll(async () => { await h.close(); });
 
 describe('registration', () => {
-  it('creates an email account with an optional phone and a verification-pending session', async () => {
+  it('creates an email account without reserving an unproved legacy phone', async () => {
     const res = await register({
       phone: '0566000001', displayName: 'محمد', password: 'correct horse battery',
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().accessToken).toBeTruthy();
     expect(res.json().isNewUser).toBe(true);
+    expect(res.json().phoneVerificationRequired).toBe(true);
+    const me = await h.app.inject({
+      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${res.json().accessToken}` },
+    });
+    expect(me.json().user.phoneE164).toBeNull();
   });
 
   /**
@@ -122,9 +127,9 @@ describe('registration', () => {
     expect(res.json().accessToken).toBeTruthy();
   });
 
-  it('refuses an identifier that already exists', async () => {
+  it('refuses an email that already exists', async () => {
     const res = await register({
-      phone: '0566000001', displayName: 'Someone else', password: 'another good passphrase',
+      email: 'naif@example.com', displayName: 'Someone else', password: 'another good passphrase',
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('identifier_taken');
@@ -174,7 +179,8 @@ describe('registration', () => {
 
 describe('sign-in', () => {
   it('accepts the phone in local or international form', async () => {
-    for (const form of ['0566000001', '+966566000001', '966566000001']) {
+    await seedAccount('+966566000021', 'Phone login', 'correct horse battery');
+    for (const form of ['0566000021', '+966566000021', '966566000021']) {
       const res = await login(form, 'correct horse battery');
       expect(res.statusCode, form).toBe(200);
       expect(res.json().accessToken).toBeTruthy();
@@ -187,7 +193,7 @@ describe('sign-in', () => {
   });
 
   it('issues a token that actually works', async () => {
-    const res = await login('0566000001', 'correct horse battery');
+    const res = await login('naif@example.com', 'correct horse battery');
     const me = await h.app.inject({
       method: 'GET', url: '/v1/me',
       headers: { authorization: `Bearer ${res.json().accessToken}` },
@@ -196,7 +202,7 @@ describe('sign-in', () => {
   });
 
   it('refuses a wrong password', async () => {
-    const res = await login('0566000001', 'not the right passphrase');
+    const res = await login('naif@example.com', 'not the right passphrase');
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe('invalid_credentials');
   });
@@ -209,7 +215,7 @@ describe('sign-in', () => {
    */
   it('answers identically for an unknown account and a wrong password', async () => {
     const unknown = await login('0599999999', 'not the right passphrase');
-    const wrong = await login('0566000001', 'not the right passphrase');
+    const wrong = await login('naif@example.com', 'not the right passphrase');
 
     expect(unknown.statusCode).toBe(wrong.statusCode);
     expect(unknown.json().error.code).toBe(wrong.json().error.code);

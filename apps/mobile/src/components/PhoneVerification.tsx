@@ -1,12 +1,24 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Banner, Button, Card, Field, Loading, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
-import { api } from '@/api/client';
+import { api, ApiError } from '@/api/client';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { phoneVerificationSupported, startPhoneProof, type PhoneChallenge } from '@/security/phone-proof';
 import { useApp } from '@/state/app-store';
 import { normalizeDigits } from '@dawaee/shared';
 import { phoneProofErrorKey } from '@/security/phone-proof-errors';
+
+/** Match the API's Saudi-default normalization before asking Firebase to send. */
+function phoneForProof(raw: string): string | null {
+  let value = normalizeDigits(raw).replace(/[\s()\-.]/g, '');
+  if (!/^\+?\d+$/.test(value)) return null;
+  if (value.startsWith('00')) value = `+${value.slice(2)}`;
+  if (value.startsWith('+')) return /^\+[1-9]\d{7,14}$/.test(value) ? value : null;
+  if (value.startsWith('966')) value = `+${value}`;
+  else if (value.startsWith('0')) value = `+966${value.slice(1)}`;
+  else if (value.length >= 8) value = `+966${value}`;
+  return /^\+[1-9]\d{7,14}$/.test(value) ? value : null;
+}
 
 export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
   const { t } = useI18n();
@@ -38,34 +50,33 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
   }, [begin, t]);
   useEffect(() => { void load(); return () => { challenge.current?.cancel(); }; }, [load]);
 
-  const link = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true; setBusy(true); setError(null);
-    const current = capture();
-    try {
-      await api.post('/v1/auth/phone', { phone: newPhone.trim(), currentPassword: password });
-      if (!current()) return;
-      setPassword(''); await refreshProfiles(); await load();
-    } catch { if (current()) setError(t('phoneVerification.linkFailed')); }
-    finally { busyRef.current = false; if (current()) setBusy(false); }
-  };
-
   const send = async () => {
-    if (busyRef.current || !phone || !phoneVerificationSupported) return;
+    const targetPhone = phone ?? phoneForProof(newPhone);
+    if (busyRef.current || !targetPhone || !phoneVerificationSupported || (!phone && !password)) return;
     busyRef.current = true; setBusy(true); setError(null); setCode('');
     const current = capture();
     challenge.current?.cancel();
     completed.current = false;
     try {
-      const next = await startPhoneProof(phone, async (idToken) => {
+      const next = await startPhoneProof(targetPhone, async (idToken) => {
         if (!current()) return;
         try {
-          await api.post('/v1/auth/phone-verification', { idToken });
+          if (phone) await api.post('/v1/auth/phone-verification', { idToken });
+          else await api.post('/v1/auth/phone', { idToken, currentPassword: password });
           if (!current()) return;
+          if (!phone) {
+            setPhone(targetPhone); setPassword(''); setNewPhone('');
+            await refreshProfiles();
+            if (!current()) return;
+          }
           completed.current = true; setVerified(true); setSent(false); setCode('');
           onVerified?.();
-        } catch {
-          if (current()) { setSent(false); setError(t('phoneVerification.failed')); }
+        } catch (err) {
+          if (current()) {
+            setSent(false);
+            setError(t(!phone && err instanceof ApiError && err.code === 'invalid_credentials'
+              ? 'auth.currentPasswordWrong' : !phone ? 'phoneVerification.linkFailed' : 'phoneVerification.failed'));
+          }
         }
       }, (err) => {
         if (current()) { setSent(false); setError(t(phoneProofErrorKey(err))); }
@@ -96,11 +107,23 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
     <Txt>{t('phoneVerification.body')}</Txt>
     {phone ? <Txt>{phone}</Txt> : null}
     {error ? <Banner tone="warning" title={error} /> : null}
-    {!loaded ? <Button label={t('common.retry')} onPress={() => void load()} /> : !phone ? <>
+    {!loaded ? <Button label={t('common.retry')} onPress={() => void load()} /> : !phone && !phoneVerificationSupported ?
+      <Txt>{t('phoneVerification.androidRequired')}</Txt> : !phone ? <>
       <Txt>{t('phoneVerification.noPhone')}</Txt>
       <Field label={t('invite.phone')} value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" maxLength={20} />
       <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
-      <Button label={t('phoneVerification.link')} loading={busy} disabled={!newPhone.trim() || !password} onPress={() => void link()} />
+      {sent ? <>
+        <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}
+          keyboardType="number-pad" textContentType="oneTimeCode" maxLength={6} autoComplete="sms-otp" />
+        <Button label={t('phoneVerification.confirm')} onPress={() => void confirm()} loading={busy} disabled={code.trim().length !== 6} />
+        <Button label={t('phoneVerification.restart')} tone="ghost" disabled={busy} onPress={() => {
+          challenge.current?.cancel(); challenge.current = null; setSent(false); setCode(''); setError(null);
+        }} />
+      </> : <>
+        <Txt variant="caption">{t('phoneVerification.consent')}</Txt>
+        <Button label={t('phoneVerification.send')} loading={busy}
+          disabled={!phoneForProof(newPhone) || !password} onPress={() => void send()} />
+      </>}
     </> : !phoneVerificationSupported ? <Txt>{t('phoneVerification.androidRequired')}</Txt> : sent ? <>
       <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}
         keyboardType="number-pad" textContentType="oneTimeCode" maxLength={6} autoComplete="sms-otp" />

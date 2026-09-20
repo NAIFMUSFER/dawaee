@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { phoneInput, t } from '@dawaee/shared';
+import { t } from '@dawaee/shared';
 
 const require = createRequire(import.meta.url);
 const { createHarness, deferred, NetworkError, ApiError } = require('./profile-screen-harness.cjs');
@@ -17,14 +17,13 @@ function setup(kind: 'sign-in' | 'sign-up') {
     '@/api/auth-connection': { waitForAuthServer: wait },
     '@/api/client': { NetworkError, ApiError, getDeviceId, api: { anonymous: { post } } },
     '@/storage/pending-invite': { landingAfterAuth: async () => '/caregiver/accept' },
-    '@dawaee/shared': { phoneInput },
   });
   h.app.signInWithTokens = signedIn; h.render(); screens.push(h);
   const label = kind === 'sign-up' ? 'auth.signUp' : 'auth.signIn';
   const press = () => h.find('Button', (p: any) => p.label === label).onPress();
   const fill = async () => {
     const values = kind === 'sign-up'
-      ? { 'auth.displayName': 'Synthetic test', 'invite.phone': '0510203040', 'emailAccount.email': 'Example@example.test', 'auth.password': 'synthetic-only-secret' }
+      ? { 'auth.displayName': 'Synthetic test', 'emailAccount.email': 'Example@example.test', 'auth.password': 'synthetic-only-secret' }
       : { 'auth.identifier': 'Example@example.test', 'auth.password': 'synthetic-only-secret' };
     for (const [field, value] of Object.entries(values)) h.find('Field', (p: any) => p.label === field).onChangeText(value);
     await h.flush();

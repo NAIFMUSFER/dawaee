@@ -301,16 +301,18 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
 
   const pw = 'DefinerModel!Pass123';
   let phone: string;
+  let email: string;
   let access: string;
   let refresh: string;
   let profileId: string;
 
   it('registration writes users, patient_profiles, user_preferences AND user_credentials', async () => {
     phone = `+9665${String(4100000 + Math.floor(Math.random() * 800000)).slice(0, 8)}`;
+    email = `fixture-${phone.replace(/\D/g, '')}@example.test`;
     const res = await send({
       method: 'POST',
       url: '/v1/auth/register',
-      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
+      payload: { email, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
     });
     // The exact request that returned 404 on a realistic owner before 0030.
     expect(res.statusCode, res.body.slice(0, 200)).toBe(200);
@@ -324,23 +326,23 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
     // definer path.
     const r = await one<{ users: string; profiles: string; prefs: string; creds: string }>(
       root,
-      `SELECT (SELECT count(*)::text FROM users WHERE phone_e164 = '${phone}') AS users,
+      `SELECT (SELECT count(*)::text FROM users WHERE email = '${email}') AS users,
               (SELECT count(*)::text FROM patient_profiles p JOIN users u ON u.id = p.owner_user_id
-                WHERE u.phone_e164 = '${phone}') AS profiles,
+                WHERE u.email = '${email}') AS profiles,
               (SELECT count(*)::text FROM user_preferences up JOIN users u ON u.id = up.user_id
-                WHERE u.phone_e164 = '${phone}') AS prefs,
+                WHERE u.email = '${email}') AS prefs,
               (SELECT count(*)::text FROM user_credentials uc JOIN users u ON u.id = uc.user_id
-                WHERE u.phone_e164 = '${phone}') AS creds`,
+                WHERE u.email = '${email}') AS creds`,
     );
     expect(r).toEqual({ users: '1', profiles: '1', prefs: '1', creds: '1' });
     // The clinical authorization cases below start after explicit mailbox proof.
-    await root.query('INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1', [phone]);
+    await root.query('INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE email=$1', [email]);
   });
 
   it('password login reads the credential through app.find_user_for_password_login', async () => {
     const res = await send({
       method: 'POST', url: '/v1/auth/login',
-      payload: { identifier: phone, password: pw, deviceId: 'definer-test-device-2' },
+      payload: { identifier: email, password: pw, deviceId: 'definer-test-device-2' },
     });
     expect(res.statusCode, res.body.slice(0, 200)).toBe(200);
   });
@@ -348,13 +350,13 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
   it('a wrong password records a failure through app.record_login_failure', async () => {
     const res = await send({
       method: 'POST', url: '/v1/auth/login',
-      payload: { identifier: phone, password: 'wrong-on-purpose', deviceId: 'definer-test-device-3' },
+      payload: { identifier: email, password: 'wrong-on-purpose', deviceId: 'definer-test-device-3' },
     });
     expect([401, 429]).toContain(res.statusCode);
     const r = await one<{ n: string }>(
       root,
       `SELECT failed_login_count::text AS n FROM user_credentials uc
-         JOIN users u ON u.id = uc.user_id WHERE u.phone_e164 = '${phone}'`,
+         JOIN users u ON u.id = uc.user_id WHERE u.email = '${email}'`,
     );
     expect(Number(r.n), 'the failure was not recorded').toBeGreaterThan(0);
   });
@@ -363,7 +365,7 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
     const before = await one<{ n: string }>(root, 'SELECT count(*)::text AS n FROM auth_rate_buckets');
     await send({
       method: 'POST', url: '/v1/auth/login',
-      payload: { identifier: phone, password: 'wrong-again', deviceId: 'definer-test-device-4' },
+      payload: { identifier: email, password: 'wrong-again', deviceId: 'definer-test-device-4' },
     });
     const after = await one<{ n: string }>(root, 'SELECT count(*)::text AS n FROM auth_rate_buckets');
     expect(Number(after.n), 'no rate bucket was written').toBeGreaterThanOrEqual(Number(before.n));

@@ -58,11 +58,16 @@ let n = 0;
 const newPhone = () => `+9665${String(3100000 + n++).padStart(8, '0')}`;
 
 async function makeAccount(phone: string, email?: string) {
+  const accountEmail = email ?? `auth-${phone.replace(/\D/g, '')}@example.test`;
   const r = await register({
     phone, ...(email ? { email } : {}), displayName: 'Test', password: PW, locale: 'ar',
     deviceId: `enum-dev-${n}-${Date.now() % 100000}`,
   });
   expect(r.statusCode, `account setup failed: ${r.body}`).toBe(200);
+  // Registration no longer reserves an unproved phone. This owner-only test
+  // fixture attaches it so the suite can probe established phone accounts;
+  // proof-first linking itself is covered at the HTTP provider boundary.
+  await owner.query('UPDATE users SET phone_e164=$1 WHERE lower(email)=$2', [phone, accountEmail.toLowerCase()]);
   await owner.query(`INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1 ON CONFLICT DO NOTHING`, [phone]);
   return r;
 }

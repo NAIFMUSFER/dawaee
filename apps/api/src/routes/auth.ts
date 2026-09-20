@@ -144,11 +144,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   // ------------------------------------------------------------- password
 
   /**
-   * Create an account with a password.
+   * Create an email account with a password.
    *
-   * Reachable by phone, by email, or by both. SMS and WhatsApp both turned out
-   * to need a commercial registration before they can carry a login code, and
-   * a password needs nobody's approval.
+   * Older clients also submit a phone here. It is validated for useful error
+   * feedback but deliberately NOT reserved: knowing an email password does not
+   * prove ownership of a phone number. The authenticated phone route links the
+   * number only after a fresh Firebase phone proof succeeds. Keeping the legacy
+   * field accepted lets an installed client finish registration safely instead
+   * of stranding it on a breaking validation response.
    */
   app.post('/v1/auth/register', {
     config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
@@ -158,27 +161,27 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     }
     const body = registerSchema.parse(req.body);
 
-    const phone = body.phone ? normalizePhone(body.phone) : null;
-    if (body.phone && !phone) {
+    const requestedPhone = body.phone ? normalizePhone(body.phone) : null;
+    if (body.phone && !requestedPhone) {
       throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
     }
     // Already trimmed and lower-cased by `emailInput`; one spelling, decided once.
     const email = body.email ?? null;
 
     // Shared with every other replica and surviving a cold start, unlike the
-    // in-process limiter this sits behind. Keyed by identifier as well as by
-    // address so a distributed attempt against one number is still bounded.
+    // in-process limiter this sits behind. Keyed by the only identity accepted
+    // at this stage (email) as well as by address, so replicas share the bound.
     await enforceAuthBudget({
       ip: { scope: 'register:ip', value: req.ip },
-      identifier: { scope: 'register:identifier', value: phone ?? email! },
+      identifier: { scope: 'register:identifier', value: email! },
     });
 
-    const passwordHash = await hashNewPassword(body.password, body.locale, phone ?? email ?? undefined);
+    const passwordHash = await hashNewPassword(body.password, body.locale, email ?? undefined);
 
     const result = await withTransaction(async (tx) => {
       const { rows } = await tx.query<{ user_id: string; created: boolean; self_profile_id: string | null }>(
         'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
-        [phone, email, body.displayName.trim(), passwordHash, body.locale],
+        [null, email, body.displayName.trim(), passwordHash, body.locale],
       );
       const row = rows[0]!;
       if (!row.created) return { taken: true as const };
@@ -205,7 +208,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         entityId: row.user_id,
         requestId: req.id,
         ipHash: req.ipHash,
-        newValue: { method: 'password', deviceId: body.deviceId },
+        newValue: { method: 'password', deviceId: body.deviceId, phoneDeferred: requestedPhone !== null },
       });
       return { taken: false as const, userId: row.user_id, session };
     });
@@ -222,6 +225,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       expiresIn: accessTokenTtlSeconds(),
       refreshExpiresAt: result.session.refreshExpiresAt.toISOString(),
       isNewUser: true,
+      phoneVerificationRequired: requestedPhone !== null,
     };
   });
 

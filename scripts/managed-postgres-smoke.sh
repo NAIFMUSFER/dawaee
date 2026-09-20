@@ -100,34 +100,34 @@ fi
 
 # ------------------------------------------------------------------- routes
 ip() { echo "10.90.$((RANDOM % 250)).$((RANDOM % 250))"; }
-PHONE_A="+9665$(printf '%08d' $((RANDOM % 90000000 + 10000000)))"
-PHONE_B="+9665$(printf '%08d' $((RANDOM % 90000000 + 10000000)))"
+EMAIL_A="smoke-a@example.test"
+EMAIL_B="smoke-b@example.test"
 PW='SmokeTest!Pass123'
 
 register() {
   curl -sS -o /tmp/smoke-reg.json -w '%{http_code}' -X POST "$BASE/v1/auth/register" \
     -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-    -d "{\"phone\":\"$1\",\"email\":\"smoke-$2@example.test\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
+    -d "{\"email\":\"$1\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
 }
 
 step "POST /v1/auth/register  (SECURITY DEFINER write: 4 FORCE-RLS tables)"
-CODE="$(register "$PHONE_A" a)"
+CODE="$(register "$EMAIL_A" a)"
 [ "$CODE" = "200" ] || { echo "$(cat /tmp/smoke-reg.json)" >&2; tail -20 /tmp/smoke-api.log >&2; fail "register returned $CODE (expected 200)"; }
 TOKEN_A="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-reg.json"))["accessToken"])')"
 [ -n "$TOKEN_A" ] || fail "register returned no access token"
 
-CODE="$(register "$PHONE_B" b)"
+CODE="$(register "$EMAIL_B" b)"
 [ "$CODE" = "200" ] || fail "second register returned $CODE"
 TOKEN_B="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-reg.json"))["accessToken"])')"
 
 step "the credential really was written (only reachable through the definer path)"
-CREDS="$(psql -tAc "SELECT count(*) FROM user_credentials uc JOIN users u ON u.id = uc.user_id WHERE u.phone_e164 = '$PHONE_A'" -d "$DB")"
-[ "$CREDS" = "1" ] || fail "no credential row for $PHONE_A — registration reported success without writing one"
+CREDS="$(psql -tAc "SELECT count(*) FROM user_credentials uc JOIN users u ON u.id = uc.user_id WHERE u.email = '$EMAIL_A'" -d "$DB")"
+[ "$CREDS" = "1" ] || fail "no credential row for $EMAIL_A — registration reported success without writing one"
 
 step "POST /v1/auth/login  (SECURITY DEFINER read)"
 CODE="$(curl -sS -o /tmp/smoke-login.json -w '%{http_code}' -X POST "$BASE/v1/auth/login" \
   -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-  -d "{\"identifier\":\"$PHONE_A\",\"password\":\"$PW\",\"deviceId\":\"smoke-a2\"}")"
+  -d "{\"identifier\":\"$EMAIL_A\",\"password\":\"$PW\",\"deviceId\":\"smoke-a2\"}")"
 [ "$CODE" = "200" ] || { cat /tmp/smoke-login.json >&2; fail "login returned $CODE"; }
 
 step "GET /v1/profiles  (ordinary RLS read)"

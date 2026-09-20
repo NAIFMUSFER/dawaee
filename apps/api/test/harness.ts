@@ -130,7 +130,7 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
 
   const registered = await h.app.inject({
     method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: phone, password: TEST_PASSWORD, deviceId },
+    payload: { email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: phone, password: TEST_PASSWORD, deviceId },
   });
 
   // A suite may sign the same number in twice; the second time it is a login.
@@ -147,29 +147,33 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
         return login.json<{ accessToken: string; refreshToken: string }>();
       })();
 
-  const profiles = await h.app.inject({
-    method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${auth.accessToken}` },
-  });
-  const profile = profiles.json<{ profiles: Array<{ id: string }> }>().profiles[0]!;
-
   const me = await h.app.inject({
     method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
 
-  const account = me.json<{ user: { id: string; phoneE164: string } }>().user;
+  const account = me.json<{ user: { id: string; phoneE164: string | null } }>().user;
   const userId = account.id;
   confirmTestEmail(userId);
-  // Ordinary clinical scenarios use an explicitly verified fixture. The
-  // external SMS provider is not part of this fixture; its API boundary has
-  // its own tests. Registration alone remains unverified in production.
-  if (options.verifiedPhone !== false) {
-    await withUser(userId, async (tx) => {
+  // Ordinary clinical scenarios attach their synthetic phone through the
+  // auth-plane function. Production registration never reserves this number:
+  // the real route calls the same function only after Firebase proof succeeds.
+  await withUser(userId, async (tx) => {
+    const credential = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [userId]);
+    const attached = await tx.query<{ linked: boolean }>('SELECT app.attach_account_phone($1,$2,$3) AS linked',
+      [userId, phone, credential.rows[0]?.hash]);
+    if (!attached.rows[0]?.linked) throw new Error('Phone fixture setup failed');
+    if (options.verifiedPhone !== false) {
       const proof = await tx.query<{ verified: boolean }>(
-        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, account.phoneE164],
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, phone],
       );
       if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
-    });
-  }
+    }
+  });
+
+  const profiles = await h.app.inject({
+    method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${auth.accessToken}` },
+  });
+  const profile = profiles.json<{ profiles: Array<{ id: string }> }>().profiles[0]!;
 
   return {
     userId,
