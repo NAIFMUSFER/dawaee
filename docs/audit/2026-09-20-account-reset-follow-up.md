@@ -63,6 +63,39 @@ schedule. See the [original reset evidence](2026-09-19-account-registration-rese
 
 ## Preview: not executed
 
+### Temporary plan change authorized; provider error — 2026-09-20
+
+The owner subsequently answered **yes** to temporarily upgrading the existing
+preview service, completing cleanup, and restoring Free within USD 1, with the
+restart/ephemeral-upload risk disclosed. That authorization persists: **do not
+ask again for the same temporary plan change or cost ceiling**. It does not
+authorize a new persistent paid service or repeating the production reset.
+
+On the exact preview service, CLI `services update --plan starter` returned
+HTTP 500 `internal server error`. A read confirmed the original Free plan and
+unchanged service timestamp. Trying the documented equivalent `0.5c-512mb`
+returned the same error and left the service unchanged. A minimal documented
+REST request, `PATCH /v1/services/srv-daipkbuk1f9s73952trg` with
+`{"serviceDetails":{"plan":"starter"}}`, also returned HTTP 500. The final
+independent service read still reported `free` and last modification
+`2026-09-20T08:49:49.051881Z`. Thus this is no longer waiting for authorization;
+the requested provider mutation has failed. No deployment was triggered, no
+paid instance was confirmed, and no preview database command ran.
+
+Browser discovery still sees Chrome, but refreshing its tabs timed out after
+20 seconds before reaching Render. No browser action was performed. Do not
+present this as a successful dashboard attempt or a database inventory.
+
+Resume from the existing administrative credentials and the approved scope when
+Render's update operation is available: read current service/deployment/job
+state first, avoid duplicate provisioning, apply the temporary plan change once,
+deploy the same reviewed preview commit `10eac842fd06ac0be54fd5a70caae3f78f8a8e06`
+only if required, then run the reviewed inventory before preparing its bounded
+backup and reset. Restore and independently verify Free before reporting done.
+Reconfirm account-set bounds from the actual inventory rather than reusing
+production counts. The repeated 500 responses are a current provider blocker,
+not evidence of a global Render outage or a missing payment method.
+
 ### Approved one-off attempt and confirmed platform limit — 2026-09-20
 
 The owner approved **up to USD 1 for a bounded temporary Render job, without a
