@@ -1,7 +1,15 @@
 # S6 — proof-first phone linking
 
 Date: 2026-09-20  
-Scope: candidate source only; not deployed to production and not submitted to TestFlight
+Scope: not deployed to production and not submitted to TestFlight.
+
+**Later status:** the candidate is now on the isolated preview; see
+[20 September live evidence](2026-09-20-preview-live-verification.md). Email
+registration also became proof-first in a subsequent change, so the original
+email-enumeration finding at the end of this document is historical, not an
+open source defect. See [the email repair](2026-09-20-proof-first-email-registration.md).
+Physical Firebase/SMS/phone-login acceptance is still open; email-only preview
+accounts do not prove it.
 
 ## Finding reproduced from the call graph
 

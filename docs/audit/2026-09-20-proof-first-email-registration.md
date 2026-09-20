@@ -2,9 +2,13 @@
 
 ## Status
 
-Published to draft PR #32 through `85b7fad`; **not deployed, not merged, and not
-included in a TestFlight build**. Exact-head CI and Security passed. This is
-source/database verification, not a visible registration acceptance test.
+Published to draft PR #32 through `85b7fad`; exact-head CI and Security passed.
+The later reviewed source `b85cc25` was deployed **only to the isolated preview**
+as exact-tree commit `ff1bd1b` on 20 September at 06:29 UTC. Real registration
+and recovery mail reached the synthetic inbox and the received tokens completed
+through HTTP; see [live evidence and its limits](2026-09-20-preview-live-verification.md).
+**Not production-deployed, not merged, not included in TestFlight, and not
+visually accepted.** The browser remains unavailable.
 
 ## Defect closed by the change
 
