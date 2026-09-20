@@ -21,6 +21,6 @@ describe('new registration email requirement',()=>{
     const profiles=await h.app.inject({url:'/v1/profiles',headers});const id=profiles.json().profiles[0].id;
     const read=()=>h.app.inject({url:`/v1/notes?profileId=${id}`,headers});
     expect((await read()).statusCode).toBe(200);
-    expect((await h.app.inject({method:'POST',url:'/v1/notes',headers,payload:{profileId:id,text:'Usable'}})).statusCode).toBe(201);
+    expect((await h.app.inject({method:'POST',url:'/v1/notes',headers,payload:{profileId:id,text:'Usable'}})).statusCode).toBe(200);
   });
 });

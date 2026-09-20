@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resetDatabase, startHarness, type Harness } from './harness.js';
+import { createEmailAccount, resetDatabase, startHarness, type Harness } from './harness.js';
 import { attemptPasswordLogin, MAX_LOGIN_ATTEMPTS } from '../src/auth/password-service.js';
 import { withTransaction } from '../src/lib/db.js';
 import { hashPassword } from '../src/lib/password.js';
@@ -57,6 +57,7 @@ async function seedAccount(phone: string | null, name: string, password: string 
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  await createEmailAccount(h, 'naif@example.com', 'Naif', 'correct horse battery', 'password-test-seed');
 });
 afterAll(async () => { await h.close(); });
 
@@ -131,7 +132,7 @@ describe('sign-in', () => {
   });
 
   it('accepts the email regardless of case', async () => {
-    const res = await login('naif@example.com', 'correct horse battery');
+    const res = await login('NAIF@EXAMPLE.COM', 'correct horse battery');
     expect(res.statusCode).toBe(200);
   });
 

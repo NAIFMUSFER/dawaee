@@ -119,9 +119,9 @@ describe('P13-9 the audit trail records the act, not the contents', () => {
     expect(rows).not.toMatch(/\beyJ[A-Za-z0-9_-]{4,}\./);
   });
 
-  it('records the device identifier verbatim, whatever the client chose', () => {
+  it('does not attribute pre-proof registration to an untrusted device identifier', () => {
     const row = psql("SELECT coalesce(new_value::text,'') FROM audit_logs WHERE action = 'auth.register' LIMIT 1");
-    expect(row).toContain('deviceId');
+    expect(row).not.toContain('deviceId');
   });
 
   it('records a caregiver invitation without the phone number it was sent to', () => {

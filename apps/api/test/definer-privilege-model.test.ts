@@ -341,8 +341,7 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
                 WHERE u.email = '${email}') AS creds`,
     );
     expect(r).toEqual({ users: '1', profiles: '1', prefs: '1', creds: '1' });
-    // The clinical authorization cases below start after explicit mailbox proof.
-    await root.query('INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE email=$1', [email]);
+    // Completion above is the mailbox proof and records the verification atomically.
   });
 
   it('password login reads the credential through app.find_user_for_password_login', async () => {
