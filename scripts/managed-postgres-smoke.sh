@@ -126,7 +126,7 @@ complete_registration() {
   # above proves that the public path does not create an identity; the known
   # token lets this smoke drive the real completion HTTP route deterministically.
   psql -d "$DB" -v ON_ERROR_STOP=1 -qc \
-    "SELECT app.request_email_registration('$email','$hash','ar','smoke-payload')"
+    "SELECT app.request_email_registration('$email','$hash','ar','smoke-payload')" > /dev/null
   curl -sS -o /tmp/smoke-complete.json -w '%{http_code}' -X POST "$BASE/v1/auth/email/complete" \
     -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
     -d "{\"token\":\"$secret\",\"purpose\":\"register\",\"displayName\":\"smoke\",\"newPassword\":\"$PW\"}"
