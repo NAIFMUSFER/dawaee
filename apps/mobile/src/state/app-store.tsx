@@ -17,6 +17,7 @@ import {
   acknowledgePrivacyHide, cancelPrivacyHidePending, markPrivacyHidePending,
   privacyHidePendingCount, purgePrivacyHideIntents, readPrivacyHideIntent,
 } from '../storage/notification-privacy-intent.js';
+import { readLocalePreference, writeLocalePreference } from '../storage/locale-preference.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
@@ -377,6 +378,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // getDeviceId clears its single-flight handle after failure, so later
       // push/sync callers can retry durable identity creation normally.
       const deviceId = await getDeviceId().catch(() => '');
+      const storedLocale = await readLocalePreference();
       const hasSession = await loadStoredSession();
       const bootstrapGeneration = sessionGeneration.current;
 
@@ -421,7 +423,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!hasSession) {
-        if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId }));
+        if (!cancelled) {
+          const locale = storedLocale ?? stateRef.current.preferences.locale;
+          const { restartRequired } = storedLocale
+            ? applyNativeDirection(locale)
+            : { restartRequired: stateRef.current.restartRequiredForRtl };
+          const ready = {
+            ...stateRef.current,
+            ready: true,
+            deviceId,
+            preferences: { ...stateRef.current.preferences, locale },
+            restartRequiredForRtl: restartRequired,
+          };
+          stateRef.current = ready;
+          setState(ready);
+        }
         return;
       }
 
@@ -722,7 +738,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           },
         ).catch(() => undefined);
       }
+      let localePersistence: Promise<boolean> | null = null;
       if (patch.locale) {
+        // First-run language selection happens before an account exists, so it
+        // cannot rely on the server preference row or encrypted account cache.
+        // Start the tiny presentation-only write immediately. Signed-out flows
+        // await it before returning; signed-in flows keep the established
+        // server-write ordering and join it before this action completes.
+        localePersistence = writeLocalePreference(patch.locale);
         const { restartRequired } = applyNativeDirection(patch.locale);
         setState((s) => ({ ...s, restartRequiredForRtl: restartRequired }));
       }
@@ -731,10 +754,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // server-side "me" to write to yet, and calling anyway earned a 401 that
       // the old catch-all below read as "offline" — so choosing Arabic raised
       // an offline banner on a perfectly healthy connection. The choice is
-      // kept locally and travels with the sign-up request instead.
-      if (!isSignedIn() || signOutInFlight.current) return;
+      // kept durably on this installation and travels with the sign-up request
+      // instead.
+      if (!isSignedIn() || signOutInFlight.current) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
       const preferenceUserId = stateRef.current.user?.id ?? null;
-      if (!preferenceUserId) return;
+      if (!preferenceUserId) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
 
       // The general bootstrap remembers presentation state, but only this
       // privacy-narrowing field gets a durable server-write marker. Persist it
@@ -751,7 +781,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         || generation !== sessionGeneration.current
         || !isSignedIn()
         || signOutInFlight.current
-      ) return;
+      ) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
 
       const save = async () => {
         try {
@@ -800,6 +833,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       };
       await enqueuePreferenceServerWork(generation, save);
+      if (localePersistence) await localePersistence;
     },
     syncNow,
     dismissSyncFailure: () => setState(s => ({ ...s, syncFailureCount: 0 })),

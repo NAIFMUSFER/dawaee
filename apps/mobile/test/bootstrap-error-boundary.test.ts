@@ -51,7 +51,7 @@ function loadModule(file: string, mocks: Record<string, unknown>, globals: Recor
  * hooks, HTTP, keychain/cache and native APIs are synthetic. This is not a React
  * renderer, live backend, encryption test or physical-device lifecycle test.
  */
-async function boot(failure?: Failure, hasStoredSession = true) {
+async function boot(failure?: Failure, hasStoredSession = true, storedLocale: 'ar' | 'en' | null = null) {
   let tokens: { accessToken: string; refreshToken: string } | null = hasStoredSession
     ? { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' } : null;
   let tokenClears = 0;
@@ -62,6 +62,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   const purged: Array<string | null> = [];
   const destroyed: string[] = [];
   const requested: string[] = [];
+  const directions: Array<'ar' | 'en'> = [];
   const accessChanges = loadModule(fileURLToPath(new URL('../src/api/access-changes.ts', import.meta.url)), {});
   const permissions = loadModule(fileURLToPath(new URL('../src/security/profile-permissions.ts', import.meta.url)), {});
   const clinicalChanges = loadModule(fileURLToPath(new URL('../src/api/clinical-changes.ts', import.meta.url)), {});
@@ -146,7 +147,16 @@ async function boot(failure?: Failure, hasStoredSession = true) {
       purgePrivacyHideIntents: async () => undefined,
       readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
-    '../i18n/index.js': { applyNativeDirection: () => ({ restartRequired: false }) },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => storedLocale,
+      writeLocalePreference: async () => true,
+    },
+    '../i18n/index.js': {
+      applyNativeDirection: (locale: 'ar' | 'en') => {
+        directions.push(locale);
+        return { restartRequired: locale === 'ar' };
+      },
+    },
     '../notifications/index.js': {
       cancelAllLocalNotifications: async () => { cancellations++; },
       rebuildRemindersFromCache: async () => undefined,
@@ -166,6 +176,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
     await new Promise<void>((resolve) => setImmediate(resolve));
     return {
       state, snapshotReads, snapshotWrites, cacheOwner, requested,
+      directions,
       sessionRetained: client.isSignedIn(), tokenClears, cancellations, purged, destroyed,
     };
   } finally {
@@ -251,6 +262,14 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     expect(result.snapshotReads).toBe(0);
     expect(result.cacheOwner).toBeNull();
     expect(result.state.signedIn).toBe(false);
+  });
+
+  it('restores an explicit first-run language before showing signed-out screens', async () => {
+    const result = await boot(undefined, false, 'en');
+    expect(result.state.signedIn).toBe(false);
+    expect(result.state.preferences.locale).toBe('en');
+    expect(result.directions).toEqual(['en']);
+    expect(result.requested).toEqual([]);
   });
 
   it('explicit cold-start session rejection destroys the restored account cache key', async () => {

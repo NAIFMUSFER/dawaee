@@ -141,6 +141,10 @@ function makeProvider(file) {
       purgePrivacyHideIntents: async () => undefined,
       readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => null,
+      writeLocalePreference: async () => true,
+    },
     '../storage/cache-key.js': {
       destroyCacheKey: id => { h.keyCalls.push(id); return h.destroyKey(id); },
     },

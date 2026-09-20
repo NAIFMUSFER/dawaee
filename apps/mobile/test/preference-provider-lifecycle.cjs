@@ -91,6 +91,10 @@ function makeProvider(file, notificationsFile, options = {}) {
       privacyHidePendingCount: async (userId) => userId && privacyIntents.has(userId) ? 1 : 0,
       purgePrivacyHideIntents: async () => { privacyIntents.clear(); },
     },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => null,
+      writeLocalePreference: async () => true,
+    },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
     '../i18n/index.js': { applyNativeDirection: (locale) => { directions.push(locale); return { restartRequired: locale === 'ar' }; } },
     '../notifications/index.js': native.api,

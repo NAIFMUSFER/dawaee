@@ -123,6 +123,7 @@ function makeHarness(file, options = {}) {
     cancelPrivacyHidePending: async () => undefined,
     acknowledgePrivacyHide: async () => undefined,
     isSignedIn: () => signedIn,
+    writeLocalePreference: async () => true,
     setCacheOwner: (id) => cacheOwners.push(id),
     applyNativeDirection: (locale) => {
       nativeDirections.push(locale);
