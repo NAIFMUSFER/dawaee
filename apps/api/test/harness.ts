@@ -130,10 +130,11 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
   const remoteAddress = nextRemoteAddress();
   const canonicalPhone = normalizePhone(phone);
   if (!canonicalPhone) throw new Error(`Invalid fixture phone: ${phone}`);
+  const fixtureEmail = `fixture-${canonicalPhone.replace(/\D/g, '')}@example.test`;
 
   const registered = await h.app.inject({
     method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: phone, password: TEST_PASSWORD, deviceId },
+    payload: { email: fixtureEmail, displayName: phone, password: TEST_PASSWORD, deviceId },
   });
 
   // A suite may sign the same number in twice; the second time it is a login.
