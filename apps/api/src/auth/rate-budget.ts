@@ -160,6 +160,15 @@ export async function consumeBudgetInTransaction(
   return { allowed: row.allowed, hits: row.hits, retryAfterSeconds: row.retry_after_seconds };
 }
 
+/** Clear one keyed budget inside an already-authorized caller transaction. */
+export async function clearBudgetInTransaction(
+  tx: Queryable,
+  scope: RateScope,
+  value: string,
+): Promise<void> {
+  await tx.query('SELECT app.clear_rate_budget($1,$2)', [scope, budgetKey(scope, value)]);
+}
+
 /**
  * Count one attempt. Throws 429 when the budget is spent.
  *
@@ -208,6 +217,6 @@ export async function enforceAuthBudget(
 
 /** Called after a successful sign-in so honest mistakes are not carried. */
 export async function clearBudget(scope: RateScope, value: string): Promise<void> {
-  await withTransaction((tx) => tx.query('SELECT app.clear_rate_budget($1,$2)', [scope, budgetKey(scope, value)]))
+  await withTransaction((tx) => clearBudgetInTransaction(tx, scope, value))
     .catch(() => undefined);
 }

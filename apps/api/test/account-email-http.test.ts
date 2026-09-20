@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@dawaee/shared';
 import { ZodError } from 'zod';
-const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), audit: vi.fn(), ready: true }));
+const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), recoveredBudget: vi.fn(), audit: vi.fn(), ready: true }));
 vi.mock('../src/lib/db.js', () => ({ withTransaction: (fn: any) => fn({ query: io.query }), withUser: (_id: string, fn: any) => fn({ query: io.query }) }));
 vi.mock('../src/middleware/context.js', () => ({
   authenticate: async (req: any) => { if (req.headers.authorization !== 'Bearer synthetic') throw AppError.unauthenticated(); req.auth = { userId: 'owner', sessionId: 'session' }; },
@@ -11,7 +11,11 @@ vi.mock('../src/middleware/context.js', () => ({
 }));
 vi.mock('../src/auth/rate-budget.js', () => ({ enforceAuthBudget: io.budget }));
 vi.mock('../src/lib/password.js', () => ({ verifyPassword: io.password, deriveRecoveryRequestKey: async () => 'request-key' }));
-vi.mock('../src/auth/password-service.js', () => ({ hashNewPassword: io.hash, passwordLoginEnabled: () => true }));
+vi.mock('../src/auth/password-service.js', () => ({
+  clearRecoveredLoginBudgets: io.recoveredBudget,
+  hashNewPassword: io.hash,
+  passwordLoginEnabled: () => true,
+}));
 vi.mock('../src/services/audit-service.js', () => ({ recordAudit: io.audit }));
 vi.mock('../src/providers/account-email.js', async importOriginal => ({ ...await importOriginal<any>(), accountEmailReady: () => io.ready }));
 import { registerAccountEmailRoutes } from '../src/routes/account-email.js';
@@ -65,6 +69,16 @@ describe('email route boundary (SQL separately tested with PostgreSQL)', () => {
     expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(403); expect(io.audit).not.toHaveBeenCalled();
     const result = await request('/v1/auth/email/complete', payload);
     expect(result.statusCode).toBe(200); expect(result.json()).toEqual({ updated: true }); expect(io.audit).toHaveBeenCalledOnce();
+    expect(io.recoveredBudget).not.toHaveBeenCalled();
+  });
+  it('clears login denial state only after an accepted password-reset token', async () => {
+    io.query.mockResolvedValueOnce({ rows: [{ user_id: null }] }).mockResolvedValueOnce({ rows: [{ user_id: 'owner' }] });
+    const payload = { token: 'b'.repeat(43), purpose: 'reset', newPassword: 'Replacement password 4382!' };
+    expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(403);
+    expect(io.recoveredBudget).not.toHaveBeenCalled();
+    expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(200);
+    expect(io.recoveredBudget).toHaveBeenCalledOnce();
+    expect(io.recoveredBudget.mock.calls[0]![1]).toBe('owner');
   });
   it('serves a no-store, no-referrer page with a hash-bound script and no database action', async () => {
     const response = await app.inject('/account-email');

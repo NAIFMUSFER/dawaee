@@ -69,8 +69,9 @@ requirements are unchanged.
 
 ## Not closed by this repair
 
-- **S4** identifier-budget denial: an attacker can still exhaust the existing
-  identifier budget. Do not remove guessing controls to conceal this finding.
+- **S4** was repaired in the subsequent candidate without removing guessing
+  controls: verified recovery now clears the current account identifiers in
+  the same transaction; see [the bounded repair](2026-09-20-recovery-rate-limit-escape.md).
 - **S6/S8**, privacy/operator facts, native acceptance and physical notification
   delivery remain open as recorded in the reconciliation.
 - This establishes equality of the application refusal and removes real-password

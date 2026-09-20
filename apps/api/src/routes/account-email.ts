@@ -6,7 +6,7 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { loadConfig } from '../config.js';
 import { withTransaction, withUser } from '../lib/db.js';
 import { verifyPassword, deriveRecoveryRequestKey } from '../lib/password.js';
-import { hashNewPassword, passwordLoginEnabled } from '../auth/password-service.js';
+import { clearRecoveredLoginBudgets, hashNewPassword, passwordLoginEnabled } from '../auth/password-service.js';
 import { enforceAuthBudget } from '../auth/rate-budget.js';
 import { recordAudit } from '../services/audit-service.js';
 import { accountEmailReady, drainAccountEmails, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
@@ -77,6 +77,7 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
       const { rows } = await tx.query<{ user_id: string | null }>('SELECT app.complete_email_action($1,$2,$3,$4) AS user_id', [tokenHash, body.purpose, passwordHash, requestHash]);
       const userId = rows[0]?.user_id;
       if (!userId) return false;
+      if (body.purpose === 'reset') await clearRecoveredLoginBudgets(tx, userId);
       await recordAudit(tx, { actorUserId: userId, patientProfileId: null, action: body.purpose === 'reset' ? 'auth.password_recovered' : 'auth.email_verified', entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash });
       return true;
     });

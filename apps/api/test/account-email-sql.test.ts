@@ -10,10 +10,12 @@ import type { PoolClient } from 'pg';
 import { registerProfileRoutes } from '../src/routes/profiles.js';
 import { registerCaregiverRoutes } from '../src/routes/caregivers.js';
 import { registerAuthRoutes } from '../src/routes/auth.js';
+import { registerAccountEmailRoutes } from '../src/routes/account-email.js';
 import { registerErrorHandler } from '../src/middleware/error-handler.js';
 import { signAccessToken } from '../src/auth/tokens.js';
 import { hashPassword } from '../src/lib/password.js';
-import { BUDGETS } from '../src/auth/rate-budget.js';
+import { BUDGETS, consumeBudget } from '../src/auth/rate-budget.js';
+import { emailTokenHash } from '../src/providers/account-email.js';
 
 // Exercise the real HTTP contracts, JWT/session middleware and audit writes
 // against this same PostgreSQL engine; only the connection pool is adapted.
@@ -78,6 +80,7 @@ beforeAll(async () => {
   registerProfileRoutes(http);
   registerCaregiverRoutes(http);
   registerAuthRoutes(http);
+  registerAccountEmailRoutes(http);
   await http.ready();
 }, 60_000);
 afterAll(async () => { await http.close(); await db?.close(); });
@@ -154,6 +157,30 @@ describe('locked sign-in refusal through real HTTP, password service and SQL', (
     expect((await http.inject({url:'/v1/me',headers:await headersFor(f)})).statusCode).toBe(401);
     expect((await login(f.email, password)).statusCode).toBe(401);
     expect((await login(f.email, replacement)).statusCode).toBe(200);
+  });
+  it('verified recovery clears exhausted login budgets for every current account identifier', async () => {
+    await owner("DELETE FROM auth_rate_buckets WHERE scope='login:identifier'");
+    const f = await fixture(true), phone = '+966500001947';
+    const rawToken = randomBytes(32).toString('base64url');
+    const replacement = 'Recovered after distributed denial 2847!';
+    await owner('UPDATE users SET phone_e164=$2 WHERE id=$1', [f.uid, phone]);
+    await owner('UPDATE user_credentials SET password_hash=$2 WHERE user_id=$1', [f.uid, await hashPassword(password)]);
+    for (const identifier of [f.email, phone]) {
+      for (let i = 0; i <= BUDGETS['login:identifier'].max; i++) {
+        await consumeBudget('login:identifier', identifier);
+      }
+    }
+    expect((await login(f.email, password)).statusCode).toBe(429);
+    expect((await login(phone, password)).statusCode).toBe(429);
+
+    await requestReset(f.email, emailTokenHash(rawToken));
+    const completed = await http.inject({ method: 'POST', url: '/v1/auth/email/complete', payload: {
+      token: rawToken, purpose: 'reset', newPassword: replacement,
+    } });
+    expect(completed.statusCode, completed.body).toBe(200);
+    expect((await owner("SELECT key_hash FROM auth_rate_buckets WHERE scope='login:identifier'")).rows).toHaveLength(0);
+    expect((await login(f.email, replacement)).statusCode).toBe(200);
+    expect((await login(phone, replacement)).statusCode).toBe(200);
   });
 });
 

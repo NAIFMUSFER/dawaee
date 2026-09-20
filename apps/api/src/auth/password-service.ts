@@ -5,6 +5,7 @@ import {
   burnVerificationTime, checkPasswordStrength, hashPassword, needsRehash, verifyPassword,
   MIN_PASSWORD_LENGTH,
 } from '../lib/password.js';
+import { clearBudgetInTransaction } from './rate-budget.js';
 
 /** After this many consecutive failures the account stops answering for a while. */
 export const MAX_LOGIN_ATTEMPTS = 8;
@@ -103,6 +104,36 @@ export function assertLogin(result: LoginOutcome, locale: Locale): asserts resul
 
   // One message for unknown, wrong, disabled, passwordless and locked accounts.
   throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, t(locale, 'auth.signInRefused', { minutes: String(LOCK_MINUTES) }));
+}
+
+/**
+ * A completed recovery must be an actual way out of account-targeted denial.
+ *
+ * Password recovery already proves the current mailbox or phone and resets the
+ * credential/account lock. Clear every current login spelling in that SAME
+ * transaction so a previously exhausted pre-password identifier bucket cannot
+ * immediately strand the owner behind a 429. The caller may supply only the
+ * user id returned by the SECURITY DEFINER recovery function; setting the RLS
+ * identity here then reveals only that recovered account's own identifiers.
+ *
+ * Keeping this in the recovery transaction matters: a 200 response now means
+ * the new password and the escape from the stored denial committed together.
+ * Invalid, expired, unknown and disabled recovery attempts never call it.
+ */
+export async function clearRecoveredLoginBudgets(tx: PoolClient, userId: string): Promise<void> {
+  await tx.query("SELECT set_config('app.user_id',$1,true)", [userId]);
+  const { rows } = await tx.query<{ phone_e164: string | null; email: string | null }>(
+    'SELECT phone_e164,email FROM users WHERE id=$1', [userId],
+  );
+  const account = rows[0];
+  if (!account) throw new Error('Recovered account is no longer readable');
+
+  const identifiers = new Set<string>();
+  if (account.phone_e164) identifiers.add(account.phone_e164);
+  if (account.email) identifiers.add(account.email.trim().toLowerCase());
+  for (const identifier of identifiers) {
+    await clearBudgetInTransaction(tx, 'login:identifier', identifier);
+  }
 }
 
 /** Validates a new password and returns its hash, or throws a localized reason. */

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { AppError, ERROR_CODES, t } from '@dawaee/shared';
 import { withTransaction } from '../lib/db.js';
 import { loadConfig } from '../config.js';
-import { hashNewPassword, passwordLoginEnabled } from '../auth/password-service.js';
+import { clearRecoveredLoginBudgets, hashNewPassword, passwordLoginEnabled } from '../auth/password-service.js';
 import { enforceAuthBudget } from '../auth/rate-budget.js';
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable, verifyFirebasePhoneIdToken } from '../auth/firebase-phone-proof.js';
 import { recordAudit } from '../services/audit-service.js';
@@ -41,6 +41,7 @@ export function registerPasswordRecoveryRoutes(app: FastifyInstance): void {
       );
       const userId = rows[0]?.user_id;
       if (!userId) return false;
+      await clearRecoveredLoginBudgets(tx, userId);
       await recordAudit(tx, { actorUserId: userId, patientProfileId: null,
         action: 'auth.password_recovered', entityType: 'user', entityId: userId,
         requestId: req.id, ipHash: req.ipHash });
