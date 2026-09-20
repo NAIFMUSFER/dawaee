@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { closePool, withUser } from '../src/lib/db.js';
+import { closePool, withTransaction, withUser } from '../src/lib/db.js';
 import { buildProviders } from '../src/providers/index.js';
 import { loadConfig } from '../src/config.js';
 import type { MockPushProvider } from '../src/providers/index.js';
