@@ -5,7 +5,7 @@ import type { ProfileSummary } from '../api/types.js';
  * disappear in the first render, before a passive loading effect can run. */
 export function profileScopeKey(userId: string | undefined, profile: ProfileSummary | null): string {
   return JSON.stringify([
-    userId, profile?.id, profile?.isSelf, profile?.timezone,
+    userId, profile?.id, profile?.role, profile?.isSelf, profile?.timezone,
     [...(profile?.permissions ?? [])].sort(),
   ]);
 }

@@ -264,12 +264,7 @@ describe('escalation is suppressed correctly', () => {
     });
     expect(snooze.statusCode).toBe(200);
     expect(snooze.json().snoozeCount).toBe(1);
-
-    const { execFileSync } = await import('node:child_process');
-    execFileSync('psql', ['-d', 'dawaee_test', '-c',
-      `UPDATE dose_occurrences SET snoozed_until = timestamptz '${new Date(snoozeAt.getTime() + 60 * 60_000).toISOString()}' WHERE id = '${tomorrow.id}'`], {
-      env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
-    });
+    expect(snooze.json().snoozedUntil).toBe(new Date(snoozeAt.getTime() + 60 * 60_000).toISOString());
 
     h.setNow(new Date(snoozeAt.getTime() + 30 * 60_000));
     await h.tick();
@@ -277,6 +272,18 @@ describe('escalation is suppressed correctly', () => {
 
     h.setNow(new Date(snoozeAt.getTime() + 70 * 60_000));
     await h.tick();
-    expect(sentToFamily()).toBeGreaterThan(familyBefore);
+    // A late worker first delivers the explicit patient snooze reminder. The
+    // next tick resumes the original outward stage, without resetting its clock.
+    expect(sentTo(PATIENT_DEVICE).length).toBe(patientBefore + 2);
+    expect(sentToFamily()).toBe(familyBefore);
+
+    h.setNow(new Date(snoozeAt.getTime() + 71 * 60_000));
+    await h.tick();
+    expect(sentToFamily()).toBe(familyBefore + 1);
+
+    h.setNow(new Date(snoozeAt.getTime() + 72 * 60_000));
+    await h.tick();
+    expect(sentTo(PATIENT_DEVICE).length).toBe(patientBefore + 2);
+    expect(sentToFamily()).toBe(familyBefore + 1);
   });
 });

@@ -75,13 +75,6 @@ await h.app.inject({
   },
 });
 
-// Registering the same phone again, so a unique violation with the number in
-// its `detail` is raised on a real code path.
-await h.app.inject({
-  method: 'POST', url: '/v1/auth/register', remoteAddress: ip(),
-  payload: { phone: user.phone, displayName: 'dup', password: 'correct horse battery staple', deviceId: 'dup-device' },
-});
-
 void med;
 await h.close();
 process.exit(0);

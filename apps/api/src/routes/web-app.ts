@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
+import type { Config } from '../config.js';
 
 /**
  * Serves the web build of the app from the API's own origin.
@@ -47,14 +48,26 @@ function checkedScriptHash(raw: string): string {
 }
 
 /** The Content Security Policy for the app document. */
-function buildCsp(scriptHash: string): string {
+export function buildCsp(scriptHash: string, storage?: Pick<Config, 'STORAGE_PROVIDER' | 'STORAGE_ENDPOINT' | 'STORAGE_REGION'>): string {
+  // Only the configured private object-store origin may receive signed image
+  // requests. Never allow arbitrary HTTPS hosts or interpolate endpoint paths,
+  // credentials or query strings into the policy.
+  let storageSource = '';
+  if (storage && ['s3', 'r2'].includes(storage.STORAGE_PROVIDER)) {
+    const endpoint = new URL(storage.STORAGE_ENDPOINT ?? `https://s3.${storage.STORAGE_REGION}.amazonaws.com`);
+    if (!['https:', 'http:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+      throw new Error('invalid image storage origin');
+    }
+    storageSource = ` ${endpoint.origin}`;
+  }
   return [
     "default-src 'none'",
     `script-src 'self' 'sha256-${scriptHash}'`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    `img-src 'self' data: blob:${storageSource}`,
     "font-src 'self' data:",
-    "connect-src 'self'",
+    // ImagePicker returns local data/blob URIs which fetch converts to bytes.
+    `connect-src 'self' data: blob:${storageSource}`,
     "manifest-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -65,7 +78,7 @@ function buildCsp(scriptHash: string): string {
 
 let csp = '';
 
-export async function registerWebAppRoutes(app: FastifyInstance): Promise<void> {
+export async function registerWebAppRoutes(app: FastifyInstance, storage?: Pick<Config, 'STORAGE_PROVIDER' | 'STORAGE_ENDPOINT' | 'STORAGE_REGION'>): Promise<void> {
   const bundlePath = await locateBundle();
 
   if (!bundlePath) {
@@ -77,7 +90,7 @@ export async function registerWebAppRoutes(app: FastifyInstance): Promise<void> 
   const scriptHash = checkedScriptHash(
     await readFile(`${bundlePath}.script-sha256`, 'utf8'),
   );
-  csp = buildCsp(scriptHash);
+  csp = buildCsp(scriptHash, storage);
 
   app.get('/', async (_req, reply) => sendWebBundle(reply));
 

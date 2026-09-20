@@ -83,7 +83,12 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     h.requests.push({ method, route, payload, ...gate });
     return gate.promise;
   };
-  const hosts = new Proxy({}, { get: (_target, key) => key === '__esModule' ? true : String(key) });
+  const foregroundListeners = new Set();
+  h.changeAppState = state => { for (const listener of foregroundListeners) listener(state); };
+  const hosts = new Proxy({ AppState: { addEventListener: (_event, listener) => {
+    foregroundListeners.add(listener);
+    return { remove: () => foregroundListeners.delete(listener) };
+  } } }, { get: (target, key) => key === '__esModule' ? true : target[key] ?? String(key) });
   const modules = {
     react: { __esModule: true, default: React, ...React },
     'react-native': hosts,
@@ -98,23 +103,36 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       return () => { if (focusCleanups.delete(cleanup)) cleanup?.(); };
     }, [fn]) },
     '@/components/ui': hosts,
+    '@/security/PrivacyModal': { PrivacyModal: 'Modal' },
+    '@/security/AppLockContext': { useAppLock: () => ({ contentBlocked: false }) },
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
+    '@/components/IncomingInvitations': hosts,
+    '@/privacy/deletion-receipt': { setDeletionReceipt: value => { h.deletionReceipt = value; } },
     '@/components/Picker': hosts,
+    '@/components/TimeField': hosts,
     '@/components/SnoozeSheet': hosts,
+    '@/components/DoseNotesSheet': hosts,
+    '@/components/MedicationImageField': hosts,
+    '@/components/MedicationPhoto': hosts,
+    '@/components/DateField': hosts,
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
     '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
-      anonymous: { post: (route, body) => request('POST', route, body) } } },
+      anonymous: { get: (route) => request('GET', route), post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },
-      readQueue: async () => h.queued,
+      readQueue: async () => [...h.queued],
       enqueue: async (value) => { h.queued.push(value); },
       applyQueuedToCache: (value) => value,
+      subscribeQueueChanges: () => () => undefined,
       newClientEventId: () => `event-${h.requests.length}`,
     },
+    '@/storage/emergency-qr': { readEmergencyQr: async () => null, saveEmergencyQr: async () => false },
+    '@/privacy/share-patient-report': { sharePatientReport: async () => false },
+    '@/privacy/share-full-export': { shareFullExport: async () => false },
     '@/notifications': {
       captureLocalReminderContext: () => () => true,
       inspectCapability: async () => ({ supported: false }),
@@ -141,7 +159,9 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     } },
   };
   const vmGlobals = overrides.__globals && typeof overrides.__globals === 'object' ? overrides.__globals : {};
+  const focusEffect = modules['expo-router'].useFocusEffect;
   Object.assign(modules, overrides);
+  modules['expo-router'].useFocusEffect ??= focusEffect;
   const evaluate = (sourceFile) => {
     const code = ts.transpileModule(fs.readFileSync(sourceFile, 'utf8'), {
       fileName: sourceFile,
@@ -149,9 +169,28 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     }).outputText;
     const exports = {};
     vm.runInNewContext(code, {
-      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout,
+      exports, Date, Intl, console, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
       ...vmGlobals,
       require: (id) => {
+        if (id === '@/privacy/usePrivateOutputGuard') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/privacy/usePrivateOutputGuard.ts'));
+        }
+        if (id === './web-patient-report') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/privacy/web-patient-report.ts'));
+        }
+        if (id === '@/medication/upload-image') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/medication/upload-image.ts'));
+        }
+        if (id === '@/security/profile-permissions') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/security/profile-permissions.ts'));
+        }
+        if (id === '@/hooks/useScreenRefresh') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/hooks/useScreenRefresh.ts'));
+        }
+        if (id === '../api/clinical-changes') {
+          modules[id] ??= evaluate(path.resolve(__dirname, '../src/api/clinical-changes.ts'));
+          h.notifyClinicalChange = modules[id].notifyClinicalChange;
+        }
         if (id === '@/hooks/useRequestScope') {
           if (!modules[id]) modules[id] = evaluate(hookFile || path.resolve(path.dirname(file), '../../src/hooks/useRequestScope.ts'));
         }
@@ -166,7 +205,11 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     ...evaluate(path.resolve(__dirname, '../../../packages/shared/src/medication-input.ts')),
     ...modules['@dawaee/shared'],
   };
+  Object.assign(modules['@/storage/offline-queue'], evaluate(path.resolve(__dirname, '../src/storage/dose-cache.ts')));
   modules['@/components/DoseUnitPicker'] ??= hosts;
+  modules['@/security/phone-proof-errors'] ??= evaluate(path.resolve(__dirname, '../src/security/phone-proof-errors.ts'));
+  modules['@/notifications/today-groups'] ??= evaluate(path.resolve(__dirname, '../src/notifications/today-groups.ts'));
+  modules['@/privacy/patient-report'] ??= { buildPatientReport: (value) => ({ html: '', text: JSON.stringify(value) }) };
   const Screen = evaluate(file)[overrides.__exportName ?? 'default'];
   const disposeFrom = (depth) => {
     for (const f of h.frames.splice(depth)) {
@@ -222,7 +265,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     for (const r of batch) {
       r.completed = true;
-      const dose = { id: `dose-${label}`, medicationId: `med-${label}`, scheduleId: `schedule-${label}`, scheduledAt: `${date}T09:00:00Z`, scheduledLocalDate: date, scheduledLocalTime: '12:00', scheduledTimezone: 'Asia/Riyadh', status: 'due', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${label}-ONLY`, foodInstruction: 'none' } };
+      const dose = { id: `dose-${label}`, medicationId: `med-${label}`, scheduleId: `schedule-${label}`, scheduledAt: new Date(Date.now() - 60_000).toISOString(), scheduledLocalDate: date, scheduledLocalTime: '12:00', scheduledTimezone: 'Asia/Riyadh', status: 'due', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${label}-ONLY`, foodInstruction: 'none' } };
       const medication = { id: dose.medicationId, name: dose.medication.name, form: 'tablet', strengthValue: null, strengthUnit: null, status: r.payload?.status || 'active' };
       r.resolve(r.method === 'POST' ? {} : r.route === '/v1/today'
         ? { profileId: r.payload.profileId, localDate: date, timezone: 'Asia/Riyadh', serverTime: new Date().toISOString(), today: [dose], prefetch: [], next: dose, prefetchDays: 7 }

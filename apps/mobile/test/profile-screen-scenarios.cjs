@@ -101,6 +101,15 @@ function scenarios(screenDirectory, hookFile) {
     const a = h.batch(); h.switchProfile('B'); const b = h.batch().filter((r) => !a.includes(r));
     assert.ok(b.some((r) => r.route === '/v1/doses')); assert.equal(b.find((r) => r.route === '/v1/doses').payload.medicationId, undefined);
   });
+  add('history', 'changing medication hides the old result until the new response arrives', async (h) => {
+    h.answer(h.batch(), 'A'); await h.flush();
+    h.find('Chip', p => p.label === 'SYNTHETIC-A-ONLY').onPress();
+    h.render(false);
+    assert.equal(h.find('DoseCard'), null);
+    assert.ok(h.find('Loading'));
+    await h.flush(); h.answer(h.batch(), 'FILTERED'); await h.flush();
+    assert.match(h.text(), /SYNTHETIC-FILTERED-ONLY/);
+  });
   add('history', 'late A API rejection cannot put an error banner on B', async (h) => {
     const a = h.batch(); h.switchProfile('B'); h.answer(h.batch().filter((r) => !a.includes(r)), 'B'); await h.flush();
     h.fail(a, new ApiError('controlled_A_rejection')); await h.flush(); assert.doesNotMatch(h.text(), /controlled_A_rejection/);

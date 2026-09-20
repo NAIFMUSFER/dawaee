@@ -55,6 +55,8 @@ async function createRelationship(permissions: string[]): Promise<string> {
 }
 
 async function enqueueDigest(relationshipId: string): Promise<string> {
+  await db.query(`INSERT INTO caregiver_notification_rules(relationship_id,patient_profile_id,channel,mode,summary_time,enabled)
+    VALUES($1,$2,'push','daily_summary','09:00',true)`, [relationshipId, patient.profileId]);
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO notification_deliveries
        (patient_profile_id, recipient_user_id, relationship_id, kind, channel, locale,

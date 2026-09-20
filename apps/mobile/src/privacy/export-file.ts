@@ -1,6 +1,6 @@
 export interface ExportFileSystemModule {
-  Paths: { cache: unknown };
-  File: new (base: unknown, name: string) => {
+  Paths: { cache: string };
+  File: new (base: string, name: string) => {
     uri: string;
     write: (contents: string) => void;
     delete: () => void;
@@ -30,14 +30,18 @@ export async function shareTemporaryExportFile(input: {
   fileName: string;
   contents: string;
   dialogTitle: string;
+  isCurrent: () => boolean;
 }): Promise<boolean> {
-  const { fileSystem, sharing, fileName, contents, dialogTitle } = input;
+  const { fileSystem, sharing, fileName, contents, dialogTitle, isCurrent } = input;
+  if (!isCurrent()) return false;
   if (!fileSystem?.Paths?.cache || !fileSystem.File || !sharing) return false;
   if (!(await sharing.isAvailableAsync())) return false;
+  if (!isCurrent()) return false;
 
   const file = new fileSystem.File(fileSystem.Paths.cache, fileName);
   try {
     file.write(contents);
+    if (!isCurrent()) return false;
     await sharing.shareAsync(file.uri, {
       mimeType: 'application/json',
       dialogTitle,

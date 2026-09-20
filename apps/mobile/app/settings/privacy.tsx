@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Share, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,11 +10,11 @@ import { useTheme } from '@/hooks/useTheme';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
-import {
-  shareTemporaryExportFile,
-  type ExportFileSystemModule,
-  type ExportSharingModule,
-} from '@/privacy/export-file';
+import { buildPatientReport } from '@/privacy/patient-report';
+import { sharePatientReport } from '@/privacy/share-patient-report';
+import { shareFullExport } from '@/privacy/share-full-export';
+import { usePrivateOutputGuard } from '@/privacy/usePrivateOutputGuard';
+import { setDeletionReceipt } from '@/privacy/deletion-receipt';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -65,27 +65,15 @@ interface MeResponse {
   consents: Array<{ type: string; granted: boolean; patientProfileId?: string | null }>;
 }
 
-/**
- * Optional native modules, loaded the same way the notification layer does it:
- * inside a try/catch, so Expo Web — where neither exists — still renders this
- * screen and simply offers the share sheet instead.
- */
-function optionalModule<T>(load: () => unknown): T | null {
-  try {
-    return load() as T;
-  } catch {
-    return null;
-  }
-}
-
 export default function PrivacyScreen() {
-  const { t, formatNumber } = useI18n();
+  const { t, locale } = useI18n();
   const theme = useTheme();
   const { user, activeProfile, signOut } = useApp();
   const apiErrorText = useApiErrorText();
   const profileKey = profileScopeKey(user?.id, activeProfile);
   const { begin: beginConsentLoad, capture: captureConsent } = useRequestScope(profileKey);
   const { begin: beginExport } = useRequestScope(profileKey);
+  const guardOutput = usePrivateOutputGuard(profileKey);
 
   const [consentState, setConsentState] = useState<{
     scopeKey: string;
@@ -108,7 +96,8 @@ export default function PrivacyScreen() {
 
   const [deleteStep, setDeleteStep] = useState<0 | 1>(0);
   const [deleting, setDeleting] = useState(false);
-  const [deleteRequested, setDeleteRequested] = useState(false);
+  const deletionInFlight = useRef(false);
+  const { capture: captureDeletion } = useRequestScope(user?.id ?? 'none');
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -196,9 +185,11 @@ export default function PrivacyScreen() {
     }
   };
 
-  const exportData = async () => {
-    if (!activeProfile) return;
-    const isCurrent = beginExport();
+  const exportData = async (full = false) => {
+    if (!activeProfile || exporting) return;
+    const requestCurrent = beginExport();
+    const isCurrent = guardOutput(requestCurrent);
+    if (!isCurrent()) return;
     const patientProfileId = activeProfile.id;
     setExporting(true);
     setExportError(null);
@@ -206,55 +197,58 @@ export default function PrivacyScreen() {
     try {
       const payload = await api.get<unknown>('/v1/reports/export', { profileId: patientProfileId });
       if (!isCurrent()) return;
-      const json = JSON.stringify(payload, null, 2);
-      const kilobytes = Math.max(1, Math.round(json.length / 1024));
-      const fileName = `dawaee-export-${patientProfileId}.json`;
-
-      const fileSystem = optionalModule<ExportFileSystemModule>(() => require('expo-file-system'));
-      const sharing = optionalModule<ExportSharingModule>(() => require('expo-sharing'));
-      const sharedFile = await shareTemporaryExportFile({
-        fileSystem,
-        sharing,
-        fileName,
-        contents: json,
-        dialogTitle: t('settings.exportData'),
-      });
+      if (full) {
+        const shared = await shareFullExport(payload, t('privacy.fullExportTitle'), isCurrent);
+        if (isCurrent()) {
+          if (shared) setExportNotice(t('privacy.fullExportReady'));
+          else setExportError(t('privacy.exportShareUnavailable'));
+        }
+        return;
+      }
+      const report = buildPatientReport(payload, locale);
+      const sharedFile = await sharePatientReport(report.html, t('privacy.reportTitle'), isCurrent);
       if (!isCurrent()) return;
 
       if (sharedFile) {
-        setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
+        setExportNotice(t('privacy.reportReady'));
         return;
       }
 
-      // No native file-sharing path (Expo Web, or a build without the module):
-      // hand the JSON to the platform share sheet instead of pretending a file
-      // was saved.
-      const result = await Share.share({ message: json, title: fileName });
+      // Readable text remains available on platforms without native PDF sharing.
+      const result = await Share.share({ message: report.text, title: t('privacy.reportTitle') });
       if (!isCurrent()) return;
       if (result.action === Share.dismissedAction) setExportNotice(null);
-      else setExportNotice(t('privacy.exportReady', { size: `${formatNumber(kilobytes)} KB` }));
+      else setExportNotice(t('privacy.reportReady'));
     } catch (err) {
       if (!isCurrent()) return;
       if (err instanceof NetworkError) setOffline(true);
       else if (err instanceof ApiError) setExportError(t('privacy.exportFailed'));
       else setExportError(t('privacy.exportShareUnavailable'));
     } finally {
-      if (isCurrent()) setExporting(false);
+      if (requestCurrent()) setExporting(false);
     }
   };
 
   const requestDeletion = async () => {
+    if (deletionInFlight.current) return;
+    const current = captureDeletion();
+    if (!current()) return;
+    deletionInFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await api.post('/v1/me/deletion-request', { confirm: true });
-      setDeleteRequested(true);
-      setDeleteStep(0);
+      const result = await api.post<{ scheduledFor: string }>('/v1/me/deletion-request', { confirm: true });
+      if (!current()) return;
+      setDeletionReceipt(result.scheduledFor);
+      // signOut invalidates local reminders immediately and purges sessions,
+      // queues, encrypted caches and keys; the receipt lives above navigation.
+      await signOut();
     } catch (err) {
-      if (err instanceof NetworkError) setOffline(true);
+      if (!current()) return;
+      if (err instanceof NetworkError) setDeleteError(t('privacy.deleteUncertain'));
       else setDeleteError(t('privacy.deleteFailed'));
     } finally {
-      setDeleting(false);
+      if (current()) { deletionInFlight.current = false; setDeleting(false); }
     }
   };
 
@@ -317,13 +311,16 @@ export default function PrivacyScreen() {
         <SectionTitle>{t('settings.exportData')}</SectionTitle>
         <Card>
           <Txt variant="bodySmall" color={theme.colors.ink500}>{t('privacy.exportHint')}</Txt>
+          <Txt>{t('privacy.exportFormats')}</Txt>
           <Button
-            label={exporting ? t('privacy.exporting') : t('settings.exportData')}
+            label={t('privacy.reportTitle')}
             tone="secondary"
             loading={exporting}
             disabled={!activeProfile}
             onPress={() => void exportData()}
           />
+          <Button label={t('privacy.fullExportTitle')} tone="secondary" loading={exporting} disabled={!activeProfile}
+            onPress={() => void exportData(true)} />
           {exportNotice ? <Banner tone="success" title={exportNotice} /> : null}
           {exportError ? <Banner tone="danger" title={exportError} /> : null}
         </Card>
@@ -334,12 +331,7 @@ export default function PrivacyScreen() {
           <Txt variant="body" weight="bold" color={theme.colors.danger700}>{t('privacy.deleteCannotUndo')}</Txt>
           <Txt variant="bodySmall" color={theme.colors.ink500}>{t('privacy.deleteExportFirst')}</Txt>
 
-          {deleteRequested ? (
-            <>
-              <Banner tone="success" title={t('privacy.deleteRequested')} />
-              <Button label={t('settings.signOut')} tone="secondary" onPress={() => void signOut()} />
-            </>
-          ) : deleteStep === 0 ? (
+          {deleteStep === 0 ? (
             <Button
               label={t('privacy.deleteStep1')}
               tone="secondary"
@@ -354,7 +346,7 @@ export default function PrivacyScreen() {
                 onPress={() => void requestDeletion()}
                 accessibilityHint={t('privacy.deleteCannotUndo')}
               />
-              <Button label={t('common.cancel')} tone="ghost" onPress={() => setDeleteStep(0)} />
+              <Button label={t('common.cancel')} tone="ghost" disabled={deleting} onPress={() => setDeleteStep(0)} />
             </View>
           )}
 

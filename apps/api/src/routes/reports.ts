@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { AppError } from '@dawaee/shared';
-import { addDays, dailyBreakdown, forecastStock, localDateInZone, summarizeAdherence } from '@dawaee/core';
+import { addDays, dailyBreakdown, deriveStatus, forecastStock, localDateInZone, summarizeAdherence } from '@dawaee/core';
 import { requireDate, requireDateRange, requireUuid } from '../lib/params.js';
 import { withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
@@ -45,7 +45,7 @@ export function registerReportRoutes(app: FastifyInstance): void {
                 d.scheduled_local_time, d.snoozed_until, d.notified_at, d.confirmed_at,
                 m.name AS medication_name, m.strength_value, m.strength_unit::text AS strength_unit,
                 m.form::text AS form, s.late_after_minutes, s.missed_after_minutes,
-                s.rule, s.dose_quantity, s.dose_unit::text AS dose_unit
+                s.rule, d.dose_quantity, d.dose_unit::text AS dose_unit
            FROM dose_occurrences d
            JOIN medications m ON m.id = d.medication_id
            JOIN medication_schedules s ON s.id = d.schedule_id
@@ -140,7 +140,8 @@ export function registerReportRoutes(app: FastifyInstance): void {
         },
         summary,
         daily: dailyBreakdown(occurrences, now, thresholds, access.profileTimezone),
-        medications: [...byMedication.values()].map((bucket) => ({
+        medications: [...byMedication.entries()].map(([medicationId, bucket]) => ({
+          medicationId,
           name: bucket.name,
           strength: bucket.strength,
           form: bucket.form,
@@ -149,12 +150,13 @@ export function registerReportRoutes(app: FastifyInstance): void {
         ...(audience === 'family' ? { stockOutlook } : {}),
         ...(audience === 'clinician'
           ? {
-              doses: rows.map((r) => ({
+              doses: rows.map((r, i) => ({
+                medicationId: r.medication_id,
                 medicationName: r.medication_name,
                 scheduledDate: r.scheduled_local_date,
                 scheduledTime: r.scheduled_local_time,
                 dose: `${Number(r.dose_quantity)} ${r.dose_unit}`,
-                status: r.status,
+                status: deriveStatus(occurrences[i]!, now, occurrences[i]!.thresholds),
                 confirmedAt: r.confirmed_at,
               })),
             }

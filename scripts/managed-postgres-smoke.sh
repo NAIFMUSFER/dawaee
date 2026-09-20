@@ -15,8 +15,8 @@
 # a failed launch.
 #
 # Covered here, deliberately, one of each kind:
-#   * a SECURITY DEFINER write path  — register  (users, patient_profiles,
-#     user_preferences, user_credentials, four FORCE-RLS tables)
+#   * a SECURITY DEFINER write path — proof-first register (the request does
+#     not create an identity; completion writes the account and credential)
 #   * a SECURITY DEFINER read path   — login     (app.find_user_for_password_login)
 #   * an ordinary RLS read           — GET /v1/profiles
 #   * an ordinary RLS write          — POST /v1/medications
@@ -69,6 +69,14 @@ export SMS_PROVIDER=mock WHATSAPP_PROVIDER=mock PUSH_PROVIDER=mock OCR_PROVIDER=
 export STORAGE_PROVIDER=local STORAGE_LOCAL_DIR=/tmp/dawaee-smoke-storage
 export WORKER_ENABLED=false
 export PUBLIC_APP_URL="$BASE"
+# Registration is intentionally unavailable unless account email is configured.
+# These synthetic values only make the readiness predicate true; the smoke
+# completes a known disposable challenge before the delivery timer can run.
+export ACCOUNT_EMAIL_PROVIDER=resend
+export ACCOUNT_EMAIL_FROM=smoke@example.com
+export ACCOUNT_EMAIL_SENDER_VERIFIED=true
+export ACCOUNT_EMAIL_BASE_URL=https://smoke.example.com
+export RESEND_API_KEY=smoke-never-send
 
 step "starting the API"
 node "$ROOT/apps/api/dist/index.js" > /tmp/smoke-api.log 2>&1 &
@@ -100,35 +108,59 @@ fi
 
 # ------------------------------------------------------------------- routes
 ip() { echo "10.90.$((RANDOM % 250)).$((RANDOM % 250))"; }
-PHONE_A="+9665$(printf '%08d' $((RANDOM % 90000000 + 10000000)))"
-PHONE_B="+9665$(printf '%08d' $((RANDOM % 90000000 + 10000000)))"
+EMAIL_A="smoke-a@example.test"
+EMAIL_B="smoke-b@example.test"
 PW='SmokeTest!Pass123'
 
-register() {
+request_registration() {
   curl -sS -o /tmp/smoke-reg.json -w '%{http_code}' -X POST "$BASE/v1/auth/register" \
     -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-    -d "{\"phone\":\"$1\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
+    -d "{\"email\":\"$1\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
 }
 
-step "POST /v1/auth/register  (SECURITY DEFINER write: 4 FORCE-RLS tables)"
-CODE="$(register "$PHONE_A" a)"
-[ "$CODE" = "200" ] || { echo "$(cat /tmp/smoke-reg.json)" >&2; tail -20 /tmp/smoke-api.log >&2; fail "register returned $CODE (expected 200)"; }
-TOKEN_A="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-reg.json"))["accessToken"])')"
-[ -n "$TOKEN_A" ] || fail "register returned no access token"
+complete_registration() {
+  local email="$1" secret hash
+  secret="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64url'))")"
+  hash="$(printf '%s' "$secret" | sha256sum | awk '{print $1}')"
+  # Synthetic mailbox ownership in this disposable database. The request route
+  # above proves that the public path does not create an identity; the known
+  # token lets this smoke drive the real completion HTTP route deterministically.
+  psql -d "$DB" -v ON_ERROR_STOP=1 -qc \
+    "SELECT app.request_email_registration('$email','$hash','ar','smoke-payload')" > /dev/null
+  curl -sS -o /tmp/smoke-complete.json -w '%{http_code}' -X POST "$BASE/v1/auth/email/complete" \
+    -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
+    -d "{\"token\":\"$secret\",\"purpose\":\"register\",\"displayName\":\"smoke\",\"newPassword\":\"$PW\"}"
+}
 
-CODE="$(register "$PHONE_B" b)"
-[ "$CODE" = "200" ] || fail "second register returned $CODE"
-TOKEN_B="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-reg.json"))["accessToken"])')"
+step "POST /v1/auth/register is opaque and creates no identity before mailbox proof"
+CODE="$(request_registration "$EMAIL_A" a)"
+[ "$CODE" = "202" ] || { echo "$(cat /tmp/smoke-reg.json)" >&2; tail -20 /tmp/smoke-api.log >&2; fail "register returned $CODE (expected 202)"; }
+PREPROOF="$(psql -tAc "SELECT count(*) FROM users WHERE email='$EMAIL_A'" -d "$DB")"
+[ "$PREPROOF" = "0" ] || fail "registration reserved $EMAIL_A before mailbox proof"
+
+step "mailbox proof atomically creates the account and verified credential"
+CODE="$(complete_registration "$EMAIL_A")"
+[ "$CODE" = "200" ] || { cat /tmp/smoke-complete.json >&2; fail "first registration completion returned $CODE"; }
+CODE="$(complete_registration "$EMAIL_B")"
+[ "$CODE" = "200" ] || { cat /tmp/smoke-complete.json >&2; fail "second registration completion returned $CODE"; }
 
 step "the credential really was written (only reachable through the definer path)"
-CREDS="$(psql -tAc "SELECT count(*) FROM user_credentials uc JOIN users u ON u.id = uc.user_id WHERE u.phone_e164 = '$PHONE_A'" -d "$DB")"
-[ "$CREDS" = "1" ] || fail "no credential row for $PHONE_A — registration reported success without writing one"
+CREDS="$(psql -tAc "SELECT count(*) FROM user_credentials uc JOIN users u ON u.id = uc.user_id WHERE u.email = '$EMAIL_A'" -d "$DB")"
+[ "$CREDS" = "1" ] || fail "no credential row for $EMAIL_A — registration reported success without writing one"
 
 step "POST /v1/auth/login  (SECURITY DEFINER read)"
 CODE="$(curl -sS -o /tmp/smoke-login.json -w '%{http_code}' -X POST "$BASE/v1/auth/login" \
   -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-  -d "{\"identifier\":\"$PHONE_A\",\"password\":\"$PW\",\"deviceId\":\"smoke-a2\"}")"
+  -d "{\"identifier\":\"$EMAIL_A\",\"password\":\"$PW\",\"deviceId\":\"smoke-a2\"}")"
 [ "$CODE" = "200" ] || { cat /tmp/smoke-login.json >&2; fail "login returned $CODE"; }
+TOKEN_A="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-login.json"))["accessToken"])')"
+[ -n "$TOKEN_A" ] || fail "login returned no access token"
+
+CODE="$(curl -sS -o /tmp/smoke-login.json -w '%{http_code}' -X POST "$BASE/v1/auth/login" \
+  -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
+  -d "{\"identifier\":\"$EMAIL_B\",\"password\":\"$PW\",\"deviceId\":\"smoke-b2\"}")"
+[ "$CODE" = "200" ] || { cat /tmp/smoke-login.json >&2; fail "second login returned $CODE"; }
+TOKEN_B="$(python3 -c 'import json;print(json.load(open("/tmp/smoke-login.json"))["accessToken"])')"
 
 step "GET /v1/profiles  (ordinary RLS read)"
 CODE="$(curl -sS -o /tmp/smoke-prof.json -w '%{http_code}' "$BASE/v1/profiles" \
@@ -192,7 +224,7 @@ grep -q "postgres://" /tmp/smoke-behind.log && fail "the refusal printed a conne
 echo
 echo "MANAGED-POSTGRES SMOKE PASSED"
 echo "  database owner : $MIGRATOR (rolsuper=false, rolbypassrls=false)"
-echo "  definer write  : register wrote users/profiles/preferences/credentials"
+echo "  definer write  : proof-first completion wrote verified accounts/credentials"
 echo "  definer read   : password login"
 echo "  RLS read       : GET /v1/profiles"
 echo "  RLS write      : POST /v1/medications"

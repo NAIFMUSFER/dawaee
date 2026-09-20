@@ -20,7 +20,7 @@ const PRIVATE_MARKERS = [
   'internal.db.invalid',
 ];
 const PRIVATE_ERROR = PRIVATE_MARKERS.join('; ');
-const JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'];
+const JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'];
 const PHASES = ['database', 'schema', 'worker'] as const;
 type Phase = typeof PHASES[number];
 let app: ReturnType<typeof Fastify>;

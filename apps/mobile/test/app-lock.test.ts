@@ -236,14 +236,14 @@ describe('nobody can be trapped behind it, and nothing weaker than a password ge
     expect(withoutRevocations).not.toContain('credentialVerifiedAt');
   });
 
-  it('is called only from the two screens that post a password', () => {
-    for (const screen of ['sign-in', 'sign-up']) {
-      const src = readFileSync(join(ROOT, `apps/mobile/app/(auth)/${screen}.tsx`), 'utf8');
-      const call = src.indexOf('signInWithTokens(tokens)');
-      expect(call, `${screen} calls it`).toBeGreaterThan(-1);
-      // The tokens it passes came from an auth POST in the same function.
-      expect(src.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/(login|register)'/);
-    }
+  it('is called only after sign-in posts a password, never by a registration request', () => {
+    const signIn = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-in.tsx'), 'utf8');
+    const call = signIn.indexOf('signInWithTokens(tokens)');
+    expect(call, 'sign-in calls it').toBeGreaterThan(-1);
+    expect(signIn.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/login'/);
+    const signUp = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-up.tsx'), 'utf8');
+    expect(signUp).not.toContain('signInWithTokens');
+    expect(signUp).not.toContain('auth.password');
   });
 
   it('drops the lock entirely when the patient turns it off', () => {
@@ -359,9 +359,13 @@ describe('the rule is actually wired to the app', () => {
   it('wraps the router, so no deep link or notification can route around it', () => {
     expect(layout).toContain('<AppLockGate>');
     const gate = layout.indexOf('<AppLockGate>');
-    const stack = layout.indexOf('<Stack');
-    expect(gate, 'the gate is outside the Stack').toBeGreaterThan(-1);
-    expect(stack).toBeGreaterThan(gate);
+    const navigator = layout.indexOf('<AppNavigator');
+    const gateEnd = layout.indexOf('</AppLockGate>');
+    expect(gate, 'the gate is outside the navigator').toBeGreaterThan(-1);
+    expect(navigator).toBeGreaterThan(gate);
+    expect(navigator).toBeLessThan(gateEnd);
+    const navigation = readFileSync(join(ROOT, 'apps/mobile/src/navigation/AppNavigator.tsx'), 'utf8');
+    expect(navigation).toContain('<Stack');
   });
 
   it('loads biometrics through the single shared module, not a private copy', () => {

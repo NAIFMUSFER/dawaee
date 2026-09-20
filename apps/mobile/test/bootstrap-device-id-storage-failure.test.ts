@@ -35,12 +35,18 @@ describe('cold-start device identity storage failure', () => {
       { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } },
     ).outputText;
 
-    let state = { ready: false, deviceId: '', signedIn: false };
+    let state = {
+      ready: false, deviceId: '', signedIn: false,
+      preferences: { locale: 'ar' as const },
+      restartRequiredForRtl: false,
+    };
+    const stateRef = { current: state };
     let sessionReads = 0;
     let cacheOwner: string | null = 'unexpected';
     const context = {
       cancelled: false,
       getDeviceId: async () => { throw new Error('synthetic AsyncStorage failure'); },
+      readLocalePreference: async () => null,
       loadStoredSession: async () => { sessionReads++; return false; },
       sessionGeneration: { current: 0 },
       getRestoredSessionUserId: async () => null,
@@ -48,7 +54,10 @@ describe('cold-start device identity storage failure', () => {
       setUnauthenticatedHandler: () => undefined,
       setState: (updater: typeof state | ((previous: typeof state) => typeof state)) => {
         state = typeof updater === 'function' ? updater(state) : updater;
+        stateRef.current = state;
       },
+      stateRef,
+      applyNativeDirection: () => ({ restartRequired: false }),
       console,
     } as Record<string, unknown>;
 

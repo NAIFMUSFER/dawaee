@@ -1,74 +1,41 @@
-# Status — what is done, and what is not
+# Current status — 19 September 2026
 
-Written to be read by someone deciding what to trust.
+The active full audit continues PR #32. Its [evidence and remaining release
+gates](audit/2026-09-19-full-audit.md) supersede unversioned early-project counts
+and integration claims. Dated reports remain historical evidence.
 
-## Verified by running it
+The [legacy-audit reconciliation](audit/2026-09-19-legacy-audit-reconciliation.md)
+maps the owner's `07bf101` report to current code and records remaining product,
+identity, notification and store prerequisites. Passing CI does not close them.
 
-| Area | Evidence |
-|---|---|
-| Domain engines | 179 unit tests, including DST transitions, ambiguous and nonexistent local times, the brief's 30-tablet stock scenario, and the full 20:00→20:35 escalation ladder |
-| API | 72 integration tests against a real PostgreSQL |
-| Cross-patient isolation | 30 adversarial SQL assertions, all passing; CI gate |
-| Escalation end-to-end | Real API + real worker: patient at 20:00, repeat at 20:10, WhatsApp to the primary caregiver at 20:30, confirmation at 20:35, **no** secondary alert at 21:00 |
-| Offline replay | Batch sync applied once, replayed idempotently, stock not double-decremented |
-| Scale | 50 medications on one profile; list and Today render in ~1.3 s |
-| Arabic RTL | Rendered in a browser and inspected; bidi-isolated measurements; localized units |
-| Elderly mode | Rendered and inspected: 35 % larger type, larger targets, fewer secondary actions |
-| English LTR | Rendered and inspected |
-| Mobile typecheck | `tsc --noEmit` clean across 37 screens |
-| Web build | `expo export` succeeds; served and driven end-to-end with zero runtime errors |
+## Observed release state
 
-## Built, correct by construction, not yet exercised against a live provider
+- Production API and worker were verified at `63b5b8d33a502b8e3d3cd2ca94b1855266665f90`.
+- iOS 0.1.0 (6) is in TestFlight. The user confirmed one real notification after
+  the APNs configuration repair on 19 September.
+- Build 7 was built from an earlier revision and held from submission for this
+  audit. It is not evidence for the new fixes or an approved final release.
+- The audit baseline is PR head `9a39df8eb829a771dd2fe51f47d3cfdc4e6442d5`.
+  Current repairs require their own CI, isolated preview and device evidence.
 
-These have real implementations and recording mocks. The mock is what runs
-until credentials exist, and `/health/ready` says so.
+## Implemented surfaces
 
-| Integration | What is missing |
-|---|---|
-| WhatsApp Cloud API | A Meta Business account, phone number ID, access token, and **approved message templates** (the four names are in `providers/whatsapp.ts`) |
-| SMS | Twilio or Unifonic credentials |
-| Push (APNs/FCM) | An Expo project and a native build; the token registration and receipt handling are written |
-| OCR | A Google Vision or Azure Document Intelligence key |
-| Object storage | An S3 or R2 bucket |
+The shared Expo app supports patient, caregiver and nurse workflows: medication
+photos and schedules, dose actions and notes, history, family invitations and
+permissions, stock, measurements, reports, privacy and notification settings.
+A readable PDF summary and complete JSON export are distinct outputs. Current
+provider configuration is documented in [integrations](integrations.md).
 
-The SigV4 presigner, the HMAC webhook verification, the template payloads and
-the retry/backoff logic are all written and typechecked — but code that has
-never met the real API is not the same as code known to work against it.
+A feature appearing in source does not establish that all of its user journeys
+work. The current audit records automated checks separately from actual browser
+and physical-device trials. No clinical validation, external penetration-test
+certification, or large-scale capacity guarantee is claimed.
 
-## Not built
+## Required before the final app
 
-- **Native iOS/Android binaries.** The app runs on Expo Web and the source is
-  complete, but producing signed builds needs an Apple Developer account and a
-  Google Play account.
-- **Caregiver web portal.** The API supports it fully; the Next.js front end is
-  not written. The mobile app covers the caregiver flows today.
-- **PDF report export.** Reports render in-app and share as text. PDF
-  generation is not implemented.
-- **Widgets, smartwatch, voice assistants.** The architecture supports them —
-  dose confirmation is an idempotent API call with a client event id — but no
-  platform extension is written. These are P2 in the brief.
-- **Barcode → medication database lookup.** Barcodes are captured and stored;
-  there is no lookup against a national medicines register (SFDA has no public
-  API).
-- **Admin UI.** The admin endpoints exist and are permission-gated; there is no
-  front end.
-- **Load testing.** Correct at 50 medications on one profile; behaviour at
-  10,000 concurrent patients is unmeasured.
-
-## Explicitly not claimed
-
-- No compliance certification of any kind (PDPL, HIPAA, GDPR). The architecture
-  follows privacy-by-design principles; that is not the same as an assessment.
-- No penetration test against a deployed instance.
-- No clinical validation. The app is a reminder and organisation tool by
-  design — see [medical-safety.md](medical-safety.md).
-
-## Next three things worth doing
-
-1. **Wire one real provider end-to-end** — WhatsApp is the highest-value, and it
-   is also the one with the longest lead time because template approval takes
-   days. Everything else can follow.
-2. **Ship a TestFlight build to one real elderly user** and watch them use it.
-   Elderly mode is designed from principles; it has not met an 80-year-old.
-3. **Load-test the reminder tick** at a realistic patient count. The queries are
-   indexed for it, but "indexed" and "measured" are different words.
+Complete the patient/caregiver/nurse UI matrix on the repaired revision, required
+CI/security checks and deployment agreement. Recheck real account verification,
+private image upload, invitation acceptance/revocation, offline conflict recovery,
+notification delivery while open/locked, and native lock/share behavior. Follow
+[the production release runbook](PRODUCTION-RELEASE-RUNBOOK.md) for the concrete
+release window and compatible recovery evidence.

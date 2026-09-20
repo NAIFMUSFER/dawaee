@@ -37,7 +37,7 @@ function note(label: string) {
 
 describe('notes and measurements profile isolation', () => {
   it('does not render patient A clinical notes on the first patient B frame', async () => {
-    const h = createHarness(screen, hook, {}, {
+    const h = createHarness(screen, hook, { role: 'owner' }, {
       '@/hooks/useTheme': { useTheme: () => theme },
       '@dawaee/shared': shared,
       'expo-router': { router: { back: () => undefined, push: () => undefined } },

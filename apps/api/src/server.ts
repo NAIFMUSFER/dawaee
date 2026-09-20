@@ -16,6 +16,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerPhoneVerificationRoutes } from './routes/phone-verification.js';
+import { registerAccountEmailRoutes } from './routes/account-email.js';
 import { registerPasswordRecoveryRoutes } from './routes/password-recovery.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
@@ -88,8 +89,9 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     max: 300,
     timeWindow: '1 minute',
     /**
-     * The key is the client address. It is not the user id, and the `req.auth`
-     * branch below is documentation of an intent that does not currently fire.
+     * The key is the client address. It is not the user id; authenticated
+     * accounts receive an additional database-backed budget after their live
+     * session is verified in middleware/context.ts.
      *
      * This plugin runs on `onRequest` by default, and authentication runs in a
      * `preHandler` — so `req.auth` is always undefined here and every limit in
@@ -108,7 +110,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
      * What makes the address trustworthy is the deployment-specific client-IP
      * binding above plus TRUST_PROXY_HOPS; a raw trustProxy:true is forbidden.
      */
-    keyGenerator: (req) => req.auth?.userId ?? req.ip,
+    keyGenerator: (req) => req.ip,
     // `statusCode` is not decoration. The object this returns is thrown, and
     // without a status on it the error handler saw an unrecognised object and
     // answered 500 "an unexpected error occurred" — so every rate-limited
@@ -155,6 +157,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAuthRoutes(scope);
     registerPhoneVerificationRoutes(scope);
     registerPasswordRecoveryRoutes(scope);
+    registerAccountEmailRoutes(scope);
     registerProfileRoutes(scope);
     registerMedicationRoutes(scope);
     registerDoseRoutes(scope);
@@ -169,7 +172,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAdminRoutes(scope);
   });
 
-  await registerWebAppRoutes(app);
+  await registerWebAppRoutes(app, cfg);
 
   return { app, providers };
 }

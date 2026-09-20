@@ -15,6 +15,7 @@ vi.mock('../src/lib/db.js', async (original) => {
   } };
 });
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable } from '../src/auth/firebase-phone-proof.js';
+import { BUDGETS, consumeBudget } from '../src/auth/rate-budget.js';
 import { withTransaction } from '../src/lib/db.js';
 import { authHeaders, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness } from './harness.js';
 
@@ -55,6 +56,10 @@ describe('password recovery on real PostgreSQL with provider boundary fixtures',
   });
   it('saves once under concurrent/lost-response retry, revokes sessions and push, and permits new-password login', async () => {
     const { user, idToken } = await fixture();
+    for (let i = 0; i <= BUDGETS['login:identifier'].max; i++) {
+      await consumeBudget('login:identifier', user.phone);
+    }
+    expect((await login(user.phone, TEST_PASSWORD)).statusCode).toBe(429);
     const pushed = await post('/v1/devices/push-token', {
       deviceId: `device-${user.phone}`, platform: 'android', token: 'ExponentPushToken[synthetic-recovery]',
     }, authHeaders(user));

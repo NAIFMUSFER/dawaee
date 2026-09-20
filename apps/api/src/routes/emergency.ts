@@ -110,7 +110,7 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
          ON CONFLICT (patient_profile_id) DO UPDATE
            SET qr_enabled = true, qr_token_hash = EXCLUDED.qr_token_hash,
                qr_rotated_at = now(), qr_view_count = 0
-         RETURNING id`,
+         RETURNING id, qr_rotated_at`,
         [profileId, sha256(token)],
       );
       await recordAudit(tx, {
@@ -119,6 +119,7 @@ export function registerEmergencyRoutes(app: FastifyInstance): void {
       });
       return {
         enabled: true,
+        qrRotatedAt: rows[0]!.qr_rotated_at,
         /**
          * The capability lives in the URL fragment, not the path/query.
          * Browsers never send a fragment in an HTTP request, so Render/CDN edge

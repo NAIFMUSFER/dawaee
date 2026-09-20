@@ -59,7 +59,7 @@ export function assessWorkerHeartbeat(input: {
     return { ok: false, detail: `worker heartbeat is stale (${Math.round(ageMs / 1000)}s)` };
   }
   if (!heartbeat.succeeded) {
-    return { ok: false, detail: 'latest reminder job failed' };
+    return { ok: false, detail: 'latest worker job failed' };
   }
 
   const apiCommit = input.apiCommit.trim() || 'unknown';

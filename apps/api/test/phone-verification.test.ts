@@ -6,7 +6,7 @@ vi.mock('../src/auth/firebase-phone-proof.js', async (original) => ({
   verifyFirebasePhoneIdToken: provider.verify,
 }));
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable } from '../src/auth/firebase-phone-proof.js';
-import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
+import { authHeaders, createEmailAccount, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
 let patient: TestUser;
@@ -74,5 +74,61 @@ describe('caregiver phone verification lifecycle', () => {
     expect(accepted.statusCode, accepted.body).toBe(200);
     const profiles = await h.app.inject({ method: 'GET', url: '/v1/profiles', headers: authHeaders(caregiver) });
     expect(profiles.json().profiles.map((p: { id: string }) => p.id)).toContain(patient.profileId);
+  });
+});
+
+describe('proof-first phone linking', () => {
+  async function emailAccount(suffix: string) {
+    const registered=await createEmailAccount(h,`proof-first-${suffix}@example.test`,'Proof first',TEST_PASSWORD,`proof-first-${suffix}-device`);
+    const accessToken=registered.token;
+    return {
+      token: accessToken,
+      headers: { authorization: `Bearer ${accessToken}` },
+    };
+  }
+
+  it('has no phone reservation before provider proof', async () => {
+    const account = await emailAccount('empty');
+    const result = await h.app.inject({ method: 'GET', url: '/v1/auth/phone-verification', headers: account.headers });
+    expect(result.json()).toEqual({ phone: null, verified: false });
+  });
+
+  it('links and verifies one provider-owned phone atomically, then permits phone login', async () => {
+    const account = await emailAccount('success');
+    const phone = '+966500092299';
+    provider.verify.mockResolvedValueOnce(proofFor(phone));
+    const linked = await h.app.inject({
+      method: 'POST', url: '/v1/auth/phone', headers: account.headers,
+      payload: { idToken: syntheticProof, currentPassword: TEST_PASSWORD },
+    });
+    expect(linked.statusCode, linked.body).toBe(200);
+    expect(linked.json()).toEqual({ linked: true, verified: true });
+    const statusResult = await h.app.inject({ method: 'GET', url: '/v1/auth/phone-verification', headers: account.headers });
+    expect(statusResult.json()).toEqual({ phone, verified: true });
+    const login = await h.app.inject({
+      method: 'POST', url: '/v1/auth/login', remoteAddress: '10.44.1.21',
+      payload: { identifier: phone, password: TEST_PASSWORD, deviceId: 'proof-first-login-device' },
+    });
+    expect(login.statusCode, login.body).toBe(200);
+  });
+
+  it('rolls back the number when the password or uniqueness check refuses linking', async () => {
+    const wrongPassword = await emailAccount('wrong-password');
+    provider.verify.mockResolvedValueOnce(proofFor('+966500092298'));
+    const refusedPassword = await h.app.inject({
+      method: 'POST', url: '/v1/auth/phone', headers: wrongPassword.headers,
+      payload: { idToken: syntheticProof, currentPassword: 'not the password' },
+    });
+    expect(refusedPassword.statusCode).toBe(401);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/auth/phone-verification', headers: wrongPassword.headers })).json().phone).toBeNull();
+
+    const duplicate = await emailAccount('duplicate');
+    provider.verify.mockResolvedValueOnce(proofFor(patient.phone));
+    const refusedDuplicate = await h.app.inject({
+      method: 'POST', url: '/v1/auth/phone', headers: duplicate.headers,
+      payload: { idToken: syntheticProof, currentPassword: TEST_PASSWORD },
+    });
+    expect(refusedDuplicate.statusCode).toBe(409);
+    expect((await h.app.inject({ method: 'GET', url: '/v1/auth/phone-verification', headers: duplicate.headers })).json().phone).toBeNull();
   });
 });

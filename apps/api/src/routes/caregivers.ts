@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   AppError, CAREGIVER_ROLE_PRESETS, ERROR_CODES, acceptInvitationSchema, caregiverNotificationRuleSchema,
   inviteCaregiverSchema, updateCaregiverPermissionsSchema, updateEscalationPolicySchema, t,
+  previewInvitationSchema, acceptReviewedInvitationSchema,
 } from '@dawaee/shared';
 import { DEFAULT_ESCALATION_STAGES } from '@dawaee/core';
 import { loadConfig } from '../config.js';
@@ -40,7 +41,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       if (access.role === 'none') throw AppError.notFound('Patient profile not found');
 
       const { rows } = await tx.query(
-        `SELECT cr.id, cr.caregiver_user_id, cr.invited_name, cr.invited_phone_e164,
+        `SELECT cr.id, cr.caregiver_user_id, cr.invited_name, cr.invited_phone_e164, cr.invited_email,
                 cr.role::text AS role, cr.status::text AS status, cr.permissions,
                 cr.escalation_priority, cr.invitation_expires_at, cr.accepted_at, cr.created_at,
                 u.display_name AS caregiver_name
@@ -66,6 +67,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
           name: r.invited_name ?? r.caregiver_name,
           // Only the patient sees the full number; caregivers see it masked.
           phone: access.role === 'owner' ? r.invited_phone_e164 : maskPhone(r.invited_phone_e164 ?? ''),
+          email: access.role === 'owner' ? r.invited_email : null,
           role: r.role,
           status: r.status,
           permissions: r.permissions,
@@ -90,8 +92,8 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
   app.post('/v1/caregivers/invite', async (req) => {
     const body = inviteCaregiverSchema.parse(req.body);
     const { userId } = currentUser(req);
-    const phone = normalizePhone(body.invitedPhone);
-    if (!phone) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid caregiver phone number');
+    const phone = body.invitedPhone ? normalizePhone(body.invitedPhone) : null;
+    if (body.invitedPhone && !phone) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid caregiver phone number');
 
     const result = await withUser(userId, async (tx) => {
       const access = await requireProfileOwner(tx, userId, body.patientProfileId);
@@ -103,12 +105,12 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
         `INSERT INTO caregiver_relationships
            (patient_profile_id, invited_phone_e164, invited_name, role, status, permissions,
             escalation_priority, invitation_token_hash, invitation_expires_at, invitation_channel,
-            invited_by_user_id)
-         VALUES ($1,$2,$3,$4::caregiver_role,'pending',$5,$6,$7, now() + ($8 || ' hours')::interval, $9, $10)
+            invited_by_user_id, invited_email)
+         VALUES ($1,$2,$3,$4::caregiver_role,'pending',$5,$6,$7, now() + ($8 || ' hours')::interval, $9, $10, $11)
          RETURNING id, invitation_expires_at`,
         [
           body.patientProfileId, phone, body.invitedName, body.role, body.permissions,
-          body.escalationPriority, sha256(token), String(body.expiresInHours), body.channel, userId,
+          body.escalationPriority, sha256(token), String(body.expiresInHours), body.channel, userId, body.invitedEmail ?? null,
         ],
       );
       const relationship = rows[0]!;
@@ -155,6 +157,61 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       invitationLink: link,
       invitationMessage: message,
     };
+  });
+
+  app.get('/v1/caregivers/incoming', async req => {
+    const { userId } = currentUser(req);
+    return withUserReadOnly(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.pending_caregiver_invitation_previews()');
+      return { invitations: rows.map(r => ({ id: r.id, patientName: r.patient_name, role: r.role, permissions: r.permissions, expiresAt: r.expires_at })) };
+    });
+  });
+
+  app.post('/v1/caregivers/incoming/accept', async req => {
+    const id = requireUuid((req.body as { relationshipId?: string })?.relationshipId, 'relationshipId');
+    const { userId } = currentUser(req);
+    return withUser(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.accept_email_invitation($1)', [id]);
+      const result = rows[0];
+      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
+      if (result?.outcome !== 'accepted') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
+      await recordAudit(tx, { actorUserId: userId, actorRole: 'caregiver', patientProfileId: result.patient_profile_id,
+        action: 'caregiver.accepted', entityType: 'caregiver_relationship', entityId: id, requestId: req.id, ipHash: req.ipHash });
+      return { accepted: true, relationshipId: id, profileId: result.patient_profile_id };
+    });
+  });
+
+  // The bearer belongs in the JSON body, never a URL/query/server access log.
+  app.post('/v1/caregivers/invitations/preview', async req => {
+    const body = previewInvitationSchema.parse(req.body);
+    const { userId } = currentUser(req);
+    return withUserReadOnly(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.preview_caregiver_invitation($1,$2)', [
+        'token' in body ? sha256(body.token) : null,
+        'relationshipId' in body ? body.relationshipId : null,
+      ]);
+      const result = rows[0];
+      if (result?.outcome === 'verification_required') throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your phone to review this invitation');
+      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
+      if (result?.outcome !== 'ready') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
+      return { id: result.id, patientName: result.patient_name, role: result.role, permissions: result.permissions, expiresAt: result.expires_at };
+    });
+  });
+
+  app.post('/v1/caregivers/invitations/accept', async req => {
+    const body = acceptReviewedInvitationSchema.parse(req.body);
+    const { userId } = currentUser(req);
+    return withUser(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.accept_reviewed_caregiver_invitation($1,$2,$3)', [body.relationshipId, body.role, body.permissions]);
+      const result = rows[0];
+      if (result?.outcome === 'changed') throw new AppError(ERROR_CODES.INVITATION_CHANGED, 409, 'Review the updated invitation before accepting');
+      if (result?.outcome === 'verification_required') throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your phone before accepting');
+      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
+      if (result?.outcome !== 'accepted') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
+      await recordAudit(tx, { actorUserId: userId, actorRole: 'caregiver', patientProfileId: result.patient_profile_id,
+        action: 'caregiver.accepted', entityType: 'caregiver_relationship', entityId: body.relationshipId, requestId: req.id, ipHash: req.ipHash });
+      return { accepted: true, relationshipId: body.relationshipId, profileId: result.patient_profile_id };
+    });
   });
 
   /**

@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 describe('account deletion request keeps remote notifications silenced', () => {
-  it('does not let a surviving authenticated session reactivate push after deletion was requested', async () => {
+  it('revokes the previous session so it cannot reactivate push after deletion was requested', async () => {
     const deviceId = 'device-deletion-push-boundary-0001';
     const user = await signIn(h, '+966500096855', deviceId);
     const token = 'ExponentPushToken[deletion-push-boundary-0001]';
@@ -47,11 +47,8 @@ describe('account deletion request keeps remote notifications silenced', () => {
     );
     expect(silenced.rows[0]?.active).toBe(false);
 
-    // The mobile shell syncs its Expo token whenever an authenticated install
-    // starts. A deletion request intentionally leaves the session alive during
-    // the grace period, so a process restart can reach this endpoint again.
-    // That restart must not undo the deletion route's explicit notification
-    // silence by turning the same installation back on.
+    // Restarting an older install must not reactivate push: the original
+    // session is now revoked as part of deletion, in addition to the SQL guard.
     const attemptedReactivation = await h.app.inject({
       method: 'POST',
       url: '/v1/devices/push-token',

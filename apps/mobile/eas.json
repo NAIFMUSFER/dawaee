@@ -58,6 +58,7 @@
       "distribution": "store",
       "environment": "production",
       "ios": {
+        "autoIncrement": false,
         "simulator": false,
         "image": "latest",
         "node": "22.22.2"
@@ -69,6 +70,11 @@
   },
   "submit": {
     "production": {},
-    "ios-testflight": {}
+    "ios-testflight": {
+      "ios": {
+        "ascAppId": "6813157983",
+        "appleTeamId": "A92SD96D4Q"
+      }
+    }
   }
 }

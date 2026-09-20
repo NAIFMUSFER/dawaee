@@ -86,6 +86,7 @@ async function boot(file: string, hasStoredSession: boolean) {
   const context = {
     NetworkError,
     getDeviceId: async () => 'device-a',
+    readLocalePreference: async () => null,
     loadStoredSession: async () => hasStoredSession,
     getRestoredSessionUserId: () => hasStoredSession ? 'ACCOUNT-A' : null,
     // A valid encrypted snapshot from the last successful online bootstrap.

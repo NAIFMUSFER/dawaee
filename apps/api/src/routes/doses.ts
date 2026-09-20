@@ -21,7 +21,9 @@ const DOSE_LIST_SELECT = `
          d.escalation_stage,
          m.name AS medication_name, m.form::text AS medication_form, m.image_key,
          m.strength_value, m.strength_unit::text AS strength_unit,
-         m.food_instruction::text AS food_instruction, m.instructions,
+         m.food_instruction::text AS food_instruction, m.instructions, m.notes AS medication_notes,
+         CASE WHEN app.has_permission(d.patient_profile_id, 'view_history') THEN (SELECT COALESCE(json_agg(json_build_object('id', n.id, 'text', n.text, 'tags', n.tags, 'recordedAt', n.recorded_at) ORDER BY n.recorded_at), '[]'::json)
+          FROM symptom_notes n WHERE n.dose_occurrence_id = d.id AND n.patient_profile_id = d.patient_profile_id) ELSE '[]'::json END AS notes,
          s.late_after_minutes, s.missed_after_minutes
     FROM dose_occurrences d
     JOIN medications m ON m.id = d.medication_id
@@ -43,6 +45,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
   const view = viewOf(occ, now, thresholds);
   return {
     id: row.id,
+    patientProfileId: row.patient_profile_id,
     medicationId: row.medication_id,
     scheduleId: row.schedule_id,
     scheduledAt: occ.scheduledAt,
@@ -60,6 +63,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
     confirmedAt: occ.confirmedAt,
     confirmationMethod: row.confirmation_method,
     escalationStage: row.escalation_stage,
+    notes: row.notes ?? [],
     medication: {
       name: row.medication_name,
       form: row.medication_form,
@@ -68,6 +72,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
       strengthUnit: row.strength_unit,
       foodInstruction: row.food_instruction,
       instructions: row.instructions,
+      notes: row.medication_notes,
     },
     thresholds,
   };
@@ -139,7 +144,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
 
   /** History and calendar. Bounded to 400 days so a range cannot be abused. */
   app.get('/v1/doses', async (req) => {
-    const q = req.query as { profileId?: string; from?: string; to?: string; medicationId?: string; status?: string; limit?: string };
+    const q = req.query as { profileId?: string; from?: string; to?: string; medicationId?: string; status?: string; limit?: string; recorded?: string };
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const medicationId = optionalUuid(q.medicationId, 'medicationId');
@@ -154,9 +159,10 @@ export function registerDoseRoutes(app: FastifyInstance): void {
             AND d.scheduled_local_date BETWEEN $2 AND $3
             AND ($4::uuid IS NULL OR d.medication_id = $4::uuid)
             AND d.status <> 'cancelled'
+            AND (NOT $6::boolean OR d.status IN ('taken','taken_late','skipped','missed'))
           ORDER BY d.scheduled_at DESC
           LIMIT $5`,
-        [profileId, range.from, range.to, medicationId, requireLimit(q.limit, 500, 2000)],
+        [profileId, range.from, range.to, medicationId, requireLimit(q.limit, 500, 2000), q.recorded === 'true'],
       );
       let doses = rows.map((r) => mapDose(r, now));
       if (q.status) doses = doses.filter((d) => d.status === q.status);
@@ -213,9 +219,10 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return snoozeDose(tx, {
         doseId, userId, minutes: body.minutes, clientEventId: body.clientEventId,
+        actionAt: body.actionAt, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -227,9 +234,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return skipDoseAction(tx, {
         doseId, userId, reason: body.reason, clientEventId: body.clientEventId,
+        actionAt: body.actionAt,
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -240,8 +249,8 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
-      return undoDose(tx, { doseId, userId, ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      return undoDose(tx, { doseId, userId, actorRole: access.role === 'owner' ? 'patient' : 'caregiver', ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
     });
   });
 
@@ -256,11 +265,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const body = syncDoseActionsSchema.parse(req.body);
     const { userId } = currentUser(req);
     const now = serverNow();
-    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean }> = [];
+    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean; snoozedUntil?: string | null; snoozeCount?: number }> = [];
 
     for (const action of body.actions) {
       try {
-        const outcome = await withUser(userId, async (tx) => {
+        const outcome: { status: string; idempotentReplay: boolean; snoozedUntil?: string | null; snoozeCount?: number } = await withUser(userId, async (tx) => {
           const profileId = await profileIdForDose(tx, action.doseOccurrenceId);
           const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
           if (action.type === 'taken') {
@@ -268,18 +277,21 @@ export function registerDoseRoutes(app: FastifyInstance): void {
               doseId: action.doseOccurrenceId, userId,
               actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, takenAt: action.at,
-              method: 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
+              method: access.role === 'caregiver' ? 'caregiver' : 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
             });
           }
           if (action.type === 'skipped') {
             return skipDoseAction(tx, {
               doseId: action.doseOccurrenceId, userId, reason: action.reason,
+              actionAt: action.at,
+              actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, deviceId: body.deviceId, now,
               requestId: req.id, ipHash: req.ipHash,
             });
           }
           return snoozeDose(tx, {
             doseId: action.doseOccurrenceId, userId, minutes: action.minutes,
+            actionAt: action.at, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
             clientEventId: action.clientEventId, deviceId: body.deviceId, now,
             requestId: req.id, ipHash: req.ipHash,
           });
@@ -289,6 +301,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
           ok: true,
           status: 'status' in outcome ? String(outcome.status) : 'snoozed',
           replay: 'idempotentReplay' in outcome ? outcome.idempotentReplay : false,
+          ...(outcome.snoozedUntil !== undefined ? { snoozedUntil: outcome.snoozedUntil, snoozeCount: outcome.snoozeCount } : {}),
         });
       } catch (err) {
         results.push({

@@ -13,7 +13,7 @@ import {
 } from '../services/access-service.js';
 import { requireEnum, requireUuid } from '../lib/params.js';
 import { diffFields, recordAudit } from '../services/audit-service.js';
-import { cancelFutureDoses, materializeSchedule, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
+import { cancelFutureDoses, lockMedicationLifecycle, materializeSchedule, reconcileTreatmentDates, rematerializeSchedule, reviveCancelledDoses, scheduleFromRow } from '../services/materializer.js';
 import { now as serverNow } from '../lib/clock.js';
 
 const MEDICATION_COLUMNS = `
@@ -346,12 +346,20 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
       const access = await requireProfileAccess(tx, userId, profileId, 'edit_medication');
+      await lockMedicationLifecycle(tx, medicationId);
 
       const { rows: beforeRows } = await tx.query(
         `SELECT ${MEDICATION_COLUMNS} FROM medications m WHERE m.id = $1 FOR UPDATE`, [medicationId],
       );
       if (!beforeRows[0]) throw AppError.notFound('Medication not found');
       const before = mapMedication(beforeRows[0]);
+      const startDate = body.startDate ?? before.startDate as string;
+      const endDate = body.endDate === undefined ? before.endDate as string | null : body.endDate;
+      if (endDate !== null && endDate < startDate) {
+        throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'End date must be on or after start date');
+      }
+      const datesChanged = startDate !== before.startDate || endDate !== before.endDate;
+      if (datesChanged) await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
 
       const highRisk = detectHighRiskChanges({
         before: {
@@ -425,8 +433,14 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const after = mapMedication(rows[0]!);
 
       let cancelled = 0;
+      if (datesChanged) {
+        cancelled += await reconcileTreatmentDates(tx, medicationId, now);
+        for (const schedule of await loadSchedules(tx, medicationId)) {
+          if (schedule.active) await rematerializeSchedule(tx, scheduleFromRow(schedule), now);
+        }
+      }
       if (body.status && ['paused', 'completed', 'archived', 'expired'].includes(body.status)) {
-        cancelled = await cancelFutureDoses(tx, medicationId, now);
+        cancelled += await cancelFutureDoses(tx, medicationId, now);
       }
       let revived = 0;
       if (body.status === 'active' && before.status !== 'active') {
@@ -517,6 +531,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const created = await materializeSchedule(tx, scheduleFromRow(rows[0]!), now);
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.created',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: rows[0]!.id, requestId: req.id, ipHash: req.ipHash,
         newValue: { rule: body.rule, doseQuantity: body.doseQuantity, doseUnit: body.doseUnit },
       });
@@ -532,7 +547,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
 
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
-      await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
 
       const { rows: beforeRows } = await tx.query(
         `SELECT id, medication_id, patient_profile_id, rule, rule_kind::text AS rule_kind, dose_quantity,
@@ -592,6 +607,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       const result = await rematerializeSchedule(tx, scheduleFromRow(rows[0]!), now);
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.updated',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: scheduleId, requestId: req.id, ipHash: req.ipHash,
         previousValue: { rule: before.rule, doseQuantity: Number(before.dose_quantity), doseUnit: before.dose_unit },
         newValue: { rule: rows[0]!.rule, doseQuantity: Number(rows[0]!.dose_quantity), doseUnit: rows[0]!.dose_unit },
@@ -615,7 +631,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
-      await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
       await tx.query('UPDATE medication_schedules SET active = false WHERE id = $1', [scheduleId]);
       const { rowCount } = await tx.query(
         `UPDATE dose_occurrences SET status = 'cancelled'
@@ -625,6 +641,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
       );
       await recordAudit(tx, {
         actorUserId: userId, patientProfileId: profileId, action: 'schedule.deleted',
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         entityType: 'medication_schedule', entityId: scheduleId, requestId: req.id, ipHash: req.ipHash,
       });
       return { deactivated: true, futureDosesCancelled: rowCount ?? 0 };

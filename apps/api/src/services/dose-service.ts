@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { AppError, ERROR_CODES, type ConfirmationMethod, type DoseStatus } from '@dawaee/shared';
-import { applyDoseToStock, confirmTaken, deriveStatus, skip as skipDose, snooze } from '@dawaee/core';
+import { confirmTaken, DEFAULT_THRESHOLDS, deriveStatus, skip as skipDose, snooze } from '@dawaee/core';
 import { recordAudit } from './audit-service.js';
 
 /**
@@ -52,11 +52,11 @@ export async function loadDoseForUpdate(tx: PoolClient, doseId: string): Promise
  * identifies that one intent, so the second attempt returns the first result
  * instead of double-decrementing the medication box.
  *
- * The mutable occurrence keeps the latest client event for compatibility and
- * fast-path replay. The append-only event trail keeps every applied identity so
+ * The append-only event trail keeps every applied identity so
  * an old action remains a replay even after undo clears/replaces occurrence
- * state. Both lookups are scoped to the requested dose; the uniqueness boundary
- * remains per patient as established by migration 0019.
+ * state. Its bounded eligibility helper works even when the caller cannot read
+ * history. Replay is scoped to the dose and authenticated actor; the database
+ * uniqueness boundary remains per patient as established by migration 0019.
  */
 async function findByClientEvent(
   tx: PoolClient, doseId: string, clientEventId: string,
@@ -65,19 +65,34 @@ async function findByClientEvent(
     `SELECT d.id, d.status
        FROM dose_occurrences d
       WHERE d.id = $1
-        AND (
-          d.client_event_id = $2
-          OR EXISTS (
-            SELECT 1
-              FROM dose_events e
-             WHERE e.dose_occurrence_id = d.id
-               AND e.patient_profile_id = d.patient_profile_id
-               AND e.client_event_id = $2
-          )
-        )`,
+        AND app.dose_action_order(d.id, $2, NULL) = 'replay'`,
     [doseId, clientEventId],
   );
   return rows[0] ?? null;
+}
+
+async function requireCurrentAction(
+  tx: PoolClient, doseId: string, clientEventId: string, actionAt: Date,
+): Promise<void> {
+  const { rows } = await tx.query<{ action_order: string }>(
+    'SELECT app.dose_action_order($1, $2, $3) AS action_order', [doseId, clientEventId, actionAt],
+  );
+  if (rows[0]?.action_order !== 'new') {
+    throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422,
+      'A newer action has already been recorded for this dose. Refresh its current state.');
+  }
+}
+
+/**
+ * Read only the identity allocated by this transaction's authorized INSERT.
+ * INSERT ... RETURNING also requires SELECT under RLS, which confirm-only
+ * caregivers intentionally lack on the historical event table.
+ */
+async function insertedEventId(tx: PoolClient): Promise<string> {
+  const { rows } = await tx.query<{ id: string }>(
+    "SELECT currval('public.dose_events_id_seq'::regclass)::text AS id",
+  );
+  return rows[0]!.id;
 }
 
 export interface ConfirmDoseInput {
@@ -149,6 +164,7 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     method: input.method,
     voiceConfidence: input.voiceConfidence,
   });
+  await requireCurrentAction(tx, dose.id, input.clientEventId, result.confirmedAt);
 
   await tx.query(
     `UPDATE dose_occurrences
@@ -160,11 +176,10 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     [dose.id, result.status, result.confirmedAt, input.userId, input.method, input.deviceId ?? null, input.clientEventId],
   );
 
-  const { rows: eventRows } = await tx.query<{ id: string }>(
+  await tx.query(
     `INSERT INTO dose_events
        (dose_occurrence_id, patient_profile_id, type, at, actor_user_id, method, device_id, metadata, client_event_id)
-     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7,$8)
-     RETURNING id`,
+     VALUES ($1,$2,'taken',$3,$4,$5::confirmation_method,$6,$7,$8)`,
     [
       dose.id, dose.patient_profile_id, result.confirmedAt, input.userId, input.method,
       input.deviceId ?? null,
@@ -173,7 +188,7 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     ],
   );
 
-  const stock = await applyStockForDose(tx, dose, input.userId, eventRows[0]!.id);
+  const stock = await applyStockForDose(tx, dose, await insertedEventId(tx));
 
   if (input.note && (input.note.tags.length > 0 || input.note.text)) {
     // Stored verbatim. The system never interprets a symptom or links it to an
@@ -208,44 +223,18 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
 async function applyStockForDose(
   tx: PoolClient,
   dose: DoseRow,
-  userId: string,
   doseEventId: string,
 ): Promise<{ remainingQuantity: number; clamped: boolean } | null> {
-  const { rows } = await tx.query<{ remaining_quantity: string | null; tracking_enabled: boolean }>(
-    'SELECT remaining_quantity, tracking_enabled FROM medication_stock WHERE medication_id = $1 FOR UPDATE',
-    [dose.medication_id],
+  const { rows } = await tx.query<{ remaining_quantity: string; clamped: boolean }>(
+    'SELECT remaining_quantity, clamped FROM app.apply_dose_stock_event($1, $2)',
+    [dose.id, doseEventId],
   );
-  const stockRow = rows[0];
-  if (!stockRow) return null;
-
-  const applied = applyDoseToStock(
-    stockRow.remaining_quantity === null ? null : Number(stockRow.remaining_quantity),
-    Number(dose.dose_quantity),
-    stockRow.tracking_enabled,
-  );
-  if (!applied) return null;
-
-  await tx.query('UPDATE medication_stock SET remaining_quantity = $2 WHERE medication_id = $1', [
-    dose.medication_id, applied.balanceAfter,
-  ]);
-
-  // One append-only dose event causes one stock movement. Offline replay never
-  // creates a second event, while a legitimate take -> undo -> take cycle does.
-  // This keeps the ledger reconstructable without sacrificing idempotency.
-  await tx.query(
-    `INSERT INTO stock_transactions
-       (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
-        balance_after, actor_user_id)
-     VALUES ($1,$2,$3,'dose_taken',$4,$5,$6,$7)`,
-    [dose.medication_id, dose.patient_profile_id, applied.delta, dose.id, doseEventId, applied.balanceAfter, userId],
-  );
-
-  return { remainingQuantity: applied.balanceAfter, clamped: applied.clamped };
+  return rows[0] ? { remainingQuantity: Number(rows[0].remaining_quantity), clamped: rows[0].clamped } : null;
 }
 
 export async function snoozeDose(
   tx: PoolClient,
-  input: { doseId: string; userId: string; minutes: number; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
+  input: { doseId: string; userId: string; actorRole?: 'patient' | 'caregiver'; minutes: number; actionAt?: string; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
   // Serialize before replay lookup: a concurrent identical request may have
   // committed while this transaction waited for the occurrence lock.
@@ -257,6 +246,7 @@ export async function snoozeDose(
     );
     return {
       doseId: existing.id,
+      status: existing.status,
       snoozedUntil: rows[0]?.snoozed_until?.toISOString() ?? null,
       snoozeCount: rows[0]?.snooze_count ?? 0,
       idempotentReplay: true,
@@ -274,7 +264,9 @@ export async function snoozeDose(
     { status: effectiveStatus, scheduledAt: dose.scheduled_at.toISOString(), snoozeCount: dose.snooze_count },
     input.minutes,
     input.now,
+    { actionAt: input.actionAt ? new Date(input.actionAt) : undefined, missedAfterMinutes: dose.missed_after_minutes },
   );
+  await requireCurrentAction(tx, dose.id, input.clientEventId, input.actionAt ? new Date(input.actionAt) : input.now);
 
   await tx.query(
     `UPDATE dose_occurrences SET status = 'snoozed', snoozed_until = $2, snooze_count = $3, client_event_id = $4
@@ -283,19 +275,23 @@ export async function snoozeDose(
   );
   await tx.query(
     `INSERT INTO dose_events
-       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id)
-     VALUES ($1,$2,'snoozed',$3,$4,$5,$6)`,
+       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id, at)
+     VALUES ($1,$2,'snoozed',$3,$4,$5,$6,$7)`,
     [dose.id, dose.patient_profile_id, input.userId, input.deviceId ?? null,
-     JSON.stringify({ minutes: input.minutes, snoozeCount: result.snoozeCount }), input.clientEventId],
+     JSON.stringify({ minutes: input.minutes, snoozeCount: result.snoozeCount,
+       snoozedUntil: result.snoozedUntil.toISOString(), actorRole: input.actorRole ?? 'patient' }),
+     input.clientEventId, input.actionAt ?? input.now],
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.snoozed',
+    actorRole: input.actorRole,
     entityType: 'dose_occurrence', entityId: dose.id, requestId: input.requestId, ipHash: input.ipHash,
     newValue: { minutes: input.minutes, snoozedUntil: result.snoozedUntil.toISOString() },
   });
 
   return {
     doseId: dose.id,
+    status: 'snoozed' as const,
     snoozedUntil: result.snoozedUntil.toISOString(),
     snoozeCount: result.snoozeCount,
     idempotentReplay: false,
@@ -304,7 +300,7 @@ export async function snoozeDose(
 
 export async function skipDoseAction(
   tx: PoolClient,
-  input: { doseId: string; userId: string; reason?: string | null; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
+  input: { doseId: string; userId: string; actorRole?: 'patient' | 'caregiver'; actionAt?: string; reason?: string | null; clientEventId: string; deviceId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
   // Serialize before replay lookup: a concurrent identical request may have
   // committed while this transaction waited for the occurrence lock.
@@ -318,10 +314,17 @@ export async function skipDoseAction(
     input.now,
     thresholds,
   );
+  const actionAt = input.actionAt ? new Date(input.actionAt) : input.now;
   skipDose(
     { status: effectiveStatus, scheduledAt: dose.scheduled_at.toISOString() },
-    input.now,
+    actionAt,
   );
+  if (!Number.isFinite(actionAt.getTime()) || actionAt > input.now ||
+    actionAt.getTime() > dose.scheduled_at.getTime() + DEFAULT_THRESHOLDS.lateConfirmationWindowMinutes * 60_000) {
+    throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422,
+      'The action time must be within this dose’s recording window and not ahead of the server.');
+  }
+  await requireCurrentAction(tx, dose.id, input.clientEventId, actionAt);
 
   await tx.query(
     `UPDATE dose_occurrences
@@ -329,19 +332,20 @@ export async function skipDoseAction(
             client_event_id = $4, snoozed_until = NULL,
             escalation_completed_at = COALESCE(escalation_completed_at, now())
       WHERE id = $1`,
-    [dose.id, input.now, input.userId, input.clientEventId],
+    [dose.id, actionAt, input.userId, input.clientEventId],
   );
   await tx.query(
     `INSERT INTO dose_events
-       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id)
-     VALUES ($1,$2,'skipped',$3,$4,$5,$6)`,
+       (dose_occurrence_id, patient_profile_id, type, actor_user_id, device_id, metadata, client_event_id, at)
+     VALUES ($1,$2,'skipped',$3,$4,$5,$6,$7)`,
     [dose.id, dose.patient_profile_id, input.userId, input.deviceId ?? null,
-     JSON.stringify({ reason: input.reason ?? null }), input.clientEventId],
+     JSON.stringify({ reason: input.reason ?? null, actorRole: input.actorRole ?? 'patient' }), input.clientEventId, actionAt],
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.skipped',
+    actorRole: input.actorRole,
     entityType: 'dose_occurrence', entityId: dose.id, requestId: input.requestId, ipHash: input.ipHash,
-    previousValue: { status: effectiveStatus }, newValue: { status: 'skipped' },
+    previousValue: { status: effectiveStatus }, newValue: { status: 'skipped', actionAt: actionAt.toISOString() },
   });
 
   return { doseId: dose.id, status: 'skipped' as const, idempotentReplay: false };
@@ -354,7 +358,7 @@ export async function skipDoseAction(
  */
 export async function undoDose(
   tx: PoolClient,
-  input: { doseId: string; userId: string; clientEventId?: string; now: Date; requestId?: string; ipHash?: string | null },
+  input: { doseId: string; userId: string; actorRole?: 'patient' | 'caregiver'; clientEventId?: string; now: Date; requestId?: string; ipHash?: string | null },
 ) {
   const dose = await loadDoseForUpdate(tx, input.doseId);
   if (input.clientEventId && await findByClientEvent(tx, input.doseId, input.clientEventId)) {
@@ -370,49 +374,16 @@ export async function undoDose(
   // Record the undo first so any stock reversal can point at the exact event
   // that caused it. Everything is in one transaction; a later failure rolls
   // the event back as well.
-  const { rows: undoEventRows } = await tx.query<{ id: string }>(
-    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata, client_event_id)
-     VALUES ($1,$2,'undone',$3,$4,$5)
-     RETURNING id`,
-    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status }), input.clientEventId ?? null],
+  await tx.query(
+    `INSERT INTO dose_events (dose_occurrence_id, patient_profile_id, type, actor_user_id, metadata, client_event_id, at)
+     VALUES ($1,$2,'undone',$3,$4,$5,$6)`,
+    [dose.id, dose.patient_profile_id, input.userId, JSON.stringify({ previousStatus: dose.status }), input.clientEventId ?? null, input.now],
   );
+  const undoEventId = await insertedEventId(tx);
 
-  // A skip never consumes stock. This status check is load-bearing after an
-  // earlier take was undone: without it, undoing a later skip can find that old
-  // dose_taken row and add the pill back a second time.
-  if (dose.status === 'taken' || dose.status === 'taken_late') {
-    // The latest take movement is the one represented by the currently recorded
-    // dose. Repeated take/undo cycles are legitimate, so there may be older ones.
-    const { rows: txRows } = await tx.query<{ delta: string }>(
-      `WITH current_take AS (
-         SELECT id, metadata FROM dose_events
-          WHERE dose_occurrence_id = $1 AND type = 'taken'
-          ORDER BY id DESC LIMIT 1
-       )
-       SELECT st.delta FROM stock_transactions st CROSS JOIN current_take e
-        WHERE st.dose_occurrence_id = $1 AND st.reason = 'dose_taken'
-          AND (st.dose_event_id = e.id OR
-            (e.metadata->>'stockLedgerVersion' IS DISTINCT FROM '1' AND st.dose_event_id IS NULL))
-        ORDER BY st.dose_event_id DESC NULLS LAST, st.created_at DESC
-        LIMIT 1`,
-      [dose.id],
-    );
-    if (txRows[0]) {
-      const delta = -Number(txRows[0].delta);
-      const { rows: stockRows } = await tx.query<{ remaining_quantity: string | null }>(
-        'UPDATE medication_stock SET remaining_quantity = remaining_quantity + $2 WHERE medication_id = $1 RETURNING remaining_quantity',
-        [dose.medication_id, delta],
-      );
-      await tx.query(
-        `INSERT INTO stock_transactions
-           (medication_id, patient_profile_id, delta, reason, dose_occurrence_id, dose_event_id,
-            balance_after, actor_user_id)
-         VALUES ($1,$2,$3,'dose_undone',$4,$5,$6,$7)`,
-        [dose.medication_id, dose.patient_profile_id, delta, dose.id, undoEventRows[0]!.id,
-         stockRows[0]?.remaining_quantity ?? null, input.userId],
-      );
-    }
-  }
+  // The bounded transition reads the matching ledger without granting history
+  // or manual stock editing. A skip produces no reversal.
+  await tx.query('SELECT * FROM app.apply_dose_stock_event($1, $2)', [dose.id, undoEventId]);
 
   await tx.query(
     `UPDATE dose_occurrences
@@ -423,6 +394,7 @@ export async function undoDose(
   );
   await recordAudit(tx, {
     actorUserId: input.userId, patientProfileId: dose.patient_profile_id, action: 'dose.undone',
+    actorRole: input.actorRole,
     entityType: 'dose_occurrence', entityId: dose.id, requestId: input.requestId, ipHash: input.ipHash,
     previousValue: { status: dose.status }, newValue: { status: 'upcoming' },
   });

@@ -609,7 +609,8 @@ describe('delivery claiming is atomic across replicas', () => {
     expect(commit, 'the provider is called before the claim commits').toBeLessThan(send);
     expect(code).toMatch(/async function finalise[\s\S]*?ctx\.pool\.connect\(\)/);
     const guards = code.match(/WHERE id = \$1 AND lease_token = \$2/g) ?? [];
-    expect(guards.length, 'a finalisation path is not guarded by the lease token').toBe(3);
+    // Four finalisations (including quiet deferral) plus the live-lease renewal.
+    expect(guards.length, 'a finalisation or renewal path is not guarded by the lease token').toBe(5);
   });
 
   it('a permanent failure is recorded and not retried forever', async () => {

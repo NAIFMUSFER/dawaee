@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "TADAWEE",
+    "NSCameraUsageDescription": "Take a photo of your medicine package or prescription to read its details.",
+    "NSPhotoLibraryUsageDescription": "Choose a medicine photo from your photo library.",
+    "NSFaceIDUsageDescription": "Protect your health information when opening the app."
+  }
+}

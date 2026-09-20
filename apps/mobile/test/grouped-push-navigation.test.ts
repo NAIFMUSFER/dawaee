@@ -27,7 +27,7 @@ async function flush() {
 function harness(options: {
   last?: unknown;
   startup?: () => Promise<unknown>;
-  open?: () => void;
+  open?: (doseId: string | null) => void;
   failClear?: boolean;
 } = {}) {
   let last: unknown = options.last ?? null;
@@ -56,8 +56,8 @@ function harness(options: {
       return { remove() { removals += 1; listener = null; } };
     },
   };
-  const stop = startGroupedNotificationListener(native, () => {
-    options.open?.();
+  const stop = startGroupedNotificationListener(native, (doseId) => {
+    options.open?.(doseId);
     opens += 1;
   }, () => generation === capturedGeneration);
   return {
@@ -81,6 +81,16 @@ describe('grouped reminder default-tap lifecycle', () => {
     h.stop();
   });
 
+  it('opens a single-dose default tap, including cold startup', async () => {
+    const reminder = other('dose_reminder');
+    (reminder.notification.request.content.data as Record<string, unknown>).doseId = '00000000-0000-4000-8000-000000000003';
+    const h = harness({ last: reminder });
+    await flush();
+    expect(h.opens()).toBe(1);
+    expect(h.clears()).toBe(1);
+    h.stop();
+  });
+
   it('handles an authenticated cold-start tap', async () => {
     const h = harness({ last: group() });
     await flush();
@@ -88,6 +98,41 @@ describe('grouped reminder default-tap lifecycle', () => {
     expect(h.clears()).toBe(1);
     h.stop();
   });
+
+  it('routes the dose from the remote JSON group once across cold and live delivery', async () => {
+    const response = group('remote-group');
+    Object.assign(response.notification.request.content.data, { doseIds: JSON.stringify(['DEPENDENT-DOSE', 'SECOND-DOSE']) });
+    const opened: (string | null)[] = [];
+    const h = harness({ last: response, open: (id) => opened.push(id) });
+    await flush();
+    h.emit(response);
+    await flush();
+    expect(opened).toEqual(['DEPENDENT-DOSE']);
+    h.stop();
+  });
+
+  it('routes the snooze repeat default tap using its dose identity', async () => {
+    const response = other('dose_reminder_repeat');
+    Object.assign(response.notification.request.content.data, { doseId: 'SNOOZED-DOSE' });
+    const opened: (string | null)[] = [];
+    const h = harness({ last: response, open: (id) => opened.push(id) });
+    await flush();
+    expect(opened).toEqual(['SNOOZED-DOSE']);
+    expect(h.clears()).toBe(1);
+    h.stop();
+  });
+
+  for (const doseIds of ['bad-json', '{}', '[]', 'x'.repeat(16_385), Array(101).fill('dose'), [null]]) {
+    it(`ignores malformed grouped identities ${String(doseIds).slice(0, 15)}`, async () => {
+      const response = group();
+      Object.assign(response.notification.request.content.data, { doseIds });
+      const h = harness({ last: response });
+      await flush();
+      expect(h.opens()).toBe(0);
+      expect(h.clears()).toBe(0);
+      h.stop();
+    });
+  }
 
   for (const actionIdentifier of ['taken', 'snooze', 'skip', '']) {
     it(`does not interpret ${actionIdentifier || 'missing default'} as a default tap`, async () => {
@@ -350,13 +395,14 @@ describe('grouped reminder default-tap lifecycle', () => {
   it('the shell fences module loading and routes to a fixed path without using payload identifiers', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../app/_layout.tsx'), 'utf8');
     const grouped = source.slice(source.indexOf('A grouped reminder deliberately'), source.indexOf('  return (\n    <I18nProvider'));
-    expect(grouped).toContain("if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;");
+    expect(grouped).toContain("if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;");
     expect(grouped).toContain('const generation = caregiverSession.current.generation;');
     expect(grouped).toContain('caregiverSession.current.generation === generation');
     expect(grouped).toContain('if (!isCurrent()) return;');
     expect(grouped).toContain('stop = startGroupedNotificationListener(');
-    expect(grouped).toContain("() => router.replace('/(tabs)/today')");
-    expect(grouped).toContain('[ready, signedIn, user?.id, router]');
+    expect(grouped).toContain("router.replace('/notification')");
+    expect(grouped).toContain('setPatientReminderIntent(user.id, { doseId })');
+    expect(grouped).toContain('[ready, signedIn, deletionPending, user?.id, router]');
     expect(grouped).not.toContain('getLastNotificationResponseAsync');
     expect(grouped).not.toContain('clearLastNotificationResponseAsync');
   });
