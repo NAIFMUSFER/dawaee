@@ -130,9 +130,10 @@ export async function createEmailAccount(
   deviceId = `device-${email}`,
   locale: 'ar' | 'en' = 'ar',
 ): Promise<{ userId: string; token: string; refreshToken: string; profileId: string }> {
+  const passwordHash = await hashPassword(password);
   const created = await withTransaction(tx => tx.query<{ user_id: string }>(
     'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
-    [null, email.toLowerCase(), displayName, await hashPassword(password), locale],
+    [null, email.toLowerCase(), displayName, passwordHash, locale],
   ));
   const userId=created.rows[0]!.user_id;
   confirmTestEmail(userId);

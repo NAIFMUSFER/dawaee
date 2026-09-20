@@ -72,8 +72,9 @@ describe('registration', () => {
   });
 
   it('answers identically for an occupied and an available email', async () => {
+    const passwordHash = await hashPassword('another good passphrase');
     await withTransaction(tx=>tx.query('SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
-      [null,'occupied@example.test','Existing',await hashPassword('another good passphrase'),'ar']));
+      [null,'occupied@example.test','Existing',passwordHash,'ar']));
     const known=await register({email:'occupied@example.test'});
     const unknown=await register({email:'available@example.test'});
     expect({status:known.statusCode,body:known.body}).toEqual({status:unknown.statusCode,body:unknown.body});
