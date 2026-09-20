@@ -53,8 +53,14 @@ after the server validates Firebase proof and rolls it back unless
   including the 21 reviewed API-contract cases and 10 account-email HTTP cases.
 - PostgreSQL route cases were added for: no pre-proof reservation; atomic
   link+verify followed by phone login; wrong-password rollback; and duplicate
-  rollback. This local image has no `psql`, so those cases require exact-head CI
-  on PostgreSQL 16 and 17 before this repair can be accepted.
+  rollback. The first exact-head CI run exposed that the shared fixture passed
+  Saudi local-format numbers directly to an E.164-only database primitive, and
+  that the new proof-first cases had not completed their required mailbox proof.
+  The fixture now canonicalises the number and those cases explicitly confirm
+  the synthetic mailbox first. This is a test-environment correction, not a
+  relaxation of either production proof gate. This local image has no `psql`,
+  so the corrected cases still require exact-head CI on PostgreSQL 16 and 17
+  before this repair can be accepted.
 
 These tests are source and deterministic screen-boundary evidence. They are not
 evidence that an SMS reached a physical Saudi number or that the native Firebase

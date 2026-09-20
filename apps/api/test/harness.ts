@@ -9,6 +9,7 @@ import type { MockPushProvider } from '../src/providers/index.js';
 import { createWorkerContext, type WorkerContext } from '../../worker/src/context.js';
 import { runTick } from '../../worker/src/index.js';
 import { resetClockSource, setClockSource } from '../src/lib/clock.js';
+import { normalizePhone } from '../src/lib/crypto.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -127,6 +128,8 @@ export const TEST_PASSWORD = 'correct horse battery staple';
  */
 export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`, options: { verifiedPhone?: boolean } = {}): Promise<TestUser> {
   const remoteAddress = nextRemoteAddress();
+  const canonicalPhone = normalizePhone(phone);
+  if (!canonicalPhone) throw new Error(`Invalid fixture phone: ${phone}`);
 
   const registered = await h.app.inject({
     method: 'POST', url: '/v1/auth/register', remoteAddress,
@@ -160,11 +163,11 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
   await withUser(userId, async (tx) => {
     const credential = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [userId]);
     const attached = await tx.query<{ linked: boolean }>('SELECT app.attach_account_phone($1,$2,$3) AS linked',
-      [userId, phone, credential.rows[0]?.hash]);
+      [userId, canonicalPhone, credential.rows[0]?.hash]);
     if (!attached.rows[0]?.linked) throw new Error('Phone fixture setup failed');
     if (options.verifiedPhone !== false) {
       const proof = await tx.query<{ verified: boolean }>(
-        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, phone],
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, canonicalPhone],
       );
       if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
     }
@@ -177,7 +180,7 @@ export async function signIn(h: Harness, phone: string, deviceId = `device-${pho
 
   return {
     userId,
-    phone,
+    phone: canonicalPhone,
     token: auth.accessToken,
     refreshToken: auth.refreshToken,
     profileId: profile.id,

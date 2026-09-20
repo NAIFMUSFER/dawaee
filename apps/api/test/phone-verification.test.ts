@@ -6,7 +6,7 @@ vi.mock('../src/auth/firebase-phone-proof.js', async (original) => ({
   verifyFirebasePhoneIdToken: provider.verify,
 }));
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable } from '../src/auth/firebase-phone-proof.js';
-import { authHeaders, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness, type TestUser } from './harness.js';
+import { authHeaders, confirmTestEmail, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
 let patient: TestUser;
@@ -87,9 +87,14 @@ describe('proof-first phone linking', () => {
       },
     });
     expect(registered.statusCode, registered.body).toBe(200);
+    const accessToken = registered.json<{ accessToken: string }>().accessToken;
+    const me = await h.app.inject({
+      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${accessToken}` },
+    });
+    confirmTestEmail(me.json<{ user: { id: string } }>().user.id);
     return {
-      token: registered.json<{ accessToken: string }>().accessToken,
-      headers: { authorization: `Bearer ${registered.json<{ accessToken: string }>().accessToken}` },
+      token: accessToken,
+      headers: { authorization: `Bearer ${accessToken}` },
     };
   }
 

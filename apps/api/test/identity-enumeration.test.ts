@@ -293,13 +293,17 @@ describe('one phone number is one identity however it is written', () => {
     }
   });
 
-  it('the same number in two spellings cannot register twice', async () => {
+  it('legacy phone input never reserves an unproved number in either spelling', async () => {
     const local = '0598765432';
     const international = '+966598765432';
     const first = await register({ phone: local, displayName: 'N1', password: PW, locale: 'ar', deviceId: `norm-a-${Date.now() % 100000}` });
     expect(first.statusCode).toBe(200);
     const second = await register({ phone: international, displayName: 'N2', password: PW, locale: 'ar', deviceId: `norm-b-${Date.now() % 100000}` });
-    expect(second.statusCode, 'the same number registered twice under two spellings').toBe(409);
+    expect(second.statusCode, 'a typed but unproved number was reserved by registration').toBe(200);
+    const rows = await owner.query<{ phone_e164: string | null }>(
+      "SELECT phone_e164 FROM users WHERE email IN ('auth-0598765432@example.test','auth-966598765432@example.test') ORDER BY email",
+    );
+    expect(rows.rows).toEqual([{ phone_e164: null }, { phone_e164: null }]);
   });
 
   it('email case does not create a second account', async () => {
