@@ -38,7 +38,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 function makeProvider(file) {
   const h = { requests: [], owners: [], directions: [], flushCalls: [], invalidated: [], rebuilds: [], sizeCalls: 0, deviceCalls: 0,
     flushQueue: async () => ({ offline: true }), queueSize: async () => 0, device: async () => 'SYNTHETIC-DEVICE' };
-  const slots = [], effects = [], cleanups = [], foreground = new Set(), queueChanges = new Set(); let cursor = 0; let currentUser = 'ACCOUNT-A';
+  const slots = [], effects = [], cleanups = [], foreground = new Set(), queueChanges = new Set(), intervals = new Set(); let cursor = 0; let currentUser = 'ACCOUNT-A';
   const hooks = {
     createContext: () => ({ Provider: 'Provider' }), useContext: () => null,
     useState: initial => {
@@ -103,7 +103,9 @@ function makeProvider(file) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
   });
   const exports = {};
-  vm.runInNewContext(result.outputText, { exports, Date, console, setInterval: () => 1, clearInterval: () => undefined, require: id => {
+  vm.runInNewContext(result.outputText, { exports, Date, console,
+    setInterval: (fn, ms) => { const timer = { fn, ms }; intervals.add(timer); return timer; },
+    clearInterval: timer => { intervals.delete(timer); }, require: id => {
     if (!(id in imports)) throw new Error(`unmocked provider dependency: ${id}`); return imports[id];
   } }, { filename: file });
   let value;
@@ -117,6 +119,7 @@ function makeProvider(file) {
   h.deny = id => imports['../api/access-changes.js'].notifyAccessDenied(id);
   h.queueChanged = () => { for (const listener of queueChanges) listener(); };
   h.foreground = () => { for (const listener of foreground) listener('active'); };
+  h.tickInterval = ms => { for (const timer of intervals) { if (timer.ms === ms) timer.fn(); } };
   h.render();
   return h;
 }
@@ -152,6 +155,16 @@ function scenarios(file) {
     assert.equal(h.pending('/v1/me').length, 1, 'verification refusal recursively started profile reads');
     h.reply(await prepareProfiles(h), { profiles: [self()] }); await flush();
     assert.equal(h.state().profiles.some(p => p.id === 'PATIENT'), false);
+    h.stop();
+  });
+  add('authorization polling removes revoked delegated data even when resource lists return empty 200 responses', async h => {
+    h.mount();
+    h.reply(await prepareProfiles(h), { profiles: [self(), patient()] }); await flush(); h.render();
+    h.tickInterval(30_000);
+    h.reply(await prepareProfiles(h), { profiles: [self()] }); await flush(); h.render();
+    assert.equal(h.state().activeProfile.id, 'SELF-A');
+    assert.equal(h.state().profiles.some(p => p.id === 'PATIENT'), false);
+    assert.deepEqual(h.invalidated, ['PATIENT']);
     h.stop();
   });
   add('durable queue changes update pending state and foreground retries while Today is unmounted', async h => {

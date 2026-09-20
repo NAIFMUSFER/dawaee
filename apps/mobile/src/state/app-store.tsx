@@ -614,6 +614,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, [loadMe]);
 
+  const hasDelegatedProfiles = state.profiles.some(profile => !profile.isSelf);
+  useEffect(() => {
+    if (!state.ready || !state.signedIn || !hasDelegatedProfiles) return undefined;
+
+    let current = true;
+    let refreshing = false;
+    const refreshAuthorizations = () => {
+      if (!current || refreshing || NativeAppState.currentState !== 'active') return;
+      refreshing = true;
+      void loadMe().catch(() => undefined).finally(() => { refreshing = false; });
+    };
+
+    // A revoked grant can make list endpoints return an empty 200 response, so
+    // the ordinary 403 listener cannot always identify it. Re-read the
+    // authoritative profile list while delegated data is held in memory; the
+    // load path invalidates caches and returns selection to the self profile.
+    const timer = setInterval(refreshAuthorizations, 30_000);
+    const foreground = NativeAppState.addEventListener('change', next => {
+      if (next === 'active') refreshAuthorizations();
+    });
+    return () => {
+      current = false;
+      foreground.remove();
+      clearInterval(timer);
+    };
+  }, [hasDelegatedProfiles, loadMe, state.ready, state.signedIn, state.user?.id]);
+
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
       // Capture intent BEFORE waiting. A later logout or login must supersede

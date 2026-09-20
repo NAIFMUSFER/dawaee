@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const { createHarness, ApiError } = createRequire(import.meta.url)('./profile-screen-harness.cjs');
 
 /** An invalid result can mean the wrong signed-in account. Keep the invitation
  * available for account switching; only expiration or consumption is terminal. */
@@ -21,16 +24,60 @@ describe('caregiver invitation account switching', () => {
     expect(acceptRoute).toContain('new AppError(ERROR_CODES.INVITATION_INVALID, 404');
   });
 
-  it('preserves the token for a recipient who signed into the wrong account', () => {
-    const src = readFileSync(ACCEPT, 'utf8');
-    const apiErrors = src.slice(
-      src.indexOf('if (err instanceof ApiError)'),
-      src.indexOf("setError(t('error.internal_error'))"),
-    );
+  it.each(['ios', 'web'])('preserves the token after a wrong-account rejection on %s until explicit acceptance', async (platform) => {
+    let storedToken: string | null = 'synthetic-invitation-token';
+    const clear = vi.fn(async () => { storedToken = null; });
+    const refreshProfiles = vi.fn().mockResolvedValue(undefined);
+    const h = createHarness(ACCEPT, join(ROOT, 'apps/mobile/src/hooks/useRequestScope.ts'), {}, {
+      'expo-router': { useLocalSearchParams: () => ({}), router: { replace: vi.fn(), push: vi.fn() } },
+      'react-native': { Platform: { OS: platform } },
+      '@/components/PhoneVerification': { PhoneVerification: 'PhoneVerification' },
+      '@/components/InvitationPermissions': { InvitationPermissions: 'InvitationPermissions' },
+      '@/storage/pending-invite': {
+        peekPendingInvite: async () => storedToken,
+        stashPendingInvite: async () => undefined,
+        clearPendingInvite: clear,
+      },
+    });
+    Object.assign(h.app, { signedIn: true, profiles: [], refreshProfiles, setActiveProfile: vi.fn() });
+    const preview = {
+      id: 'invitation-a', patientName: 'Synthetic patient', role: 'caregiver',
+      permissions: ['view_schedule'], expiresAt: '2099-01-01',
+    };
+    try {
+      h.render(); await h.flush();
+      expect(h.requests).toHaveLength(1);
+      expect(h.requests[0]).toMatchObject({
+        route: '/v1/caregivers/invitations/preview', payload: { token: storedToken },
+      });
+      h.requests[0].reject(new ApiError('invitation_invalid')); await h.flush();
+      expect(h.text()).toContain(platform === 'web' ? 'accept.webIdentityHelp' : 'accept.invalidBody');
+      expect(h.find('InvitationPermissions')).toBeNull();
+      expect(h.find('Button', (p: any) => p.label === 'invite.accept')).toBeNull();
+      expect(clear).not.toHaveBeenCalled();
 
-    const invalidBranch = /if\s*\([^)]*err\.code\s*===\s*['"]invitation_invalid['"][^)]*\)\s*\{([\s\S]*?)\n\s*\}/.exec(apiErrors)?.[1] ?? '';
-    expect(invalidBranch, 'invitation_invalid must have its own error branch').not.toBe('');
-    expect(invalidBranch).not.toContain('await clearPendingInvite()');
-    expect(invalidBranch).toContain("setError(t('accept.invalidBody'))");
+      // Switching accounts must re-review the same stored capability, not accept it.
+      h.app.user = { id: 'intended-recipient' }; h.render(); await h.flush();
+      expect(h.requests).toHaveLength(2);
+      expect(h.requests[1]).toMatchObject({
+        route: '/v1/caregivers/invitations/preview', payload: { token: 'synthetic-invitation-token' },
+      });
+      h.requests[1].resolve(preview); await h.flush();
+      expect(h.find('InvitationPermissions').invitation).toEqual(preview);
+      expect(h.requests).toHaveLength(2);
+      expect(clear).not.toHaveBeenCalled();
+
+      h.find('Button', (p: any) => p.label === 'invite.accept').onPress(); await h.flush();
+      expect(h.requests).toHaveLength(3);
+      expect(h.requests[2]).toMatchObject({
+        route: '/v1/caregivers/invitations/accept',
+        payload: { relationshipId: preview.id, role: preview.role, permissions: preview.permissions },
+      });
+      expect(clear).not.toHaveBeenCalled();
+      h.requests[2].resolve({ profileId: 'patient-a' }); await h.flush();
+      expect(clear).toHaveBeenCalledOnce();
+      expect(storedToken).toBeNull();
+      expect(refreshProfiles).toHaveBeenCalledOnce();
+    } finally { h.unmount(); }
   });
 });
