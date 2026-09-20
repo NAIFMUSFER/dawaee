@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, EmptyState, Loading, Screen, Txt } from '@/components/ui';
@@ -56,7 +57,7 @@ function InvitationFlow({ incomingToken }: { incomingToken?: string }) {
       }
       if (err.code === 'invitation_invalid') {
         // A wrong-account attempt keeps the capability for account switching.
-        setPreview(null); setError(t('accept.invalidBody')); return;
+        setPreview(null); setError(t(Platform.OS === 'web' ? 'accept.webIdentityHelp' : 'accept.invalidBody')); return;
       }
     }
     setError(t('error.internal_error'));
@@ -111,8 +112,9 @@ function InvitationFlow({ incomingToken }: { incomingToken?: string }) {
     action={<Button label={t('common.close')} onPress={() => router.replace('/')} />} />;
   if (!signedIn) return <SafeAreaView style={{ flex: 1 }}><Screen>
     <Txt variant="h1" weight="bold">{t('accept.signInTitle')}</Txt>
-    <Txt>{t('accept.signInBody')}</Txt>
+    <Txt>{t(Platform.OS === 'web' ? 'accept.webSignInBody' : 'accept.signInBody')}</Txt>
     <Button label={t('accept.signIn')} onPress={() => router.push('/(auth)/sign-in')} />
+    <Button label={t('auth.signUp')} tone="secondary" onPress={() => router.push('/(auth)/sign-up')} />
   </Screen></SafeAreaView>;
 
   return <SafeAreaView style={{ flex: 1 }}><Screen>

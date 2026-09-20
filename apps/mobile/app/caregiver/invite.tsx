@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Share, Switch, View } from 'react-native';
+import { Platform, Share, Switch, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as SMS from 'expo-sms';
 import { QrCode } from '@/components/QrCode';
@@ -76,6 +76,9 @@ function InviteCaregiverProfileScreen() {
   const { activeProfile, setOffline } = useApp();
   const { capture } = useRequestScope();
 
+  // Web signup proves a mailbox; phone proof is native-only. Keep web invites
+  // on the same identity path so a new caregiver can finish in this browser.
+  const emailOnly = Platform.OS === 'web';
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState<CaregiverRole>('son');
@@ -127,7 +130,10 @@ function InviteCaregiverProfileScreen() {
     if (name.trim().length === 0) errors.name = t('invite.nameRequired');
     // The server normalises Saudi local format; the client only rejects what
     // could not be a phone number at all.
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(phone.trim()) && normalizeDigits(phone).replace(/\D/g, '').length < 9) errors.phone = t('invite.recipientRequired');
+    const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(phone.trim());
+    if (emailOnly ? !validEmail : !validEmail && normalizeDigits(phone).replace(/\D/g, '').length < 9) {
+      errors.phone = t(emailOnly ? 'invite.emailRequired' : 'invite.recipientRequired');
+    }
     setFieldError(errors);
     if (errors.name || errors.phone) return;
 
@@ -159,7 +165,7 @@ function InviteCaregiverProfileScreen() {
     } finally {
       if (current()) setBusy(false);
     }
-  }, [activeProfile, capture, channel, describe, name, permissions, phone, priority, role, setOffline, t]);
+  }, [activeProfile, capture, channel, describe, emailOnly, name, permissions, phone, priority, role, setOffline, t]);
 
   const copyLink = async (link: string) => {
     try { await Clipboard.setStringAsync(link); setCopied(true); }
@@ -221,7 +227,8 @@ function InviteCaregiverProfileScreen() {
             <QrCode value={result.invitationLink} size={240} accessibilityLabel={t('invite.qrLabel')} />
             <Txt variant="bodySmall">{t('invite.qrHint')}</Txt>
           </Card>
-          {!phone.includes('@') ? <><Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
+          {phone.includes('@') ? <Txt>{t('invite.emailNextSteps')}</Txt> : null}
+          {!emailOnly && !phone.includes('@') ? <><Button label={t('invite.sendSms')} loading={busy} onPress={() => void sendSms()} />
           <Txt variant="caption">{t('invite.smsComposerHint')}</Txt></> : null}
           <Button label={t('invite.share')} tone="secondary" onPress={() => void share()} />
 
@@ -269,11 +276,11 @@ function InviteCaregiverProfileScreen() {
           error={fieldError.name ?? null}
         />
         <Field
-          label={t('invite.recipient')}
+          label={t(emailOnly ? 'invite.email' : 'invite.recipient')}
           value={phone}
           onChangeText={(v) => { setPhone(v); if (v.includes('@')) setChannel('link'); setFieldError((e) => ({ ...e, phone: undefined })); }}
           keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
-          hint={t('invite.recipientHint')}
+          hint={t(emailOnly ? 'invite.webEmailHint' : 'invite.recipientHint')}
           error={fieldError.phone ?? null}
           maxLength={320}
         />
@@ -360,7 +367,7 @@ function InviteCaregiverProfileScreen() {
 
         <SectionTitle>{t('invite.channel')}</SectionTitle>
         <Row wrap gap={theme.spacing.sm}>
-          {CHANNELS.filter(c => !phone.includes('@') || c === 'link').map((c) => (
+          {CHANNELS.filter(c => (!emailOnly && !phone.includes('@')) || c === 'link').map((c) => (
             <Button
               key={c}
               label={`${channel === c ? '✓ ' : ''}${t(`channel.${c}`)}`}

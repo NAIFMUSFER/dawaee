@@ -71,6 +71,7 @@ export default function SignUpScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
+          hint={t('auth.registrationInviteHint')}
           maxLength={320}
           editable={!busy && !requested}
           autoFocus
