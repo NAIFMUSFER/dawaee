@@ -63,6 +63,11 @@ describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind =
       expect(s.signedIn).not.toHaveBeenCalled();
       expect(s.h.text()).toContain('auth.registrationRequested');
       expect(s.h.routes).toEqual([]);
+      s.h.find('Button', (p: any) => p.label === 'recovery.title').onPress();
+      expect(s.h.routes).toEqual(['/(auth)/forgot-password']);
+      // Recovery is an explicit next screen, never an automatic email request
+      // or a credential/contact-bearing route after generic registration.
+      expect(s.post).toHaveBeenCalledTimes(1);
     } else {
       expect(s.signedIn).toHaveBeenCalledTimes(1);
       expect(s.signedIn).toHaveBeenCalledWith(response);
