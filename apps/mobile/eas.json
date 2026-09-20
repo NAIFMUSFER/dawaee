@@ -58,6 +58,7 @@
       "distribution": "store",
       "environment": "production",
       "ios": {
+        "autoIncrement": false,
         "simulator": false,
         "image": "latest",
         "node": "22.22.2"

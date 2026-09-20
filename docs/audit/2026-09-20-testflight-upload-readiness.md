@@ -78,3 +78,58 @@ No iOS build or submission was started in this preparation. No production deploy
 merge or public release was performed. The existing preview stays on its already
 deployed source; a test/documentation-only repair requires no duplicate preview
 deployment. Previously completed account cleanup must not be replayed.
+
+## Follow-up: verified source and dashboard build preparation
+
+The repair was published as `bef196d2c3cc2cd3f501942beedbf4d722b396dd`.
+Its [CI](https://github.com/NAIFMUSFER/dawaee/actions/runs/35508155261) and
+[Security](https://github.com/NAIFMUSFER/dawaee/actions/runs/35508155262) passed.
+PostgreSQL 16 and 17 each passed **2,914 tests in 380 files**; RLS reported 110
+attempts, zero unexplained failures and zero open findings. Mobile, containers,
+dependencies and runtime recovery also passed. These results do not cover a
+later changed source until its own verification is recorded.
+
+The owner supplied `IMG_0563.png` showing the Expo project's unfiltered Builds
+list: latest visible iOS store build **0.1.0 (7)**, Git ref **bed05a8**, profile
+**ios-testflight**, followed by build (6) from `63b5b8d`. The dashboard exposes
+**Build from GitHub**. This is owner-supplied evidence of their browser session
+and visible build inventory; it does not establish CLI authentication, signed
+artifact inspection or submission to Apple.
+
+For the next reviewed artifact, `app.json` now specifies build **8**. Only the
+iOS settings of `ios-testflight` explicitly disable inherited auto-increment,
+so a dashboard build consumes that reviewed number without repeating build 7
+from the stale local number or relying on an uncommitted CLI increment. Android
+versioning and the generic production profile retain their previous settings.
+Before any subsequent artifact/retry intended for submission, check the remote
+build list again and allocate a new number if 8 has already been consumed.
+
+Dashboard build selection, once this preparation is published/checked:
+
+| Field | Value |
+|---|---|
+| Git ref | Exact published preparation commit recorded on PR #32 |
+| Platform | iOS |
+| Build profile | ios-testflight |
+| Base directory | apps/mobile |
+| Store submission | Separate step after artifact/API verification |
+
+The existing production bundle ID, remote signing, production environment,
+Firebase preflight and backend remain intact. The production API compatibility
+gate above still applies before beta distribution. No old build should be
+submitted as a substitute. Selecting the dashboard form is not starting a build;
+record its actual build ID and source if the owner starts it.
+
+Local verification of this configuration change: **21/21 existing iOS preflight
+and audit-identity tests** passed. The installed EAS CLI 24.7.0 `@expo/eas-json`
+parser validated the schema and resolved inherited `ios-testflight` settings to
+store distribution, remote credentials, production environment and
+`autoIncrement=false`. Executing `app.config.js` yielded version `0.1.0`, build
+`8`, bundle `app.dawaee.mobile`; the production Android profile still resolves
+to automatic increments and its local versionCode remains 5. Whitespace checks
+passed. This is configuration validation, not an Xcode build or real Firebase
+credential check.
+
+References checked 20 September 2026:
+[Expo GitHub dashboard builds](https://docs.expo.dev/build/building-from-github/)
+and [local app-version management](https://docs.expo.dev/build-reference/app-versions/).
