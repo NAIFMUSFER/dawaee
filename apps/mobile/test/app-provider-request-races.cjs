@@ -90,6 +90,10 @@ function makeProvider(file) {
       purgePrivacyHideIntents: async () => undefined,
       readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => null,
+      writeLocalePreference: async () => true,
+    },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
     '../notifications/index.js': { cancelAllLocalNotifications: async () => {}, rebuildRemindersFromCache: async id => { h.rebuilds.push(id); } },
     '../i18n/index.js': { applyNativeDirection: locale => { h.directions.push(locale); return { restartRequired: locale === 'ar' }; } },

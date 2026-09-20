@@ -50,6 +50,7 @@ function harness(file) {
     '../api/restored-session-owner.js':{getRestoredSessionUserId:async()=>h.account},
   '../storage/offline-queue.js':{subscribeQueueChanges:()=>()=>undefined,invalidateCachedProfile:async()=>undefined,restoreCachedProfiles:()=>undefined,setCacheOwner:id=>{h.owner=id;h.events.push(['owner',id]);},purgeLocalCaches:id=>{h.events.push(['purge',id]);return h.purge(id);},queueSize:async()=>0,flushQueue:async()=>{h.flushCalls++;return{offline:true};},readOfflineBootstrap:async()=>null,writeOfflineBootstrap:async()=>true},
   '../storage/notification-privacy-intent.js':{acknowledgePrivacyHide:async()=>undefined,cancelPrivacyHidePending:async()=>undefined,markPrivacyHidePending:async()=>'synthetic-privacy-intent',privacyHidePendingCount:async()=>0,purgePrivacyHideIntents:async()=>undefined,readPrivacyHideIntent:async()=>({kind:'none'})},
+  '../storage/locale-preference.js':{readLocalePreference:async()=>null,writeLocalePreference:async()=>true},
   '../storage/cache-key.js':{destroyCacheKey:id=>{h.events.push(['destroy',id]);return h.destroy(id);}},
   '../notifications/index.js':{cancelAllLocalNotifications:()=>{h.events.push(['cancel']);return h.cancel();},rebuildRemindersFromCache:async()=>{}},
   '../i18n/index.js':{applyNativeDirection:()=>({restartRequired:false})},

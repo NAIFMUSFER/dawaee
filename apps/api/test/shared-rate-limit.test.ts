@@ -41,6 +41,57 @@ const login = (app: FastifyInstance, identifier: string, addr: string, password 
 const register = (app: FastifyInstance, payload: Record<string, unknown>, addr: string) =>
   app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
+async function loginHits(keyHash: string): Promise<number> {
+  const { rows } = await owner.query<{ hits: string }>(
+    "SELECT coalesce(sum(count), 0) AS hits FROM auth_rate_buckets WHERE scope='login:identifier' AND key_hash=$1",
+    [keyHash],
+  );
+  return Number(rows[0]!.hits);
+}
+
+async function seedSpentLoginWindows(keyHash: string, firstOffset = 0): Promise<void> {
+  const budget = BUDGETS['login:identifier'];
+  // Persistence assertions must not accidentally assert a sliding window.
+  // Derive both adjacent fixed windows from the database clock in one statement.
+  // Only this synthetic identifier is touched; production limits are unchanged.
+  await owner.query(
+    `WITH boundary AS (
+       SELECT to_timestamp(floor(extract(epoch FROM now()) / $2::int) * $2::int) AS start
+     )
+     INSERT INTO auth_rate_buckets (scope, key_hash, window_start, count)
+     SELECT 'login:identifier', $1, start + make_interval(secs => $2::int * step), $3::int
+       FROM boundary CROSS JOIN generate_series($4::int, $4::int + 1) AS offsets(step)
+     ON CONFLICT (scope, key_hash, window_start)
+     DO UPDATE SET count = greatest(auth_rate_buckets.count, excluded.count)`,
+    [keyHash, budget.windowSeconds, budget.max, firstOffset],
+  );
+}
+
+async function spentLoginFixture(phone: string, addressPrefix: string): Promise<string> {
+  const before = await owner.query<{ key_hash: string }>(
+    "SELECT DISTINCT key_hash FROM auth_rate_buckets WHERE scope='login:identifier'",
+  );
+  const max = BUDGETS['login:identifier'].max;
+  for (let i = 0; i < max; i++) {
+    const response = await login(alpha, phone, `${addressPrefix}.${i + 1}`);
+    expect(response.statusCode, response.body).toBe(401);
+  }
+  // Discover the opaque key made by the real login path, without duplicating
+  // the application's HMAC or clearing any unrelated fixture's buckets.
+  const { rows } = await owner.query<{ key_hash: string }>(
+    "SELECT DISTINCT key_hash FROM auth_rate_buckets WHERE scope='login:identifier' AND NOT (key_hash = ANY($1::text[]))",
+    [before.rows.map(row => row.key_hash)],
+  );
+  expect(rows).toHaveLength(1);
+  const keyHash = rows[0]!.key_hash;
+  expect(await loginHits(keyHash), 'some login attempts bypassed the database counter').toBe(max);
+  // Ten requests can straddle a ten-minute boundary. Top up the current AND
+  // next bucket so the following replica/restart probes test persistence, not
+  // whether the wall clock happens to cross a legitimate expiry between them.
+  await seedSpentLoginWindows(keyHash);
+  return keyHash;
+}
+
 async function authenticatedAccount(app: FastifyInstance, addr: string) {
   const email = `api-budget-${seq++}-${Date.now()}@example.test`;
   const made=await owner.query<{user_id:string}>('SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
@@ -120,36 +171,50 @@ describe('two API instances share one authentication budget', () => {
 
   it('one instance sees the attempts the other already counted', async () => {
     const identifier = `+9665${String(7900000 + n++).padStart(8, '0')}`;
-    const max = BUDGETS['login:identifier'].max;
-
-    // Spend the whole budget on alpha only.
-    for (let i = 0; i < max; i++) await login(alpha, identifier, `198.51.100.${100 + i}`);
+    const keyHash = await spentLoginFixture(identifier, '198.51.100');
+    const hits = await loginHits(keyHash);
 
     // Beta has never seen this identifier in its own memory. If the counters
     // were per-process it would happily start again from zero.
     const onBeta = await login(beta, identifier, '198.51.100.199');
     expect(onBeta.statusCode, 'the second instance did not see the first instance\'s attempts').toBe(429);
+    expect(await loginHits(keyHash), 'the second instance did not commit the refused attempt').toBe(hits + 1);
   });
 });
 
 // ══════════════════════════════════════ restart
 
 describe('a restart does not hand back a fresh budget', () => {
-  it('a new process inherits the count the old one accumulated', async () => {
+  it('a fresh server inherits the count the old one accumulated', async () => {
     const phone = newPhone();
-    const max = BUDGETS['login:identifier'].max;
-    for (let i = 0; i < max; i++) await login(alpha, phone, `192.0.2.${i + 1}`);
+    const keyHash = await spentLoginFixture(phone, '192.0.2');
+    const hits = await loginHits(keyHash);
     expect((await login(alpha, phone, '192.0.2.99')).statusCode, 'the budget never closed').toBe(429);
+    expect(await loginHits(keyHash)).toBe(hits + 1);
 
-    // A brand-new server: fresh process state, fresh in-process limiter. This
-    // is what a cold start on the free plan looks like.
+    // A brand-new Fastify server and in-memory limiter, with the same database.
+    // This exercises application reconstruction, not an OS process restart.
     const cfg = loadConfig();
     const restarted = (await buildServer({ providers: buildProviders(cfg) })).app;
     await restarted.ready();
     try {
       const after = await login(restarted, phone, '192.0.2.100');
       expect(after.statusCode, 'restarting the service reset the attacker\'s budget').toBe(429);
+      expect(await loginHits(keyHash), 'the fresh server did not commit the refused attempt').toBe(hits + 2);
     } finally { await restarted.close(); }
+  });
+
+  it('expired fixed windows legitimately give back a budget without a restart', async () => {
+    const phone = newPhone();
+    const keyHash = await spentLoginFixture(phone, '192.0.2');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='login:identifier' AND key_hash=$1", [keyHash]);
+    await seedSpentLoginWindows(keyHash, -2);
+    const hits = await loginHits(keyHash);
+    expect(hits).toBe(BUDGETS['login:identifier'].max * 2);
+
+    const afterExpiry = await login(alpha, phone, '192.0.2.199');
+    expect(afterExpiry.statusCode, 'expired windows were treated as a permanent lock').toBe(401);
+    expect(await loginHits(keyHash)).toBe(hits + 1);
   });
 });
 

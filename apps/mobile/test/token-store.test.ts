@@ -585,6 +585,9 @@ describe('nothing new writes plaintext to AsyncStorage', () => {
     // Not a credential and not PHI: a random device identifier, which the API
     // treats as an opaque label. Asserted separately above.
     ['dawaee.deviceId', 'apps/mobile/src/api/client.ts'],
+    // Presentation-only and account-free: the language chosen on the first-run
+    // screen. It contains no identity, credential, or health information.
+    ['dawaee.localePreference', 'apps/mobile/src/storage/locale-preference.ts'],
     // Legacy names, only ever READ and then deleted by the migrations.
     ['dawaee.accessToken', 'apps/mobile/src/api/token-store.ts'],
     ['dawaee.refreshToken', 'apps/mobile/src/api/token-store.ts'],
