@@ -61,7 +61,106 @@ physical erasure, including object-byte handling; this run does not certify
 successful future erasure. The original ten accounts remain on their original
 schedule. See the [original reset evidence](2026-09-19-account-registration-reset.md).
 
-## Preview: not executed
+## Preview: current execution follow-up
+
+See the current result below; the following dated access attempts are historical.
+
+### Confirmed upgrade and preview inventory — 2026-09-20
+
+The owner completed the temporary preview upgrade in the dashboard. Independent
+service reads report `0.5c-512mb`; deploy `dep-danr5op42hec73felm00` of the same
+preview app commit `10eac842fd06ac0be54fd5a70caae3f78f8a8e06` became live at
+10:20:16.720006 UTC. No new service or application code deployment was requested
+for the reset. This resolves the earlier plan-change/access blocker.
+
+Read-only job `job-danr7eugekts739t5neg` succeeded, fixing the inventory cutoff at
+**10:22:25.790051 UTC**: 28 non-disabled accounts, 36 unrevoked sessions,
+28 profiles, 3 stored-object metadata rows, 95 migrations, and 5 registration
+challenges. The account-set SHA-256 is
+`b5ad82b0ecb739f1e590c1c454d13e78801800df0eab7c20be9a6b93c83ba381`.
+
+Automatic approval review rejected an encrypted backup-through-job-logs attempt
+and a provider export-list attempt before execution. No preview backup or export
+was created. The owner then explicitly stated that old account data is not needed.
+The reset proceeds without a preview backup; do not request that approval again
+or retry an export. Production evidence above is separate and unchanged.
+
+The new preview-only SQL pins the exact database, owner, PostgreSQL major version,
+account count/fingerprint, profile count, migrations and storage counts. It checks
+worker/auth locks and active email leases, invalidates registration proofs added
+in migration 0095, defaults to ROLLBACK and refuses replay after the audit marker.
+No RLS, trigger, retention or date guard is disabled. The runner logs only aggregate
+checks, verifies the SQL SHA-256, and reconnects for a read-only verification.
+
+Rollback job `job-danrckuk1f9s739mhjo0` succeeded. The actual SQL passed every
+assertion; a separate connection at **10:33:29.083207 UTC** confirmed all 28
+accounts, 36 sessions, 28 credentials, 28 profiles, 19 active schedules, 2 usable
+care links, and the five registration proofs remained. The reset audit marker
+was absent. Thus the rehearsal did not retain any account change.
+
+SQL SHA-256: `53d5670dd358126d6f00700311bbae0c380f02a7e65138159f4e9f9ea5d4b4ff`.
+
+### Preview commit and independent verification — 2026-09-20
+
+Commit job `job-danrdauk1f9s739mjm00` succeeded at 10:34:28 UTC. The reviewed SQL
+committed at **10:34:25.187406 UTC**; a fresh connection verified its result at
+**10:34:25.296898 UTC**. The transaction used the rehearsal SQL with only its final
+ROLLBACK changed to COMMIT. The sole runner changes were correcting its header
+and deadline label. No account rows, contacts, tokens or credentials were exported.
+
+| Independent check for the 28 inventoried accounts | Count |
+| --- | ---: |
+| Non-disabled accounts / retained original identifiers | 0 / 0 |
+| Unrevoked sessions / password credentials | 0 / 0 |
+| Active push endpoints / profiles / medication schedules | 0 / 0 / 0 |
+| Usable care links / emergency QR capabilities | 0 / 0 |
+| Pending notification deliveries | 0 |
+| Account-email / old registration proofs | 0 / 0 |
+| Phone / email verification / onboarding / recovery proofs | 0 / 0 / 0 / 0 |
+| Reset audit marker | 1 |
+| Migration ledger / stored-object metadata | 95 / 3 |
+
+The old email/phone identifiers are now free for new account UUIDs; existing
+account sessions and emailed proof links cannot be reused. The marker is
+`owner-account-reset-20260920-preview`. **Do not replay either reset.** Accounts
+created after the fixed cutoff are outside the operation.
+
+This is **immediate account retirement and identifier release**, not completed
+physical erasure. The 28 disabled account rows and three stored-object metadata
+rows remain subject to the existing worker's 14-day policy, with latest eligibility
+**2026-10-04 10:34:24.822352 UTC**. Future physical erasure is not certified here.
+No deletion timestamp was backdated. The owner declined a backup, which does not
+change the app's existing database retention guards.
+
+No new registration or email was sent in this operation. The user may retry
+registration from the preview; actual delivery to the user's mailbox remains
+unverified. A successful database cleanup is not a mail-delivery or UI acceptance.
+
+### Restoring the temporary compute plan
+
+All three one-off jobs finished successfully; no job is pending or running.
+The official CLI attempt to restore the existing preview with `--plan free`
+returned HTTP 500; a minimal REST PATCH for `serviceDetails.plan=free` returned
+the same HTTP 500. An independent read still showed `0.5c-512mb`, last modified
+at 10:20:16.721395 UTC. The cloud browser retry also failed before navigation:
+`CDP operation refresh tabs timed out after 20000ms`.
+
+Restoration is still required; **do not claim Free was restored**. No duplicate
+service, deploy or job was created to work around this failure. The already
+approved USD 1 ceiling remains in force. The owner can change the existing
+preview's Instance Type to Free in its dashboard; this is an execution dependency,
+not another request to approve cost or deletion.
+
+Local checks: runner syntax, ESLint, and patch whitespace checks passed. The
+actual preview transaction and fresh-connection checks above provide the reset
+evidence. The prior draft head `18ae31e` separately passed
+[CI](https://github.com/NAIFMUSFER/dawaee/actions/runs/35504587709) and
+[Security scan](https://github.com/NAIFMUSFER/dawaee/actions/runs/35504587828).
+Those completed checks do not cover the new operator files, native UI or iPhone
+notification delivery. No application build, production deploy or TestFlight
+submission was initiated by this follow-up.
+
+### Earlier access attempts (superseded by the successful internal jobs)
 
 ### Temporary plan change authorized; provider error — 2026-09-20
 
@@ -205,7 +304,7 @@ registration/email/phone/recovery proofs as applicable to schema 0095, and verif
 zero usable old identities/sessions. Do not execute the production-specific
 script against preview, or replay the already recorded production batch.
 
-## Source, checks and deployment
+## Earlier source, checks and deployment (before preview execution)
 
 The previous application source `860b1105e995d1c3a20a63cd30c0a3b6c0341a39`
 completed [CI #1153](https://github.com/NAIFMUSFER/dawaee/actions/runs/35500463148)
