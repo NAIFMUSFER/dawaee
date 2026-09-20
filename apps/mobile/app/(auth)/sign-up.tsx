@@ -77,7 +77,11 @@ export default function SignUpScreen() {
         />
 
         {error ? <Banner tone="warning" title={error} /> : null}
-        {requested ? <Banner tone="success" title={t('auth.registrationRequested')} /> : null}
+        {requested ? <>
+          <Banner tone="info" title={t('auth.registrationRequested')} />
+          <Button label={t('recovery.title')} tone="secondary"
+            onPress={() => router.replace('/(auth)/forgot-password')} />
+        </> : null}
         {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
         <Button
           label={t('auth.signUp')}
