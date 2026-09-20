@@ -1,5 +1,13 @@
 # Account reset follow-up — 2026-09-20
 
+## Latest operational state: Free restored
+
+Independent Render service/deploy reads now confirm `plan: free`, updated at
+**2026-09-20T10:49:46.748988Z**, and live deploy `dep-danrjfmgekts739u9odg`
+of unchanged app commit `10eac842`. This closes the temporary-compute restoration
+blocker described historically below. No new service, paid job or reset is needed.
+Do not replay either completed reset or remove accounts created for current tests.
+
 ## Authorization and scope
 
 The owner explicitly expanded the request to **all accounts, including new

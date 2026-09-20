@@ -420,6 +420,26 @@ describe('verified mailbox invitation and linked account boundaries', () => {
 
 
 describe('recipient review before caregiver acceptance', () => {
+  it.each(['caregiver', 'nurse'])('discovers an invitation issued before email-only registration and requires %s consent', async role => {
+    const patient = await fixture(true), other = await fixture(true);
+    const profile = randomUUID(), relationship = randomUUID(), email = `${randomUUID()}@example.test`;
+    const grant = ['view_schedule', 'confirm_dose'], registration = hash();
+    await owner("INSERT INTO patient_profiles(id,owner_user_id,display_name,is_self) VALUES($1,$2,'Synthetic patient',true)", [profile, patient.uid]);
+    await query(`INSERT INTO caregiver_relationships(id,patient_profile_id,invited_email,invited_name,role,status,permissions,invitation_token_hash,invitation_expires_at,invited_by_user_id)
+      VALUES($1,$2,$3,'New mailbox caregiver',$4,'pending',$5,$6,now()+interval '3 days',$7)`,
+      [relationship,profile,email,role,grant,hash(),patient.uid], 'dawaee_app', patient.uid);
+    await query('SELECT app.request_email_registration($1,$2,$3,$4)', [email,registration,'en','synthetic-encrypted-mail']);
+    const uid = await value('SELECT app.complete_email_registration($1,$2,$3)', [registration,'New caregiver',newPassword]) as string;
+    expect(uid).toBeTypeOf('string');
+    expect((await owner('SELECT phone_e164 FROM users WHERE id=$1',[uid])).rows[0]).toEqual({phone_e164:null});
+    const incoming = (await query('SELECT * FROM app.pending_caregiver_invitation_previews()', [], 'dawaee_app', uid)).rows;
+    expect(incoming).toEqual([expect.objectContaining({id:relationship,role,permissions:grant})]);
+    expect((await query('SELECT * FROM app.pending_caregiver_invitation_previews()', [], 'dawaee_app', other.uid)).rows).toEqual([]);
+    expect(await value('SELECT app.has_permission($1,$2)',[profile,'view_schedule'],uid)).toBe(false);
+    expect((await query('SELECT * FROM app.accept_reviewed_caregiver_invitation($1,$2,$3)', [relationship,role,grant], 'dawaee_app', uid)).rows[0]).toMatchObject({outcome:'accepted',patient_profile_id:profile});
+    expect(await value('SELECT app.has_permission($1,$2)',[profile,'view_schedule'],uid)).toBe(true);
+  });
+
   const preview = (id: string, uid: string, token: string | null = null) => query(
     'SELECT * FROM app.preview_caregiver_invitation($1,$2)', [token, token ? null : id], 'dawaee_app', uid);
   const accept = (id: string, uid: string, permissions: string[], role = 'caregiver') => query(

@@ -10,6 +10,13 @@ import type { Locale } from './enums.js';
  */
 export const MESSAGES = {
   ar: {
+    'invite.email': 'بريد المرافق الإلكتروني',
+    'invite.webEmailHint': 'اكتب البريد الذي سيستخدمه المرافق لإنشاء حسابه أو تسجيل الدخول. دعوات المتصفح مرتبطة بالبريد؛ توثيق رقم الجوال يتم من التطبيق.',
+    'invite.emailRequired': 'أدخل بريد المرافق الإلكتروني بدلًا من رقم الجوال.',
+    'invite.emailNextSteps': 'شارك الرابط مع المرافق، واطلب منه الدخول أو إنشاء حساب بالبريد الذي أدخلته. ستظهر له الدعوة في صفحة اليوم لمراجعة الصلاحيات وقبولها. لم يُرسل بريد دعوة تلقائي.',
+    'auth.registrationInviteHint': 'إذا وصلتك دعوة رعاية، استخدم البريد الذي حدده المريض في الدعوة. يمكن توثيق الجوال لاحقًا من التطبيق؛ تسجيل البريد لا يوثّق رقم الجوال.',
+    'accept.webSignInBody': 'ادخل أو أنشئ حسابًا بالبريد المحدد في الدعوة، ثم راجع الصلاحيات واقبلها. إذا كانت الدعوة برقم جوال لم توثّقه في التطبيق، اطلب من المريض دعوة جديدة ببريدك.',
+    'accept.webIdentityHelp': 'ادخل بالبريد الذي حدده المريض في الدعوة. إذا كانت الدعوة القديمة مرتبطة برقم جوال، اطلب منه إلغاءها وإرسال دعوة جديدة ببريدك. لا يمكن قبول دعوة الجوال بحساب بريد غير مرتبط بالرقم الموثّق.',
     'today.dueGroups': 'جرعات حان وقتها',
     'today.timeGroup': 'أدوية موعد {time}',
     'today.laterToday': 'لاحقًا اليوم',
@@ -1104,6 +1111,13 @@ export const MESSAGES = {
   },
 
   en: {
+    'invite.email': 'Caregiver email address',
+    'invite.webEmailHint': 'Enter the email the caregiver will use to create an account or sign in. Browser invitations use email; phone verification is completed in the app.',
+    'invite.emailRequired': 'Enter the caregiver’s email address instead of a phone number.',
+    'invite.emailNextSteps': 'Share the link and ask the caregiver to sign in or register with the email you entered. Their invitation will appear on Today for permission review and acceptance. No invitation email was sent automatically.',
+    'auth.registrationInviteHint': 'For a care invitation, use the email the patient entered. You can verify a phone later in the app; email registration does not verify a phone number.',
+    'accept.webSignInBody': 'Sign in or create an account with the email on the invitation, then review and accept the permissions. If it uses a phone you have not verified in the app, ask the patient for a new invitation to your email.',
+    'accept.webIdentityHelp': 'Sign in with the email the patient invited. For an older phone invitation, ask the patient to revoke it and create a new invitation to your email. An email-only account cannot accept an invitation for an unverified phone.',
     'today.dueGroups': 'Doses due',
     'today.timeGroup': 'Medications at {time}',
     'today.laterToday': 'Later today',

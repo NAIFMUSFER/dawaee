@@ -117,6 +117,20 @@ describe('email action form', () => {
     h.nodes.confirm.value = h.nodes.password.value; await h.nodes.form.submit({ preventDefault() {} });
     expect(h.fetch.mock.calls[0]![0]).toBe('/v1/auth/email/complete'); expect(h.nodes.password.value).toBe(''); expect(h.nodes.confirm.value).toBe('');
   });
+  it('keeps sign-in hidden until success and explains mailbox invitations without requesting a phone', async () => {
+    const h = form('register');
+    expect(h.nodes['continue-link'].hidden).toBe(true);
+    expect(h.nodes.expiry.textContent).toBe('This account-creation link expires after 30 minutes.');
+    h.nodes['display-name'].value = 'Mailbox Owner';
+    h.nodes.password.value = h.nodes.confirm.value = 'Synthetic-password1';
+    h.fetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ updated: false }) });
+    await h.nodes.form.submit({ preventDefault() {} });
+    expect(h.nodes['continue-link'].hidden).toBe(true);
+    await h.nodes.form.submit({ preventDefault() {} });
+    expect(h.nodes['continue-link'].hidden).toBe(false);
+    expect(h.nodes.message.textContent).toContain('same email');
+    expect(h.nodes.message.textContent).toContain('Today');
+  });
   it('requires the mailbox holder to choose the registration name and password', async () => {
     const h = form('register'); h.nodes['display-name'].value = 'Mailbox Owner';
     h.nodes.password.value = h.nodes.confirm.value = 'Synthetic-password1';
