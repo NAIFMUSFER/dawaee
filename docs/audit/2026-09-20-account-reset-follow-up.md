@@ -1,0 +1,100 @@
+# Account reset follow-up — 2026-09-20
+
+## Authorization and scope
+
+The owner explicitly expanded the request to **all accounts, including new
+accounts through today**. This supersedes the earlier instruction to protect
+post-September-19 registrations. It does not authorize resetting unrelated
+projects or adding a recurring startup reset. The isolated preview is still a
+separate database and must not be reported as cleaned based on production work.
+
+## Production: executed and independently verified
+
+Inventory at **09:09:51.718313 UTC** found eleven retained application rows:
+ten already retired by the September 19 operation and one later account with
+a pending deletion request. There were no Supabase Auth users. The later account
+still occupied its identifiers and retained a password credential. Its existing
+deletion request was dated September 19; it was not an active-account count of
+one. The correct pre-operation count was one **non-disabled** account.
+
+The one-account identity fingerprint was
+`1d95f0f643b3ecdac5a0389bd1a87abb9b93b78fd41e8f88df38659326c296fa`.
+An AES-256 encrypted logical snapshot covering thirty application tables was
+saved outside Git with its recovery key. Independent local decryption and JSON
+parsing matched the plaintext SHA-256
+`aa6ce814d0ff380e67e7c3e0a8385749af9209409b5283e70f62049d2617d91a`.
+Nine tables had a row, including one stored-object metadata row. Object bytes,
+audit/job/provider logs and a full database re-import were not backed up or
+tested by this snapshot.
+
+`scripts/ops/reset-accounts-20260920-production.sql` was rehearsed with ROLLBACK.
+All in-transaction assertions passed. A separate query confirmed the account,
+credential and absence of the new audit marker were unchanged. The same bounded
+transaction was then committed at **09:14:46.281506 UTC**. The script defaults to
+ROLLBACK, requires the reviewed operator database/user, checks the exact identity
+fingerprint and count, obtains the existing worker/auth locks, and refuses replay
+after `owner-account-reset-20260920-production` is recorded.
+
+This operation disabled the remaining account, freed its original email/phone,
+removed its password and verification/recovery capabilities, revoked sessions
+and care access, and archived the patient profile. Existing deletion timestamps
+were preserved with `coalesce`, so the earlier ten accounts and their deletion
+windows were not reset. No trigger, RLS policy or retention boundary was removed.
+
+Independent post-commit verification at **09:15:08.218401 UTC** found:
+
+| Check | Count |
+| --- | ---: |
+| Non-disabled accounts | 0 |
+| Original contact identifiers retained by accounts | 0 |
+| Password credentials / unrevoked sessions | 0 / 0 |
+| Active push endpoints / patient profiles / schedules | 0 / 0 / 0 |
+| Usable care links / emergency QR capabilities | 0 / 0 |
+| Email challenges / queued or sending notifications | 0 / 0 |
+| New reset audit marker | 1 |
+| Migration ledger / retained object metadata | 88 / 7 |
+
+This is immediate account retirement and identifier release, **not completed
+physical erasure**. The existing deletion timestamp makes the additional account
+eligible at **2026-10-03 19:57:09.371659 UTC**. The existing worker still owns
+physical erasure, including object-byte handling; this run does not certify
+successful future erasure. The original ten accounts remain on their original
+schedule. See the [original reset evidence](2026-09-19-account-registration-reset.md).
+
+## Preview: not executed
+
+The affected registration page is hosted by Render service
+`srv-daipkbuk1f9s73952trg`, database `dpg-daipq80jo6nc73fsmhhg-a`
+(`dawaee_audit_db`). No preview account was modified in this run. Earlier
+attempts through the provided read-only SQL connector failed with EOF/TLS;
+browser navigation failed during CDP refresh before reaching the database page.
+The latest additional read-only check was interrupted and is not a new success
+or failure claim. No configured Render CLI login/API key or owner connection was
+available locally. The connector's read-only contract would not permit cleanup
+even if its connection recovered.
+
+The remaining dependency is a working, authorized **administrative write
+connection to this preview database**, or an operational authenticated Render
+browser session that can provide its normal operator access. Reconnecting a
+read-only SQL connector alone does not grant write capability. No public network
+allowlist change, TLS downgrade, startup reset, credential export endpoint or
+provider creation was used to work around that limit.
+
+Once access is available, inventory and snapshot all preview accounts within the
+newly authorized scope, rehearse and execute a bounded one-time cleanup, invalidate
+registration/email/phone/recovery proofs as applicable to schema 0095, and verify
+zero usable old identities/sessions. Do not execute the production-specific
+script against preview, or replay the already recorded production batch.
+
+## Source, checks and deployment
+
+The previous application source `860b1105e995d1c3a20a63cd30c0a3b6c0341a39`
+completed [CI #1153](https://github.com/NAIFMUSFER/dawaee/actions/runs/35500463148)
+successfully. That result does not certify the new operator SQL, preview cleanup,
+rendered user interfaces or email receipt. The SQL evidence above comes from its
+actual rollback rehearsal and independently verified production commit.
+
+Only the operator script and audit evidence are added to the draft PR in this
+follow-up. No application deployment, new binary, PR merge, new test registration
+or email was initiated. Missing registration mail on preview is **not resolved**
+by the production cleanup.
