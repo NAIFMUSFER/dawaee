@@ -2,9 +2,9 @@
 
 ## Status
 
-Implemented locally after PR #32 head `2063485`; **not deployed, not merged, and
-not included in a TestFlight build**. Full CI is still required for this exact
-change set.
+Published to draft PR #32 through `85b7fad`; **not deployed, not merged, and not
+included in a TestFlight build**. Exact-head CI and Security passed. This is
+source/database verification, not a visible registration acceptance test.
 
 ## Defect closed by the change
 
@@ -56,9 +56,18 @@ idempotent provider boundary, with a distinct SQL queue.
 - The full shared/core/mobile suite then passed: **1,348 tests across 174
   files, zero failures**. This covers client regressions but is not a substitute
   for the API/database matrix or a real-device registration journey.
-- The native PostgreSQL reset could not run in this execution environment
-  because the `psql` binary is absent. This is not recorded as a product pass;
-  CI PostgreSQL 16/17 remains mandatory.
+- Exact-head CI run
+  [#1144](https://github.com/NAIFMUSFER/dawaee/actions/runs/35491089756)
+  passed **2,885/2,885 tests across 377 files** on PostgreSQL 16 and again on
+  PostgreSQL 17. All 95 migrations ran with a non-superuser/non-BYPASSRLS
+  owner; the managed application smoke, RLS probe (110 attempts, zero
+  unexplained failures/findings), lint, typechecks, native bundle exports,
+  container, dependency and recovery gates passed.
+- Exact-head Security run
+  [#1146](https://github.com/NAIFMUSFER/dawaee/actions/runs/35491089743)
+  passed. The native PostgreSQL reset remained unavailable locally because the
+  `psql` binary is absent; the two CI database jobs provide the recorded native
+  evidence instead.
 - A fresh cloud-browser attempt still failed while refreshing tabs with a
   20-second CDP timeout. No visual acceptance is claimed for this change.
 
@@ -68,4 +77,4 @@ The installed iOS `0.1.0 (6)` expects tokens from the old one-step registration
 response. Deploying the API alone would make new registration fail safely but
 would strand that old client. Ship only after the updated mobile build and API
 are verified as a coordinated change. Existing login and recovery are not
-changed. Do not publish the API or a TestFlight build from these local results.
+changed. Do not publish the API or a TestFlight build from CI alone.
