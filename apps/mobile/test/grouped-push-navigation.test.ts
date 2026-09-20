@@ -395,14 +395,14 @@ describe('grouped reminder default-tap lifecycle', () => {
   it('the shell fences module loading and routes to a fixed path without using payload identifiers', () => {
     const source = readFileSync(resolve(import.meta.dirname, '../app/_layout.tsx'), 'utf8');
     const grouped = source.slice(source.indexOf('A grouped reminder deliberately'), source.indexOf('  return (\n    <I18nProvider'));
-    expect(grouped).toContain("if (!ready || !signedIn || !user?.id || Platform.OS === 'web') return;");
+    expect(grouped).toContain("if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;");
     expect(grouped).toContain('const generation = caregiverSession.current.generation;');
     expect(grouped).toContain('caregiverSession.current.generation === generation');
     expect(grouped).toContain('if (!isCurrent()) return;');
     expect(grouped).toContain('stop = startGroupedNotificationListener(');
     expect(grouped).toContain("router.replace('/notification')");
     expect(grouped).toContain('setPatientReminderIntent(user.id, { doseId })');
-    expect(grouped).toContain('[ready, signedIn, user?.id, router]');
+    expect(grouped).toContain('[ready, signedIn, deletionPending, user?.id, router]');
     expect(grouped).not.toContain('getLastNotificationResponseAsync');
     expect(grouped).not.toContain('clearLastNotificationResponseAsync');
   });

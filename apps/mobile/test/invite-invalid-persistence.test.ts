@@ -25,12 +25,12 @@ describe('caregiver invitation account switching', () => {
     const src = readFileSync(ACCEPT, 'utf8');
     const apiErrors = src.slice(
       src.indexOf('if (err instanceof ApiError)'),
-      src.indexOf("setOutcome({ kind: 'invalid', message: t('error.internal_error') })"),
+      src.indexOf("setError(t('error.internal_error'))"),
     );
 
     const invalidBranch = /if\s*\([^)]*err\.code\s*===\s*['"]invitation_invalid['"][^)]*\)\s*\{([\s\S]*?)\n\s*\}/.exec(apiErrors)?.[1] ?? '';
     expect(invalidBranch, 'invitation_invalid must have its own error branch').not.toBe('');
     expect(invalidBranch).not.toContain('await clearPendingInvite()');
-    expect(invalidBranch).toContain("setOutcome({ kind: 'invalid'");
+    expect(invalidBranch).toContain("setError(t('accept.invalidBody'))");
   });
 });

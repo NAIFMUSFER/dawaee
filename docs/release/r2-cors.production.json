@@ -1,0 +1,8 @@
+[
+  {
+    "AllowedOrigins": ["https://dawaee-api.onrender.com"],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["Content-Type", "If-None-Match"],
+    "MaxAgeSeconds": 3600
+  }
+]

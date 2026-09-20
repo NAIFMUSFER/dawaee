@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { loadConfig, type Config } from '../config.js';
 import { withTransaction } from '../lib/db.js';
 
-export type EmailPurpose = 'verify' | 'reset';
+export type EmailPurpose = 'verify' | 'reset' | 'register';
 const payloadSchema = z.object({ email: z.string().email(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  purpose: z.enum(['verify', 'reset']), locale: z.enum(['ar', 'en']) });
+  purpose: z.enum(['verify', 'reset', 'register']), locale: z.enum(['ar', 'en']) });
 type Mail = z.infer<typeof payloadSchema>;
 const key = () => new Uint8Array(hkdfSync('sha256', loadConfig().JWT_SECRET, '', 'tadawee:account-email:v1', 32));
 export const emailTokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -33,7 +33,9 @@ export function accountEmailContent(mail: Mail, cfg: Config) {
   // Fragment is never sent to the server or written to request logs.
   url.hash = new URLSearchParams({ token: mail.token, purpose: mail.purpose, lang: mail.locale }).toString();
   const ar = mail.locale === 'ar';
-  const action = mail.purpose === 'reset' ? (ar ? 'إعادة تعيين كلمة المرور' : 'Reset your password') : (ar ? 'تأكيد البريد الإلكتروني' : 'Verify your email');
+  const action = mail.purpose === 'reset' ? (ar ? 'إعادة تعيين كلمة المرور' : 'Reset your password')
+    : mail.purpose === 'register' ? (ar ? 'إكمال إنشاء الحساب' : 'Complete account creation')
+      : (ar ? 'تأكيد البريد الإلكتروني' : 'Verify your email');
   const minutes = mail.purpose === 'reset' ? 15 : 30;
   const expiry = ar ? `تنتهي صلاحية الرابط خلال ${minutes} دقيقة. إذا لم تطلب هذه الرسالة، تجاهلها.` : `This link expires in ${minutes} minutes. If you did not request this email, ignore it.`;
   return { subject: `TADAWEE | ${action}`, text: `${action}\n${url.href}\n\n${expiry}`,
@@ -56,13 +58,18 @@ export async function sendAccountEmail(mail: Mail, idempotencyKey: string, reque
 // Runs inside the API with durable leases; no provider latency in anonymous
 // request responses. Stored payloads are encrypted and purged on send/expiry.
 export async function drainAccountEmails(send = sendAccountEmail): Promise<number> {
-  const lease = randomUUID();
-  const { rows } = await withTransaction(tx => tx.query<{ token_hash: string; payload: string }>('SELECT * FROM app.claim_account_emails($1)', [lease]));
   let sent = 0;
-  for (const row of rows) {
-    let accepted = false;
-    try { await send(await openEmailJob(row.payload), row.token_hash); accepted = true; sent++; } catch { /* Retry the same job/key, never log token/provider content. */ }
-    await withTransaction(tx => tx.query('SELECT app.finish_account_email($1,$2,$3)', [row.token_hash, lease, accepted]));
+  for (const queue of [
+    { claim: 'app.claim_account_emails', finish: 'app.finish_account_email' },
+    { claim: 'app.claim_registration_emails', finish: 'app.finish_registration_email' },
+  ]) {
+    const lease = randomUUID();
+    const { rows } = await withTransaction(tx => tx.query<{ token_hash: string; payload: string }>(`SELECT * FROM ${queue.claim}($1)`, [lease]));
+    for (const row of rows) {
+      let accepted = false;
+      try { await send(await openEmailJob(row.payload), row.token_hash); accepted = true; sent++; } catch { /* Retry the same job/key, never log token/provider content. */ }
+      await withTransaction(tx => tx.query(`SELECT ${queue.finish}($1,$2,$3)`, [row.token_hash, lease, accepted]));
+    }
   }
   return sent;
 }

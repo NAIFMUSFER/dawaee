@@ -1,7 +1,7 @@
 import { createHmac, hkdfSync } from 'node:crypto';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 import { loadConfig } from '../config.js';
-import { withTransaction } from '../lib/db.js';
+import { withTransaction, type Queryable } from '../lib/db.js';
 
 /**
  * Authentication rate limits that hold across replicas and restarts.
@@ -33,7 +33,8 @@ export type RateScope =
   | 'phone-proof:ip' | 'phone-proof:account'
   | 'recovery:ip' | 'recovery:phone'
   | 'email:ip' | 'email:account' | 'email:recipient' | 'email:hour' | 'email:global' | 'email:token'
-  | 'refresh:ip';
+  | 'refresh:ip'
+  | 'api:account';
 
 export interface Budget {
   windowSeconds: number;
@@ -68,6 +69,10 @@ export const BUDGETS: Record<RateScope, Budget> = {
   'recovery:ip': { windowSeconds: 600, max: 30 },
   'recovery:phone': { windowSeconds: 600, max: 10 },
   'refresh:ip': { windowSeconds: 600, max: 120 },
+  // Four authenticated requests per second, sustained for a minute. Normal
+  // screen loads and offline sync use a small fraction of this, while a token
+  // that is looping or scraping cannot hide behind rotating client addresses.
+  'api:account': { windowSeconds: 60, max: 240 },
 };
 
 /**
@@ -133,6 +138,38 @@ export interface BudgetResult {
 }
 
 /**
+ * Counts within a caller-owned transaction without deciding the HTTP outcome.
+ *
+ * The distinction is security-significant: the row increment must COMMIT even
+ * when it says "refuse". Throwing a 429 inside that same transaction would
+ * roll back the increment and pin the bucket at its last allowed value. Auth
+ * middleware also uses this form so its live-session check and counter consume
+ * one database transaction instead of two.
+ */
+export async function consumeBudgetInTransaction(
+  tx: Queryable,
+  scope: RateScope,
+  value: string,
+): Promise<BudgetResult> {
+  const budget = BUDGETS[scope];
+  const { rows } = await tx.query<{ allowed: boolean; hits: number; retry_after_seconds: number }>(
+    'SELECT * FROM app.consume_rate_budget($1,$2,$3,$4)',
+    [scope, budgetKey(scope, value), budget.windowSeconds, budget.max],
+  );
+  const row = rows[0]!;
+  return { allowed: row.allowed, hits: row.hits, retryAfterSeconds: row.retry_after_seconds };
+}
+
+/** Clear one keyed budget inside an already-authorized caller transaction. */
+export async function clearBudgetInTransaction(
+  tx: Queryable,
+  scope: RateScope,
+  value: string,
+): Promise<void> {
+  await tx.query('SELECT app.clear_rate_budget($1,$2)', [scope, budgetKey(scope, value)]);
+}
+
+/**
  * Count one attempt. Throws 429 when the budget is spent.
  *
  * FAIL CLOSED, on purpose. If this database call fails, the route it guards was
@@ -148,14 +185,7 @@ export interface BudgetResult {
  * in-process limiter, which fails open.
  */
 export async function consumeBudget(scope: RateScope, value: string): Promise<BudgetResult> {
-  const budget = BUDGETS[scope];
-  const { rows } = await withTransaction((tx) =>
-    tx.query<{ allowed: boolean; hits: number; retry_after_seconds: number }>(
-      'SELECT * FROM app.consume_rate_budget($1,$2,$3,$4)',
-      [scope, budgetKey(scope, value), budget.windowSeconds, budget.max],
-    ));
-  const row = rows[0]!;
-  return { allowed: row.allowed, hits: row.hits, retryAfterSeconds: row.retry_after_seconds };
+  return withTransaction((tx) => consumeBudgetInTransaction(tx, scope, value));
 }
 
 /**
@@ -187,6 +217,6 @@ export async function enforceAuthBudget(
 
 /** Called after a successful sign-in so honest mistakes are not carried. */
 export async function clearBudget(scope: RateScope, value: string): Promise<void> {
-  await withTransaction((tx) => tx.query('SELECT app.clear_rate_budget($1,$2)', [scope, budgetKey(scope, value)]))
+  await withTransaction((tx) => clearBudgetInTransaction(tx, scope, value))
     .catch(() => undefined);
 }

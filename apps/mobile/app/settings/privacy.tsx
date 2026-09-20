@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Share, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +14,7 @@ import { buildPatientReport } from '@/privacy/patient-report';
 import { sharePatientReport } from '@/privacy/share-patient-report';
 import { shareFullExport } from '@/privacy/share-full-export';
 import { usePrivateOutputGuard } from '@/privacy/usePrivateOutputGuard';
+import { setDeletionReceipt } from '@/privacy/deletion-receipt';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -95,7 +96,8 @@ export default function PrivacyScreen() {
 
   const [deleteStep, setDeleteStep] = useState<0 | 1>(0);
   const [deleting, setDeleting] = useState(false);
-  const [deleteRequested, setDeleteRequested] = useState(false);
+  const deletionInFlight = useRef(false);
+  const { capture: captureDeletion } = useRequestScope(user?.id ?? 'none');
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -228,17 +230,25 @@ export default function PrivacyScreen() {
   };
 
   const requestDeletion = async () => {
+    if (deletionInFlight.current) return;
+    const current = captureDeletion();
+    if (!current()) return;
+    deletionInFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
     try {
-      await api.post('/v1/me/deletion-request', { confirm: true });
-      setDeleteRequested(true);
-      setDeleteStep(0);
+      const result = await api.post<{ scheduledFor: string }>('/v1/me/deletion-request', { confirm: true });
+      if (!current()) return;
+      setDeletionReceipt(result.scheduledFor);
+      // signOut invalidates local reminders immediately and purges sessions,
+      // queues, encrypted caches and keys; the receipt lives above navigation.
+      await signOut();
     } catch (err) {
-      if (err instanceof NetworkError) setOffline(true);
+      if (!current()) return;
+      if (err instanceof NetworkError) setDeleteError(t('privacy.deleteUncertain'));
       else setDeleteError(t('privacy.deleteFailed'));
     } finally {
-      setDeleting(false);
+      if (current()) { deletionInFlight.current = false; setDeleting(false); }
     }
   };
 
@@ -321,12 +331,7 @@ export default function PrivacyScreen() {
           <Txt variant="body" weight="bold" color={theme.colors.danger700}>{t('privacy.deleteCannotUndo')}</Txt>
           <Txt variant="bodySmall" color={theme.colors.ink500}>{t('privacy.deleteExportFirst')}</Txt>
 
-          {deleteRequested ? (
-            <>
-              <Banner tone="success" title={t('privacy.deleteRequested')} />
-              <Button label={t('settings.signOut')} tone="secondary" onPress={() => void signOut()} />
-            </>
-          ) : deleteStep === 0 ? (
+          {deleteStep === 0 ? (
             <Button
               label={t('privacy.deleteStep1')}
               tone="secondary"
@@ -341,7 +346,7 @@ export default function PrivacyScreen() {
                 onPress={() => void requestDeletion()}
                 accessibilityHint={t('privacy.deleteCannotUndo')}
               />
-              <Button label={t('common.cancel')} tone="ghost" onPress={() => setDeleteStep(0)} />
+              <Button label={t('common.cancel')} tone="ghost" disabled={deleting} onPress={() => setDeleteStep(0)} />
             </View>
           )}
 

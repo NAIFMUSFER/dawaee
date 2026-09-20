@@ -53,8 +53,8 @@ function harness() {
     foreground: () => foreground.forEach(fn => fn('active')),
     close: () => cleanup.forEach(fn => fn()),
     async wait() { await vi.advanceTimersByTimeAsync(101); },
-    async resolve(index: number, name: string) {
-      calls[index]!.resolve({ timezone: 'Asia/Riyadh', today: [{ id: name, medication: { name }, status: 'pending' }], prefetch: [] });
+    async resolve(index: number, name: string, scheduledAt?: string) {
+      calls[index]!.resolve({ timezone: 'Asia/Riyadh', today: [{ id: name, scheduledAt, medication: { name }, status: 'pending' }], prefetch: [] });
       await vi.advanceTimersByTimeAsync(0);
     },
   };
@@ -80,6 +80,17 @@ describe('self reminder refresh after clinical writes', () => {
       await h.wait(); await h.resolve(0, 'same-drug');
       await vi.advanceTimersByTimeAsync(30_000); await h.resolve(1, 'same-drug');
       expect(h.scheduled).toHaveLength(1);
+    } finally { h.close(); }
+  });
+  it('replenishes the scheduling window after a trigger passes even if the server still reports pending', async () => {
+    const h = harness();
+    const trigger = new Date(Date.now() + 45_000).toISOString();
+    try {
+      await h.wait(); await h.resolve(0, 'same-drug', trigger);
+      await vi.advanceTimersByTimeAsync(30_000); await h.resolve(1, 'same-drug', trigger);
+      expect(h.scheduled).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(30_000); await h.resolve(2, 'same-drug', trigger);
+      expect(h.scheduled).toHaveLength(2);
     } finally { h.close(); }
   });
   it('refreshes the owner schedule even when viewing another patient, and includes a newly added drug', async () => {

@@ -3,6 +3,12 @@
 Status: repairs and verification in progress; **not final release approval**.
 This continues [PR #32](https://github.com/NAIFMUSFER/dawaee/pull/32).
 
+The later [legacy-audit reconciliation](2026-09-19-legacy-audit-reconciliation.md)
+supersedes broad closure claims below. In particular, public lockout responses,
+legal/release prerequisites and device/UI acceptance remain open. The later
+[invitation/deletion/notification checkpoint](2026-09-19-invitation-deletion-notification-review.md)
+records source repairs and their bounded evidence for those paths. Baseline evidence below is historical.
+
 ## Baseline and method
 
 The PR baseline is `9a39df8eb829a771dd2fe51f47d3cfdc4e6442d5`, tree
@@ -27,7 +33,7 @@ repairs. Generated dependencies were not treated as project-authored files.
 | Offline dose actions | Pending actions overlay authoritative cached data until acknowledged. Reconnect/foreground retry and session fences prevent lost or cross-account work. Rejected sync removes the optimistic result and shows a generic visible notice. Frozen action timestamps and private replay/order checks reject stale conflicts. |
 | Automatic stock | Confirm-only actions deduct stock and undo the matching movement atomically without granting manual stock editing. Event identity, actor/profile binding, same-transaction creation, replay, clamping and unit checks bound the helper. |
 | Reminders | Snooze intent is independent of escalation stages. Dispatch revalidates current dose/stock state and lease; grouped payloads are rebuilt. Quiet-hour work remains pending, overdue digest selection is bounded, and reminder scanning uses fair paging. |
-| Identity and privacy | Worker email verification checks the exact active relationship. Password lockout responses stay uniform. Warm native invitations parse allowed links. Sensitive modals and report output respect account/profile/app-lock boundaries. Emergency QR retry retains its in-memory capability and states offline uncertainty. |
+| Identity and privacy | Worker email verification checks the exact active relationship. The candidate refuses locked password attempts uniformly without checking the real hash, adds a shared post-authentication account budget, and makes verified recovery transactionally clear the exhausted current phone/email login budgets; see [lockout](2026-09-19-password-lockout-oracle.md), [account-budget](2026-09-19-authenticated-account-rate-budget.md), and [recovery escape](2026-09-20-recovery-rate-limit-escape.md). Warm native invitations parse allowed links. Sensitive modals and report output respect account/profile/app-lock boundaries. Emergency QR retry retains its in-memory capability and states offline uncertainty. |
 | Reports | Readable PDF summary and complete JSON export are separate actions. Temporary outputs are cleaned up and cancelled on scope/lock changes. |
 | Operations | Fresh Compose setup uses restricted runtime roles and the normal migration ledger. Orphan recovery refuses nonempty partial schemas. Terminal notification retention has a bounded worker DELETE policy. Current setup documents replace obsolete provider claims. |
 

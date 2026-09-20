@@ -28,7 +28,7 @@ function loadModule(file, platform = 'ios') {
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
     getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
-    requestPermissionsAsync: async () => { state.notificationGranted = true; return { granted: true }; },
+    requestPermissionsAsync: async () => { state.permissionRequests = (state.permissionRequests || 0) + 1; state.notificationGranted = true; return { granted: true }; },
     getExpoPushTokenAsync: async () => { state.tokenReads++; return state.tokenGate ? state.tokenGate.promise : { data: 'synthetic-token' }; },
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
@@ -84,6 +84,19 @@ function scenarios(file) {
   const add = (name, run, platform) => cases.push({ name, run: async () => {
     const h = loadModule(file, platform); await run(h.api, h.state);
   } });
+  add('background token synchronization never prompts for permission by default', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device'), false);
+    assert.equal(state.permissionRequests || 0, 0);
+    assert.equal(state.tokenReads, 0);
+    assert.equal(state.pushPosts.length, 0);
+  });
+  add('an explicit explained permission action can grant and register', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: true }), true);
+    assert.equal(state.permissionRequests, 1);
+    assert.equal(state.pushPosts.length, 1);
+  });
   add('a later permission grant signals token registration without a new login', async (api, state) => {
     state.notificationGranted = false;
     assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: false }), false);
@@ -256,6 +269,37 @@ function scenarios(file) {
     assert.equal(capability.canScheduleExact, true);
     assert.equal(state.exactAlarmChecks, 0);
   }, 'ios');
+  add('iOS keeps the nearest 64 groups and exposes the first unscheduled deadline', async (api, state) => {
+    const doses = Array.from({ length: 80 }, (_, i) => dose(`D${i}`, i + 1)).reverse();
+    const result = await api.rescheduleLocalNotifications(doses, 'en');
+    assert.equal(result.scheduled, 64); assert.equal(result.deferred, 16);
+    assert.equal(state.active[0].content.data.doseId, 'D0');
+    assert.equal(state.active[63].content.data.doseId, 'D63');
+    assert.equal(result.nextUnscheduledAt, doses.find(d => d.id === 'D64').scheduledAt);
+    assert.equal(api.getLocalScheduleStatus().deferred, 16);
+  });
+  add('refilling excludes resolved reminders and moves later appointments into the available slots', async (api, state) => {
+    const doses = Array.from({ length: 70 }, (_, i) => dose(`D${i}`, i + 1));
+    await api.rescheduleLocalNotifications(doses, 'en');
+    await api.rescheduleLocalNotifications(doses.map((d, i) => i < 10 ? { ...d, status: 'taken' } : d), 'en');
+    assert.equal(state.active.length, 60); assert.equal(api.getLocalScheduleStatus().deferred, 0);
+    assert.equal(state.active[59].content.data.doseId, 'D69');
+    await api.cancelAllLocalNotifications(); assert.equal(api.getLocalScheduleStatus(), null);
+  });
+  add('grouped doses use one slot and Android is not incorrectly capped by the iOS limit', async (api, state) => {
+    await api.rescheduleLocalNotifications(Array.from({ length: 80 }, (_, i) => dose(`D${i}`, i + 1)), 'en');
+    assert.equal(state.active.length, 80); assert.equal(api.getLocalScheduleStatus().deferred, 0);
+  }, 'android');
+  add('a failed push-token request remains visibly failed until a successful registration retry', async (api, state) => {
+    state.tokenGate = deferred();
+    const request = api.syncPushRegistration('device');
+    await until(() => state.tokenReads === 1); state.tokenGate.reject(new Error('offline'));
+    assert.equal(await request, false); assert.equal(api.getPushRegistrationStatus(), 'failed');
+    state.tokenGate = null;
+    assert.equal(await api.syncPushRegistration('device'), true);
+    assert.equal(api.getPushRegistrationStatus(), 'registered');
+    api.resetPushRegistrationStatus(); assert.equal(api.getPushRegistrationStatus(), 'unknown');
+  });
   return cases;
 }
 module.exports = { scenarios, loadModule, deferred, until, dose, flush };

@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@dawaee/shared';
 import { ZodError } from 'zod';
-const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), audit: vi.fn(), ready: true }));
+const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), recoveredBudget: vi.fn(), audit: vi.fn(), ready: true }));
 vi.mock('../src/lib/db.js', () => ({ withTransaction: (fn: any) => fn({ query: io.query }), withUser: (_id: string, fn: any) => fn({ query: io.query }) }));
 vi.mock('../src/middleware/context.js', () => ({
   authenticate: async (req: any) => { if (req.headers.authorization !== 'Bearer synthetic') throw AppError.unauthenticated(); req.auth = { userId: 'owner', sessionId: 'session' }; },
@@ -11,7 +11,11 @@ vi.mock('../src/middleware/context.js', () => ({
 }));
 vi.mock('../src/auth/rate-budget.js', () => ({ enforceAuthBudget: io.budget }));
 vi.mock('../src/lib/password.js', () => ({ verifyPassword: io.password, deriveRecoveryRequestKey: async () => 'request-key' }));
-vi.mock('../src/auth/password-service.js', () => ({ hashNewPassword: io.hash, passwordLoginEnabled: () => true }));
+vi.mock('../src/auth/password-service.js', () => ({
+  clearRecoveredLoginBudgets: io.recoveredBudget,
+  hashNewPassword: io.hash,
+  passwordLoginEnabled: () => true,
+}));
 vi.mock('../src/services/audit-service.js', () => ({ recordAudit: io.audit }));
 vi.mock('../src/providers/account-email.js', async importOriginal => ({ ...await importOriginal<any>(), accountEmailReady: () => io.ready }));
 import { registerAccountEmailRoutes } from '../src/routes/account-email.js';
@@ -65,6 +69,26 @@ describe('email route boundary (SQL separately tested with PostgreSQL)', () => {
     expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(403); expect(io.audit).not.toHaveBeenCalled();
     const result = await request('/v1/auth/email/complete', payload);
     expect(result.statusCode).toBe(200); expect(result.json()).toEqual({ updated: true }); expect(io.audit).toHaveBeenCalledOnce();
+    expect(io.recoveredBudget).not.toHaveBeenCalled();
+  });
+  it('clears login denial state only after an accepted password-reset token', async () => {
+    io.query.mockResolvedValueOnce({ rows: [{ user_id: null }] }).mockResolvedValueOnce({ rows: [{ user_id: 'owner' }] });
+    const payload = { token: 'b'.repeat(43), purpose: 'reset', newPassword: 'Replacement password 4382!' };
+    expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(403);
+    expect(io.recoveredBudget).not.toHaveBeenCalled();
+    expect((await request('/v1/auth/email/complete', payload)).statusCode).toBe(200);
+    expect(io.recoveredBudget).toHaveBeenCalledOnce();
+    expect(io.recoveredBudget.mock.calls[0]![1]).toBe('owner');
+  });
+  it('creates a verified account only from the registration form fields', async () => {
+    io.query.mockResolvedValueOnce({ rows: [{ user_id: 'new-owner' }] });
+    const payload = { token: 'c'.repeat(43), purpose: 'register', displayName: 'Mailbox Owner', newPassword: 'Synthetic registration 4382!' };
+    const result = await request('/v1/auth/email/complete', payload);
+    expect(result.statusCode).toBe(200);
+    expect(io.hash).toHaveBeenCalledWith(payload.newPassword, 'ar');
+    expect(io.query.mock.calls[0]![0]).toContain('complete_email_registration');
+    expect(io.query.mock.calls[0]![1]).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/), payload.displayName, 'hashed-password']);
+    expect(io.audit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'auth.register', actorUserId: 'new-owner' }));
   });
   it('serves a no-store, no-referrer page with a hash-bound script and no database action', async () => {
     const response = await app.inject('/account-email');
@@ -92,5 +116,13 @@ describe('email action form', () => {
     await h.nodes.form.submit({ preventDefault() {} }); expect(h.fetch).not.toHaveBeenCalled();
     h.nodes.confirm.value = h.nodes.password.value; await h.nodes.form.submit({ preventDefault() {} });
     expect(h.fetch.mock.calls[0]![0]).toBe('/v1/auth/email/complete'); expect(h.nodes.password.value).toBe(''); expect(h.nodes.confirm.value).toBe('');
+  });
+  it('requires the mailbox holder to choose the registration name and password', async () => {
+    const h = form('register'); h.nodes['display-name'].value = 'Mailbox Owner';
+    h.nodes.password.value = h.nodes.confirm.value = 'Synthetic-password1';
+    await h.nodes.form.submit({ preventDefault() {} });
+    const body=JSON.parse(h.fetch.mock.calls[0]![1].body);
+    expect(body).toEqual({token:'a'.repeat(43),purpose:'register',displayName:'Mailbox Owner',newPassword:'Synthetic-password1'});
+    expect(h.nodes['display-name'].value).toBe(''); expect(h.nodes.password.value).toBe('');
   });
 });

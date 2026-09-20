@@ -15,7 +15,7 @@ describe('legacy caregiver invitation URL privacy', () => {
   });
 
   it('keeps the fixed accept screen able to resume from the pending-invite store', () => {
-    expect(acceptScreen).toContain('const stored = await peekPendingInvite()');
-    expect(acceptScreen).toContain('if (params.token)');
+    expect(acceptScreen).toContain('incomingToken ?? await peekPendingInvite()');
+    expect(acceptScreen).toContain('if (incomingToken) await stashPendingInvite(incomingToken)');
   });
 });

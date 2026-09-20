@@ -70,7 +70,7 @@ describe('phase 10 — managed notification runtime is wired end to end', () => 
     expect(layout).toContain('configureCategories');
     // This is the durable wiring audit. The mobile Shell and scheduling suites
     // exercise cold startup, account changes and a later OS permission grant.
-    expect(layout).toMatch(/if \(!ready \|\| !signedIn \|\| !user\?\.id \|\| emailRequired \|\| !deviceId\) return/);
+    expect(layout).toMatch(/if \(!ready \|\| !signedIn \|\| deletionPending \|\| !user\?\.id \|\| emailRequired \|\| !deviceId\) return/);
     expect(layout).toMatch(/syncPushRegistration\(deviceId,\s*\{\s*requestPermission,\s*isCurrent:\s*current\s*\}\)/);
     expect(layout).toContain('!disposed && caregiverSession.current.generation === generation');
     expect(layout).toMatch(/subscribeNotificationPermissionChanges\(\(\) => \{ void register\(false\); \}\)/);

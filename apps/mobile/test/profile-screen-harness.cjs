@@ -108,6 +108,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/components/DoseCard': hosts,
     '@/components/ProfileSwitcher': hosts,
     '@/components/IncomingInvitations': hosts,
+    '@/privacy/deletion-receipt': { setDeletionReceipt: value => { h.deletionReceipt = value; } },
     '@/components/Picker': hosts,
     '@/components/TimeField': hosts,
     '@/components/SnoozeSheet': hosts,

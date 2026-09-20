@@ -1,6 +1,7 @@
 # Dawaee mobile — screen authoring brief
 
-Read this before adding a screen. Everything here already exists and works.
+Read this before adding a screen. Reuse the existing components and verify each
+journey against the current audit; a listed surface is not an acceptance result.
 
 ## Stack
 Expo SDK 55 + expo-router (file-based routing) + React Native 0.83 + TypeScript strict.
@@ -124,7 +125,8 @@ try { ... } catch (err) {
 ## Existing routes (do not recreate)
 ```
 app/_layout.tsx                app/index.tsx
-app/(auth)/_layout.tsx  language.tsx  phone.tsx  otp.tsx
+app/(auth)/_layout.tsx  language.tsx  sign-in.tsx  sign-up.tsx
+app/(auth)/forgot-password.tsx  onboarding.tsx
 app/(tabs)/_layout.tsx  today.tsx
 src/components/ui.tsx  DoseCard.tsx  SnoozeSheet.tsx
 ```

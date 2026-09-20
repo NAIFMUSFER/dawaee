@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   AppError, CAREGIVER_ROLE_PRESETS, ERROR_CODES, acceptInvitationSchema, caregiverNotificationRuleSchema,
   inviteCaregiverSchema, updateCaregiverPermissionsSchema, updateEscalationPolicySchema, t,
+  previewInvitationSchema, acceptReviewedInvitationSchema,
 } from '@dawaee/shared';
 import { DEFAULT_ESCALATION_STAGES } from '@dawaee/core';
 import { loadConfig } from '../config.js';
@@ -161,8 +162,8 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
   app.get('/v1/caregivers/incoming', async req => {
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async tx => {
-      const { rows } = await tx.query('SELECT * FROM app.pending_email_invitations()');
-      return { invitations: rows.map(r => ({ id: r.id, patientName: r.patient_name, role: r.role, expiresAt: r.expires_at })) };
+      const { rows } = await tx.query('SELECT * FROM app.pending_caregiver_invitation_previews()');
+      return { invitations: rows.map(r => ({ id: r.id, patientName: r.patient_name, role: r.role, permissions: r.permissions, expiresAt: r.expires_at })) };
     });
   });
 
@@ -177,6 +178,39 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
       await recordAudit(tx, { actorUserId: userId, actorRole: 'caregiver', patientProfileId: result.patient_profile_id,
         action: 'caregiver.accepted', entityType: 'caregiver_relationship', entityId: id, requestId: req.id, ipHash: req.ipHash });
       return { accepted: true, relationshipId: id, profileId: result.patient_profile_id };
+    });
+  });
+
+  // The bearer belongs in the JSON body, never a URL/query/server access log.
+  app.post('/v1/caregivers/invitations/preview', async req => {
+    const body = previewInvitationSchema.parse(req.body);
+    const { userId } = currentUser(req);
+    return withUserReadOnly(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.preview_caregiver_invitation($1,$2)', [
+        'token' in body ? sha256(body.token) : null,
+        'relationshipId' in body ? body.relationshipId : null,
+      ]);
+      const result = rows[0];
+      if (result?.outcome === 'verification_required') throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your phone to review this invitation');
+      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
+      if (result?.outcome !== 'ready') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
+      return { id: result.id, patientName: result.patient_name, role: result.role, permissions: result.permissions, expiresAt: result.expires_at };
+    });
+  });
+
+  app.post('/v1/caregivers/invitations/accept', async req => {
+    const body = acceptReviewedInvitationSchema.parse(req.body);
+    const { userId } = currentUser(req);
+    return withUser(userId, async tx => {
+      const { rows } = await tx.query('SELECT * FROM app.accept_reviewed_caregiver_invitation($1,$2,$3)', [body.relationshipId, body.role, body.permissions]);
+      const result = rows[0];
+      if (result?.outcome === 'changed') throw new AppError(ERROR_CODES.INVITATION_CHANGED, 409, 'Review the updated invitation before accepting');
+      if (result?.outcome === 'verification_required') throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your phone before accepting');
+      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
+      if (result?.outcome !== 'accepted') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
+      await recordAudit(tx, { actorUserId: userId, actorRole: 'caregiver', patientProfileId: result.patient_profile_id,
+        action: 'caregiver.accepted', entityType: 'caregiver_relationship', entityId: body.relationshipId, requestId: req.id, ipHash: req.ipHash });
+      return { accepted: true, relationshipId: body.relationshipId, profileId: result.patient_profile_id };
     });
   });
 

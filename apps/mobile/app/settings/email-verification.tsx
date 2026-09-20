@@ -77,6 +77,8 @@ function EmailForm() {
     {cooldown ? <Txt>{t('recovery.cooldown')}</Txt> : null}
     <Button label={t('emailAccount.sendVerify')} loading={busy} disabled={!status?.available || !password || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || cooldown} onPress={() => void send()} />
     <Button label={t('emailAccount.refresh')} tone="secondary" disabled={busy} onPress={() => void load()} />
+    {status?.verified && !user?.phoneE164 ? <Button label={t('phoneVerification.title')} tone="secondary"
+      disabled={busy} onPress={() => router.replace('/settings/phone-verification')} /> : null}
     {!required ? <Button label={t('common.back')} tone="ghost" disabled={busy} onPress={() => { void landingAfterAuth().then(path => router.replace(path)); }} /> : null}
     {required ? <Button label={t('settings.signOut')} tone="ghost" disabled={busy} onPress={() => { void signOut(); }} /> : null}
   </Screen></SafeAreaView>;

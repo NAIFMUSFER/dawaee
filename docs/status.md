@@ -4,6 +4,10 @@ The active full audit continues PR #32. Its [evidence and remaining release
 gates](audit/2026-09-19-full-audit.md) supersede unversioned early-project counts
 and integration claims. Dated reports remain historical evidence.
 
+The [legacy-audit reconciliation](audit/2026-09-19-legacy-audit-reconciliation.md)
+maps the owner's `07bf101` report to current code and records remaining product,
+identity, notification and store prerequisites. Passing CI does not close them.
+
 ## Observed release state
 
 - Production API and worker were verified at `63b5b8d33a502b8e3d3cd2ca94b1855266665f90`.

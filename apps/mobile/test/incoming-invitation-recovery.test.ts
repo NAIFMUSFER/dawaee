@@ -9,11 +9,12 @@ describe('verified email invitation discovery', () => {
     const setActiveProfile = vi.fn();
     const h = createHarness(resolve('apps/mobile/src/components/IncomingInvitations.tsx'), resolve('apps/mobile/src/hooks/useRequestScope.ts'), {}, {
       __exportName: 'IncomingInvitations',
+      './InvitationPermissions': { InvitationPermissions: 'InvitationPermissions' },
       './ui': new Proxy({}, { get: (_, key) => String(key) }),
       '@/state/app-store': { useApp: () => ({ user: { id: 'synthetic-recipient' }, refreshProfiles, setActiveProfile }) },
     });
     try {
-      h.requests[0].resolve({ invitations: [{ id: 'invite-a', patientName: 'Synthetic patient', role: 'caregiver', expiresAt: '2099-01-01' }] });
+      h.requests[0].resolve({ invitations: [{ id: 'invite-a', patientName: 'Synthetic patient', role: 'caregiver', permissions: ['view_schedule'], expiresAt: '2099-01-01' }] });
       await h.flush();
       h.find('Button', (p: any) => p.label === 'invite.accept').onPress(); await h.flush();
       h.requests[1].resolve({ profileId: 'patient-a' }); await h.flush();

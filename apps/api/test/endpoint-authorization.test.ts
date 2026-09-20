@@ -208,6 +208,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/me/preferences': 'authenticated',
   'PUT /v1/me/consents': 'authenticated',
   'POST /v1/me/deletion-request': 'authenticated',
+  'POST /v1/me/deletion-cancel': 'authenticated',
 
   'GET /v1/medications': 'authenticated',
   'POST /v1/medications': 'authenticated',
@@ -241,6 +242,8 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/care-circle': 'authenticated',
   'POST /v1/caregivers/invite': 'authenticated',
   'POST /v1/caregivers/accept': 'authenticated',
+  'POST /v1/caregivers/invitations/preview': 'authenticated',
+  'POST /v1/caregivers/invitations/accept': 'authenticated',
   'GET /v1/caregivers/incoming': 'authenticated',
   'POST /v1/caregivers/incoming/accept': 'authenticated',
   'DELETE /v1/caregivers/:relationshipId': 'authenticated',

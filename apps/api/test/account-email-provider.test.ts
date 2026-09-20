@@ -30,6 +30,13 @@ describe('account email provider', () => {
     expect(new URLSearchParams(url.hash.slice(1)).get('token')).toBe(mail.token);
     expect(content.html).toContain('dir="rtl"'); expect(content.text).toContain('15');
   });
+  it('renders a distinct account-creation action without embedding a password', () => {
+    const registration={...mail,purpose:'register' as const,locale:'en' as const};
+    const content=accountEmailContent(registration,loadConfig());
+    expect(content.subject).toContain('Complete account creation');
+    expect(content.text).toContain('purpose=register');
+    expect(content.text).not.toContain('password');
+  });
   it('uses a stable idempotency key and never follows a provider redirect', async () => {
     const request = vi.fn(async () => new Response(JSON.stringify({ id: 'synthetic-message' }), { status: 200 }));
     const key = emailTokenHash(mail.token); await sendAccountEmail(mail, key, request as typeof fetch);

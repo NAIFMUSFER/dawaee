@@ -102,12 +102,14 @@ function harness(options: { platform?: string; last?: unknown; signedIn?: boolea
       case '@/security/email-onboarding': return executeSource('apps/mobile/src/security/email-onboarding.ts', requireMock);
       case '@/navigation/private-navigation': return { clearClinicalRouteIntents: noop };
       case '@/navigation/AppNavigator': return { default: noop };
+      case '@/components/AccountDeletionNotice': return { PendingDeletionScreen: noop, DeletionReceiptNotice: noop };
+      case '@/components/NotificationHealthNotice': return { NotificationHealthNotice: noop };
       case '@/components/WebAlertHost': return { default: noop };
       case '@/storage/medication-draft': return { clearMedicationDrafts: noop };
       case '@/notifications': return {
         configureCategories: async () => undefined, configureChannels: async () => undefined,
         syncPushRegistration: async () => { registrations++; },
-        subscribeNotificationPermissionChanges: () => noop,
+        subscribeNotificationPermissionChanges: () => noop, resetPushRegistrationStatus: noop,
         startNotificationActionListener: async () => { actionSubscriptions++; return noop; },
       };
       case '@/notifications/caregiver-navigation':
