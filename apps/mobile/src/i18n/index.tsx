@@ -140,10 +140,13 @@ export function applyNativeDirection(locale: Locale): { restartRequired: boolean
   // The web document updates direction immediately; forceRTL is native-only.
   if (Platform.OS === 'web') return { restartRequired: false };
   const want = isRtl(locale);
-  if (I18nManager.isRTL === want) return { restartRequired: false };
+  // isRTL describes this running bridge, not the persisted next-start flags.
+  // Always overwrite both flags, even when returning to the current direction:
+  // otherwise en -> ar -> en hides the restart banner but leaves RTL forced
+  // for the next launch (and ar -> en -> ar leaves RTL disabled).
   I18nManager.allowRTL(want);
   I18nManager.forceRTL(want);
-  return { restartRequired: true };
+  return { restartRequired: I18nManager.isRTL !== want };
 }
 
 export function useT() {
