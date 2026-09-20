@@ -58,9 +58,24 @@ browser storage. No API contract or migration changed.
 
 ## Publishing and limits
 
-This source checkpoint records completed local checks. Publication and the
-preview's actual live commit/deploy must be recorded separately in PR #32 after
-verification. Do not reuse previous-head CI as evidence for this change.
+Published source: PR #32 `67ceed730fde8b3584fdacd163e8abb90a615fff`.
+The isolated preview serves identical-tree commit
+`6b50862b15ada2a60014eff531e4ca36ed538191` via
+`dep-danrt6p7lnhs73eegrd0`, live at `2026-09-20T11:10:37.227515Z`.
+Read-only HTTP checks confirmed that commit/schema 0095, readiness, the updated
+sign-up/sign-in bundle and account-email return path. No production deploy or
+native submission was performed.
+
+Full CI run [35506974322](https://github.com/NAIFMUSFER/dawaee/actions/runs/35506974322)
+then found one stale source-text assertion in
+`apps/mobile/test/invite-invalid-persistence.test.ts` on both database versions:
+it required `setError(t('accept.invalidBody'))` literally, whereas the corrected
+screen selects the guidance by platform. Each matrix job reported 2,912 passing
+tests and this one failure. Mobile, container, dependency and recovery jobs, and
+the separate Security workflow passed. This checkpoint is therefore **not a
+fully green CI head**. The follow-up replaces that assertion with execution of
+the actual screen for iOS and web; see the
+[TestFlight preparation record](2026-09-20-testflight-upload-readiness.md).
 
 The controlled browser still fails before navigation: `CDP operation refresh tabs
 timed out after 20000ms`. Consequently this is not a rendered browser journey,
