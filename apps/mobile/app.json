@@ -30,7 +30,7 @@
           "en"
         ]
       },
-      "buildNumber": "8"
+      "buildNumber": "10"
     },
     "locales": {
       "ar": "./locales/ar.json",
