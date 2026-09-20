@@ -38,6 +38,9 @@ needed for this workflow.
 
 The existing authenticated Expo dashboard supports running a workflow from a
 specific Git ref, so a persistent local CLI token is not required for this path.
+Commit `ef2c9a4fbd6b49315caa25142e708eab67639f23` was loaded in the Run workflow
+form. Expo offered **Upload reviewed iOS build 10** and enabled Confirm. The
+form was cancelled without running it; a selectable workflow is not an upload.
 The submissions list still contains only the previous three submissions; no
 build-10 upload is recorded. The historical successful EAS Submit workflow
 provides evidence that this project previously used hosted submission.
@@ -65,3 +68,25 @@ merge or final release was performed in this checkpoint. The existing signed
 build remains **0.1.0 (10)**. Browser photo/confirmation evidence remains valid
 within its documented scope. Authenticated mounted-session revocation retest,
 physical iPhone notification and native acceptance remain open.
+
+## Independent preview work completed
+
+The tested application tree `e59f864` was promoted to the existing isolated
+preview as `3c5969a9d7a4ad125bb49c43ad391c4fdec1e39c`, preserving preview and
+source ancestry. Git's tree comparison reports no difference. Its one automatic
+deployment `dep-dao2epfavr4c73asasv0` became **live at 18:37:35 UTC** on
+20 September. No second trigger was sent and no accounts were reset.
+
+At 18:38 UTC, `/version` returned the exact preview commit and schema 0095,
+and `/health/ready` returned 200/ready. Browser-style `/sign-up` with
+`Accept: text/html` returned 200 HTML with CSP and the corrected English text
+in its served bundle. Requests without an HTML Accept header returned the
+API's 404, so those requests are not counted as successful page checks.
+Both corrected Arabic strings were also present after decoding the bundle's
+Unicode escapes; this is bundle-content evidence, not an authenticated Settings
+screen observation.
+After reloading the signed-out browser, Arabic sign-in rendered; its actual
+create-account button opened the email registration screen with the same-email
+invitation guidance and disabled submission while empty. No account was created.
+Error/fatal logs between 18:37:35 and 18:38:37 UTC were empty. These are limited
+browser/HTTP deployment checks, not a repeat of all authenticated/native journeys.
