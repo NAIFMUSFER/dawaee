@@ -1,5 +1,13 @@
 # Existing iOS 10 upload preparation — 20 September 2026
 
+**Follow-up, 19:04 UTC:** the owner completed Apple sign-in. The automatic
+distribution hold was implemented and verified using a manual internal group
+with the existing tester/build 6; the automatic group has zero testers.
+The pinned workflow ran once and **Succeeded**. Apple independently displays
+build **0.1.0 (10), Processing**. No duplicate build, production deploy or
+public release was performed. The preparation-only statements below are
+historical; see [the actual upload evidence](2026-09-20-ios10-apple-upload.md).
+
 ## Verified source and running services
 
 The application source is `e59f864a6ae32ec28276b1b786e64b0621506308`.
