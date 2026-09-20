@@ -6,6 +6,7 @@ import { loadConfig } from '../src/config.js';
 import { resetDatabase } from './harness.js';
 import { BUDGETS, clientAddressUnit, consumeBudget } from '../src/auth/rate-budget.js';
 import type { FastifyInstance } from 'fastify';
+import { hashPassword } from '../src/lib/password.js';
 
 /**
  * Authentication limits that hold when the service is more than one process.
@@ -42,10 +43,11 @@ const register = (app: FastifyInstance, payload: Record<string, unknown>, addr: 
 
 async function authenticatedAccount(app: FastifyInstance, addr: string) {
   const email = `api-budget-${seq++}-${Date.now()}@example.test`;
-  const created = await register(app, {
-    email, displayName: 'API budget fixture', password: PW, locale: 'ar',
-    deviceId: `api-budget-device-${seq++}`,
-  }, addr);
+  const made=await owner.query<{user_id:string}>('SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
+    [null,email,'API budget fixture',await hashPassword(PW),'ar']);
+  await owner.query('INSERT INTO user_email_verifications(user_id,email) VALUES($1,$2)',[made.rows[0]!.user_id,email]);
+  const created=await app.inject({method:'POST',url:'/v1/auth/login',remoteAddress:'10.55.0.1',headers:from(addr),
+    payload:{identifier:email,password:PW,deviceId:`api-budget-device-${seq++}`}});
   expect(created.statusCode, created.body).toBe(200);
   const accessToken = created.json<{ accessToken: string }>().accessToken;
   const headers = { authorization: `Bearer ${accessToken}` };

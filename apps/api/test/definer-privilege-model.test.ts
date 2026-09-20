@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { resetDatabase, startHarness, type Harness } from './harness.js';
+import { openEmailJob } from '../src/providers/account-email.js';
 
 /**
  * The definer privilege model, and the topology the rest of the suite runs on.
@@ -314,11 +315,16 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
       url: '/v1/auth/register',
       payload: { email, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
     });
-    // The exact request that returned 404 on a realistic owner before 0030.
-    expect(res.statusCode, res.body.slice(0, 200)).toBe(200);
-    const body = res.json() as { accessToken: string; refreshToken: string };
-    access = body.accessToken;
-    refresh = body.refreshToken;
+    expect(res.statusCode, res.body.slice(0, 200)).toBe(202);
+    expect((await one<{users:string}>(root,`SELECT count(*)::text AS users FROM users WHERE email='${email}'`)).users).toBe('0');
+    const queued=await one<{payload:string}>(root,`SELECT payload FROM email_registration_challenges WHERE email='${email}'`);
+    const mail=await openEmailJob(queued.payload);
+    const completed=await send({method:'POST',url:'/v1/auth/email/complete',payload:{token:mail.token,purpose:'register',displayName:'نموذج المُعرِّف',newPassword:pw}});
+    expect(completed.statusCode,completed.body).toBe(200);
+    const signedIn=await send({method:'POST',url:'/v1/auth/login',payload:{identifier:email,password:pw,deviceId:'definer-test-device'}});
+    expect(signedIn.statusCode,signedIn.body).toBe(200);
+    const body = signedIn.json() as { accessToken: string; refreshToken: string };
+    access = body.accessToken; refresh = body.refreshToken;
     expect(access).toBeTruthy();
 
     // Four FORCE-RLS tables, one of which (user_credentials) has no grant to any

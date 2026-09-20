@@ -2,6 +2,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDatabase, startHarness, type Harness } from './harness.js';
 import { generateOtp, otpVerifier, sha256 } from '../src/lib/crypto.js';
+import { hashPassword } from '../src/lib/password.js';
 
 /**
  * One-time codes: what is stored, what can be guessed, and what a code buys.
@@ -23,6 +24,11 @@ let seq = 0;
 const client = () => ({ 'x-forwarded-for': `10.55.0.1, 198.18.${Math.floor(seq / 250) % 250}.${(seq++ % 250) + 1}` });
 let n = 0;
 const newPhone = () => `+9665${String(6100000 + n++).padStart(8, '0')}`;
+async function seedAccount(phone: string, name: string): Promise<void> {
+  const email=`fixture-${phone.replace(/\D/g,'')}@example.test`;
+  await owner.query('SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
+    [phone,email,name,await hashPassword(PW),'ar']);
+}
 
 /** Issue a challenge exactly as `issueOtp` would, without a provider. */
 const issue = (phone: string, code: string, opts: { ttl?: number; cooldown?: number } = {}) =>
@@ -273,12 +279,7 @@ describe('only the newest code is live', () => {
 describe('a code does not outrank an operator', () => {
   it('a disabled account looks exactly like a wrong code', async () => {
     const phone = newPhone();
-    const reg = await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D', password: PW, locale: 'ar', deviceId: `otp-reg-${seq}-${Date.now() % 10000}` },
-    });
-    expect(reg.statusCode).toBe(200);
-    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
+    await seedAccount(phone,'D');
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
 
     await issue(phone, '191919');
@@ -297,11 +298,7 @@ describe('a code does not outrank an operator', () => {
 
   it('a disabled account is not signed in and gets no session', async () => {
     const phone = newPhone();
-    await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'D2', password: PW, locale: 'ar', deviceId: `otp-reg2-${seq}-${Date.now() % 10000}` },
-    });
-    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
+    await seedAccount(phone,'D2');
     await owner.query('UPDATE users SET disabled_at = now() WHERE phone_e164=$1', [phone]);
     const before = await owner.query<{ n: string }>(
       'SELECT count(*) AS n FROM auth_sessions WHERE user_id=(SELECT id FROM users WHERE phone_e164=$1) AND revoked_at IS NULL', [phone],
@@ -321,11 +318,7 @@ describe('a code does not outrank an operator', () => {
    */
   it('signing in with a code clears a password lockout', async () => {
     const phone = newPhone();
-    await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone, email: `fixture-${phone.replace(/\D/g, '')}@example.test`, displayName: 'L', password: PW, locale: 'ar', deviceId: `otp-lk-${seq}-${Date.now() % 10000}` },
-    });
-    await owner.query('UPDATE users SET phone_e164=$1 WHERE email=$2', [phone, `fixture-${phone.replace(/\D/g, '')}@example.test`]);
+    await seedAccount(phone,'L');
     for (let i = 0; i < 9; i++) {
       await h.app.inject({
         method: 'POST', url: '/v1/auth/login', remoteAddress: '10.55.0.1', headers: client(),
@@ -425,10 +418,7 @@ describe('codes do not leak, and challenges do not linger', () => {
 describe('there is no delivery provider, and the API says so', () => {
   it('requesting a code is refused identically for any number', async () => {
     const known = newPhone();
-    await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: client(),
-      payload: { phone: known, email: `fixture-${known.replace(/\D/g, '')}@example.test`, displayName: 'R', password: PW, locale: 'ar', deviceId: `otp-req-${seq}-${Date.now() % 10000}` },
-    });
+    await seedAccount(known,'R');
     const ask = (p: string) => h.app.inject({
       method: 'POST', url: '/v1/auth/otp/request', remoteAddress: '10.55.0.1', headers: client(),
       payload: { phone: p, locale: 'ar' },

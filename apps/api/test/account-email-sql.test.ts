@@ -209,6 +209,49 @@ describe('authenticated account request budget through real middleware and SQL',
 });
 
 describe('account email SQL boundaries', () => {
+  it('creates no identity until the mailbox token supplies the name and password', async () => {
+    const email=`pending-${randomUUID()}@example.test`, token=hash();
+    await query('SELECT app.request_email_registration($1,$2,$3,$4)',[email,token,'en','encrypted-registration']);
+    expect((await owner('SELECT id FROM users WHERE lower(email)=$1',[email])).rows).toHaveLength(0);
+    expect((await owner('SELECT email,payload FROM email_registration_challenges WHERE email=$1',[email])).rows)
+      .toEqual([{email,payload:'encrypted-registration'}]);
+    const uid=await value('SELECT app.complete_email_registration($1,$2,$3)',[token,'Mailbox Owner',newPassword]) as string;
+    expect(uid).toMatch(/^[a-f0-9-]{36}$/i);
+    expect((await owner('SELECT email,display_name,locale FROM users WHERE id=$1',[uid])).rows[0])
+      .toEqual({email,display_name:'Mailbox Owner',locale:'en'});
+    expect(await value('SELECT app.has_verified_email($1)',[uid],uid)).toBe(true);
+    expect(await value('SELECT app.email_verification_required($1)',[uid],uid)).toBe(false);
+    expect((await owner('SELECT id FROM patient_profiles WHERE owner_user_id=$1 AND is_self',[uid])).rows).toHaveLength(1);
+    expect(await value('SELECT app.complete_email_registration($1,$2,$3)',[token,'Mailbox Owner',newPassword])).toBe(uid);
+  });
+  it('gives an occupied mailbox no challenge and cannot be used to replace its credential', async () => {
+    const f=await fixture(true), token=hash();
+    await query('SELECT app.request_email_registration($1,$2,$3,$4)',[f.email,token,'ar','encrypted-registration']);
+    expect((await owner('SELECT * FROM email_registration_challenges WHERE email=$1',[f.email])).rows).toHaveLength(0);
+    expect(await value('SELECT app.complete_email_registration($1,$2,$3)',[token,'Attacker',newPassword])).toBeNull();
+    expect((await owner('SELECT password_hash FROM user_credentials WHERE user_id=$1',[f.uid])).rows[0])
+      .toEqual({password_hash:oldPassword});
+  });
+  it('keeps bounded links valid until one wins, then invalidates the rest and leases jobs privately', async () => {
+    const email=`lease-${randomUUID()}@example.test`, old=hash(), latest=hash();
+    await query('SELECT app.request_email_registration($1,$2,$3,$4)',[email,old,'ar','first']);
+    await query('SELECT app.request_email_registration($1,$2,$3,$4)',[email,latest,'ar','second']);
+    const lease=randomUUID();
+    expect((await query('SELECT * FROM app.claim_registration_emails($1)',[lease])).rows)
+      .toEqual(expect.arrayContaining([{token_hash:old,payload:'first'},{token_hash:latest,payload:'second'}]));
+    const uid=await value('SELECT app.complete_email_registration($1,$2,$3)',[old,'Owner',newPassword]);
+    expect(uid).toMatch(/^[a-f0-9-]{36}$/i);
+    expect(await value('SELECT app.complete_email_registration($1,$2,$3)',[latest,'Owner',newPassword])).toBeNull();
+    await query('SELECT app.finish_registration_email($1,$2,true)',[old,lease]);
+    expect((await query('SELECT * FROM app.claim_registration_emails($1)',[randomUUID()])).rows).toHaveLength(0);
+    const expired=hash(); await query('SELECT app.request_email_registration($1,$2,$3,$4)',[`expired-${email}`,expired,'ar','expired']);
+    await owner("UPDATE email_registration_challenges SET expires_at=now()-interval '1 second' WHERE token_hash=$1",[expired]);
+    expect(await value('SELECT app.complete_email_registration($1,$2,$3)',[expired,'Owner',newPassword])).toBeNull();
+    for (const role of ['dawaee_app','dawaee_worker']) {
+      await expect(query('SELECT * FROM email_registration_challenges',[],role)).rejects.toMatchObject({code:'42501'});
+    }
+    await expect(query('SELECT * FROM app.claim_registration_emails($1)',[randomUUID()],'dawaee_worker')).rejects.toMatchObject({code:'42501'});
+  });
   it('enforces onboarding for new email accounts until the real verification action completes', async () => {
     const email = `${randomUUID()}@example.test`;
     const registered = await query('SELECT * FROM app.register_email_account(NULL,$1,$2,$3,$4)', [email,'New email account',oldPassword,'ar']);

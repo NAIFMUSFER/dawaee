@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { randomBytes } from 'node:crypto';
 import {
   AppError, ERROR_CODES, passwordLoginSchema, registerPushTokenSchema, registerSchema,
   refreshSchema, setPasswordSchema, verifyOtpSchema, t,
@@ -15,6 +16,7 @@ import { accessTokenTtlSeconds, signAccessToken } from '../auth/tokens.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
 import { clearBudget, enforceAuthBudget } from './../auth/rate-budget.js';
+import { accountEmailReady, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
 
 export function registerAuthRoutes(app: FastifyInstance): void {
   /**
@@ -143,90 +145,39 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   // ------------------------------------------------------------- password
 
-  /**
-   * Create an email account with a password.
-   *
-   * Older clients also submit a phone here. It is validated for useful error
-   * feedback but deliberately NOT reserved: knowing an email password does not
-   * prove ownership of a phone number. The authenticated phone route links the
-   * number only after a fresh Firebase phone proof succeeds. Keeping the legacy
-   * field accepted lets an installed client finish registration safely instead
-   * of stranding it on a breaking validation response.
-   */
+  /** Request a one-time account-creation link without reserving an identity. */
   app.post('/v1/auth/register', {
     config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
-  }, async (req) => {
-    if (!passwordLoginEnabled()) {
-      throw new AppError(ERROR_CODES.FORBIDDEN, 403, 'Password sign-in is disabled.');
+  }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!passwordLoginEnabled() || !accountEmailReady()) {
+      throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Account email is unavailable');
     }
     const body = registerSchema.parse(req.body);
 
-    const requestedPhone = body.phone ? normalizePhone(body.phone) : null;
-    if (body.phone && !requestedPhone) {
+    if (body.phone && !normalizePhone(body.phone)) {
       throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Invalid phone number');
     }
     // Already trimmed and lower-cased by `emailInput`; one spelling, decided once.
-    const email = body.email ?? null;
+    const email = body.email;
 
     // Shared with every other replica and surviving a cold start, unlike the
     // in-process limiter this sits behind. Keyed by the only identity accepted
     // at this stage (email) as well as by address, so replicas share the bound.
     await enforceAuthBudget({
       ip: { scope: 'register:ip', value: req.ip },
-      identifier: { scope: 'register:identifier', value: email! },
+      identifier: { scope: 'register:identifier', value: email },
     });
+    const secret = randomBytes(32).toString('base64url');
+    const payload = await sealEmailJob({ email, token: secret, purpose: 'register', locale: body.locale });
+    await withTransaction(tx => tx.query(
+      'SELECT app.request_email_registration($1,$2,$3,$4)',
+      [email, emailTokenHash(secret), body.locale, payload],
+    ));
 
-    const passwordHash = await hashNewPassword(body.password, body.locale, email ?? undefined);
-
-    const result = await withTransaction(async (tx) => {
-      const { rows } = await tx.query<{ user_id: string; created: boolean; self_profile_id: string | null }>(
-        'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
-        [null, email, body.displayName.trim(), passwordHash, body.locale],
-      );
-      const row = rows[0]!;
-      if (!row.created) return { taken: true as const };
-
-      // A new account without its own patient profile is unusable: every
-      // screen needs one, and the app would sit on a loading spinner rather
-      // than report anything. Refuse the registration instead of handing back
-      // a session to a half-built account.
-      if (!row.self_profile_id) {
-        throw new AppError(ERROR_CODES.INTERNAL, 500, 'Account setup did not complete.');
-      }
-
-      const session = await createSession(tx, row.user_id, {
-        deviceId: body.deviceId,
-        deviceName: body.deviceName ?? null,
-        userAgent: req.headers['user-agent'] ?? null,
-        ipHash: req.ipHash,
-      });
-      await recordAudit(tx, {
-        actorUserId: row.user_id,
-        patientProfileId: null,
-        action: 'auth.register',
-        entityType: 'user',
-        entityId: row.user_id,
-        requestId: req.id,
-        ipHash: req.ipHash,
-        newValue: { method: 'password', deviceId: body.deviceId, phoneDeferred: requestedPhone !== null },
-      });
-      return { taken: false as const, userId: row.user_id, session };
-    });
-
-    if (result.taken) {
-      // Registration is the one place this cannot be hidden — the account
-      // genuinely cannot be created twice. Sign-in stays uniform.
-      throw new AppError(ERROR_CODES.IDENTIFIER_TAKEN, 409, t(body.locale, 'auth.identifierTaken'));
-    }
-
-    return {
-      accessToken: await signAccessToken(result.userId, result.session.sessionId, false),
-      refreshToken: result.session.refreshToken,
-      expiresIn: accessTokenTtlSeconds(),
-      refreshExpiresAt: result.session.refreshExpiresAt.toISOString(),
-      isNewUser: true,
-      phoneVerificationRequired: requestedPhone !== null,
-    };
+    // Identical for an existing or available address. No account, password or
+    // session exists until the mailbox holder completes the emailed form.
+    return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
   });
 
   /** Sign in with phone-or-email and a password. */

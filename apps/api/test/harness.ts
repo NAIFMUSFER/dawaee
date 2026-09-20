@@ -10,6 +10,7 @@ import { createWorkerContext, type WorkerContext } from '../../worker/src/contex
 import { runTick } from '../../worker/src/index.js';
 import { resetClockSource, setClockSource } from '../src/lib/clock.js';
 import { normalizePhone } from '../src/lib/crypto.js';
+import { hashPassword } from '../src/lib/password.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -118,8 +119,34 @@ function nextRemoteAddress(): string {
  */
 export const TEST_PASSWORD = 'correct horse battery staple';
 
+/** Owner-proof is exercised by the account-email suites. Clinical fixtures
+ * start from the post-proof definer operation so thousands of unrelated tests
+ * do not depend on an email provider or scrape a bearer token from a mailbox. */
+export async function createEmailAccount(
+  h: Harness,
+  email: string,
+  displayName: string,
+  password = TEST_PASSWORD,
+  deviceId = `device-${email}`,
+  locale: 'ar' | 'en' = 'ar',
+): Promise<{ userId: string; token: string; refreshToken: string; profileId: string }> {
+  const created = await withTransaction(tx => tx.query<{ user_id: string }>(
+    'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
+    [null, email.toLowerCase(), displayName, await hashPassword(password), locale],
+  ));
+  const userId=created.rows[0]!.user_id;
+  confirmTestEmail(userId);
+  const login = await h.app.inject({ method: 'POST', url: '/v1/auth/login',
+    remoteAddress: nextRemoteAddress(), payload: { identifier: email, password, deviceId } });
+  if (login.statusCode !== 200) throw new Error(`fixture sign-in failed for ${email}: ${login.body}`);
+  const auth=login.json<{accessToken:string;refreshToken:string}>();
+  const profiles=await h.app.inject({url:'/v1/profiles',headers:{authorization:`Bearer ${auth.accessToken}`}});
+  const profileId=profiles.json<{profiles:Array<{id:string}>}>().profiles[0]!.id;
+  return {userId,token:auth.accessToken,refreshToken:auth.refreshToken,profileId};
+}
+
 /**
- * Registers (or signs in) a user and returns everything a test needs.
+ * Creates a fixture through the restricted auth-plane function, then signs in.
  *
  * Password, not OTP. The one-time-code path has no delivery channel left —
  * both SMS and WhatsApp need a Saudi commercial registration — so the request
@@ -127,29 +154,12 @@ export const TEST_PASSWORD = 'correct horse battery staple';
  * route no real user can take. This is the way in that actually exists.
  */
 export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`, options: { verifiedPhone?: boolean } = {}): Promise<TestUser> {
-  const remoteAddress = nextRemoteAddress();
   const canonicalPhone = normalizePhone(phone);
   if (!canonicalPhone) throw new Error(`Invalid fixture phone: ${phone}`);
   const fixtureEmail = `fixture-${canonicalPhone.replace(/\D/g, '')}@example.test`;
 
-  const registered = await h.app.inject({
-    method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { email: fixtureEmail, displayName: phone, password: TEST_PASSWORD, deviceId },
-  });
-
-  // A suite may sign the same number in twice; the second time it is a login.
-  const auth = registered.statusCode === 200
-    ? registered.json<{ accessToken: string; refreshToken: string }>()
-    : await (async () => {
-        const login = await h.app.inject({
-          method: 'POST', url: '/v1/auth/login', remoteAddress,
-          payload: { identifier: phone, password: TEST_PASSWORD, deviceId },
-        });
-        if (login.statusCode !== 200) {
-          throw new Error(`sign-in failed for ${phone}: ${registered.body} / ${login.body}`);
-        }
-        return login.json<{ accessToken: string; refreshToken: string }>();
-      })();
+  const created=await createEmailAccount(h,fixtureEmail,phone,TEST_PASSWORD,deviceId);
+  const auth = {accessToken:created.token,refreshToken:created.refreshToken};
 
   const me = await h.app.inject({
     method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },

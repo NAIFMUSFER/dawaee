@@ -6,7 +6,7 @@ vi.mock('../src/auth/firebase-phone-proof.js', async (original) => ({
   verifyFirebasePhoneIdToken: provider.verify,
 }));
 import { FirebasePhoneProofInvalid, FirebasePhoneProofUnavailable } from '../src/auth/firebase-phone-proof.js';
-import { authHeaders, confirmTestEmail, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness, type TestUser } from './harness.js';
+import { authHeaders, createEmailAccount, resetDatabase, signIn, startHarness, TEST_PASSWORD, type Harness, type TestUser } from './harness.js';
 
 let h: Harness;
 let patient: TestUser;
@@ -79,19 +79,8 @@ describe('caregiver phone verification lifecycle', () => {
 
 describe('proof-first phone linking', () => {
   async function emailAccount(suffix: string) {
-    const registered = await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: `10.44.0.${suffix.length + 10}`,
-      payload: {
-        email: `proof-first-${suffix}@example.test`, displayName: 'Proof first',
-        password: TEST_PASSWORD, deviceId: `proof-first-${suffix}-device`,
-      },
-    });
-    expect(registered.statusCode, registered.body).toBe(200);
-    const accessToken = registered.json<{ accessToken: string }>().accessToken;
-    const me = await h.app.inject({
-      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${accessToken}` },
-    });
-    confirmTestEmail(me.json<{ user: { id: string } }>().user.id);
+    const registered=await createEmailAccount(h,`proof-first-${suffix}@example.test`,'Proof first',TEST_PASSWORD,`proof-first-${suffix}-device`);
+    const accessToken=registered.token;
     return {
       token: accessToken,
       headers: { authorization: `Bearer ${accessToken}` },

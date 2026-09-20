@@ -46,7 +46,7 @@ const login = (identifier: string, password: string) =>
  * SECURITY DEFINER surface — which is the isolation working, not an obstacle
  * to route around.
  */
-async function seedAccount(phone: string, name: string, password: string | null): Promise<void> {
+async function seedAccount(phone: string | null, name: string, password: string | null): Promise<void> {
   const hash = password === null ? null : await hashPassword(password);
   await withTransaction(async (tx) => {
     await tx.query('SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
@@ -61,91 +61,33 @@ beforeAll(async () => {
 afterAll(async () => { await h.close(); });
 
 describe('registration', () => {
-  it('creates an email account without reserving an unproved legacy phone', async () => {
-    const res = await register({
-      phone: '0566000001', displayName: 'محمد', password: 'correct horse battery',
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().accessToken).toBeTruthy();
-    expect(res.json().isNewUser).toBe(true);
-    expect(res.json().phoneVerificationRequired).toBe(true);
-    const me = await h.app.inject({
-      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${res.json().accessToken}` },
-    });
-    expect(me.json().user.phoneE164).toBeNull();
+  it('acknowledges a mailbox request without creating an account or session', async () => {
+    const email='proof-before-account@example.test';
+    const res=await register({email,phone:'0566000001',displayName:'Legacy ignored',password:'correct horse battery'});
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({accepted:true,retryAfterSeconds:60});
+    expect(res.json().accessToken).toBeUndefined(); expect(res.json().refreshToken).toBeUndefined();
+    expect((await login(email,'correct horse battery')).statusCode).toBe(401);
+    expect((await login('0566000001','correct horse battery')).statusCode).toBe(401);
   });
 
-  /**
-   * The registration that shipped created the user row and nothing else. The
-   * API answered 200, the app stored the tokens, and then every screen sat on
-   * a loading spinner forever, because a profile is what medications, doses
-   * and reminders all hang from. An account is not created until it is usable.
-   */
-  it('creates the account with its own patient profile and preferences', async () => {
-    const res = await register({
-      phone: '0566000009', displayName: 'سارة', password: 'correct horse battery',
-    });
-    expect(res.statusCode).toBe(200);
-    const token = res.json().accessToken as string;
-
-    const profiles = await h.app.inject({
-      method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${token}` },
-    });
-    expect(profiles.statusCode).toBe(200);
-    const list = profiles.json().profiles as Array<{ isSelf: boolean; displayName: string }>;
-    expect(list).toHaveLength(1);
-    expect(list[0]?.isSelf).toBe(true);
-    expect(list[0]?.displayName).toBe('سارة');
-
-    // Preferences too — the locale chosen at sign-up is what every reminder
-    // and notification is written in from the first dose onward.
-    const me = await h.app.inject({
-      method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${token}` },
-    });
-    expect(me.json().preferences.locale).toBe('ar');
+  it('answers identically for an occupied and an available email', async () => {
+    await withTransaction(tx=>tx.query('SELECT * FROM app.register_with_password($1,$2,$3,$4,$5)',
+      [null,'occupied@example.test','Existing',await hashPassword('another good passphrase'),'ar']));
+    const known=await register({email:'occupied@example.test'});
+    const unknown=await register({email:'available@example.test'});
+    expect({status:known.statusCode,body:known.body}).toEqual({status:unknown.statusCode,body:unknown.body});
   });
 
-  it('carries the chosen language onto the new account', async () => {
-    const res = await register({
-      email: 'english@example.com', displayName: 'Sara', password: 'correct horse battery',
-      locale: 'en',
-    });
-    expect(res.statusCode).toBe(200);
-    const me = await h.app.inject({
-      method: 'GET', url: '/v1/me',
-      headers: { authorization: `Bearer ${res.json().accessToken}` },
-    });
-    expect(me.json().user.locale).toBe('en');
-    expect(me.json().preferences.locale).toBe('en');
-  });
-
-  it('creates an account with an email instead of a phone', async () => {
-    const res = await register({
-      email: 'Naif@Example.com', displayName: 'Naif', password: 'correct horse battery',
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().accessToken).toBeTruthy();
-  });
-
-  it('refuses an email that already exists', async () => {
-    const res = await register({
-      email: 'naif@example.com', displayName: 'Someone else', password: 'another good passphrase',
-    });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe('identifier_taken');
-  });
-
-  it('refuses a password that is too short or trivially guessable', async () => {
-    const short = await register({ phone: '0566000009', displayName: 'x', password: 'short1' });
+  it('rejects malformed legacy fields but never uses them as credentials', async () => {
+    const short = await register({ email:'legacy-short@example.test', password: 'short1' });
     expect(short.statusCode).toBe(400);
-
-    const common = await register({ phone: '0566000009', displayName: 'x', password: 'password123' });
-    expect(common.statusCode).toBe(400);
-    expect(common.json().error.code).toBe('weak_password');
+    const badPhone = await register({ email:'legacy-phone@example.test', phone:'not-a-phone' });
+    expect(badPhone.statusCode).toBe(400);
   });
 
   it('requires an email', async () => {
-    const res = await register({ displayName: 'Nobody', password: 'correct horse battery' });
+    const res = await register({});
     expect(res.statusCode).toBe(400);
   });
 
@@ -169,7 +111,7 @@ describe('registration', () => {
     let limited: Awaited<ReturnType<typeof attempt>> | null = null;
     for (let n = 0; n < 12 && !limited; n++) {
       const res = await attempt(n);
-      if (res.statusCode !== 200) limited = res;
+      if (res.statusCode !== 202) limited = res;
     }
 
     expect(limited?.statusCode).toBe(429);

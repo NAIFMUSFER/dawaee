@@ -23,7 +23,7 @@ function setup(kind: 'sign-in' | 'sign-up') {
   const press = () => h.find('Button', (p: any) => p.label === label).onPress();
   const fill = async () => {
     const values = kind === 'sign-up'
-      ? { 'auth.displayName': 'Synthetic test', 'emailAccount.email': 'Example@example.test', 'auth.password': 'synthetic-only-secret' }
+      ? { 'emailAccount.email': 'Example@example.test' }
       : { 'auth.identifier': 'Example@example.test', 'auth.password': 'synthetic-only-secret' };
     for (const [field, value] of Object.entries(values)) h.find('Field', (p: any) => p.label === field).onChangeText(value);
     await h.flush();
@@ -56,16 +56,23 @@ describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind =
     s.gate.resolve(); await s.h.flush();
     expect(s.post).toHaveBeenCalledTimes(1);
     expect(s.post.mock.calls[0]?.[0]).toBe(kind === 'sign-up' ? '/v1/auth/register' : '/v1/auth/login');
-    const tokens = { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' };
-    s.response.resolve(tokens); await s.h.flush();
-    expect(s.signedIn).toHaveBeenCalledTimes(1);
-    expect(s.signedIn).toHaveBeenCalledWith(tokens);
-    expect(s.h.routes).toEqual([kind === 'sign-up' ? '/settings/email-verification' : '/caregiver/accept']);
+    const response = kind === 'sign-up' ? { accepted: true, retryAfterSeconds: 60 }
+      : { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' };
+    s.response.resolve(response); await s.h.flush();
+    if (kind === 'sign-up') {
+      expect(s.signedIn).not.toHaveBeenCalled();
+      expect(s.h.text()).toContain('auth.registrationRequested');
+      expect(s.h.routes).toEqual([]);
+    } else {
+      expect(s.signedIn).toHaveBeenCalledTimes(1);
+      expect(s.signedIn).toHaveBeenCalledWith(response);
+      expect(s.h.routes).toEqual(['/caregiver/accept']);
+    }
   });
   it('shows a connection banner without blaming the password or promising dose sync', async () => {
     const s = setup(kind); await s.fill(); s.press(); s.gate.reject(new NetworkError('unreachable')); await s.h.flush();
     expect(s.post).not.toHaveBeenCalled(); expect(s.h.find('Banner').title).toBe('auth.connectionFailed');
-    expect(s.h.find('Field', (p: any) => p.label === 'auth.password').error).toBeUndefined();
+    if (kind === 'sign-in') expect(s.h.find('Field', (p: any) => p.label === 'auth.password').error).toBeUndefined();
     expect(s.h.text()).not.toContain('notifications.offlineBanner');
     expect(s.h.find('Field').editable).toBe(true);
   });
@@ -82,8 +89,12 @@ describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind =
   });
   it('does not send credentials after leaving during device identity lookup', async () => {
     const s = setup(kind), identity = deferred(); s.getDeviceId.mockImplementation(() => identity.promise);
-    await s.fill(); s.press(); s.gate.resolve(); await s.h.flush(); s.h.unmount();
-    identity.resolve('synthetic-device'); await s.h.flush(); expect(s.post).not.toHaveBeenCalled();
+    await s.fill(); s.press(); s.gate.resolve(); await s.h.flush();
+    if (kind === 'sign-up') {
+      expect(s.getDeviceId).not.toHaveBeenCalled(); expect(s.post).toHaveBeenCalledOnce();
+    } else {
+      s.h.unmount(); identity.resolve('synthetic-device'); await s.h.flush(); expect(s.post).not.toHaveBeenCalled();
+    }
   });
   it('ignores an auth response that arrives after the screen closes', async () => {
     const s = setup(kind); await s.fill(); s.press(); s.gate.resolve(); await s.h.flush(); s.h.unmount();

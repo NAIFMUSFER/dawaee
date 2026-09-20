@@ -20,6 +20,7 @@ const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const completeSchema = z.discriminatedUnion('purpose', [
   z.object({ token, purpose: z.literal('verify') }).strict(),
   z.object({ token, purpose: z.literal('reset'), newPassword: z.string().min(1).max(200) }).strict(),
+  z.object({ token, purpose: z.literal('register'), displayName: z.string().trim().min(1).max(120), newPassword: z.string().min(1).max(200) }).strict(),
 ]);
 export function registerAccountEmailRoutes(app: FastifyInstance): void {
   const unavailable = () => { throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Account email is unavailable'); };
@@ -70,15 +71,26 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
     await enforceAuthBudget({ ip: { scope: 'recovery:ip', value: req.ip } });
     const tokenHash = emailTokenHash(body.token);
     await enforceAuthBudget({ identifier: { scope: 'email:token', value: tokenHash } });
-    const passwordHash = body.purpose === 'reset' ? await hashNewPassword(body.newPassword, locale) : null;
+    const passwordHash = body.purpose === 'reset' || body.purpose === 'register'
+      ? await hashNewPassword(body.newPassword, locale) : null;
     const requestHash = body.purpose === 'reset' ? createHmac('sha256', loadConfig().JWT_SECRET)
       .update(await deriveRecoveryRequestKey(body.newPassword, tokenHash)).digest('hex') : null;
     const updated = await withTransaction(async tx => {
-      const { rows } = await tx.query<{ user_id: string | null }>('SELECT app.complete_email_action($1,$2,$3,$4) AS user_id', [tokenHash, body.purpose, passwordHash, requestHash]);
+      const { rows } = body.purpose === 'register'
+        ? await tx.query<{ user_id: string | null }>(
+          'SELECT app.complete_email_registration($1,$2,$3) AS user_id',
+          [tokenHash, body.displayName, passwordHash],
+        )
+        : await tx.query<{ user_id: string | null }>(
+          'SELECT app.complete_email_action($1,$2,$3,$4) AS user_id',
+          [tokenHash, body.purpose, passwordHash, requestHash],
+        );
       const userId = rows[0]?.user_id;
       if (!userId) return false;
       if (body.purpose === 'reset') await clearRecoveredLoginBudgets(tx, userId);
-      await recordAudit(tx, { actorUserId: userId, patientProfileId: null, action: body.purpose === 'reset' ? 'auth.password_recovered' : 'auth.email_verified', entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash });
+      await recordAudit(tx, { actorUserId: userId, patientProfileId: null,
+        action: body.purpose === 'reset' ? 'auth.password_recovered' : body.purpose === 'register' ? 'auth.register' : 'auth.email_verified',
+        entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash });
       return true;
     });
     if (!updated) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 403, t(locale, 'emailAccount.invalidLink'));

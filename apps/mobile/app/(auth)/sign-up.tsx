@@ -6,27 +6,18 @@ import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
+import { api, ApiError, NetworkError } from '@/api/client';
 import { waitForAuthServer } from '@/api/auth-connection';
 
-const MIN_PASSWORD = 10;
-
-interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
-/** New accounts use an email that must be verified before onboarding ends. */
+/** The mailbox holder creates the account from the one-time email link. */
 export default function SignUpScreen() {
   const { t } = useI18n();
   const theme = useTheme();
-  const { signInWithTokens, preferences } = useApp();
+  const { preferences } = useApp();
 
-  const [name, setName] = useState('');
   const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
-  const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
   const [busy, setBusy] = useState(false);
   const action = useRef<AbortController | null>(null);
   useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
@@ -43,24 +34,13 @@ export default function SignUpScreen() {
     try {
       await waitForAuthServer(controller.signal);
       if (!current()) return;
-      const deviceId = await getDeviceId();
-      if (!current()) return;
       submitted = true;
-      const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/register', {
+      await api.anonymous.post('/v1/auth/register', {
         email: typed.toLowerCase(),
-        displayName: name.trim(),
-        password,
-        // The language chosen on the first screen, not a hardcoded default:
-        // it is the account's locale from the first notification onward.
         locale: preferences.locale,
-        deviceId,
       });
       if (!current()) return;
-      await signInWithTokens(tokens);
-      if (!current()) return;
-      // Add and verify recovery email before leaving onboarding. Pending caregiver
-      // invitations remain stored and can be continued from email settings.
-      router.replace('/settings/email-verification');
+      setRequested(true);
     } catch (err) {
       if (!current()) return;
       if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) {
@@ -73,8 +53,7 @@ export default function SignUpScreen() {
     }
   };
 
-  const ready =
-    name.trim().length > 0 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim()) && password.length >= MIN_PASSWORD;
+  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim());
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -85,15 +64,6 @@ export default function SignUpScreen() {
         </View>
 
         <Field
-          label={t('auth.displayName')}
-          value={name}
-          onChangeText={setName}
-          maxLength={120}
-          editable={!busy}
-          autoFocus
-        />
-
-        <Field
           label={t('emailAccount.email')}
           value={identifier}
           onChangeText={setIdentifier}
@@ -102,40 +72,18 @@ export default function SignUpScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={320}
-          editable={!busy}
+          editable={!busy && !requested}
+          autoFocus
         />
-
-        <Field
-          label={t('auth.password')}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!reveal}
-          autoCapitalize="none"
-          autoCorrect={false}
-          maxLength={200}
-          editable={!busy}
-          hint={t('auth.passwordHint', { min: String(MIN_PASSWORD) })}
-        />
-
-        <Pressable
-          onPress={() => setReveal((v) => !v)}
-          disabled={busy}
-          accessibilityRole="button"
-          accessibilityLabel={reveal ? t('auth.hidePassword') : t('auth.showPassword')}
-          hitSlop={12}
-        >
-          <Txt variant="caption" color={theme.colors.primary600}>
-            {reveal ? t('auth.hidePassword') : t('auth.showPassword')}
-          </Txt>
-        </Pressable>
 
         {error ? <Banner tone="warning" title={error} /> : null}
+        {requested ? <Banner tone="success" title={t('auth.registrationRequested')} /> : null}
         {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
         <Button
           label={t('auth.signUp')}
           onPress={() => void submit()}
           loading={busy}
-          disabled={!ready}
+          disabled={!ready || requested}
           size="large"
         />
 

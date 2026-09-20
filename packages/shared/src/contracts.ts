@@ -117,10 +117,13 @@ export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
     email: emailInput,
-    displayName: z.string().min(1).max(120),
-    password: z.string().min(10).max(200),
+    // Kept optional for installed clients that still send the old one-step
+    // shape.  They are never trusted or stored: the mailbox holder chooses
+    // both values on the emailed, one-time registration page.
+    displayName: z.string().min(1).max(120).optional(),
+    password: z.string().min(10).max(200).optional(),
     locale: z.enum(LOCALES).default('ar'),
-    deviceId: z.string().min(8).max(128),
+    deviceId: z.string().min(8).max(128).optional(),
     deviceName: z.string().max(120).optional(),
   });
 
