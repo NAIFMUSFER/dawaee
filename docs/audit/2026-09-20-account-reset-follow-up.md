@@ -63,6 +63,46 @@ schedule. See the [original reset evidence](2026-09-19-account-registration-rese
 
 ## Preview: not executed
 
+### Administrative access update — 2026-09-20
+
+The owner completed Render's official CLI device authorization. CLI v2.28.0 was
+downloaded from its official release and verified against the published SHA-256.
+Authenticated workspace listing, selecting the existing workspace, and fetching
+the exact preview database's connection details succeeded. Credentials remain
+local and were not logged or committed. **Lack of Render administrative
+authentication is no longer the blocker.**
+
+A certificate-verified PostgreSQL connection from this execution environment
+failed at hostname resolution (`EAI_AGAIN`). A connection through the configured
+outbound proxy timed out. The execution tool rejected the request for expanded
+network permissions because sandbox escalation is disabled. No external-access
+rules or TLS verification were changed. The database reports an empty external
+IP allowlist, so credentials alone would not establish external connectivity.
+
+An internal one-off job on the existing preview service is a documented option.
+[Render bills such jobs per second](https://render.com/docs/one-off-jobs); the
+preview's free service has no SSH or dashboard shell. No job was launched and
+the service's job list was empty. Because the owner previously prohibited new
+paid providers, chargeable compute is left for explicit authorization rather
+than assuming the device-login approval also approves additional charges.
+
+The concrete first job is prepared in
+`scripts/ops/preview-account-inventory-20260920.cjs`: a 30-second, read-only
+repeatable-read transaction against the exact internal preview host/database
+and ordinary owner role. It logs only aggregate counts and an account-set
+fingerprint. It rejects unexpected database targets and preserves the existing
+internal TLS selection. Syntax and two pre-connection refusal checks passed;
+the script has **not** run against Render or established a database connection.
+It is standalone operator code, not a migration or startup hook. Running it as
+a one-off job can use an inline copy from the reviewed file and does not require
+an application deployment. A backup/rehearsal/commit is still required after
+reviewing the inventory; this script does not delete accounts.
+
+Current dependency: authorize the temporary chargeable internal execution route,
+or provide an execution environment with permitted PostgreSQL connectivity.
+Do not ask for another Render login or for credentials in chat. The following
+paragraphs describe the earlier state before device authorization.
+
 The affected registration page is hosted by Render service
 `srv-daipkbuk1f9s73952trg`, database `dpg-daipq80jo6nc73fsmhhg-a`
 (`dawaee_audit_db`). No preview account was modified in this run. Earlier
