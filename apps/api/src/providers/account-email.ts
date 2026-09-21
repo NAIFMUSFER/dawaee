@@ -5,6 +5,12 @@ import { loadConfig, type Config } from '../config.js';
 import { withTransaction } from '../lib/db.js';
 
 export type EmailPurpose = 'verify' | 'reset' | 'register';
+type DeliveryFailure = 'configuration' | 'rate_limited' | 'provider_unavailable' | 'provider_rejected'
+  | 'invalid_response' | 'timeout' | 'network' | 'invalid_payload' | 'unknown';
+export class AccountEmailDeliveryError extends Error {
+  constructor(readonly code: DeliveryFailure) { super('Account email unavailable'); }
+}
+export type EmailDeliveryDiagnostic = { queue: 'account' | 'registration'; code: DeliveryFailure };
 const payloadSchema = z.object({ email: z.string().email(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   purpose: z.enum(['verify', 'reset', 'register']), locale: z.enum(['ar', 'en']) });
 type Mail = z.infer<typeof payloadSchema>;
@@ -43,31 +49,47 @@ export function accountEmailContent(mail: Mail, cfg: Config) {
 }
 export async function sendAccountEmail(mail: Mail, idempotencyKey: string, request: typeof fetch = fetch): Promise<void> {
   const cfg = loadConfig();
-  if (!accountEmailReady(cfg)) throw new Error('Account email unavailable');
+  if (!accountEmailReady(cfg)) throw new AccountEmailDeliveryError('configuration');
   try {
     const response = await request('https://api.resend.com/emails', { method: 'POST', redirect: 'error',
       signal: AbortSignal.timeout(10_000), headers: { Authorization: `Bearer ${cfg.RESEND_API_KEY}`,
         'Content-Type': 'application/json', 'Idempotency-Key': `account-email/${idempotencyKey}` },
       body: JSON.stringify({ from: `TADAWEE <${cfg.ACCOUNT_EMAIL_FROM}>`, to: [mail.email], ...accountEmailContent(mail, cfg) }),
     });
-    if (!response.ok) throw new Error('Rejected');
-    const result = await response.json() as { id?: unknown };
-    if (typeof result.id !== 'string' || !result.id) throw new Error('Malformed');
-  } catch { throw new Error('Account email unavailable'); }
+    if (!response.ok) throw new AccountEmailDeliveryError(response.status === 429 ? 'rate_limited'
+      : response.status >= 500 ? 'provider_unavailable' : 'provider_rejected');
+    let result: { id?: unknown } | null;
+    try { result = await response.json() as { id?: unknown } | null; }
+    catch { throw new AccountEmailDeliveryError('invalid_response'); }
+    if (typeof result?.id !== 'string' || !result.id) throw new AccountEmailDeliveryError('invalid_response');
+  } catch (error) {
+    if (error instanceof AccountEmailDeliveryError) throw error;
+    throw new AccountEmailDeliveryError(error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network');
+  }
 }
 // Runs inside the API with durable leases; no provider latency in anonymous
 // request responses. Stored payloads are encrypted and purged on send/expiry.
-export async function drainAccountEmails(send = sendAccountEmail): Promise<number> {
+export async function drainAccountEmails(send = sendAccountEmail,
+  diagnose: (event: EmailDeliveryDiagnostic) => void = () => {}): Promise<number> {
   let sent = 0;
   for (const queue of [
-    { claim: 'app.claim_account_emails', finish: 'app.finish_account_email' },
-    { claim: 'app.claim_registration_emails', finish: 'app.finish_registration_email' },
-  ]) {
+    { name: 'account', claim: 'app.claim_account_emails', finish: 'app.finish_account_email' },
+    { name: 'registration', claim: 'app.claim_registration_emails', finish: 'app.finish_registration_email' },
+  ] as const) {
     const lease = randomUUID();
     const { rows } = await withTransaction(tx => tx.query<{ token_hash: string; payload: string }>(`SELECT * FROM ${queue.claim}($1)`, [lease]));
     for (const row of rows) {
       let accepted = false;
-      try { await send(await openEmailJob(row.payload), row.token_hash); accepted = true; sent++; } catch { /* Retry the same job/key, never log token/provider content. */ }
+      let stage: 'payload' | 'send' = 'payload';
+      try {
+        const mail = await openEmailJob(row.payload); stage = 'send';
+        await send(mail, row.token_hash); accepted = true; sent++;
+      } catch (error) {
+        // Never give the observer the error, recipient, token, job key or provider body.
+        // Diagnostics must not interrupt the durable retry/lease completion path.
+        try { diagnose({ queue: queue.name, code: stage === 'payload' ? 'invalid_payload'
+          : error instanceof AccountEmailDeliveryError ? error.code : 'unknown' }); } catch { /* observer only */ }
+      }
       await withTransaction(tx => tx.query(`SELECT ${queue.finish}($1,$2,$3)`, [row.token_hash, lease, accepted]));
     }
   }
