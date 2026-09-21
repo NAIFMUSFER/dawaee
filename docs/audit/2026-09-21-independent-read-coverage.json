@@ -1,0 +1,4806 @@
+{
+  "sourceCommit": "9bf0a3bc66f025907b1efff5a907e629bb334bed",
+  "readTextFiles": [
+    {
+      "path": ".dockerignore",
+      "lines": 58,
+      "sha256": "bfc58442a0f8c2894c70969c6709e4dc550386ba6fd16113be52e8b4431be2f9"
+    },
+    {
+      "path": ".editorconfig",
+      "lines": 10,
+      "sha256": "9ff02b5f94e6cd180b657b690fe8a76936ea9f2f376e7bb0ce327130008b5b24"
+    },
+    {
+      "path": ".env.example",
+      "lines": 65,
+      "sha256": "f980ea94c13f7f1ada3ec6de4cb020936cd0ccdd2adb7981d67fd36be922ccba"
+    },
+    {
+      "path": ".github/workflows/android-interaction.yml",
+      "lines": 77,
+      "sha256": "3129f12db165cd4f3cc0801fe1b1019b2a688ba95e38c6d6ffd1212cb059d897"
+    },
+    {
+      "path": ".github/workflows/android-native.yml",
+      "lines": 125,
+      "sha256": "51d9bcccc6689330d0ad64f365557864458d3f164a9317810d66ead7c80c9bc8"
+    },
+    {
+      "path": ".github/workflows/audit-android.yml",
+      "lines": 86,
+      "sha256": "564eecff69443d7579cda3609c904acdcf3a05b211763a832835ae08ddce78cc"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "lines": 336,
+      "sha256": "018b1ead6c869e7c0305c36894b17492f94f3aef5c1c3a5d88b445a3cc1c682d"
+    },
+    {
+      "path": ".github/workflows/codeql.yml",
+      "lines": 168,
+      "sha256": "d646636f40cc085bcdc0d7268113eba17aafe979c21b9b482040b33d7339fce7"
+    },
+    {
+      "path": ".github/workflows/security-schedule.yml",
+      "lines": 69,
+      "sha256": "f1500ad214be45e81411c146e01252b99380bc440d2761351e2b3d6555f45ea1"
+    },
+    {
+      "path": ".gitignore",
+      "lines": 30,
+      "sha256": "af72decdcae8bad1c9e377d45436ac50c9a22aa55fc20a830784539e9fefd185"
+    },
+    {
+      "path": ".gitleaksignore",
+      "lines": 5,
+      "sha256": "d8cc80da6beb76252f54ef5182420d40adcc8071c8623f567030f6f896ab9622"
+    },
+    {
+      "path": ".nvmrc",
+      "lines": 1,
+      "sha256": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56"
+    },
+    {
+      "path": "Dockerfile",
+      "lines": 143,
+      "sha256": "a0101dc1369fc8247543614224a17f30f5c7cbb6ba65533a950c1921f7d70461"
+    },
+    {
+      "path": "README.md",
+      "lines": 87,
+      "sha256": "02656519c7ccad3a384bd99cef02e2fc874e659c719f158b78a3ba6141f76207"
+    },
+    {
+      "path": "apps/api/package.json",
+      "lines": 55,
+      "sha256": "d8c5843221e0466ec18960dc295cb5170c934465c56434b0be3e1753fa79d2e6"
+    },
+    {
+      "path": "apps/api/src/auth/firebase-phone-proof.ts",
+      "lines": 127,
+      "sha256": "4b07fb6b4f94b23146826fab90df5bf8892feaf771573b0f3708e10ea13a4ee6"
+    },
+    {
+      "path": "apps/api/src/auth/otp-service.ts",
+      "lines": 104,
+      "sha256": "9dcf3be3f98be1861cc1d4209c2aad2418227460cb402fa3ad2d89c75b96af31"
+    },
+    {
+      "path": "apps/api/src/auth/password-service.ts",
+      "lines": 164,
+      "sha256": "958479c760b1ca7fbd67d428fb11d7e34b61dfdc4e083a748ff0f18dfa045dac"
+    },
+    {
+      "path": "apps/api/src/auth/rate-budget.ts",
+      "lines": 222,
+      "sha256": "d7ef67ee8964cae66c9ab2f8302257bfdd8449c1eb9daf3b314f492ce3b59ec3"
+    },
+    {
+      "path": "apps/api/src/auth/session-service.ts",
+      "lines": 117,
+      "sha256": "0150dda662b6944af332fc8a9580c67126d2722452289d632131db5c06fb131c"
+    },
+    {
+      "path": "apps/api/src/auth/tokens.ts",
+      "lines": 60,
+      "sha256": "9e5706f5849a6ce9e812fb2cde5d39ba1611b5a0905a06bbeb332d0606e42e45"
+    },
+    {
+      "path": "apps/api/src/config.ts",
+      "lines": 215,
+      "sha256": "84e2fa3612ab5772066736fcfe80b34e47fc57fe32acba6aae55c9bd1e0d45b4"
+    },
+    {
+      "path": "apps/api/src/index.ts",
+      "lines": 62,
+      "sha256": "4cef4c85d2da0f9f4522c0bea1270f3964cba466f1a6ddca91bd742a65c649aa"
+    },
+    {
+      "path": "apps/api/src/lib/client-ip.ts",
+      "lines": 33,
+      "sha256": "d8cbf78de1f070c2f0b36dc052e4de1820b472de6f8bacb41ff5f6b35681b8d6"
+    },
+    {
+      "path": "apps/api/src/lib/clock.ts",
+      "lines": 28,
+      "sha256": "7592a10bf82b7075e1a41dacc927ba598b47e3375d4c92073e15e39341a60a10"
+    },
+    {
+      "path": "apps/api/src/lib/crypto.ts",
+      "lines": 114,
+      "sha256": "4c285d69798a98e10aa7afe13c6cc5f6fb0549c6c1e5527fe1d6e517a61f92d8"
+    },
+    {
+      "path": "apps/api/src/lib/db-tls.ts",
+      "lines": 161,
+      "sha256": "8dc8e32d6e40c273bcfd34287b84bd9d085bb42a3581f038c7d2807436210e95"
+    },
+    {
+      "path": "apps/api/src/lib/db.ts",
+      "lines": 151,
+      "sha256": "263b336902eead05f0afbf444734577e4be3cc1cbb8556fc1f85e358098ddaac"
+    },
+    {
+      "path": "apps/api/src/lib/deployment-coherence.ts",
+      "lines": 85,
+      "sha256": "3aa3339231e9db8e7f27926ab038e88fd293a5b438401d1c502cd86b68f49226"
+    },
+    {
+      "path": "apps/api/src/lib/logger.ts",
+      "lines": 125,
+      "sha256": "43f93c491b848fe8eae1d557d0a918636c722c1fc6a4fdad31d3ed321d5697fb"
+    },
+    {
+      "path": "apps/api/src/lib/params.ts",
+      "lines": 136,
+      "sha256": "eebc20967a760a27108c540c84f77578ede5e1f7b76c59de542b8c83ab092e15"
+    },
+    {
+      "path": "apps/api/src/lib/password.ts",
+      "lines": 197,
+      "sha256": "916d39c8da35751be06963d83e81003569686d28b6e1bfa19806bc6023449708"
+    },
+    {
+      "path": "apps/api/src/lib/schema-contract.ts",
+      "lines": 220,
+      "sha256": "072431162ab1078ae80661771e78907ae24724799eb1d11e263edd30bfc9efbe"
+    },
+    {
+      "path": "apps/api/src/middleware/context.ts",
+      "lines": 155,
+      "sha256": "37e5da88dc0d50898b683ed60dceb6a455ff6beb3fa9f59c56fd03a71532e8c6"
+    },
+    {
+      "path": "apps/api/src/middleware/error-handler.ts",
+      "lines": 141,
+      "sha256": "dbdc862778d67c342a98ebc8a5d27e6502631d8e41c035b048adcd7f095e61b0"
+    },
+    {
+      "path": "apps/api/src/middleware/private-resource-routing.ts",
+      "lines": 122,
+      "sha256": "f893a6e039039046ac539e002696d21c91d0875bcf00cdb270c20bf23bb87456"
+    },
+    {
+      "path": "apps/api/src/middleware/profile-routing.ts",
+      "lines": 92,
+      "sha256": "e56ab02ba04f7efbf56cd8269f5358586dacbff7c2048dc58ea811671b7a8f4f"
+    },
+    {
+      "path": "apps/api/src/providers/account-email.ts",
+      "lines": 75,
+      "sha256": "292cbfed53787c8db6b54666b02b8eda42b1915102f85b5e8a6a62b2cbe40226"
+    },
+    {
+      "path": "apps/api/src/providers/audit-account-email.ts",
+      "lines": 23,
+      "sha256": "446fc7cb729154612a7705856c36e9c36867354b353d154b9463909bbf340f92"
+    },
+    {
+      "path": "apps/api/src/providers/index.ts",
+      "lines": 71,
+      "sha256": "7f7c1b777d319568a35acf713abea4c4f2519af122fd84cdf4b4a0622c2eb45a"
+    },
+    {
+      "path": "apps/api/src/providers/ocr.ts",
+      "lines": 290,
+      "sha256": "83f10180dbd88fd45606d3ee6367115867b57d4d98441ed77043e658e42c3a6b"
+    },
+    {
+      "path": "apps/api/src/providers/push.ts",
+      "lines": 173,
+      "sha256": "9b3e84bf378fcbea7d9d13cab548a7e27eaad982fa35eacf4b29f743f5bee1c5"
+    },
+    {
+      "path": "apps/api/src/providers/storage.ts",
+      "lines": 349,
+      "sha256": "b2af17eff776886d25fe6af2f8b9b9ba69a8cf02827e90123936eab10caa95be"
+    },
+    {
+      "path": "apps/api/src/providers/types.ts",
+      "lines": 129,
+      "sha256": "d394a216b09216ebc74a133f68419814cf1e16754f10001c414137cfb2f20433"
+    },
+    {
+      "path": "apps/api/src/routes/account-email-page.ts",
+      "lines": 98,
+      "sha256": "db04c4378425fa874edfab43a5acfd3ab4fa821e412a0eaaacbfe8ea599b6a83"
+    },
+    {
+      "path": "apps/api/src/routes/account-email.ts",
+      "lines": 113,
+      "sha256": "d8dfc7fef8dbcff2d4ecdb3a1acdb239a5e58eea63576850125851ca9b35fafc"
+    },
+    {
+      "path": "apps/api/src/routes/admin.ts",
+      "lines": 87,
+      "sha256": "790ec0f4898293d4029ec696917fd668f266cbb8738953995312625dab7f5576"
+    },
+    {
+      "path": "apps/api/src/routes/auth.ts",
+      "lines": 493,
+      "sha256": "44a100e59ef2c6230b7c3d94b2a5ba2edb7a93f791c598be145f212b3f0d3d59"
+    },
+    {
+      "path": "apps/api/src/routes/caregiver-private.ts",
+      "lines": 195,
+      "sha256": "9560803ed90648e1d7a63e1adea31c7bae6d22b948b1545e9ec692a7b6982269"
+    },
+    {
+      "path": "apps/api/src/routes/caregivers.ts",
+      "lines": 447,
+      "sha256": "73a0a543bea4e28872df79fdc4c01dd2ff60828a3f68891fb44d396959b9bbea"
+    },
+    {
+      "path": "apps/api/src/routes/dose-private.ts",
+      "lines": 102,
+      "sha256": "3d1cacb823dae0d4870c93d7d3e7321cb35b2de68cd3fdc21cba7aec1051c9e5"
+    },
+    {
+      "path": "apps/api/src/routes/doses.ts",
+      "lines": 391,
+      "sha256": "e799cc9dff4a8f137624a77e8a13d17ae99e745833100723270d94ce2126c195"
+    },
+    {
+      "path": "apps/api/src/routes/emergency.ts",
+      "lines": 219,
+      "sha256": "3ceddfa7d3b0cde5044fdfb11f87ee897798fe5ae4a417cafdb9976af84cfa8b"
+    },
+    {
+      "path": "apps/api/src/routes/health.ts",
+      "lines": 98,
+      "sha256": "1a86f740084f05326dbb51da0b54f1aaac22426a18e164ba71bf3de1cf8cc609"
+    },
+    {
+      "path": "apps/api/src/routes/medications.ts",
+      "lines": 650,
+      "sha256": "252cf9b07a99d3c3500a63bcd06f92b580e18ec318aaab0fdce4aa009c08e965"
+    },
+    {
+      "path": "apps/api/src/routes/notes.ts",
+      "lines": 174,
+      "sha256": "1d0fdbfc59c955e5d0f657e2ec6eb5e379e19d366234dcad3e4176cdb27466b9"
+    },
+    {
+      "path": "apps/api/src/routes/password-recovery.ts",
+      "lines": 55,
+      "sha256": "7a7e0a1bc29a7e35628f090062f5ab1bf821a2227969c138661f28b11f53a490"
+    },
+    {
+      "path": "apps/api/src/routes/phone-verification.ts",
+      "lines": 100,
+      "sha256": "8ce61f2bf8d24761718945780104d6b39a6569c947d3b6ca0defa165627ea129"
+    },
+    {
+      "path": "apps/api/src/routes/profiles.ts",
+      "lines": 514,
+      "sha256": "c7a317df7681a597fdf9791d7f022beda6154805b1999e9fa68cada1dacc43be"
+    },
+    {
+      "path": "apps/api/src/routes/reports.ts",
+      "lines": 270,
+      "sha256": "a1e2fa86eaef961d423fdf1841b493c519b1b4573c810e64fb5407066c7a49f4"
+    },
+    {
+      "path": "apps/api/src/routes/stock.ts",
+      "lines": 286,
+      "sha256": "66940c74d5ecf8c18fe36c766238217888cc5e07e6635f0b0ccb9842b96cdd55"
+    },
+    {
+      "path": "apps/api/src/routes/uploads.ts",
+      "lines": 496,
+      "sha256": "104df4dbdf43bad85bea4ae61fe43f165ba77865c47307a4bfbe46ac11c269af"
+    },
+    {
+      "path": "apps/api/src/routes/web-app.ts",
+      "lines": 139,
+      "sha256": "4d680b26c9aac7d38d89f31d4fc5d10e38a79877e652631fe2e0bf73b8356b0d"
+    },
+    {
+      "path": "apps/api/src/server.ts",
+      "lines": 178,
+      "sha256": "d0ccc1cd320e989d0b4f257d2ea85a2e017fb5f0ee33011b18e091ef4a72cddf"
+    },
+    {
+      "path": "apps/api/src/services/access-service.ts",
+      "lines": 234,
+      "sha256": "9068f6ff4c6b3be84c45797e4b92ebda8041c18e4dbb2dc6582d8abdb378f0a0"
+    },
+    {
+      "path": "apps/api/src/services/audit-service.ts",
+      "lines": 74,
+      "sha256": "3851af0fbe0c273f602d2759b43a7792f3da838725e99a5f3717797ff9a33479"
+    },
+    {
+      "path": "apps/api/src/services/dose-service.ts",
+      "lines": 403,
+      "sha256": "bd5421e433750e73f2082ec916fad896be4e1915b7da8a4f36e6acacbcc2d002"
+    },
+    {
+      "path": "apps/api/src/services/materializer.ts",
+      "lines": 303,
+      "sha256": "2455f5f29d8183522d057e64b9b2d4f3fd0d54d7571f1b85a3fd81c445458c13"
+    },
+    {
+      "path": "apps/api/test/account-disable-refresh-race.test.ts",
+      "lines": 98,
+      "sha256": "1b7f0f3853e09e83f4d67984ecd37f09a9ab3f2e52acf45016cf6a0c5c2659d6"
+    },
+    {
+      "path": "apps/api/test/account-email-concurrency.test.ts",
+      "lines": 189,
+      "sha256": "fb8ff39003e174d4c777264e91ada7c6bce970aaefeb48a486dff287747c674c"
+    },
+    {
+      "path": "apps/api/test/account-email-http.test.ts",
+      "lines": 142,
+      "sha256": "8c1074a34f9836beff71f05d5c2e876220358f909fd1950f1c170c5c099c4578"
+    },
+    {
+      "path": "apps/api/test/account-email-provider.test.ts",
+      "lines": 54,
+      "sha256": "54307f867b0a89d16f95d44d95e736a3f501625cafd24ee419434398df9a0a57"
+    },
+    {
+      "path": "apps/api/test/account-email-sql.test.ts",
+      "lines": 571,
+      "sha256": "febad27ac0683d79e853953cafef6eeac1d417303af3cd457ad5a22355ecd0f2"
+    },
+    {
+      "path": "apps/api/test/account-erasure-audit-integrity.test.ts",
+      "lines": 102,
+      "sha256": "504845d5d912a5f520afc22bb41f1cc6407e5e4682a47325eea8fe48b0370924"
+    },
+    {
+      "path": "apps/api/test/account-erasure-caregiver-upload-objects.test.ts",
+      "lines": 100,
+      "sha256": "7dbb541ca27d9d27422c128df2f25f2d908af89ccbc2d7734921ee66246be76c"
+    },
+    {
+      "path": "apps/api/test/account-erasure.test.ts",
+      "lines": 162,
+      "sha256": "c35e6c0ba15c35a97032e71bd3a4b67b61c8b83afaf8d91430ddb55a21e4a1a8"
+    },
+    {
+      "path": "apps/api/test/adherence-per-schedule-thresholds.test.ts",
+      "lines": 99,
+      "sha256": "42bc32e612edc3870f4199e6267aafd1d6681fb16c36f5018e86e8b99b118395"
+    },
+    {
+      "path": "apps/api/test/adherence-permission-dependencies.test.ts",
+      "lines": 56,
+      "sha256": "a7eb423d87ed2b3b436b3dad73b595d84bd07d29d648302ff437ec6c3fd6358e"
+    },
+    {
+      "path": "apps/api/test/admin-operational-read-model.test.ts",
+      "lines": 183,
+      "sha256": "4ab921d494c603467e4bff83092f6cf99a16bf19c0454e1ee67e16b07da9a887"
+    },
+    {
+      "path": "apps/api/test/advisor-hardening.test.ts",
+      "lines": 57,
+      "sha256": "d90a5c8416dfcc52999c39720d8a5595fac9885e028a60659a6e73f3f5b6398c"
+    },
+    {
+      "path": "apps/api/test/app-operational-privilege-boundary.test.ts",
+      "lines": 115,
+      "sha256": "01cb4af464018ca80b52757bed166d75f5288da4a3864f6bd468e74eba392215"
+    },
+    {
+      "path": "apps/api/test/audit-account-email.test.ts",
+      "lines": 103,
+      "sha256": "f5904ed1f29af2957460d108ff6ae1b04f192baaa79319ec8328703e1125b4cb"
+    },
+    {
+      "path": "apps/api/test/audit-preview-runtime.test.ts",
+      "lines": 120,
+      "sha256": "9c2537adaffd205bffdacf3fc461749827fa48aaebca264e340b43bde7b9089a"
+    },
+    {
+      "path": "apps/api/test/audit-preview-start.test.ts",
+      "lines": 57,
+      "sha256": "bda66ea5d545a7802bb6fbdd98ac8ccc0e6102a61e9998c331bc60fae0767147"
+    },
+    {
+      "path": "apps/api/test/audit-preview-web-build.test.ts",
+      "lines": 73,
+      "sha256": "11cff86913ba03e5d882538c79bb3339a058724bff9c4d6d4a5fb8b0d9926252"
+    },
+    {
+      "path": "apps/api/test/audit-privacy.test.ts",
+      "lines": 368,
+      "sha256": "5d3a7338fbb5e42ff5b4b1727ea3e21f9d02832a66b877e129f731d12c87d2b0"
+    },
+    {
+      "path": "apps/api/test/auth-serialization-deadlock.test.ts",
+      "lines": 119,
+      "sha256": "2085cfd26f952cdf29957e936171f98c4d003f89b4d1c71b2c1035814690bd6a"
+    },
+    {
+      "path": "apps/api/test/auth-session.test.ts",
+      "lines": 1460,
+      "sha256": "11cd28a3c257524607401e49692350d3e574fabd3663c417d676e17fa5bcd5ba"
+    },
+    {
+      "path": "apps/api/test/auth.test.ts",
+      "lines": 200,
+      "sha256": "c638957d07ac1e5cf5c072650b0d8a35711f1d5337500bc6896178991b3554dd"
+    },
+    {
+      "path": "apps/api/test/caregiver-delivery-revocation-race.test.ts",
+      "lines": 150,
+      "sha256": "9239c8c4e607e193b8243185c719ba217f3ddf1097b33417b9c85e3e277a2bd9"
+    },
+    {
+      "path": "apps/api/test/caregiver-digest-delivery-revocation.test.ts",
+      "lines": 139,
+      "sha256": "87cc111d1f3f683c00f15e523a184b9265bb13ff0422648ddc164286b0c5f9a5"
+    },
+    {
+      "path": "apps/api/test/caregiver-digest-permission-dependencies.test.ts",
+      "lines": 109,
+      "sha256": "5244bf630ea61bbf94b987606e14204bcb207dde04052ee29a80e6587a0def95"
+    },
+    {
+      "path": "apps/api/test/caregiver-email-worker-identity.test.ts",
+      "lines": 134,
+      "sha256": "a847f2f0533998773789094a1dd0ccbd142b35d2f2e15381c269a305377437d6"
+    },
+    {
+      "path": "apps/api/test/caregiver-fixed-path-privacy.test.ts",
+      "lines": 125,
+      "sha256": "d7b3e6c8a76b3f3472190476fb74031cc64a086a99b603a5741d746d5ba3bc0b"
+    },
+    {
+      "path": "apps/api/test/caregiver-invitation-phone-binding.test.ts",
+      "lines": 77,
+      "sha256": "5164d5990839d4d690c00f48b2cd9410f2896879e79f255e6191f5e8183c3472"
+    },
+    {
+      "path": "apps/api/test/caregiver-notification-medication-permission.test.ts",
+      "lines": 145,
+      "sha256": "80d9c470cab96e28c25375ac451a3f323097ec044c6b9156318181296b1ed9ea"
+    },
+    {
+      "path": "apps/api/test/caregiver-notification-resolution.test.ts",
+      "lines": 277,
+      "sha256": "7b1b1227f6bac47076d99b2088ad895933be5ecf1dc501b8eb77bfa23350f11e"
+    },
+    {
+      "path": "apps/api/test/caregiver-notification-rule-profile-integrity.test.ts",
+      "lines": 76,
+      "sha256": "5cb1968b74dba69caa17fd87b42ae444f1f91bed291b69ef6351586a6ab1466a"
+    },
+    {
+      "path": "apps/api/test/caregiver-policy-integrity.test.ts",
+      "lines": 105,
+      "sha256": "4e29d37a08caeed800dab1d7beaf77369600b5929b0625390de4df8a42a78cc2"
+    },
+    {
+      "path": "apps/api/test/caregiver-push-envelope.test.ts",
+      "lines": 211,
+      "sha256": "bdd7d94006fdf7a4a7c048a9034d83a411945d04925f1756f61ca45a7c67b078"
+    },
+    {
+      "path": "apps/api/test/caregiver-push-postgres.test.ts",
+      "lines": 267,
+      "sha256": "a6a3c920b03e11182fbf377ed06af9a6da8af2cc45d97e89885a26d051d5dec1"
+    },
+    {
+      "path": "apps/api/test/ci-postgres-source-scope.test.ts",
+      "lines": 146,
+      "sha256": "550eea9e97a6dfe3bf7fdd0f00e26167fe9894adc36f29f094e4c7bdf6b80b99"
+    },
+    {
+      "path": "apps/api/test/codeql-evidence.test.ts",
+      "lines": 11,
+      "sha256": "ab72ec3fa77cdc26664afc9e2117e5a397bba849f2ba4e323c235b3fa80bc3c2"
+    },
+    {
+      "path": "apps/api/test/config-boolean-strictness.test.ts",
+      "lines": 29,
+      "sha256": "70110e64d7f8180df79a4efcae11faf47372d2b67155a40ccc290ab2191a75e6"
+    },
+    {
+      "path": "apps/api/test/config.test.ts",
+      "lines": 120,
+      "sha256": "1014cc511a461a5a035bc199d6d49077a04724627d2248637b23815f6e20b5c5"
+    },
+    {
+      "path": "apps/api/test/consent-profile-owner-integrity.test.ts",
+      "lines": 105,
+      "sha256": "ce27a659d73aed48f83b860e8515c1c85cd675d117910f3838c08ac3af827b86"
+    },
+    {
+      "path": "apps/api/test/db-tls.test.ts",
+      "lines": 269,
+      "sha256": "612267b3f6ff0ef80afe5f50fab5a5cf677fb6cc1b04ffb06eeea31e9d93a092"
+    },
+    {
+      "path": "apps/api/test/definer-privilege-model.test.ts",
+      "lines": 643,
+      "sha256": "0cc11cae8f43ad0e68c5385ddd0451ed1319a9e69cff5e1385229db073207297"
+    },
+    {
+      "path": "apps/api/test/deletion-request-push-boundary.test.ts",
+      "lines": 69,
+      "sha256": "4719ba77d00b995e98b72b7c5ab022ab6ece1759a231fab8dd1d9b64c239ec33"
+    },
+    {
+      "path": "apps/api/test/deletion-request.test.ts",
+      "lines": 124,
+      "sha256": "11d79511cb306bdb4439070fe58c73da9765a1a6e6f60c42f18ccdfb5d7ccfdb"
+    },
+    {
+      "path": "apps/api/test/dependency-gate-build-scope.test.ts",
+      "lines": 54,
+      "sha256": "0ca09d529f68a0f6ce9c7bb62e71c68ca8d71f49883bd4892321d8e6e4d5329f"
+    },
+    {
+      "path": "apps/api/test/deployment-coherence.test.ts",
+      "lines": 105,
+      "sha256": "cc173cfb4eb148eb164f5440525641921c34df5d9890818fde2bdbd8d0bd30a3"
+    },
+    {
+      "path": "apps/api/test/digest-per-schedule-thresholds.test.ts",
+      "lines": 120,
+      "sha256": "b9a656f4abc7626e1c80ef8156a90f3e6b6416f413a1ef9dd195352fa05954ba"
+    },
+    {
+      "path": "apps/api/test/dose-early-action-integrity.test.ts",
+      "lines": 105,
+      "sha256": "5f23b9a704fedc61eedbe7cb4fabab0ef070792280159438730d4e4a22c81227"
+    },
+    {
+      "path": "apps/api/test/dose-fixed-path-privacy.test.ts",
+      "lines": 121,
+      "sha256": "affaa6c13bc2573ba29ee15f3945d161f801ca3aea3ee672cbd4cbeb94cdf856"
+    },
+    {
+      "path": "apps/api/test/dose-history-permission-dependencies.test.ts",
+      "lines": 55,
+      "sha256": "2872f02540f24e9c940caa3afe90668b024b5c86044449fe70e056a76c48f4ff"
+    },
+    {
+      "path": "apps/api/test/dose-schedule-graph-integrity.test.ts",
+      "lines": 155,
+      "sha256": "5a68398d6994cadd3bbf7c276ac09593668ed888c5d5cd1d0365b22e47f18a02"
+    },
+    {
+      "path": "apps/api/test/dose-snooze-state-integrity.test.ts",
+      "lines": 120,
+      "sha256": "e32199ecbafd21f8fd978a47a14ae40783e2b5e62f2c42bb6e487e7144e91d89"
+    },
+    {
+      "path": "apps/api/test/dose-stale-replay-after-undo.test.ts",
+      "lines": 110,
+      "sha256": "70be15c41b161d53eaa122291fe054cd1352441f6798ea9b11782a2d69f6d098"
+    },
+    {
+      "path": "apps/api/test/doses.test.ts",
+      "lines": 302,
+      "sha256": "7d3a1a690f1ced106a1e8dc6019a550c6ec093dc7649aa212ed03b8f41415aba"
+    },
+    {
+      "path": "apps/api/test/email-onboarding.test.ts",
+      "lines": 26,
+      "sha256": "1427c0d208710333851412561213d3fbc71069fa747dfdcbba32cb4b49e2bdde"
+    },
+    {
+      "path": "apps/api/test/emergency-capability-transport.test.ts",
+      "lines": 66,
+      "sha256": "b3ea6d458e8a5ee5aa7c95cbed700e9b04fb697ecc5ab445a7519313c6d78e9f"
+    },
+    {
+      "path": "apps/api/test/endpoint-authorization.test.ts",
+      "lines": 2067,
+      "sha256": "d91e634b7da5b7951c7dabee493f12042fdaefd0d03f8e4b7648cdfc9bcd773f"
+    },
+    {
+      "path": "apps/api/test/error-handler-classification.test.ts",
+      "lines": 46,
+      "sha256": "1e8b5c8922c6905ac957001fd88efd82b487fd891b9156725366387d8ec2b482"
+    },
+    {
+      "path": "apps/api/test/escalation-consecutive-missed-thresholds.test.ts",
+      "lines": 180,
+      "sha256": "919515ca848cf2009573398f82c5b6c2ae4028035890f5918a1e3a191656119b"
+    },
+    {
+      "path": "apps/api/test/escalation-legacy-patient-first-safety.test.ts",
+      "lines": 147,
+      "sha256": "cf605939f7e281576b31bd5cee55cc42656ba5effb6200159edfa874ef4fa604"
+    },
+    {
+      "path": "apps/api/test/escalation.test.ts",
+      "lines": 289,
+      "sha256": "e956123c85f6442e244b0378ab70848513c6fdb78d396473bef66bf5dd67b365"
+    },
+    {
+      "path": "apps/api/test/expired-session-push-boundary.test.ts",
+      "lines": 103,
+      "sha256": "12c74bdc2bde57577097da4005ae2d13c9c1aec27b2ede260a8fa18117d509cf"
+    },
+    {
+      "path": "apps/api/test/expo-push-receipts.test.ts",
+      "lines": 52,
+      "sha256": "6a43abda2ad8c4c2d47a10349a457b34d7b3440236e36147eab8fe9bdb91e321"
+    },
+    {
+      "path": "apps/api/test/final-audit-dose-stock.test.ts",
+      "lines": 150,
+      "sha256": "04628bd61d8316600ae45fb96ae7ac09ebb5351c9dce968ef25caf3a2e170cb4"
+    },
+    {
+      "path": "apps/api/test/final-audit-ocr.test.ts",
+      "lines": 45,
+      "sha256": "9b1aa1771ff17117a22d394e95c94ed21b82af3ddd87591b78d3263bfab5042c"
+    },
+    {
+      "path": "apps/api/test/final-audit-report-escaping.test.ts",
+      "lines": 15,
+      "sha256": "bd422e93a0ea01169078b26fed4c59a63fdc790c52860bb1a01db1edfb210bca"
+    },
+    {
+      "path": "apps/api/test/firebase-phone-proof.test.ts",
+      "lines": 54,
+      "sha256": "7dc85fb7a9db9c13fa2cc34b2379eed02fa1ec45734bb7d7c90123ff07ca8327"
+    },
+    {
+      "path": "apps/api/test/fixtures/log-lifecycle-probe.mts",
+      "lines": 80,
+      "sha256": "be1c3f24745ce3812692d09c0cb458bff821b91697e5a00e3702a86e5acde9ef"
+    },
+    {
+      "path": "apps/api/test/google-vision-api-key-transport.test.ts",
+      "lines": 51,
+      "sha256": "38532bee42cb174ac971510af4de244e00ddfff3d097bb29c04c2722335ab26a"
+    },
+    {
+      "path": "apps/api/test/harness.ts",
+      "lines": 237,
+      "sha256": "fceefdec6a7d488517e604afed83f7ec4913cb80aae6758459bee134f8a2d931"
+    },
+    {
+      "path": "apps/api/test/health-history-dose-profile-integrity.test.ts",
+      "lines": 133,
+      "sha256": "849b3083406dd55acc2feeebd16948d97f9d9c7bc4172b50d92a3688210df36d"
+    },
+    {
+      "path": "apps/api/test/health-integration-readiness.test.ts",
+      "lines": 43,
+      "sha256": "13ee879236515b3db9dac7e236fee7390b2eddfff317edc2b9c82b6c9d2f6dd6"
+    },
+    {
+      "path": "apps/api/test/health-readiness-error-privacy.test.ts",
+      "lines": 139,
+      "sha256": "9c061ffc3c0d56caccea53e3637de4a836b0d2bbfa310a831767ef28a2d644e0"
+    },
+    {
+      "path": "apps/api/test/health-worker-job-completeness.test.ts",
+      "lines": 137,
+      "sha256": "1966ca9f94eecb285224b64db47f5fc57c88f33afe1d3acabeb5bb9de14c4811"
+    },
+    {
+      "path": "apps/api/test/identity-enumeration.test.ts",
+      "lines": 412,
+      "sha256": "a93706e763a9765a054e9663695ecc7515f97ec23dd478d8a42279c866a8564e"
+    },
+    {
+      "path": "apps/api/test/inactive-medication-schedule-materialization.test.ts",
+      "lines": 108,
+      "sha256": "e049450f6a8fdc194c60ac8610169e49972f8d95d06f7e3ef77e6b5620c24c1f"
+    },
+    {
+      "path": "apps/api/test/log-redaction.test.ts",
+      "lines": 305,
+      "sha256": "fad078225cb12af2665f6b18c52b6e2ee116274d50c35fbf1d621e68e2c3dd6a"
+    },
+    {
+      "path": "apps/api/test/logout-all-refresh-race.test.ts",
+      "lines": 105,
+      "sha256": "69978ab8e551bd8d76327bdc718e3ac99010fe267661ebb584b6c6dddf7cb0b1"
+    },
+    {
+      "path": "apps/api/test/logout-device-id-isolation.test.ts",
+      "lines": 76,
+      "sha256": "7f9c0121ac05db24768acd7b7ecdac2f66b29bcebe6867db07ab4f4169e34d28"
+    },
+    {
+      "path": "apps/api/test/logout-push-token-revocation.test.ts",
+      "lines": 71,
+      "sha256": "0d0659cdd8ab30503f9e81cc34b1077690f546b1fdb46ffc67bde8a90cf60727"
+    },
+    {
+      "path": "apps/api/test/logout-refresh-revocation-race.test.ts",
+      "lines": 104,
+      "sha256": "cafedfa73fb0031992846d33af8d9636d9b60d7a8eb1c3dadcedc7a167f0548f"
+    },
+    {
+      "path": "apps/api/test/me-consent-scope-disclosure.test.ts",
+      "lines": 93,
+      "sha256": "1d22ecb146479c7a9b81949fc1134ab5773942716db54ef0dfa9a6efaf44fcb1"
+    },
+    {
+      "path": "apps/api/test/medication-create-permissions.test.ts",
+      "lines": 161,
+      "sha256": "a02c0e8ed2c2786ca2fbcd011092f3544daaa162258bfc630ef68c08703f86d4"
+    },
+    {
+      "path": "apps/api/test/medication-external-reference-integrity.test.ts",
+      "lines": 129,
+      "sha256": "5671b852b27ee832ebfeb98d1a9400d8e2adea857304c5a52ae1eeba9a78f3cc"
+    },
+    {
+      "path": "apps/api/test/medication-profile-graph-integrity.test.ts",
+      "lines": 128,
+      "sha256": "58eda32ca06ca3d9260aca1bcb3c005426619d325ccc0c6f4558db59c312430f"
+    },
+    {
+      "path": "apps/api/test/medication-reparent-authorization-boundary.test.ts",
+      "lines": 146,
+      "sha256": "891e04467b21baa72c63b17ff84b66d67f8f26328b5f65b74410c6702ffc784f"
+    },
+    {
+      "path": "apps/api/test/medications.test.ts",
+      "lines": 233,
+      "sha256": "c0f65f29d7db822557da6b87c07340f71ff91ba5dff99146f8eb8942895d7cc8"
+    },
+    {
+      "path": "apps/api/test/migration-history-postgres.test.ts",
+      "lines": 62,
+      "sha256": "4f909d86681252888e274f1c93bbadcbe515ec988d9da9da42b6f872e2a8f147"
+    },
+    {
+      "path": "apps/api/test/migration-history.test.ts",
+      "lines": 30,
+      "sha256": "49e744d9a163a72b8ef699da89370f8c74fcb6045a024463c055a581c849b13d"
+    },
+    {
+      "path": "apps/api/test/migration-number-uniqueness.test.ts",
+      "lines": 26,
+      "sha256": "9ea7af9a6994a827f6709854b0f9174e2c87ccda2d4801b03a06ddbe53680f0a"
+    },
+    {
+      "path": "apps/api/test/migration-orphan-recovery.test.ts",
+      "lines": 66,
+      "sha256": "7bd04c0246282f20560fba7f9a27453fbdb271dc5cf0be8bf35bd5b0dbc9f54a"
+    },
+    {
+      "path": "apps/api/test/migration-preflight-read-only.test.ts",
+      "lines": 91,
+      "sha256": "f82fe9b9b87f29ba66e82c8e28dbdb463ab2138d1f9b1d87127c543650acce59"
+    },
+    {
+      "path": "apps/api/test/migration-set-role.test.ts",
+      "lines": 111,
+      "sha256": "7d1a2076714c510e12c92b070fd06e0b11f311cf801cd814a7d27dfe8502541e"
+    },
+    {
+      "path": "apps/api/test/mobile-read-routing.test.ts",
+      "lines": 117,
+      "sha256": "870e3f675b11e380726d5a47902a32d879132d7408465efdafef12f2919750a6"
+    },
+    {
+      "path": "apps/api/test/notification-delivery-graph-integrity.test.ts",
+      "lines": 138,
+      "sha256": "854451cb3ab25f575c67a6f296e67bc616bde859933e16b47c80f6b4d4e7cd93"
+    },
+    {
+      "path": "apps/api/test/notification-privacy-retry.test.ts",
+      "lines": 106,
+      "sha256": "a31910d276ae218c6e9e22d0f7454d509a1ad89813bb155cd2d96c0f19457dd9"
+    },
+    {
+      "path": "apps/api/test/notification-privacy.test.ts",
+      "lines": 128,
+      "sha256": "4f44eb2b7ed6500c547fb49870ce939210f1e96326cee58503fc91bc9106c054"
+    },
+    {
+      "path": "apps/api/test/nullable-patch-semantics.test.ts",
+      "lines": 129,
+      "sha256": "748cf4db171e174d6554b28b36e0208d0b6ba2adb10381501d4f3d62ab3bc9ce"
+    },
+    {
+      "path": "apps/api/test/object-key-privacy.test.ts",
+      "lines": 12,
+      "sha256": "6100b8bcaad7d0a2e5ff36d1e6821e45a4a9da81e8c4cd0dee632393374a96ef"
+    },
+    {
+      "path": "apps/api/test/ocr-caregiver-revocation-race.test.ts",
+      "lines": 103,
+      "sha256": "90de1af9410f06a7f794c97f7fe78dbbb218b9116b3112165732b54df7a81d83"
+    },
+    {
+      "path": "apps/api/test/ocr-consent-profile-scope.test.ts",
+      "lines": 149,
+      "sha256": "4496a85abc215751a3a9073d0da072a24dcd80df930e6649eeca55f2be42c0f8"
+    },
+    {
+      "path": "apps/api/test/ocr-consent-revocation-race.test.ts",
+      "lines": 97,
+      "sha256": "5739481a487c25304e4af616f92a5f03ca03b281795b1f9f85745119651070d9"
+    },
+    {
+      "path": "apps/api/test/ocr-parser-redos.test.ts",
+      "lines": 34,
+      "sha256": "3ac7e42fe3aea42b87b50afbe0aa7203741b495a0ab177daaf0c279acfefe995"
+    },
+    {
+      "path": "apps/api/test/ocr-profile-binding.test.ts",
+      "lines": 89,
+      "sha256": "e63030b4bbf61f86c09053bf9987076f17c36a66ffe0bf9aac32f1f6bc2bfeb3"
+    },
+    {
+      "path": "apps/api/test/ocr-strength-boundary.test.ts",
+      "lines": 39,
+      "sha256": "3f8312fdbf1a316a0f341ba2fbdaf437b9da41f5441a2fbe279502fe64053ed9"
+    },
+    {
+      "path": "apps/api/test/operational-error-privacy.test.ts",
+      "lines": 311,
+      "sha256": "e78300851daf8b39a0c0bdbd18859b3e77a80ef1f41a2e599fdba1a33145c310"
+    },
+    {
+      "path": "apps/api/test/otp-rls-regression.test.ts",
+      "lines": 58,
+      "sha256": "d53feb688aff2efe77355ccabaa8e0087e18581ffb4af7cd5d7289f2fffafc87"
+    },
+    {
+      "path": "apps/api/test/otp-security.test.ts",
+      "lines": 458,
+      "sha256": "0d150d9973cd8ce82c8917cbf00afc775b22a6789e4de5079782daea99bb209b"
+    },
+    {
+      "path": "apps/api/test/password-auth.test.ts",
+      "lines": 247,
+      "sha256": "fcfd980a2cb0ecb00e16beb4c31e07b0b675a61e0ad1c087acdb9f08d6d8733b"
+    },
+    {
+      "path": "apps/api/test/password-change-refresh-race.test.ts",
+      "lines": 127,
+      "sha256": "1616cdfdd26c31f0e5133eb72140991bd605c03d4d64379a09fd08e6c0c81373"
+    },
+    {
+      "path": "apps/api/test/password-change-revoked-refresh-device-id-isolation.test.ts",
+      "lines": 88,
+      "sha256": "cee6ce7fed9e7869ef48742d261097b6c6d918dda05d180b2d19fd49f8336dbb"
+    },
+    {
+      "path": "apps/api/test/password-email-identifier.test.ts",
+      "lines": 19,
+      "sha256": "a559626ad35e49690a91dfab6c41b60f23417b2c69232443771a12d77f26288e"
+    },
+    {
+      "path": "apps/api/test/password-lockout-service.test.ts",
+      "lines": 26,
+      "sha256": "20be91f6c69a00aa634e3a839fb2a1907d29b08329ee80302a441a492e97949c"
+    },
+    {
+      "path": "apps/api/test/password-recovery-key.test.ts",
+      "lines": 17,
+      "sha256": "66c1cb42f4fcee760f20065bde49364e2aa4c865f7e330a9aa6cdda5eac936c1"
+    },
+    {
+      "path": "apps/api/test/password-recovery.test.ts",
+      "lines": 161,
+      "sha256": "c2dde640e53a3c45203b6f28397f24f3230b97f3213f31de95ed145dd389678f"
+    },
+    {
+      "path": "apps/api/test/patient-caregiver-journey.test.ts",
+      "lines": 103,
+      "sha256": "09ac94cbb91db5412d311ccf4ee5d179f2d83cbd5efe8955797f73155e38a574"
+    },
+    {
+      "path": "apps/api/test/phase10-closeout.test.ts",
+      "lines": 87,
+      "sha256": "71b854c52ec91c1d432749cfc367720aa97b4358454a3acee37a2d0d3de1ab8e"
+    },
+    {
+      "path": "apps/api/test/phone-identifier.test.ts",
+      "lines": 15,
+      "sha256": "fbcf4f86e36de324cfa68632ab6f9f4fa9ec9ea0c872fc9c6a659f717ed8848f"
+    },
+    {
+      "path": "apps/api/test/phone-verification.test.ts",
+      "lines": 134,
+      "sha256": "81bff3d81afb1e8bbf49141555cb782d9f8ccacd8881a3e8907304b25758e2a8"
+    },
+    {
+      "path": "apps/api/test/preferences-persistence.test.ts",
+      "lines": 94,
+      "sha256": "e4e54a6489f5bf42ae25212365ee42c146ed128e05c07428dc7e8e4e6dff2fd7"
+    },
+    {
+      "path": "apps/api/test/privacy-export-audit-completeness.test.ts",
+      "lines": 54,
+      "sha256": "70482c43d15eeefc213daf0197af38841c319b0bed85c6c6c61d166c5f3ed701"
+    },
+    {
+      "path": "apps/api/test/privacy-export-caregiver-lifecycle-completeness.test.ts",
+      "lines": 124,
+      "sha256": "dbf218310ef7695aae6be7d38dd27a9dd08b9374909dafab48296941ac11b96d"
+    },
+    {
+      "path": "apps/api/test/privacy-export-caregiver-rule-boundary.test.ts",
+      "lines": 184,
+      "sha256": "d4a5cae4315aa824181297f3dabad73b17d985a567c9064f45d370c420bb55b1"
+    },
+    {
+      "path": "apps/api/test/privacy-export-consent-completeness.test.ts",
+      "lines": 88,
+      "sha256": "95e5ea5b21d06f9b51b712b40d0d9325a94d1172afa7ab7dfb67742f2d6207b1"
+    },
+    {
+      "path": "apps/api/test/privacy-export-emergency-card-completeness.test.ts",
+      "lines": 61,
+      "sha256": "7afb5c57b6b98c9e266beb76cd653ca8d1b72bc9d1baac82e3a4bf1357cf5288"
+    },
+    {
+      "path": "apps/api/test/privacy-export-emergency-completeness.test.ts",
+      "lines": 158,
+      "sha256": "01ce727d9abffe31c7167ffc0af4552e3e64650f85428cbb074fe9b351b763d2"
+    },
+    {
+      "path": "apps/api/test/privacy-export-escalation-policy-completeness.test.ts",
+      "lines": 62,
+      "sha256": "c3ef6125ba6c18d6c0cfb429aab4e6fc855e25f922d1a07435e43c273a514576"
+    },
+    {
+      "path": "apps/api/test/privacy-export-notification-delivery-completeness.test.ts",
+      "lines": 69,
+      "sha256": "4f3788c7b1df0e3def368b75054f3ab274554f5c63095d6018cb4c947fc08f95"
+    },
+    {
+      "path": "apps/api/test/privacy-export-prescriptions-completeness.test.ts",
+      "lines": 63,
+      "sha256": "0f61fcde490db5d33cd307f4cc18f4eaa10c21a619c54a2bab89230ab9995f38"
+    },
+    {
+      "path": "apps/api/test/privacy-export-profile-owned-metadata-completeness.test.ts",
+      "lines": 130,
+      "sha256": "e6ceb08e527b58c71904f1227096310a1367d243026e55b45319dedd64513c4e"
+    },
+    {
+      "path": "apps/api/test/private-resource-routing-integration.test.ts",
+      "lines": 176,
+      "sha256": "0be5acb29c7d63facf47aa53c57225c96e0f531b526f07be59e1e6b4ea251caa"
+    },
+    {
+      "path": "apps/api/test/private-resource-routing.test.ts",
+      "lines": 95,
+      "sha256": "65dab7845d879b7ca465bf1658123b4f74c97240ec6b7ebe430148224e00b50c"
+    },
+    {
+      "path": "apps/api/test/private-routing-handler-fallback.test.ts",
+      "lines": 32,
+      "sha256": "9231fdaea63b574adbaaccd9cf220efb449f4b5743425990785ffdf40c82c838"
+    },
+    {
+      "path": "apps/api/test/privilege-boundary.test.ts",
+      "lines": 392,
+      "sha256": "4110959973f9a7d19c3c0b4a431af36fb5e98cd4cc09dacbeeafa1f3c6203d57"
+    },
+    {
+      "path": "apps/api/test/production-ocr-provider.test.ts",
+      "lines": 49,
+      "sha256": "bcbae33b3118e202680c3a3d7d18b0e3468a8f8df7341b7053901b42add497a0"
+    },
+    {
+      "path": "apps/api/test/production-recovery-rehearsal.test.ts",
+      "lines": 223,
+      "sha256": "303c22af147258fadd03dbc53bd31492b6d39258ce04739e5009ada7e19ea2b6"
+    },
+    {
+      "path": "apps/api/test/production-release-runbook-safety.test.ts",
+      "lines": 55,
+      "sha256": "65a1278fada8ec2155d4020cb2e43ef2c18d4eecd82191e9dc7d61471812aebe"
+    },
+    {
+      "path": "apps/api/test/production-upgrade-rehearsal.test.ts",
+      "lines": 56,
+      "sha256": "428365f67395d9379dd5e87051ff003ee4d684559d07168c83d1428ed6fba9d8"
+    },
+    {
+      "path": "apps/api/test/profile-identity-reassignment-boundary.test.ts",
+      "lines": 123,
+      "sha256": "7dca46615b68582416b849e285771408f5115e2ac2cd3cf52a45f41f6eb68e7c"
+    },
+    {
+      "path": "apps/api/test/profile-identity-runtime-controls.test.ts",
+      "lines": 171,
+      "sha256": "544f2806b367d9e54498ea60fe625f4f5be2869dc1d9bf92d45f06618c8b9f98"
+    },
+    {
+      "path": "apps/api/test/profile-routing-header.test.ts",
+      "lines": 43,
+      "sha256": "436fec7878eb96b11605c5e5360f823699f276a588d6364df0f4407fd8f54e44"
+    },
+    {
+      "path": "apps/api/test/profile-self-identity.test.ts",
+      "lines": 92,
+      "sha256": "1266fbb1fb06267e359c5297a1bacb20aca475668dff6a92c9a554a11953838c"
+    },
+    {
+      "path": "apps/api/test/proxy-depth-diagnostic.test.ts",
+      "lines": 47,
+      "sha256": "a5a93510353076c02ed3aa7243e2e8b3f95ea7332c58051ee13400f1f57ce6f0"
+    },
+    {
+      "path": "apps/api/test/public-app-url-security.test.ts",
+      "lines": 29,
+      "sha256": "d4abebda9e90450e888e6aa177d374aab22f5fa6158bd08b6afa39bc4161107a"
+    },
+    {
+      "path": "apps/api/test/push-receipts.test.ts",
+      "lines": 163,
+      "sha256": "cffb28cb40ab47e245a91a4a48982f5fa0be9a53c958c69402f51070f0c839bb"
+    },
+    {
+      "path": "apps/api/test/push-send-shape.test.ts",
+      "lines": 68,
+      "sha256": "8a8693eee6c03d02f96ce0797231778117a8ccfd5c35f53c2f64c4f08986080b"
+    },
+    {
+      "path": "apps/api/test/push-session-retention-regression.test.ts",
+      "lines": 61,
+      "sha256": "be7a48f8a584db23d33656eae16ceb35c88adedbb53ed5f407d2255876e09318"
+    },
+    {
+      "path": "apps/api/test/push-token-account-switch.test.ts",
+      "lines": 140,
+      "sha256": "f218dd79e6e7ae31036b584dd907c3770e6caa8b45362041dd1aa28367b7723f"
+    },
+    {
+      "path": "apps/api/test/push-token-deregistration-same-device-session-isolation.test.ts",
+      "lines": 76,
+      "sha256": "f52f3c4b0ff0eb3ec7e7d18c63b30a84d898496e06a7b67e4f1325d7242b2f4e"
+    },
+    {
+      "path": "apps/api/test/push-token-deregistration-session-device-binding.test.ts",
+      "lines": 72,
+      "sha256": "45a97bc1c27c41b33af08595baca3d956230507b40fd94c443dd1ee2187069d4"
+    },
+    {
+      "path": "apps/api/test/push-token-session-binding-expiry.test.ts",
+      "lines": 102,
+      "sha256": "713c208a50ff9083b9fa36ef8ff543c8a3fff687057264041e205bd9a8a38436"
+    },
+    {
+      "path": "apps/api/test/push-token-session-device-binding.test.ts",
+      "lines": 66,
+      "sha256": "ed60512e7303b37d2841a83f09cf0e1c4db4e1dc531289dccab7f5eca7d567a3"
+    },
+    {
+      "path": "apps/api/test/refresh-reuse-push-device-id-isolation.test.ts",
+      "lines": 121,
+      "sha256": "0935c3aef001a3d913eab0a811eda8701d920a78b8cf2e38bcc5e812314ee1ae"
+    },
+    {
+      "path": "apps/api/test/release-backup-preflight-guard.test.ts",
+      "lines": 78,
+      "sha256": "4cf63450e58f4b8618dca47dc6c7524545744468cc256eafff3133eb572f6c1b"
+    },
+    {
+      "path": "apps/api/test/release-gates.test.ts",
+      "lines": 490,
+      "sha256": "ee99131414b2b93f9a10bd862ad3f6fbc9208350a344d2440115e4bcd8148520"
+    },
+    {
+      "path": "apps/api/test/release-recovery-environment.test.ts",
+      "lines": 15,
+      "sha256": "53ef9a59af378e73b50db84dfeb948c06dd33b672aa4ab52a496c9cca0cdb350"
+    },
+    {
+      "path": "apps/api/test/render-client-ip-source.test.ts",
+      "lines": 103,
+      "sha256": "f65cdebbb3fb68d9bc1f683431a0e96eb7eb3bd0082474f987646c93eb471453"
+    },
+    {
+      "path": "apps/api/test/render-production-plan.test.ts",
+      "lines": 39,
+      "sha256": "52b2af6d8a4d7926cf221f68ecf9067c6f165630dc2e0a706416bf65e322d00c"
+    },
+    {
+      "path": "apps/api/test/render-release-control.test.ts",
+      "lines": 35,
+      "sha256": "61db99e9c67734391ce1dad46fccdfdfbf0aa6c85c668b42b9613dac2ec9cb7b"
+    },
+    {
+      "path": "apps/api/test/report-permission-dependencies.test.ts",
+      "lines": 55,
+      "sha256": "a4f81b97caec8caafdae2313a2621c405c4b02d47f171dae671f736fcd3e5ec9"
+    },
+    {
+      "path": "apps/api/test/request-ip-log-privacy.test.ts",
+      "lines": 37,
+      "sha256": "ec06b7169a2b5185b0236865325065c3d6e91dcacb87cba0c227d5fd8c16595a"
+    },
+    {
+      "path": "apps/api/test/request-url-redaction.test.ts",
+      "lines": 39,
+      "sha256": "8861add64a07e2d95c5d83028b040ce58abfd0636f121ab05d0c8e39c97da3f6"
+    },
+    {
+      "path": "apps/api/test/review-api-contracts.test.ts",
+      "lines": 435,
+      "sha256": "0a156107832b389863a3fdf945d207505b4ec6bd32df4b2e9239e8bb3c9f1164"
+    },
+    {
+      "path": "apps/api/test/rls-matrix.test.ts",
+      "lines": 938,
+      "sha256": "9e8984734a5e73dd722435d97d29cf646cbdc8e13763fb5cb52c4ef9b1a07de9"
+    },
+    {
+      "path": "apps/api/test/runtime-recovery-environment.test.ts",
+      "lines": 40,
+      "sha256": "24244201b9b1cde301145be90ce2b0cc8047c262fe5955b9c9feaafc07000003"
+    },
+    {
+      "path": "apps/api/test/s3-upload-content-type-binding.test.ts",
+      "lines": 43,
+      "sha256": "f792f74d10e674e7499a9dc387cb03beb02bf1e00fb02deeee9f72b5b2b1c1d6"
+    },
+    {
+      "path": "apps/api/test/s3-upload-signature-vectors.test.ts",
+      "lines": 102,
+      "sha256": "783e29c530cb807be1bacec1e7c801a1879f91978667a615b5db309fc94a6949"
+    },
+    {
+      "path": "apps/api/test/schedule-stop-resume-integrity.test.ts",
+      "lines": 221,
+      "sha256": "ef38c5f7c506434fc3803c52b14fde10c5d9219f5b1badb4112e131407bffc12"
+    },
+    {
+      "path": "apps/api/test/schema-contract.test.ts",
+      "lines": 200,
+      "sha256": "3a84aebdccd877117cec53a27c3df91b697bcb5d47371af8ce261b5a2a2b155f"
+    },
+    {
+      "path": "apps/api/test/security.test.ts",
+      "lines": 646,
+      "sha256": "6007104a790a11ef1f820e7b57476dc8a46dd3cd638435b0a34363a63b4145d6"
+    },
+    {
+      "path": "apps/api/test/session-revocation-push-boundary.test.ts",
+      "lines": 155,
+      "sha256": "298de6b35f51bb38a87eae314c1e39c566d1f38fe6340cb856e71c6d4f1d10ca"
+    },
+    {
+      "path": "apps/api/test/shared-rate-limit.test.ts",
+      "lines": 578,
+      "sha256": "95d0d502eb958be76bca7b546eb962309ac7ff008cf0fecc18354ae83665836c"
+    },
+    {
+      "path": "apps/api/test/stock-alert-rearm.test.ts",
+      "lines": 85,
+      "sha256": "cd062bf25761241705e4cd42bac4970f16ce65e2f2b6a887fad6b5641bdb1285"
+    },
+    {
+      "path": "apps/api/test/stock-ledger-repeat-cycle.test.ts",
+      "lines": 122,
+      "sha256": "11fc05870a5bd8498b8f9bc53d5f939a5e3e760e9ec4d0c107cfb311bd2805fb"
+    },
+    {
+      "path": "apps/api/test/stock-notification-privacy.test.ts",
+      "lines": 90,
+      "sha256": "f1653479ce61ad5e6aacd7edce48109a67f42339a19ef86c425c1a4492e24e74"
+    },
+    {
+      "path": "apps/api/test/stock-transaction-graph-integrity.test.ts",
+      "lines": 156,
+      "sha256": "41857bea35a4c6d00b25d62c2fd89ac389ffa4ea8304820cc7aba5df15008578"
+    },
+    {
+      "path": "apps/api/test/stock-unit-integrity.test.ts",
+      "lines": 97,
+      "sha256": "1ad3dc3067b665ab96087ef50164bcd544423e179fc1094f0ef0a353d24b599d"
+    },
+    {
+      "path": "apps/api/test/storage-provider-security.test.ts",
+      "lines": 201,
+      "sha256": "140bb6b8daccf5bb91a4b377ba170fc15ce471c329690f754dae8dc93a1552a5"
+    },
+    {
+      "path": "apps/api/test/symptom-note-length-contract.test.ts",
+      "lines": 38,
+      "sha256": "f0fcc37445ce763f13372a6661053e671f1a91a5099488f685c75d4d1db2c4a5"
+    },
+    {
+      "path": "apps/api/test/timezone-check-validation.test.ts",
+      "lines": 49,
+      "sha256": "4bfbb3e5612732428c082107d09a97c1322fefbaa0f16ad2e1bad5c5059680c2"
+    },
+    {
+      "path": "apps/api/test/upload-caregiver-uploader-revocation.test.ts",
+      "lines": 69,
+      "sha256": "0b5aea978110cb6af4dc8014d15bbf84a0be943b25176408e6eac0fdb8ba45ee"
+    },
+    {
+      "path": "apps/api/test/upload-caregiver-uploader-signing-revocation-race.test.ts",
+      "lines": 83,
+      "sha256": "a1519a73ab3ea1698db93b555d9d98aa6ca809ce6018354b85425eebc2f947a8"
+    },
+    {
+      "path": "apps/api/test/upload-declared-size-integrity.test.ts",
+      "lines": 45,
+      "sha256": "2fdba7e45cdb83e307552c938e0e2451f72c419317ba9ca893d0bbd1d9c3898b"
+    },
+    {
+      "path": "apps/api/test/upload-declared-size-routing.test.ts",
+      "lines": 112,
+      "sha256": "4a6856f8bf6e018afddd546c7c81312a1aadd00a1ae55ce42244d7bb46c1407d"
+    },
+    {
+      "path": "apps/api/test/upload-emergency-security.test.ts",
+      "lines": 449,
+      "sha256": "d777c59287a34bde010de3ef989a1805455c894e4db0e8808b4d2825cb5391d5"
+    },
+    {
+      "path": "apps/api/test/upload-finalization-authorization.test.ts",
+      "lines": 150,
+      "sha256": "a113563ea84527021edbf6a689eb4f4ebccc1b5dda6875d718f93f9909b8599c"
+    },
+    {
+      "path": "apps/api/test/upload-finalization-size-boundary.test.ts",
+      "lines": 156,
+      "sha256": "271d18d90880bb4a95a3314d7260d8e87385f8e78d6590ac0dc5ce315693d8a5"
+    },
+    {
+      "path": "apps/api/test/upload-finalize-concurrency.test.ts",
+      "lines": 77,
+      "sha256": "4abae32915594912bcf29206c6b39936d27cd9b50756b8ff9f7ab32319e7cc08"
+    },
+    {
+      "path": "apps/api/test/upload-finalized-ticket-replay.test.ts",
+      "lines": 88,
+      "sha256": "e85b4321b122ec81ab2db6c6f0cfd3175670994128c67c9079992ac1f860b610"
+    },
+    {
+      "path": "apps/api/test/upload-object-key-header-routing.test.ts",
+      "lines": 103,
+      "sha256": "ab15b05c6bcaebc2b388925c13234a465b295e91140d1b0a5685e746eaea89e0"
+    },
+    {
+      "path": "apps/api/test/upload-read-url-revocation-race.test.ts",
+      "lines": 83,
+      "sha256": "d360e3891fb3254295b5a5d12d9bdbc1cb6d49bf59a87e36d5f1d7da848b446f"
+    },
+    {
+      "path": "apps/api/test/upload-retention-integrity.test.ts",
+      "lines": 45,
+      "sha256": "683c1528ef10eb925b84e15ba5297a0424e96876ae6a1625132b33ff18e0dcfe"
+    },
+    {
+      "path": "apps/api/test/web-app.test.ts",
+      "lines": 120,
+      "sha256": "89fe995f885f3e77762a05efd7d75118e851ba530c75c4b44686b065f3fa02bd"
+    },
+    {
+      "path": "apps/api/test/web-artifact-collection.test.ts",
+      "lines": 56,
+      "sha256": "66c910b6f1225ce32f2ac43a68e25b2687ee608d1cfd5dfdb63c84cf6406beea"
+    },
+    {
+      "path": "apps/api/test/web-build-hardening.test.ts",
+      "lines": 297,
+      "sha256": "b7f0eb909528e1f694380eff2851cf4c8479817e2d494379e8c27cf43ebd1cae"
+    },
+    {
+      "path": "apps/api/test/web-storage-csp.test.ts",
+      "lines": 33,
+      "sha256": "caf7a9749e789787e1cd003a1c69e6794e563f3734ed2ee9e98e06ad7f3c15a6"
+    },
+    {
+      "path": "apps/api/test/web-test-bootstrap.test.ts",
+      "lines": 36,
+      "sha256": "d5be6e0faf22ddead2729acf0e80d4004291dc72d6ac43cffbb477d3a282ab8e"
+    },
+    {
+      "path": "apps/api/test/weekly-report-profile-timezone.test.ts",
+      "lines": 44,
+      "sha256": "9eb62bbe5460148afd368c91b9e72c50e12a6cbf154676e3cd9f3bdfd511cf52"
+    },
+    {
+      "path": "apps/api/test/worker-materialization-hotfix.test.ts",
+      "lines": 159,
+      "sha256": "28664025ed9c1c4ab9290bf9c627bdcb6e91fabe547352e8a3450e66c6158b93"
+    },
+    {
+      "path": "apps/api/test/worker-materialization-privileges.test.ts",
+      "lines": 201,
+      "sha256": "bfd2e9e1235e0e00734bab3b191dfd53588feab221489c3fb268de7de4320e9c"
+    },
+    {
+      "path": "apps/api/test/worker-reliability.test.ts",
+      "lines": 1542,
+      "sha256": "997c18253a01f412fc3afa740abab087ef9749ada18769b909f0191e6b776adc"
+    },
+    {
+      "path": "apps/api/tsconfig.json",
+      "lines": 17,
+      "sha256": "aba21a531e672835c344e819e4345ade4688b9ab7016faaba1ebf0f1f9b0e437"
+    },
+    {
+      "path": "apps/mobile/.eas/workflows/submit-ios10.yml",
+      "lines": 17,
+      "sha256": "1b7a61c7d859c3e3b01179842906dba70d225de11ab8398004e98dce955d67e7"
+    },
+    {
+      "path": "apps/mobile/SCREEN_BRIEF.md",
+      "lines": 139,
+      "sha256": "3a14fb8c73a7e56d6b0b0c2ad00511660568405536cb02276167760b900270e8"
+    },
+    {
+      "path": "apps/mobile/app.config.js",
+      "lines": 41,
+      "sha256": "01070b3431aa2fceb07951747e9b53e489081c9e53cd5e4fcc0819304df177ab"
+    },
+    {
+      "path": "apps/mobile/app.json",
+      "lines": 125,
+      "sha256": "b9a719563c27b548da0903db2806a4a77399acef35ecdeb6ff97af79f047fcda"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/_layout.tsx",
+      "lines": 6,
+      "sha256": "4e200f4c7e2920decdbec7748161bc1dec24488c4c956b12ce4581794fcfab4b"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/forgot-password.tsx",
+      "lines": 65,
+      "sha256": "6f218957744a083f69217a6cf8256b172599d2bd3d1dd7b6bedb058e8ef4e1ff"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/language.tsx",
+      "lines": 48,
+      "sha256": "0d89b66318de5340c8e02eaebf9a93781f26c45528f40e0fbfda159b35c9282d"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/onboarding.tsx",
+      "lines": 298,
+      "sha256": "02e33237986735f63ee509b54ba6fcdb42d287c23fc3e3df49805d1294121fe5"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/sign-in.tsx",
+      "lines": 149,
+      "sha256": "be137a532cdb6cb16d888b14bbc133020fb07cbb607b6dbbb081c26da10faf17"
+    },
+    {
+      "path": "apps/mobile/app/(auth)/sign-up.tsx",
+      "lines": 107,
+      "sha256": "b03290462ac9fb9eb4012d15deeb241251d77aa5bd9d8d2e6143ca350a76d262"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/_layout.tsx",
+      "lines": 72,
+      "sha256": "9db831b582e7b67de8405e5e4c9a4b1f59e3bafe9e7fbcaeb4010b68f73e3c5a"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/family.tsx",
+      "lines": 469,
+      "sha256": "fdf00fa1ec7a98cc86c5df301504cf92e0e6ad36dd9b2cf66da727eb57e2d490"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/history.tsx",
+      "lines": 655,
+      "sha256": "9d9ba1abdb04d8619cf6d1601c3d561f2a33be048d0d00686e1ce9a48228d7d7"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/medications.tsx",
+      "lines": 207,
+      "sha256": "f2ebb0347732f0ea589b95be07ab67d085690ed57b4f659ba3ec3ba33e0496c6"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/settings.tsx",
+      "lines": 277,
+      "sha256": "1e2ddfb3faf091ba5dc39e80d142a524166620288d84f908678698fe72539b1f"
+    },
+    {
+      "path": "apps/mobile/app/(tabs)/today.tsx",
+      "lines": 520,
+      "sha256": "f58fd85436ca661b8886ec13dab99933cdb20ec8414462a3398330364156d86d"
+    },
+    {
+      "path": "apps/mobile/app/+native-intent.tsx",
+      "lines": 11,
+      "sha256": "71e08a331b4cff1b6ea3051570eb56f46d9b1dfb40918bb2fc8e81d3ce848392"
+    },
+    {
+      "path": "apps/mobile/app/_layout.tsx",
+      "lines": 220,
+      "sha256": "310ca22417cd9bb95ae585a30689352af89389414efc5c2c9a6f91da07b9a7fc"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/[id].tsx",
+      "lines": 14,
+      "sha256": "3296ba833bc3b487e990d40a6a3728f893239edf659b8f39a46d7fecf2ecfbc2"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/accept.tsx",
+      "lines": 139,
+      "sha256": "62b6154280faa6fccc19975fb542b85916e539dbe7a3e48a6685e54fef784118"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/dashboard.tsx",
+      "lines": 351,
+      "sha256": "c3ec31e35b69bb224efd82eff4351743e9469c790f0b59f9e16f536490b6c737"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/detail.tsx",
+      "lines": 408,
+      "sha256": "26c200c1fa252f3ba146a9532fb1103d8980954fe69e8fb02944e49e945fcda6"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/escalation.tsx",
+      "lines": 588,
+      "sha256": "f2de8c1367ee7d0f8582108ec3e1a907ed12283f3f4d2169d3ae73fe5138bfbb"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/invite.tsx",
+      "lines": 410,
+      "sha256": "b9058464c686b7c2293382abd7c66980c57d97ea3bc980b8cc8a2525e9393377"
+    },
+    {
+      "path": "apps/mobile/app/caregiver/notification.tsx",
+      "lines": 159,
+      "sha256": "caf69cf678a336dc80892d356f1d45e72ad999d72e6afc4b6d2c34067bd88355"
+    },
+    {
+      "path": "apps/mobile/app/e/index.tsx",
+      "lines": 218,
+      "sha256": "3b68992c998f739fde3aaad3a7d11dadd1943d6554f1c870fd2f01cd86178be7"
+    },
+    {
+      "path": "apps/mobile/app/index.tsx",
+      "lines": 60,
+      "sha256": "159ddeea8fb5db9787665cb3e890c7a69629e091b00ebc165c497bebd20bec7a"
+    },
+    {
+      "path": "apps/mobile/app/invite/[token].tsx",
+      "lines": 34,
+      "sha256": "c914118f5f7dff65d3c5b605b785cb8243373f06c95c5dd2b7dd9aade1749965"
+    },
+    {
+      "path": "apps/mobile/app/invite/index.tsx",
+      "lines": 67,
+      "sha256": "280d390159bdc030fe16d675a777acfdab946da82651b1c8731848f6716e7f93"
+    },
+    {
+      "path": "apps/mobile/app/medication/[id].tsx",
+      "lines": 14,
+      "sha256": "efcbccfd1228acdd492a52dcb653e9a2119b828f6f3f75359d779d0e0324ed91"
+    },
+    {
+      "path": "apps/mobile/app/medication/add.tsx",
+      "lines": 111,
+      "sha256": "d8cb5b482e873d58b16c4a44fde0c95a0561f6b884fc241f1ee2a634fd4f2ad9"
+    },
+    {
+      "path": "apps/mobile/app/medication/capture.tsx",
+      "lines": 232,
+      "sha256": "f8738855f25c38f480a72f6d7f938604a436b1fc321ab8017aa4aba4c0ebd335"
+    },
+    {
+      "path": "apps/mobile/app/medication/confirm.tsx",
+      "lines": 216,
+      "sha256": "14e7bdbd88a4e813d55a76e8eb5faa9e6e6e5344648f3184dcc1c2556d48b591"
+    },
+    {
+      "path": "apps/mobile/app/medication/detail.tsx",
+      "lines": 226,
+      "sha256": "fd988fa02d803b59dd0a24dfd2a9cdc1adb559bb03e1aaf66cfca51eaebd5bac"
+    },
+    {
+      "path": "apps/mobile/app/medication/edit.tsx",
+      "lines": 474,
+      "sha256": "9ee82c394782a6696ba4eaf2551d7aaa65dfa42bc73a79a973dbcd2ef1522c1e"
+    },
+    {
+      "path": "apps/mobile/app/medication/quick-create.tsx",
+      "lines": 353,
+      "sha256": "e8c7281fe0b205fe2b7aee5bf9f2d2f0ff76627fe7d0566456efc6b1b439c346"
+    },
+    {
+      "path": "apps/mobile/app/medication/schedule.tsx",
+      "lines": 617,
+      "sha256": "f3a5d7575fd9f43b3d37fa4d9f7d53af99dd4a415359d10f69caac47d0408e15"
+    },
+    {
+      "path": "apps/mobile/app/medication/stock.tsx",
+      "lines": 456,
+      "sha256": "4fcc0f0cf0c380b081ccc13c51be0bc4f9b4caffb240d29e1a44059bbd868f4e"
+    },
+    {
+      "path": "apps/mobile/app/notification.tsx",
+      "lines": 97,
+      "sha256": "d59caafa9010bd06cdcee70145cb78d73f977c95154a425ca85845c369f01ae8"
+    },
+    {
+      "path": "apps/mobile/app/reports/adherence.tsx",
+      "lines": 315,
+      "sha256": "f35bac9269d982fc01e5d96647bb9bf6a8f9d501d9e347a7e2b55c56fa210caa"
+    },
+    {
+      "path": "apps/mobile/app/reports/clinician.tsx",
+      "lines": 424,
+      "sha256": "aaeed1b3d525468e68ae37a3d44be9912fc64e74a98b08516c33027b8c75fbde"
+    },
+    {
+      "path": "apps/mobile/app/reports/index.tsx",
+      "lines": 225,
+      "sha256": "f3af050f1d77799a7561b99d601240a42bc692bb3071f7e988668fc8f2722007"
+    },
+    {
+      "path": "apps/mobile/app/reports/notes.tsx",
+      "lines": 468,
+      "sha256": "4b370d6bcd48e645fcee57596a3fb29758c464ae16282609378eb50d606c3542"
+    },
+    {
+      "path": "apps/mobile/app/reports/weekly.tsx",
+      "lines": 296,
+      "sha256": "1c0c26a382255d83a78a9f457cef0cb792ac18fecbd14345e9d57bc62072b1b0"
+    },
+    {
+      "path": "apps/mobile/app/settings/accessibility.tsx",
+      "lines": 185,
+      "sha256": "6fe685faeedbe0810c001dcb09522acd979f73285b80f0555f57bbffdb682381"
+    },
+    {
+      "path": "apps/mobile/app/settings/app-lock.tsx",
+      "lines": 192,
+      "sha256": "7dfdb37d31ddbfe8286ce076aaf24f610781c4b096542aa23343b43861b32b8c"
+    },
+    {
+      "path": "apps/mobile/app/settings/email-verification.tsx",
+      "lines": 85,
+      "sha256": "bc45c04c127481b8347b5de02c8f2f1ce240e73dab2a471927944564206d66c6"
+    },
+    {
+      "path": "apps/mobile/app/settings/emergency-qr.tsx",
+      "lines": 327,
+      "sha256": "d78a2b5348f503ed68fdd9a26ec5550c05666d888fc818e1d5939b141404b97e"
+    },
+    {
+      "path": "apps/mobile/app/settings/emergency.tsx",
+      "lines": 412,
+      "sha256": "20fb72d044924f475abf52d07ba47fbddb7ba8b9526aa50c288050a65aff0978"
+    },
+    {
+      "path": "apps/mobile/app/settings/notifications.tsx",
+      "lines": 480,
+      "sha256": "2c9a8c7a2862e696d209b1fb679fc86c086e9a18c9edfa82bdd51985363a0415"
+    },
+    {
+      "path": "apps/mobile/app/settings/phone-verification.tsx",
+      "lines": 17,
+      "sha256": "463df88cdd62c503f4e39b6af1ec18c34df4651c1fba331ed2a2f42d19ddc740"
+    },
+    {
+      "path": "apps/mobile/app/settings/privacy.tsx",
+      "lines": 360,
+      "sha256": "ee1734231476e342b342ec60df2d12665c14fbd65ad6a9a174586173c0b83832"
+    },
+    {
+      "path": "apps/mobile/app/settings/travel.tsx",
+      "lines": 238,
+      "sha256": "f706c962b017bacc62071b98e7e454d5c62b751fb06d9955134309c30a23fa51"
+    },
+    {
+      "path": "apps/mobile/babel.config.js",
+      "lines": 6,
+      "sha256": "dffff79d69e7d80177997baf6878a933d3b18671e545e5924d2f6ee2e2e241aa"
+    },
+    {
+      "path": "apps/mobile/eas.json",
+      "lines": 80,
+      "sha256": "57b6e7f8bae3c791d833a70643f7136e3b4fd3f64e104dea4c20b5ac8588ac75"
+    },
+    {
+      "path": "apps/mobile/google-services.json",
+      "lines": 21,
+      "sha256": "b71cc6b28c44e122362e29d67d0ff10053f27812df29fd3645cc67215b788b74"
+    },
+    {
+      "path": "apps/mobile/locales/ar.json",
+      "lines": 8,
+      "sha256": "d390e48bc2b417fd058192c4a9db5a1fcb0b3b66707003c2d784ea6a3da39216"
+    },
+    {
+      "path": "apps/mobile/locales/en.json",
+      "lines": 8,
+      "sha256": "6d0d22cf4060674f5f0ef5db149d0a643b3a9ad584a802ddb5cb416ddad09d55"
+    },
+    {
+      "path": "apps/mobile/metro.config.js",
+      "lines": 90,
+      "sha256": "150e8c93471394af1714da553b8e9024d339e29c74439746afc19e4ded5abbea"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/build.gradle",
+      "lines": 26,
+      "sha256": "5d77c36257932eb9412eaba8a0169051e59d2f487d01d7baee8caef29222ab8b"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/src/main/AndroidManifest.xml",
+      "lines": 18,
+      "sha256": "9f10cdbf6fc7d454e54d5f03ad31ddaeaf2f5130bcfe4b18cca9520e3e5c5787"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmAccessModule.kt",
+      "lines": 66,
+      "sha256": "78da9c48a62edd85fa326fe44dbbd7ec2f83854014a31c987f9b8d57301c2283"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmPermissionReceiver.kt",
+      "lines": 37,
+      "sha256": "1f2d2c9721337fd66e7f8e20bd91dfa217dd3a6b1a56dc026c4bcceb185e21f7"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/ExactAlarmRecoveryJobService.kt",
+      "lines": 141,
+      "sha256": "83b48d33684fe7cf60eb0c38754efcc6f623cfd944f358dbba2f55c851e5bc4f"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/android/src/main/java/app/dawaee/exactalarm/NotificationScheduleMutationCoordinator.kt",
+      "lines": 46,
+      "sha256": "a8ad44ea84918b7606e7e2770e02b8471b910dca6cb4cd3e19ac2a0d0b6867bb"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/expo-module.config.json",
+      "lines": 6,
+      "sha256": "7546f1bfd3506c500884f50e7c5470323b05bd9a934b40061cab038841a2dfac"
+    },
+    {
+      "path": "apps/mobile/modules/exact-alarm-access/index.ts",
+      "lines": 49,
+      "sha256": "ab902a0c2a6bf3e3e5f1e65e92e216a925ba670df68b049f4c2102f189b5206c"
+    },
+    {
+      "path": "apps/mobile/package.json",
+      "lines": 59,
+      "sha256": "c1e092309fa616b5d786a24bcb1f5b5d839d007a628f502a4942b004866aae1f"
+    },
+    {
+      "path": "apps/mobile/scripts/ios-preflight.cjs",
+      "lines": 36,
+      "sha256": "43f6e25d69c019b0b99176979c5b9f7085fd90d4a8ee1a081692f0a6b0cf239b"
+    },
+    {
+      "path": "apps/mobile/src/api/access-changes.ts",
+      "lines": 12,
+      "sha256": "6c28f09bfe1472d026aa721eb25ead281fe2de5cd9fdaf6539475ce63b0734ea"
+    },
+    {
+      "path": "apps/mobile/src/api/auth-connection.ts",
+      "lines": 54,
+      "sha256": "2c5157627db206f5e3b6a9e964bd38df23148348554985111f6c37fb6a9a8480"
+    },
+    {
+      "path": "apps/mobile/src/api/client.ts",
+      "lines": 590,
+      "sha256": "b28033a7ac2d424224463bdd173a98cd686ebf36037e87344542ec30c1eb0efc"
+    },
+    {
+      "path": "apps/mobile/src/api/clinical-changes.ts",
+      "lines": 14,
+      "sha256": "6de0bf74aa272f8fc9918f10bebe0b1531440eddbc2bd3ccfb6c2dd112daa2a6"
+    },
+    {
+      "path": "apps/mobile/src/api/demo-backend.ts",
+      "lines": 561,
+      "sha256": "e6961369117def3424e15a3743ab0fd90336cdb68452666c3bd8a1b2a069d127"
+    },
+    {
+      "path": "apps/mobile/src/api/restored-session-owner.ts",
+      "lines": 86,
+      "sha256": "b0ba0f3112ac743b32e55798769f1257886bc76366ec9f4f32b664c3845ebbb2"
+    },
+    {
+      "path": "apps/mobile/src/api/token-store.ts",
+      "lines": 307,
+      "sha256": "65f3534a9487d2435505e13c21a361dd684b99ac25feb20cead7efbbadee41f6"
+    },
+    {
+      "path": "apps/mobile/src/api/types.ts",
+      "lines": 150,
+      "sha256": "7ab738c096abf0c886a6200492f5150c34ed8a836921b0bea327603de3e33c10"
+    },
+    {
+      "path": "apps/mobile/src/components/AccountDeletionNotice.tsx",
+      "lines": 61,
+      "sha256": "6546c3cdd2da46ce684a6dc2ea892bf3f5866daee354f1b2f096c630647a55fb"
+    },
+    {
+      "path": "apps/mobile/src/components/DateField.tsx",
+      "lines": 129,
+      "sha256": "28ecfc547c6288bca4edf348fa9566b74ccbf5f3f0302f3c5580f28d1022664d"
+    },
+    {
+      "path": "apps/mobile/src/components/DoseCard.tsx",
+      "lines": 153,
+      "sha256": "25b6f4a6c31bc457e0a52d3e8bbae7d2fddcfac0f36bc69a3bd6cb6ad3e75e42"
+    },
+    {
+      "path": "apps/mobile/src/components/DoseNotesSheet.tsx",
+      "lines": 82,
+      "sha256": "baead7548551658afb8cc2af81a6527e17f82451894607d470c691fabaa976af"
+    },
+    {
+      "path": "apps/mobile/src/components/DoseUnitPicker.tsx",
+      "lines": 27,
+      "sha256": "7470e07f09d6744565eb2d07a3df5bc70b31e83506c51da33880aa7d547dcf9d"
+    },
+    {
+      "path": "apps/mobile/src/components/IncomingInvitations.tsx",
+      "lines": 82,
+      "sha256": "9dae956f1141d56b94c123ad3ca56b6e75e8fb9f401223768b37d73d44d3e41f"
+    },
+    {
+      "path": "apps/mobile/src/components/InvitationPermissions.tsx",
+      "lines": 34,
+      "sha256": "0e6fd7bb65304c5ace35e43b6e5158444998f934ce4dcce4294fd5d81a0dc40a"
+    },
+    {
+      "path": "apps/mobile/src/components/MedicationDetailView.tsx",
+      "lines": 366,
+      "sha256": "0fdd75b92209bb012d8f201028926112dd7093517efa393166072708b885e597"
+    },
+    {
+      "path": "apps/mobile/src/components/MedicationImageField.tsx",
+      "lines": 47,
+      "sha256": "2fbaa98235f1aafefda44f998a6f91557ad2cdfa672c3c4e0906668ec259f6fc"
+    },
+    {
+      "path": "apps/mobile/src/components/MedicationPhoto.tsx",
+      "lines": 48,
+      "sha256": "f468529ce820ba23002306b4e4a251f786adbe04bfd2a115883633699274b78f"
+    },
+    {
+      "path": "apps/mobile/src/components/NotificationHealthNotice.tsx",
+      "lines": 21,
+      "sha256": "f144a44b09d700ab652abaabaf4c0b50aa2da165b2ab35a3ad5332ee472c714b"
+    },
+    {
+      "path": "apps/mobile/src/components/PhoneVerification.tsx",
+      "lines": 141,
+      "sha256": "1a3acc93377b8cf6871e5332af1854eabefe4e048c3abb2b90bccff89201c48e"
+    },
+    {
+      "path": "apps/mobile/src/components/Picker.tsx",
+      "lines": 142,
+      "sha256": "2006f512a35d19569ee8396682f0ff044b0451df93807a50e527345b4f0fc677"
+    },
+    {
+      "path": "apps/mobile/src/components/ProfileSwitcher.tsx",
+      "lines": 40,
+      "sha256": "221967cef5aa55934c42d37b33746f211d68ee3b319247f80dab240dd6529347"
+    },
+    {
+      "path": "apps/mobile/src/components/QrCode.tsx",
+      "lines": 435,
+      "sha256": "f85ed4c26c6238457459167fb0e5d31187f46afd709b5c8016ad0849f42d9958"
+    },
+    {
+      "path": "apps/mobile/src/components/SnoozeSheet.tsx",
+      "lines": 70,
+      "sha256": "efc6b01665a69fe3a903c1fd66bb01a9bc1dc33f105417b6033a6853da116e96"
+    },
+    {
+      "path": "apps/mobile/src/components/TabIcon.tsx",
+      "lines": 62,
+      "sha256": "d39f42cf9bec503a9c043e0848b0a26d94f4e7434fc01b21b6be7acae706c9b3"
+    },
+    {
+      "path": "apps/mobile/src/components/TimeField.tsx",
+      "lines": 95,
+      "sha256": "6b8e65873ec5d1c7b7073f0e4f1ea3f22bdef504779d76fa88bce168fa74036c"
+    },
+    {
+      "path": "apps/mobile/src/components/WebAlertHost.tsx",
+      "lines": 95,
+      "sha256": "12f3128018d9944980171dc5ecf63915d3ebed48343dd0d2d193eb8810162f97"
+    },
+    {
+      "path": "apps/mobile/src/components/date-field-calendar.ts",
+      "lines": 49,
+      "sha256": "934904f1a85c419bb39ad31a7ed02abb497c1d703039d5b4f61850517233b5cf"
+    },
+    {
+      "path": "apps/mobile/src/components/ui.tsx",
+      "lines": 373,
+      "sha256": "e617e6d6b10fd446dcadc788a74ad73e24d26e7adafd80233026bf3ed787aa32"
+    },
+    {
+      "path": "apps/mobile/src/hooks/useRequestScope.ts",
+      "lines": 43,
+      "sha256": "cf61baaef30c6168842cec2990e42c88443085a5510769dfc31a3333de09f7f8"
+    },
+    {
+      "path": "apps/mobile/src/hooks/useScreenRefresh.ts",
+      "lines": 30,
+      "sha256": "a06560dcb91b46aaf0f0f8991b596e7b57721971cdfacfe5e977d54127e0d0bf"
+    },
+    {
+      "path": "apps/mobile/src/hooks/useSelfReminderRefresh.ts",
+      "lines": 72,
+      "sha256": "ad5cc1db22d86f0923adeeea21db1f3f0ba3105b3b5a0a54655f331e748ac6df"
+    },
+    {
+      "path": "apps/mobile/src/hooks/useTheme.ts",
+      "lines": 19,
+      "sha256": "75521c53f866c486426401dcad0b1ae352de075948c06d378ddf73261b4ffebd"
+    },
+    {
+      "path": "apps/mobile/src/i18n/index.tsx",
+      "lines": 154,
+      "sha256": "a20cb3b28a6aa37671e9935399361fed3195ff9b92c81b4a6eaf68ac3d6938c0"
+    },
+    {
+      "path": "apps/mobile/src/i18n/web-document-direction.ts",
+      "lines": 34,
+      "sha256": "a480ad0eea27f158538eec68a9b1a527ad172a009f0e4a892cd8a6e4b4df9e04"
+    },
+    {
+      "path": "apps/mobile/src/medication/upload-image.ts",
+      "lines": 38,
+      "sha256": "c819ffa1c11fa3ab4f55505d28cb9daaad3d77040e1f326e595bf61cc61e2174"
+    },
+    {
+      "path": "apps/mobile/src/navigation/AppNavigator.tsx",
+      "lines": 40,
+      "sha256": "9662e3d9a1a65376ef3d1d505ba471e9fd55ce03ed300250f1df6945d52dedd2"
+    },
+    {
+      "path": "apps/mobile/src/navigation/native-invite.ts",
+      "lines": 33,
+      "sha256": "262d96f79b0772063f7d1bd3afcd83e36fb0d8c4dafb201276a7314b12f96d1d"
+    },
+    {
+      "path": "apps/mobile/src/navigation/private-navigation.ts",
+      "lines": 141,
+      "sha256": "6d400b63ee6d7d9a9b5c291736029b62960bbdf3a41c5335a1956a74bd03299d"
+    },
+    {
+      "path": "apps/mobile/src/notifications/actions.ts",
+      "lines": 102,
+      "sha256": "a336f1a49e7ac7ac96f2d30238cb6ec2488c145fd2ebf8a10601b2a94386ad93"
+    },
+    {
+      "path": "apps/mobile/src/notifications/caregiver-intent.ts",
+      "lines": 51,
+      "sha256": "392ec158e3ffa899afbce1bbbc3d776a5825db29d6e06242d02306c3df17436a"
+    },
+    {
+      "path": "apps/mobile/src/notifications/caregiver-navigation.ts",
+      "lines": 108,
+      "sha256": "7299d2013490c439d5112359399c6ffc8db89f9199948f7fe879041fc98eb504"
+    },
+    {
+      "path": "apps/mobile/src/notifications/exact-alarm-recovery.ts",
+      "lines": 53,
+      "sha256": "26a698505c25dc57419dda7fbde67d744febf56caf73a5ad7c20a585f44db1a4"
+    },
+    {
+      "path": "apps/mobile/src/notifications/grouped-navigation.ts",
+      "lines": 103,
+      "sha256": "9cbabd6c91d1d5589f4bc78f0f62fbfb9d474406d3390a56331b033082dc7c0b"
+    },
+    {
+      "path": "apps/mobile/src/notifications/index.ts",
+      "lines": 456,
+      "sha256": "28b289f9396aaf6c4d93efa3b86e84299101c90364ff21138e33c114311c8baa"
+    },
+    {
+      "path": "apps/mobile/src/notifications/patient-intent.ts",
+      "lines": 50,
+      "sha256": "18e5355cc1d332a1ad812d4cc749d9046dca5ad0753f7c234136d80e110373d9"
+    },
+    {
+      "path": "apps/mobile/src/notifications/permission.ts",
+      "lines": 10,
+      "sha256": "5cf30d998d97b7a7652927a0ce7fa1f2110d7e9afd5c79e2b5f22b7787510390"
+    },
+    {
+      "path": "apps/mobile/src/notifications/today-groups.ts",
+      "lines": 35,
+      "sha256": "3ef7315e977f24a263fb1de0feb65c712f5ff1bf5a4efed56f074199970ea9e4"
+    },
+    {
+      "path": "apps/mobile/src/privacy/deletion-receipt.ts",
+      "lines": 13,
+      "sha256": "1d27867e2bf2c4ea3d4d5c5a331cc64c5dd1a6243585076ca6c6ae2b85b2730e"
+    },
+    {
+      "path": "apps/mobile/src/privacy/export-file.ts",
+      "lines": 56,
+      "sha256": "5a9f9c0ec0c8b37dc7fa67dc700b19a6370a5142622b833447c98970426dd5ab"
+    },
+    {
+      "path": "apps/mobile/src/privacy/patient-report.ts",
+      "lines": 123,
+      "sha256": "9f90be0b46291bafc886dd211ecf134e46c50df82bfb9bffe6f9eb06a2317157"
+    },
+    {
+      "path": "apps/mobile/src/privacy/share-full-export.ts",
+      "lines": 32,
+      "sha256": "db2e256dfa3e7ed09f774c40db503d25e07fe6078fcb141ca1a63d147ff7a2ad"
+    },
+    {
+      "path": "apps/mobile/src/privacy/share-patient-report.ts",
+      "lines": 22,
+      "sha256": "367d72a8ee7ed4b1964c9e9ae2369af7d48862fc48e3945019dd5914967f1647"
+    },
+    {
+      "path": "apps/mobile/src/privacy/usePrivateOutputGuard.ts",
+      "lines": 43,
+      "sha256": "d5fcc65671939bbb6f6471486580b082770429c0b006a137100f7842dbab1b2d"
+    },
+    {
+      "path": "apps/mobile/src/privacy/web-patient-report.ts",
+      "lines": 70,
+      "sha256": "7c6583bbbb37eed301c131810cc95f79636550445130ad5a8498166f69a3c3b8"
+    },
+    {
+      "path": "apps/mobile/src/security/AppLockContext.ts",
+      "lines": 16,
+      "sha256": "91b749156aa0ffd1ea2be4963016b82b91c1677b26b972a68221f496473dbc20"
+    },
+    {
+      "path": "apps/mobile/src/security/AppLockGate.tsx",
+      "lines": 298,
+      "sha256": "135a5c39f1aaf5e1da28d6e25444b527f1fa52acf6539e24dc67281fddf19f9b"
+    },
+    {
+      "path": "apps/mobile/src/security/PrivacyModal.tsx",
+      "lines": 14,
+      "sha256": "ba35033a46b40623d42ab7ba3d8a874accbc013d81cff0fb48fe0e9501b21cbd"
+    },
+    {
+      "path": "apps/mobile/src/security/email-onboarding.ts",
+      "lines": 8,
+      "sha256": "6e98421923dfbd15601f9d416318087aea80379c87deeb021ccffadb96abf800"
+    },
+    {
+      "path": "apps/mobile/src/security/local-auth.ts",
+      "lines": 65,
+      "sha256": "22357b0be816241b1b13bbd3df1682ed814eb3fa47ea8537d8e536d49c309786"
+    },
+    {
+      "path": "apps/mobile/src/security/lock-state.ts",
+      "lines": 332,
+      "sha256": "92cae2710fc6393c2890d5a72988d4e445e818f3ce8ba6637682030de5bf1513"
+    },
+    {
+      "path": "apps/mobile/src/security/phone-proof-errors.ts",
+      "lines": 23,
+      "sha256": "dca1bd5a9d4c602a9dafa1cf2733aebbb72cd3af901f65ac419880a56bb30d2f"
+    },
+    {
+      "path": "apps/mobile/src/security/phone-proof.native.ts",
+      "lines": 89,
+      "sha256": "c9c32a9ccd396e49cde83b46bbdd584a994aefdeb4179e5e88d15d7d1c7fc89a"
+    },
+    {
+      "path": "apps/mobile/src/security/phone-proof.ts",
+      "lines": 13,
+      "sha256": "ef2b458cca7c86456dad60a2494fa56e69911d4b637f4e8250b6bf245233c072"
+    },
+    {
+      "path": "apps/mobile/src/security/profile-permissions.ts",
+      "lines": 7,
+      "sha256": "d6ed7b1bdf67f23d17a46634a7926b53d98074e2f653fa2cfc10a4911f2480ac"
+    },
+    {
+      "path": "apps/mobile/src/state/app-store.tsx",
+      "lines": 885,
+      "sha256": "3bdbae1c6c73923963d9b3a22f9f51de97bcd2c34b5cda391d10def72e26ccdb"
+    },
+    {
+      "path": "apps/mobile/src/storage/cache-key.ts",
+      "lines": 201,
+      "sha256": "e1132633e25677e78044911cfb91c7f2361a5d3d6bdc375e37bc71b960954462"
+    },
+    {
+      "path": "apps/mobile/src/storage/crypto.ts",
+      "lines": 198,
+      "sha256": "926541257257940a27fa51e2007eafae13d63dbe75642d0b816bb87c59fb14b1"
+    },
+    {
+      "path": "apps/mobile/src/storage/dose-cache.ts",
+      "lines": 28,
+      "sha256": "e981648081f77bbcb7681c23220cece52853d8ba8cd9d4f1e231fc09ed9971ef"
+    },
+    {
+      "path": "apps/mobile/src/storage/emergency-qr.ts",
+      "lines": 56,
+      "sha256": "284e7646a1f1f4f2fd92f258c143276d3c68f631d191a701d0240d497e0483f7"
+    },
+    {
+      "path": "apps/mobile/src/storage/locale-preference.ts",
+      "lines": 47,
+      "sha256": "28099a1b03cea61d088eff9159a6505502ef39ea5c498ccc9aa5311cbd312bd9"
+    },
+    {
+      "path": "apps/mobile/src/storage/low-stock-snooze.ts",
+      "lines": 199,
+      "sha256": "11a5b614bd37fd7a357fc12ecc9bb429ccf441c08b20e36056fffebc0b9068c4"
+    },
+    {
+      "path": "apps/mobile/src/storage/medication-draft.ts",
+      "lines": 90,
+      "sha256": "b19f7c88a5cc7c92770769a9ff15f50157d67e849f246fd3698778abd04f35c1"
+    },
+    {
+      "path": "apps/mobile/src/storage/notification-privacy-intent.ts",
+      "lines": 117,
+      "sha256": "13d02ccb1efc2c286d796c7f22a056ce89840ebf9b2934fff0d7de447650795b"
+    },
+    {
+      "path": "apps/mobile/src/storage/offline-bootstrap.ts",
+      "lines": 183,
+      "sha256": "e1afe08c4c8529ebf409c1ab80ce0c92d4aaed507c2c74a7a6437311940ad8ec"
+    },
+    {
+      "path": "apps/mobile/src/storage/offline-queue.ts",
+      "lines": 440,
+      "sha256": "45353b0a82db0b5ae2cc21d9ae5585a546d208871022807c46025f504306716b"
+    },
+    {
+      "path": "apps/mobile/src/storage/pending-invite.ts",
+      "lines": 146,
+      "sha256": "24aad4720f1f9feb1797c3f4bc5392e9d0be7d3291bd8acd92a126e051b2d94b"
+    },
+    {
+      "path": "apps/mobile/src/storage/secure-cache.ts",
+      "lines": 208,
+      "sha256": "6ceceb439a5eb3f5cc5ff0891ff29ad498a7e52f43c8d9853832ae5216d0a60a"
+    },
+    {
+      "path": "apps/mobile/src/theme/index.ts",
+      "lines": 76,
+      "sha256": "880fade9196a01b6f195e5b6b541d6fceb44745cc00f82f7b82def596f2948eb"
+    },
+    {
+      "path": "apps/mobile/test/account-deletion-flow.test.ts",
+      "lines": 60,
+      "sha256": "0f47823cfb2ec68265a1cb4b88053659b9a4658b69e2ce52b74c359f3718a83c"
+    },
+    {
+      "path": "apps/mobile/test/adherence-profile-race.test.ts",
+      "lines": 124,
+      "sha256": "530365c0a7117db130cd285127b23370bedddef7cc2eab4343d6c7790df4ad35"
+    },
+    {
+      "path": "apps/mobile/test/android-exact-alarm-policy.test.ts",
+      "lines": 56,
+      "sha256": "d4735c0b247e159a69a8ddd3a227c046bbedfd2fabe351a19819b192e3ddce5c"
+    },
+    {
+      "path": "apps/mobile/test/app-lock-accessibility-shield.test.ts",
+      "lines": 32,
+      "sha256": "001b4d7fb509cf509ade6440aa9d49872a3294dac1386fec2909ee4a1a04647a"
+    },
+    {
+      "path": "apps/mobile/test/app-lock-background-verification-race.test.ts",
+      "lines": 178,
+      "sha256": "f864563d94d20ba93bda96492acd60f573a169907059b28ccbaacb7ce5495dce"
+    },
+    {
+      "path": "apps/mobile/test/app-lock-clock-rollback.test.ts",
+      "lines": 17,
+      "sha256": "e3959595590cb1dc9e6718f24b0aafece3a8fa8e977241ffcd0cb734362c987a"
+    },
+    {
+      "path": "apps/mobile/test/app-lock.test.ts",
+      "lines": 376,
+      "sha256": "0986fd165b6ee92509817bd0b748fda1b5d776c6626a23090796c579cff2ac0b"
+    },
+    {
+      "path": "apps/mobile/test/app-provider-auth-transition-races.cjs",
+      "lines": 288,
+      "sha256": "75311c62490e2aebca07bc046475bcd57655c1ee4e1e8cc01e7bfd1e4e74299e"
+    },
+    {
+      "path": "apps/mobile/test/app-provider-auth-transition-races.test.ts",
+      "lines": 13,
+      "sha256": "fef9003d68709a96fe0d650c16907902a566a9e0a582864d4306fb0e661421a2"
+    },
+    {
+      "path": "apps/mobile/test/app-provider-request-races.cjs",
+      "lines": 328,
+      "sha256": "11a70679e279b9c2c7e90e476332303e45f83c4ed2bb19ee25a42fbe36f9bfca"
+    },
+    {
+      "path": "apps/mobile/test/app-provider-request-races.test.ts",
+      "lines": 13,
+      "sha256": "d48c84e5cd6758f3144ee2ad613bcbed23ef8d8116f467d1871bf91fd3495161"
+    },
+    {
+      "path": "apps/mobile/test/audit-build-profile.test.ts",
+      "lines": 78,
+      "sha256": "51ee819711e0a573408da9a0fd8a1ee27abfe43bea0300ee6a9315e9cc30b0d7"
+    },
+    {
+      "path": "apps/mobile/test/auth-connection-screens.test.ts",
+      "lines": 109,
+      "sha256": "ddc2ff7b265c86d2f8b7d8508402a42e6025415e8f0861711689fa583c29e6a5"
+    },
+    {
+      "path": "apps/mobile/test/auth-connection.test.ts",
+      "lines": 83,
+      "sha256": "49588208b7eba3353b230266266788ee9ec3c49f5c459f5dc76abb73478f5211"
+    },
+    {
+      "path": "apps/mobile/test/auth-transition-lifecycle.cjs",
+      "lines": 111,
+      "sha256": "dc9e765cec296ca4f4da00e69cb350b73407ab47cc293e453b9e54252e19ab74"
+    },
+    {
+      "path": "apps/mobile/test/auth-transition-lifecycle.test.ts",
+      "lines": 13,
+      "sha256": "6aea08dc1b756be075e5b26bc339a91466d55fd6c2ccf9517b215fc6a454cdfc"
+    },
+    {
+      "path": "apps/mobile/test/authenticated-route-inventory.test.ts",
+      "lines": 59,
+      "sha256": "82e7c4dcbf0f12f8cd35f902d9e609ca3116c3719ded654038c1075f79a0fd53"
+    },
+    {
+      "path": "apps/mobile/test/bootstrap-device-id-storage-failure.test.ts",
+      "lines": 77,
+      "sha256": "ca679c064f3f4e8efc994bbfb0e046746ad7546ac1f8b437c731df7cf36ef84c"
+    },
+    {
+      "path": "apps/mobile/test/bootstrap-error-boundary.test.ts",
+      "lines": 303,
+      "sha256": "c621275d9d8012e91d0f974f34e962bea2e52f96bb5b74e8b9cce17805a99623"
+    },
+    {
+      "path": "apps/mobile/test/cached-schedule-account-race.test.ts",
+      "lines": 128,
+      "sha256": "aab2dbccead0c4b05c0d772368eac458cf030d92076eb93cdb6b002079318b42"
+    },
+    {
+      "path": "apps/mobile/test/capture-upload-content-type.cjs",
+      "lines": 118,
+      "sha256": "1b2f3ebb35381724b98909dd132b85db18b180fb8822b942415038860e6e3340"
+    },
+    {
+      "path": "apps/mobile/test/capture-upload-content-type.test.ts",
+      "lines": 26,
+      "sha256": "34360c61b62a6c470d096c99959ee963d1716e7ea2d82550c36e09bf6dab39a6"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-browser-url-privacy.test.ts",
+      "lines": 36,
+      "sha256": "ebfe8713ef7be9b51a480be244a7572b4baf81f599dbf52a9fcd05e0bc3360ae"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-dashboard-profile-isolation.test.ts",
+      "lines": 39,
+      "sha256": "702272ec0762ad94e938170bfc7391c3b6d0030815b01c3cf582e274ce3b07b2"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-dashboard-url-privacy.test.ts",
+      "lines": 27,
+      "sha256": "f6388426f63f7b992b829f1196a0a21970b68bda15526aa0d497049c660b20a6"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-detail-profile-race.test.ts",
+      "lines": 237,
+      "sha256": "3f8644d64d729c9ed160de6ffaf274a466099babed2adeb26856364db58d194f"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-invite-capability-transport.test.ts",
+      "lines": 40,
+      "sha256": "f8ebdf1e4fb93ed11ecb2d52801040edf7e8b402d2367882a8a59a543b30ece6"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-invite-profile-race.test.ts",
+      "lines": 93,
+      "sha256": "90965e4a7310663a1324d178fec8fbc0ae676ad7f68b1bf5300ecf32ef08d917"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-invite-sharing.test.ts",
+      "lines": 42,
+      "sha256": "b762c474e9e088c090eeba80fbd9619c18b11d0e841628f1e4b60ea31915c5e1"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-notification-intent.test.ts",
+      "lines": 85,
+      "sha256": "2af69413605b23497a64c6b5695b616a5fb293e2f751d50a6a19b75fb13b1244"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-notification-screen.test.ts",
+      "lines": 315,
+      "sha256": "8e669103a590b20b4a34e15ba5d9a5cdea1f3c6950f401b8036fa28d55b7a3d2"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-permission-ui.test.ts",
+      "lines": 47,
+      "sha256": "13f2a342cc44072e4aa4fccb40318027bfc0a062d8f3455af68dfb43d5a15ab5"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-private-push-routing-regression.test.ts",
+      "lines": 82,
+      "sha256": "178d2c01c51ddbd7613ab7b0e997cd24451fa3a0ed852319ea995088e29f608e"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-push-navigation.test.ts",
+      "lines": 292,
+      "sha256": "36f63f5e29d2fdac066ba82d3c48b72746af77d8c39a5e32de9ae488863af66b"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-relationship-url-privacy.test.ts",
+      "lines": 44,
+      "sha256": "833d139fb0e41e1668781bc74a9c832f2575d513a3f60c32c4dab7cdb5d6f00a"
+    },
+    {
+      "path": "apps/mobile/test/caregiver-save-mutation-profile-race.test.ts",
+      "lines": 130,
+      "sha256": "a4b2a142a16a6610d9b84c8b57b73a2bf1fbb9c2f54c61f845b0bb30fbac448e"
+    },
+    {
+      "path": "apps/mobile/test/client-bodyless-content-type.test.ts",
+      "lines": 79,
+      "sha256": "571cf569300408203d43db878b55766dbf893af3dae0e23e6387d814b1506b7b"
+    },
+    {
+      "path": "apps/mobile/test/client-identity-retry.test.ts",
+      "lines": 217,
+      "sha256": "9147ab85ba8620a82b6d109a6d1e23733146cd883161961a35637e20af640657"
+    },
+    {
+      "path": "apps/mobile/test/clinical-route-auth-boundary.test.ts",
+      "lines": 36,
+      "sha256": "306861e6c538d7725d7ccb535c89104a02e06bba9fd05ba664d479f9e4ed936e"
+    },
+    {
+      "path": "apps/mobile/test/clinical-route-intent.test.ts",
+      "lines": 65,
+      "sha256": "cd6e3d60e3be97a5f061cbbb18da320ad0dc87f85e4cc0c3e66a151366724824"
+    },
+    {
+      "path": "apps/mobile/test/clinical-route-url-privacy.test.ts",
+      "lines": 104,
+      "sha256": "d2cc6c54231f0e6b664aa1f9d630e09e9401cf91ecf6e53e19880d9112767b06"
+    },
+    {
+      "path": "apps/mobile/test/clinician-report-profile-race.test.ts",
+      "lines": 139,
+      "sha256": "0f97e090942c6284aacaa28f9f8f2358a2f236661c4e4d0e89b5951fb0b48a7d"
+    },
+    {
+      "path": "apps/mobile/test/date-field-calendar.test.ts",
+      "lines": 32,
+      "sha256": "a2edd8a221fdae3fca4700b96f6146a54031339d38666307e61a6c86da389422"
+    },
+    {
+      "path": "apps/mobile/test/dose-action-url-privacy.test.ts",
+      "lines": 38,
+      "sha256": "3e9e16956026f75e68b541f2d31bedb862d883265c8e811959c448a978b8667e"
+    },
+    {
+      "path": "apps/mobile/test/dose-cache-pending.test.ts",
+      "lines": 40,
+      "sha256": "aa2b17c0a0c54c6c13dbd0bf6dfd0f0a819ade9cef2f06e5e9e8801feb82ae9f"
+    },
+    {
+      "path": "apps/mobile/test/dose-notes-sheet.test.ts",
+      "lines": 43,
+      "sha256": "0aa461ff3e2ad0c44e0f1ee0d4e2dc791c4dabc9f3b8a0d363ea10c27b9b5f06"
+    },
+    {
+      "path": "apps/mobile/test/email-verification-screen.test.ts",
+      "lines": 40,
+      "sha256": "4323ffa4acd522d04d61c7cdec9019d6d328f2a4f93c841e9d05ab7dfa4653cf"
+    },
+    {
+      "path": "apps/mobile/test/emergency-card-profile-race.test.ts",
+      "lines": 45,
+      "sha256": "4111616eaa7a43b409624e06c1a54f25025ab2f02061b4b684a42e14d695fd6e"
+    },
+    {
+      "path": "apps/mobile/test/emergency-qr-load-safety.cjs",
+      "lines": 258,
+      "sha256": "be709eca9f300c3529e18e170a0afbdbc8ffbf8fe0ad734b56d249988524a613"
+    },
+    {
+      "path": "apps/mobile/test/emergency-qr-load-safety.test.ts",
+      "lines": 15,
+      "sha256": "ae1b4711aa728438612b2785641e4628728af33130908803cda993cc1f57a07f"
+    },
+    {
+      "path": "apps/mobile/test/emergency-qr-profile-race.test.ts",
+      "lines": 110,
+      "sha256": "fffa0fa735995425b30f6d3aaf94d56c417b375662d086dd5b83d9bd11b891a0"
+    },
+    {
+      "path": "apps/mobile/test/emergency-qr-storage.test.ts",
+      "lines": 34,
+      "sha256": "99d95f22132a2fbcd3765deab755b883174ee956aa0d8332d7fcd1be1ab0085f"
+    },
+    {
+      "path": "apps/mobile/test/emergency-scan-recovery.test.ts",
+      "lines": 54,
+      "sha256": "d32ceff5af00e3691b4f913307d175d1af0ada09e02d440ac50096aeb1a33e03"
+    },
+    {
+      "path": "apps/mobile/test/escalation-patient-stage-integrity.cjs",
+      "lines": 168,
+      "sha256": "0f3fc7a8dbd7d7ecaa8cc6e51b19091cd22515865d9c941e3e9f21fa76b1039f"
+    },
+    {
+      "path": "apps/mobile/test/escalation-patient-stage-integrity.test.ts",
+      "lines": 15,
+      "sha256": "01a52e7cd87685a72ee69c6f3c86965eb24b142b6acc573eec80495ba42cb543"
+    },
+    {
+      "path": "apps/mobile/test/exact-alarm-broadcast-recovery.test.ts",
+      "lines": 130,
+      "sha256": "0d0fe2955fc11b748402a6aedb26a559b172cd6f23666a56c1964edcf8ef39b6"
+    },
+    {
+      "path": "apps/mobile/test/exact-alarm-grant-recovery.test.ts",
+      "lines": 83,
+      "sha256": "9cff354451aecb2adfced04b50566c636a3570d4b88c519fb3d69e5fe99d0ab7"
+    },
+    {
+      "path": "apps/mobile/test/exact-alarm-inexact-fallback.test.ts",
+      "lines": 32,
+      "sha256": "da2e8e0b8b30a088fdac102b121fd84fe930448b90564f4705d2be244cd70b2a"
+    },
+    {
+      "path": "apps/mobile/test/exact-alarm-schedule-serialization.test.ts",
+      "lines": 82,
+      "sha256": "6f1665fddeb96048a908031518b16abe1268c28e852b40099c6c82a6da270393"
+    },
+    {
+      "path": "apps/mobile/test/family-profile-race.test.ts",
+      "lines": 191,
+      "sha256": "022f93fca76cd6c067b9df53b85a16f5e5eb0831f57ef704c3ccededf04e0d1f"
+    },
+    {
+      "path": "apps/mobile/test/forced-unauth-local-privacy.test.ts",
+      "lines": 49,
+      "sha256": "8c26fda23009881071d2cf68cb5a21b2a8a64c4032504068e537c0eb60b736d4"
+    },
+    {
+      "path": "apps/mobile/test/full-export-sharing.test.ts",
+      "lines": 51,
+      "sha256": "6044e2803eb76fb95ac271b170720c35d0a4f9da5f203d067a7a47f50570e457"
+    },
+    {
+      "path": "apps/mobile/test/grouped-push-navigation.test.ts",
+      "lines": 409,
+      "sha256": "7d003dc69692c5c114a609948f93128615d3b687124a74cdc4522bb3854bc926"
+    },
+    {
+      "path": "apps/mobile/test/incoming-invitation-recovery.test.ts",
+      "lines": 29,
+      "sha256": "11fbff878ea24aae4dddc963ea2d96892a84c83d8fe3b396a890fdb8214b8283"
+    },
+    {
+      "path": "apps/mobile/test/invitation-review-consent.test.ts",
+      "lines": 105,
+      "sha256": "8a21ec4a1212d0733b2fbf4352b196c57ba9bf2d1c6417a11a5b16b30f369f0d"
+    },
+    {
+      "path": "apps/mobile/test/invite-attempt-lifecycle.test.ts",
+      "lines": 51,
+      "sha256": "9b00107fc6eac4fcd4e3e734094c8f3219acadc1daf962731317f3aae0959c59"
+    },
+    {
+      "path": "apps/mobile/test/invite-flow.test.ts",
+      "lines": 187,
+      "sha256": "f78112ce4ea67e9dcf56edf70c8f7f670d34145b62df0859495f9ff73683c55c"
+    },
+    {
+      "path": "apps/mobile/test/invite-invalid-persistence.test.ts",
+      "lines": 83,
+      "sha256": "ba86fdb57da71f5a04006a76698aa838795cddd256072f1366131843f8c9eeef"
+    },
+    {
+      "path": "apps/mobile/test/ios-phone-proof.test.ts",
+      "lines": 56,
+      "sha256": "7ec611e293de82abb38042f550c8ae433d98d15143ed71672d81081adf400281"
+    },
+    {
+      "path": "apps/mobile/test/ios-preflight.test.ts",
+      "lines": 93,
+      "sha256": "dbc510f9844e552251f266c13be47222705d9ebcea0afea6f3a9a413a432a8a7"
+    },
+    {
+      "path": "apps/mobile/test/legacy-invite-url-privacy.test.ts",
+      "lines": 21,
+      "sha256": "7e1296cbd811f0fd0573980caf2ab93e20a4833c873f838490305561adfcd578"
+    },
+    {
+      "path": "apps/mobile/test/legacy-medication-query-ingestion-privacy.test.ts",
+      "lines": 34,
+      "sha256": "c89ff0fe4b3de88705e8d7f423dc0a7c661eef506aca1d23c8a170e164777eae"
+    },
+    {
+      "path": "apps/mobile/test/links-resolve.test.ts",
+      "lines": 158,
+      "sha256": "468be248d423fba9bf8f0f83a086c64aa420064301e8db4013b801e3fcbb4254"
+    },
+    {
+      "path": "apps/mobile/test/locale-preference-storage.test.ts",
+      "lines": 54,
+      "sha256": "702d265ea86b1270b5cfd8d4fa508c93cab2b08c1af24a6f31a0298f8438e711"
+    },
+    {
+      "path": "apps/mobile/test/medication-browser-url-privacy.test.ts",
+      "lines": 37,
+      "sha256": "3001c91a084410e858abe2798445b675ffe0a7a48c2d0fbc2c6534a5f77c8c1b"
+    },
+    {
+      "path": "apps/mobile/test/medication-capture-android-lifecycle.test.ts",
+      "lines": 22,
+      "sha256": "cbc7c503e7896966a1a11408e7feb0b5ce21b5126a40864ed6edf1e515c8a4dc"
+    },
+    {
+      "path": "apps/mobile/test/medication-capture-consent-scope.test.ts",
+      "lines": 26,
+      "sha256": "1688f247f29c01e1b4f6102336bae7690ff7286d1bc12b7a6f4a4506410905ad"
+    },
+    {
+      "path": "apps/mobile/test/medication-capture-profile-race.test.ts",
+      "lines": 270,
+      "sha256": "f38a2b782e70448cc9096e99565d3fba31fc7e77347a02a7cfc1449f46b02eac"
+    },
+    {
+      "path": "apps/mobile/test/medication-confirm-profile-isolation.test.ts",
+      "lines": 62,
+      "sha256": "b3263c2d012f64779c6220b7ddf3893042a587b92bda4f7564f2cecf9ae25bed"
+    },
+    {
+      "path": "apps/mobile/test/medication-confirm-strength-integrity.test.ts",
+      "lines": 145,
+      "sha256": "3663a383e239cd1f7bed8a2233fe172c08e5f8ce1c02251ba7aeb7104009a4b7"
+    },
+    {
+      "path": "apps/mobile/test/medication-detail-first-frame-profile-race.test.ts",
+      "lines": 85,
+      "sha256": "ee8187ab84a82198458d2a42b6a0042479df1c28201d54788c7a22ce6801771b"
+    },
+    {
+      "path": "apps/mobile/test/medication-detail-mutation-profile-race.test.ts",
+      "lines": 112,
+      "sha256": "aa0016c0f4ca405ca6e526e1cfe60c8d26053ce1b350b8bbb006521a5e6d4748"
+    },
+    {
+      "path": "apps/mobile/test/medication-detail-request-race.test.ts",
+      "lines": 107,
+      "sha256": "ad18a0173fd66643f80ad414b63c3825b397154a3e6132071c18ecebd1d650e3"
+    },
+    {
+      "path": "apps/mobile/test/medication-draft-privacy.test.ts",
+      "lines": 82,
+      "sha256": "fee521b3fd1592a5a87ef60d7dacafd41942af9d551ebf98b78007be893035c1"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-load-safety.cjs",
+      "lines": 163,
+      "sha256": "7ef3f5a3d87fb3eb9664d3c693d79f9e1b36d481e019d8fc428e08c319d93106"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-load-safety.test.ts",
+      "lines": 15,
+      "sha256": "c91713510bc7a98f6a1b3c163f9f9a680509059b2e063285b9984ab7722a0764"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-metadata-roundtrip.cjs",
+      "lines": 138,
+      "sha256": "882bdf4281b89ce3c33399bfd124425ea8498e14adadc1142523afa2a8af6fc3"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-metadata-roundtrip.test.ts",
+      "lines": 14,
+      "sha256": "4fc90f9d4017c2014c51ca58d2c9bfcc9d20224ea849e2075feb92d5bce9ef2f"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-profile-race.test.ts",
+      "lines": 103,
+      "sha256": "bc911595552b030cb558f928b6989d9b88a48012ffc7ff33a3073e4673bfead8"
+    },
+    {
+      "path": "apps/mobile/test/medication-edit-save-profile-race.test.ts",
+      "lines": 105,
+      "sha256": "49e6fcfb2cace2e7c472aa68fbddfc945a0cc479f5474913ae8e2d56af4b7014"
+    },
+    {
+      "path": "apps/mobile/test/medication-editor-record-integrity.test.ts",
+      "lines": 57,
+      "sha256": "84ba5778ea8d7fcaca098006ec2fc0d0f95568a02266ba6d57f4e0e3139712ed"
+    },
+    {
+      "path": "apps/mobile/test/medication-editor-signed-out.cjs",
+      "lines": 95,
+      "sha256": "88f7dfa86335cc0acfc40cf197bb782c2cda9479e1099a453854b8cdca4604c5"
+    },
+    {
+      "path": "apps/mobile/test/medication-editor-signed-out.test.ts",
+      "lines": 15,
+      "sha256": "74a52632798584b5dc9a81c14b56ee59d0ea9f985719bfb4509595f2c4f40c6c"
+    },
+    {
+      "path": "apps/mobile/test/medication-photo.test.ts",
+      "lines": 48,
+      "sha256": "49cd4567382d2757d83666e24cdb51ad03818574da2cb52b2cb11d5961847f5d"
+    },
+    {
+      "path": "apps/mobile/test/metro-workspace-resolution.test.ts",
+      "lines": 64,
+      "sha256": "c916f49c7a3575dcbcf39c035bb1a81aaea8f16e292c0097cab6509f5ed457af"
+    },
+    {
+      "path": "apps/mobile/test/native-direction-persistence.test.ts",
+      "lines": 93,
+      "sha256": "37fff2e2639935e9cdf609b1a576b54fa3c5f4abd322f92e992abeb567f995f0"
+    },
+    {
+      "path": "apps/mobile/test/native-invite-system-path.test.ts",
+      "lines": 78,
+      "sha256": "82f0154d7dbe3a8873b94f7b3e0f3eeb9dd3f7c56e32d48011591796a818b239"
+    },
+    {
+      "path": "apps/mobile/test/notes-measurements-profile-race.test.ts",
+      "lines": 67,
+      "sha256": "68823461569149b48142f9caf5ae51a1db18781e5450a62489f28f4f2681295d"
+    },
+    {
+      "path": "apps/mobile/test/notification-actions.test.ts",
+      "lines": 131,
+      "sha256": "e153429c954e937837070a8090886372fa38680d84ea2b51d4290689332191b1"
+    },
+    {
+      "path": "apps/mobile/test/notification-cache-rebuild-race.test.ts",
+      "lines": 168,
+      "sha256": "fdfd65fffe3f13003075d2ee5d14dc80010aca192dc1c48b040e4ecfc55a54e1"
+    },
+    {
+      "path": "apps/mobile/test/notification-caller-intent.cjs",
+      "lines": 134,
+      "sha256": "d6a079daaacfc3d4d743a38c868da977523402dca709e482bb59116409a74034"
+    },
+    {
+      "path": "apps/mobile/test/notification-caller-intent.test.ts",
+      "lines": 15,
+      "sha256": "a63e3c12686d20a440a3f8c4d413e964d10f946637bd8f2c599d18bfc5feb6b3"
+    },
+    {
+      "path": "apps/mobile/test/notification-privacy-intent.test.ts",
+      "lines": 86,
+      "sha256": "0162abfd3cbd294c32b1cb8cb8bcbfcb9396551bc2ea12ee71a937301f503d90"
+    },
+    {
+      "path": "apps/mobile/test/notification-schedule-races.cjs",
+      "lines": 316,
+      "sha256": "237c19b49a852bac4608eb7c3a8e7673de3d1e2ac623acfe46af87a3af352cb6"
+    },
+    {
+      "path": "apps/mobile/test/notification-schedule-races.test.ts",
+      "lines": 13,
+      "sha256": "12f6266858553e66f5d71f97ef640e4963ca23ac36511375624191af34069b54"
+    },
+    {
+      "path": "apps/mobile/test/object-key-url-transport.test.ts",
+      "lines": 64,
+      "sha256": "61efa94238548e4b8e90da50ad869e7c824268dbd071256f0818a99a280801b3"
+    },
+    {
+      "path": "apps/mobile/test/offline-bootstrap-storage-boundary.test.ts",
+      "lines": 156,
+      "sha256": "54bbe57afb0fa6246812ab9f61d4e7280cb4e9d84b804675f65ea36152a486a4"
+    },
+    {
+      "path": "apps/mobile/test/offline-bootstrap.test.ts",
+      "lines": 138,
+      "sha256": "3068b61a356c521ecef51fbd2aa8279ca72f6b46d3f38c1a56d078015ead51cd"
+    },
+    {
+      "path": "apps/mobile/test/offline-cold-start-cache-owner.test.ts",
+      "lines": 189,
+      "sha256": "6db8ec319ab0886524dc2ade0f8b584df999280a920a41389ff43aac9675c836"
+    },
+    {
+      "path": "apps/mobile/test/offline-queue-races.test.ts",
+      "lines": 272,
+      "sha256": "7569764c6759e3e0e815b526bca7225f983f8aa2c98025f3c21e328928041caa"
+    },
+    {
+      "path": "apps/mobile/test/offline-today-cli-boundary.test.ts",
+      "lines": 60,
+      "sha256": "f6c371f87b4bb4e6ebfa51948fed6032c0a616a34dc6751b28e4ded5f61443ae"
+    },
+    {
+      "path": "apps/mobile/test/offline-today-rollover.cjs",
+      "lines": 151,
+      "sha256": "2828e260c41cb8e0029d0990320b7bd8f886e60b9cb440e3584dccbf325efeec"
+    },
+    {
+      "path": "apps/mobile/test/offline-today-rollover.test.ts",
+      "lines": 13,
+      "sha256": "3fd95c1f3da2ea626c6f2e99fb627f520e73644616f4e230f7ec53097e5718b2"
+    },
+    {
+      "path": "apps/mobile/test/password-recovery-screen.test.ts",
+      "lines": 51,
+      "sha256": "dd0a994b12291c9f5301d5526c0c3dca691a64ef5f7674d1e7ab6c4295fe2664"
+    },
+    {
+      "path": "apps/mobile/test/patient-feedback.test.ts",
+      "lines": 86,
+      "sha256": "fb50a114f36f5fc943d2f484c37458187659e7f50e29406306beda1aa2382a3b"
+    },
+    {
+      "path": "apps/mobile/test/patient-notification-screen.test.ts",
+      "lines": 104,
+      "sha256": "47cea914daea3d4607dcdda5a152693a1db4342372f7d479f29b2a97817bfb61"
+    },
+    {
+      "path": "apps/mobile/test/patient-report-sharing.test.ts",
+      "lines": 26,
+      "sha256": "a270ab200218202b40582218c6b06cefc68b4cd9e0c3bb0b6c23a108662e2c7b"
+    },
+    {
+      "path": "apps/mobile/test/phone-proof-lifecycle.test.ts",
+      "lines": 70,
+      "sha256": "7c00803789dfb4a0bc31213ba2d3eab14bdff01d6202550995573c91ed1e7131"
+    },
+    {
+      "path": "apps/mobile/test/phone-verification-screen.test.ts",
+      "lines": 101,
+      "sha256": "73fe954955699a45e5dac8af4cd5f44ed79ca65391a87f56028966f364e60484"
+    },
+    {
+      "path": "apps/mobile/test/preference-bootstrap-commit-race.test.ts",
+      "lines": 145,
+      "sha256": "4cf9ef83a8c9125f3591963ddd62f1e3fa857090ad8849e65b644b4ccd0700aa"
+    },
+    {
+      "path": "apps/mobile/test/preference-loadme-race.test.ts",
+      "lines": 83,
+      "sha256": "35e245f9c0a99a979236c708c73da16c3861b0ccf2381f4eca93a88403877e1c"
+    },
+    {
+      "path": "apps/mobile/test/preference-offline-privacy-replay.test.ts",
+      "lines": 61,
+      "sha256": "f81fc358635064b9454c9db7d8aaf117274097c812b42c038d767f0ea3a22f54"
+    },
+    {
+      "path": "apps/mobile/test/preference-provider-lifecycle.cjs",
+      "lines": 267,
+      "sha256": "3307f0ddac6955666f9fd5dacac6c89b20ed863e4ce178f6c3fde617845e7b83"
+    },
+    {
+      "path": "apps/mobile/test/preference-provider-lifecycle.test.ts",
+      "lines": 14,
+      "sha256": "abd0024901d3a16d760bd7b52e514ede87ea4c409fe562c2d74100fddd86272a"
+    },
+    {
+      "path": "apps/mobile/test/preference-scope-races.cjs",
+      "lines": 318,
+      "sha256": "682e1ccc417633de55ef42fb9f1aa372eaa79443db8b5e8c570a619194567b30"
+    },
+    {
+      "path": "apps/mobile/test/preference-scope-races.test.ts",
+      "lines": 13,
+      "sha256": "8a9558d4338427f565bd99cf152e68fd3a91774e2137f9dbca70c821647644e3"
+    },
+    {
+      "path": "apps/mobile/test/privacy-consent-mutation-scope.cjs",
+      "lines": 162,
+      "sha256": "dad6ecbb95026315c5fb83dba11aa920d86dc042198f41f448ebdf2accc98969"
+    },
+    {
+      "path": "apps/mobile/test/privacy-consent-mutation-scope.test.ts",
+      "lines": 14,
+      "sha256": "b602dc11250d89c07c695f28d2a6548caf39a08db8c4b1a0d218f9ec8d0a2948"
+    },
+    {
+      "path": "apps/mobile/test/privacy-consent-profile-isolation.test.ts",
+      "lines": 157,
+      "sha256": "26c363575f56c37eafdc337768911956813e801a1fd63968d6e3bf5abbe22312"
+    },
+    {
+      "path": "apps/mobile/test/privacy-export-file-retention.test.ts",
+      "lines": 127,
+      "sha256": "6373bd3e17c2b84357c1edaa480a8c86e135a63347766b0b6b742d8feb2220c4"
+    },
+    {
+      "path": "apps/mobile/test/privacy-export-profile-race.test.ts",
+      "lines": 69,
+      "sha256": "ad85a4be2986b9c3fd006841653970d76baea1f7e3ae6756339942cc52137792"
+    },
+    {
+      "path": "apps/mobile/test/privacy-modal.test.ts",
+      "lines": 45,
+      "sha256": "5fee40a5720d86a16644dfad712211c4392e495fb135e1cf504795abd1e1dc83"
+    },
+    {
+      "path": "apps/mobile/test/private-output-screen-boundaries.test.ts",
+      "lines": 74,
+      "sha256": "1523c0e53823dd4f359cb63888f9feb1ca7bcccb539e1e319689cf3460418ff9"
+    },
+    {
+      "path": "apps/mobile/test/production-observed-url-regression.test.ts",
+      "lines": 49,
+      "sha256": "03f0bda8de6323d43e65d01de90cb2c21df275729fee6787b757ca6e826818a3"
+    },
+    {
+      "path": "apps/mobile/test/profile-id-url-transport.test.ts",
+      "lines": 79,
+      "sha256": "493edaabe8b05ac20f46468742c020a6b3f9916a5fe0a86f772c87baa02be64f"
+    },
+    {
+      "path": "apps/mobile/test/profile-screen-harness.cjs",
+      "lines": 281,
+      "sha256": "7298d15405f5a85a25af7fb677cc19209af04f8f7cdf8f02ea19ede6a45aeb06"
+    },
+    {
+      "path": "apps/mobile/test/profile-screen-races.test.ts",
+      "lines": 13,
+      "sha256": "bf31043c7cd917908855b21c73181b92dfdb49b50e476c3fc5a6f81ac4f46190"
+    },
+    {
+      "path": "apps/mobile/test/profile-screen-scenarios.cjs",
+      "lines": 130,
+      "sha256": "f73bcaa27529474a660ff5b3d4994a556f631b7882e9f388e7aecbeb1dc86098"
+    },
+    {
+      "path": "apps/mobile/test/quick-create-duplicate-ack-scope.test.ts",
+      "lines": 120,
+      "sha256": "7afe7acc5d2eec2120a522d6d0fd1a51389b134df569464644f2c2332672e8e2"
+    },
+    {
+      "path": "apps/mobile/test/quick-create-final-audit.test.ts",
+      "lines": 77,
+      "sha256": "2a46163b483132af3b68cda80c9505e22dfa74c28db331435f3e3065b908b423"
+    },
+    {
+      "path": "apps/mobile/test/quick-create-profile-isolation.test.ts",
+      "lines": 89,
+      "sha256": "7ac466790e2eb7da6929273e74dfe4b91f96bdb7ae45cd16060b283925a667fd"
+    },
+    {
+      "path": "apps/mobile/test/refresh-session-switch-race.test.ts",
+      "lines": 110,
+      "sha256": "372868b4be2ca7fbdb58a8f83a902c22d84f85d468381791f1910c3c536269c9"
+    },
+    {
+      "path": "apps/mobile/test/refresh-single-flight.test.ts",
+      "lines": 317,
+      "sha256": "1f81f2ab8cee7dc8e375158ed395fbf8a55388040ff2bb3dbf4b14e10ec737e3"
+    },
+    {
+      "path": "apps/mobile/test/refresh-transient-failure.test.ts",
+      "lines": 115,
+      "sha256": "aa7cbf953ea8971ae1ea1a4c9ab533d91d5e1da72a3b99151f5b6faed1e926af"
+    },
+    {
+      "path": "apps/mobile/test/reported-screen-errors.test.ts",
+      "lines": 83,
+      "sha256": "c5b0dfb9a1dedc6f2b26c3673a1d92be1c08626ddb7c88179ddaf389fbd286a8"
+    },
+    {
+      "path": "apps/mobile/test/reports-hub-export-profile-race.test.ts",
+      "lines": 91,
+      "sha256": "6b6a07026121928b912fff440ee7764046afa43c25ec129e2bd055840a3b92ba"
+    },
+    {
+      "path": "apps/mobile/test/resource-id-path-privacy.test.ts",
+      "lines": 140,
+      "sha256": "46c233da7c6fc395da772d5373b1cf65678407e7a5acd9d7864b94651b02df99"
+    },
+    {
+      "path": "apps/mobile/test/restored-session-owner.test.ts",
+      "lines": 61,
+      "sha256": "5870491712de8b3dc8027229904487ae6df289c0afc6b24205670d35d7aae38a"
+    },
+    {
+      "path": "apps/mobile/test/schedule-edit-load-safety.cjs",
+      "lines": 212,
+      "sha256": "59dd46019e669202fdfe9bc1c044ded82b52562e6375e3512df0fd90a949dff4"
+    },
+    {
+      "path": "apps/mobile/test/schedule-edit-load-safety.test.ts",
+      "lines": 15,
+      "sha256": "46e24ae27dcebc2fe92fb419a44154e248f7ebff8094a5d28e15af977a98853d"
+    },
+    {
+      "path": "apps/mobile/test/schedule-optional-constraint-integrity.cjs",
+      "lines": 193,
+      "sha256": "6922d1127c2da5d8c9488f42f63452411e991109187fab715fc887ea2a29f426"
+    },
+    {
+      "path": "apps/mobile/test/schedule-optional-constraint-integrity.test.ts",
+      "lines": 15,
+      "sha256": "2aee75a5cd00aa3d29e2fb43023769313c6a5b692cb2ab56497567493d1fa9a5"
+    },
+    {
+      "path": "apps/mobile/test/schedule-profile-race.test.ts",
+      "lines": 98,
+      "sha256": "70fc0b5988c2e19787a54c15e5bef7da531c866f8573b2e4e3320fc8fe3d86ba"
+    },
+    {
+      "path": "apps/mobile/test/schedule-save-profile-race.test.ts",
+      "lines": 96,
+      "sha256": "f15ebd6ab4790389fd2157f12e2ce7c941019ec5b812ca195edbd8cfbd5327f9"
+    },
+    {
+      "path": "apps/mobile/test/schedule-time-input-integrity.cjs",
+      "lines": 166,
+      "sha256": "729de4d16d969cceec44c789eb7a6941961c745ed8d10a1fced73298351909bc"
+    },
+    {
+      "path": "apps/mobile/test/schedule-time-input-integrity.test.ts",
+      "lines": 15,
+      "sha256": "45dc4db04367e7ae667fa7b8e604097fee077c8997d780c46ae6a55a3867f12f"
+    },
+    {
+      "path": "apps/mobile/test/secure-cache.test.ts",
+      "lines": 868,
+      "sha256": "21374d350b85f7da1336a04121f55a560b2a81abb8973663d07cafa35535bc98"
+    },
+    {
+      "path": "apps/mobile/test/security-hardening.test.ts",
+      "lines": 154,
+      "sha256": "5be09d7b7e2f67c926f28f753949279208da634df4e5caedb01402db48685044"
+    },
+    {
+      "path": "apps/mobile/test/self-reminder-refresh.test.ts",
+      "lines": 136,
+      "sha256": "3f1ccb0815f65e2707497f0651c06b71f0c78caf478b012add4203824bd30d62"
+    },
+    {
+      "path": "apps/mobile/test/service-unavailable-empty-state.test.ts",
+      "lines": 53,
+      "sha256": "f680be02dd506dbf6207d8272fd8a04e08738318b671b3921220b43447e96412"
+    },
+    {
+      "path": "apps/mobile/test/session-generation.test.ts",
+      "lines": 335,
+      "sha256": "4de19e235096affc13df78838db895207ac63833fbb0fc8e2fca1af1927a5dd8"
+    },
+    {
+      "path": "apps/mobile/test/session-switch-race.test.ts",
+      "lines": 59,
+      "sha256": "fd73bed6922c4d2cdfaac5e939eca3230aaf7290789211444e45282b3a7301a8"
+    },
+    {
+      "path": "apps/mobile/test/stock-load-refill-safety.cjs",
+      "lines": 252,
+      "sha256": "d65a2d6853439a6ebcdb7e033732ae764ab9ffc230ff019a54b062ae7378fc14"
+    },
+    {
+      "path": "apps/mobile/test/stock-load-refill-safety.test.ts",
+      "lines": 15,
+      "sha256": "39009dfe852073c8c8fa8937e988531bd54826ff84be204e879d41bac58ce265"
+    },
+    {
+      "path": "apps/mobile/test/stock-profile-race.test.ts",
+      "lines": 121,
+      "sha256": "b2103d959d6f0e5d3678187a4cebf04ea629a624da27a69d98513dd52f7ffe97"
+    },
+    {
+      "path": "apps/mobile/test/symptom-note-length-ui-contract.test.ts",
+      "lines": 15,
+      "sha256": "ecdc87b6756e23c7c4efc17252c028c9806aeeaeb962d5e9e3f1b11464870b62"
+    },
+    {
+      "path": "apps/mobile/test/time-field-final-audit.test.ts",
+      "lines": 36,
+      "sha256": "c6209590e59b7e0fb81dacfad0bd6b5919275937e9283433bb204a3ab2919f43"
+    },
+    {
+      "path": "apps/mobile/test/today-final-audit.test.ts",
+      "lines": 65,
+      "sha256": "bc2de2e8b8e711ab82535ec3ffe7d2d75d01792fd889e5239b3c23bb6a30e091"
+    },
+    {
+      "path": "apps/mobile/test/today-hero.test.ts",
+      "lines": 70,
+      "sha256": "4226abd96201cb8c6e7b2aa0f203d22c9866c9a80b011c2fa41fff833e169f5f"
+    },
+    {
+      "path": "apps/mobile/test/today-owner-permissions.cjs",
+      "lines": 129,
+      "sha256": "32a8750a0a588af9572f6f8dedbdc0c06e8ad195041b5c73cfc854779921bb2b"
+    },
+    {
+      "path": "apps/mobile/test/today-owner-permissions.test.ts",
+      "lines": 14,
+      "sha256": "90126618ae020f0e633c152c960ed1e3a7d7034dc9e019e516d76e046aa5c73a"
+    },
+    {
+      "path": "apps/mobile/test/today-time-groups.test.ts",
+      "lines": 65,
+      "sha256": "e99b12a53858bc1ce9bd055536808c56eeb8e317b09bf74306b91a9e379eeecd"
+    },
+    {
+      "path": "apps/mobile/test/token-store.test.ts",
+      "lines": 667,
+      "sha256": "aed35e3a1eaba3f06a6390922badb78483975bc5e55c500342aa104fa504660e"
+    },
+    {
+      "path": "apps/mobile/test/travel-escalation-profile-race.test.ts",
+      "lines": 141,
+      "sha256": "b49f1bdb29fb19e35f08697c015659e82d3490697d93884a04d98e2f82eb2099"
+    },
+    {
+      "path": "apps/mobile/test/web-alert-host.test.ts",
+      "lines": 166,
+      "sha256": "d27377634149ada83d3e531b60eae9e8b5825c511d72ae22667a502699a47d6a"
+    },
+    {
+      "path": "apps/mobile/test/web-document-direction.test.ts",
+      "lines": 21,
+      "sha256": "ff1c74bf32c99ba8dcda6c9aedd62c8c600f17ff4f3fd6af4e6d5a6ac55e6a41"
+    },
+    {
+      "path": "apps/mobile/test/web-invitation-registration.test.ts",
+      "lines": 45,
+      "sha256": "cd3ce57fe43144b60c8e3cdfc3e395eaafee25692a0a7a6208702ee0c694f771"
+    },
+    {
+      "path": "apps/mobile/test/web-report-privacy-boundary.test.ts",
+      "lines": 61,
+      "sha256": "947486861e1b47a4cbc9022d5f6cac6ebcb15f2308d26c28cb186bef4f522af0"
+    },
+    {
+      "path": "apps/mobile/test/weekly-report-profile-race.test.ts",
+      "lines": 100,
+      "sha256": "82763f8b4beb53c239031d3b22aa811432e71c02d736d85fae329026b4ba246a"
+    },
+    {
+      "path": "apps/mobile/tsconfig.json",
+      "lines": 25,
+      "sha256": "dff6056a41c4614a504538539fc69fb8390cd1389bbce7ea75b2f72d8126fea3"
+    },
+    {
+      "path": "apps/worker/package.json",
+      "lines": 20,
+      "sha256": "df8aa1c10d495636cd0805e2ccd408c8d47167950cfd2388d56fe44becd0dc7d"
+    },
+    {
+      "path": "apps/worker/src/context.ts",
+      "lines": 146,
+      "sha256": "e28c1aeb9ce3b8f9af95128f4d663e639da20e2fa9d2c5e3d705a0b93d468d7a"
+    },
+    {
+      "path": "apps/worker/src/housekeeping-schedule.ts",
+      "lines": 20,
+      "sha256": "af7b5f6de140a835d2585962916e5c4fe4131c442ee7dad53e89b1ea143b8e83"
+    },
+    {
+      "path": "apps/worker/src/index.ts",
+      "lines": 114,
+      "sha256": "d5126dd29727c3a24d4878f9a2548e31b14c3d38685e6330b6be20dec8b29982"
+    },
+    {
+      "path": "apps/worker/src/jobs/delivery-state.ts",
+      "lines": 125,
+      "sha256": "fee4588b216eb5c2228369ab557eec595a8f56175ec78270dab63a43e28a9165"
+    },
+    {
+      "path": "apps/worker/src/jobs/digests.ts",
+      "lines": 124,
+      "sha256": "a76ac48775e3cd85e4b84f97916bad84da9d4c2cac05bcd84a272b6e108d81a0"
+    },
+    {
+      "path": "apps/worker/src/jobs/dispatcher.ts",
+      "lines": 470,
+      "sha256": "f1f33ab7b58d4d9eded1f6ae89c5da966bc597230fe00ec365f2553a2ef8a8d1"
+    },
+    {
+      "path": "apps/worker/src/jobs/housekeeping-step.ts",
+      "lines": 67,
+      "sha256": "fe6460c55761d7d8427fe08e915152951342d62f3781672a231739df4c739aae"
+    },
+    {
+      "path": "apps/worker/src/jobs/housekeeping.ts",
+      "lines": 187,
+      "sha256": "8dce93ed989157d37368cb9cd9b3ab5d5d9110a3468ddcdbe1a006094b866bda"
+    },
+    {
+      "path": "apps/worker/src/jobs/mark-missed.ts",
+      "lines": 62,
+      "sha256": "17bdba9bd407e47dfc738d47460a7e09b11568f93d39b90552838031b39c4e05"
+    },
+    {
+      "path": "apps/worker/src/jobs/materialize.ts",
+      "lines": 21,
+      "sha256": "077fc69f4a8acd5a670454b4fe0692fb61d836580d5ab2c2afa92ccb36801cf9"
+    },
+    {
+      "path": "apps/worker/src/jobs/push-receipts.ts",
+      "lines": 153,
+      "sha256": "d1763c2d309fd43da2975448b339e1ba11ee0f1d08a4a07920e0a7c61ce77712"
+    },
+    {
+      "path": "apps/worker/src/jobs/reminders.ts",
+      "lines": 521,
+      "sha256": "755e56a7ac87436fe59beb47742c98a86b0c4ac50d9adb4f741cacfb7a83a9f7"
+    },
+    {
+      "path": "apps/worker/src/jobs/stock-alerts.ts",
+      "lines": 157,
+      "sha256": "167c71ba8cab3de0d45dbaaf5ab2c226a6d5a0ec264b3825636ede9279693044"
+    },
+    {
+      "path": "apps/worker/test/caregiver-notification-locale.test.ts",
+      "lines": 16,
+      "sha256": "bc3cde7152446ada74939e2b73776f5dccb66d6d123177a76c1e67e82a4ceeef"
+    },
+    {
+      "path": "apps/worker/test/digest-period.test.ts",
+      "lines": 20,
+      "sha256": "43373a30471b1be218106a8624a329b1fa1bf05110be74f6fe1693d43397f12b"
+    },
+    {
+      "path": "apps/worker/test/housekeeping-schedule.test.ts",
+      "lines": 82,
+      "sha256": "15f677e19f32152e0a82e14964b3c7c26771f979f0b17c8e767db00750f1f18a"
+    },
+    {
+      "path": "apps/worker/test/housekeeping-storage-readiness.test.ts",
+      "lines": 41,
+      "sha256": "454e497f5a421e5008732fb7841cd90143c27cdc32891137ed5d124c32509a9c"
+    },
+    {
+      "path": "apps/worker/test/reminder-state-sql.test.ts",
+      "lines": 283,
+      "sha256": "56436820c6c9d754aa43b7ce060ccac08656f28a9fb1d843e0fedb2aff81337f"
+    },
+    {
+      "path": "apps/worker/test/stays-alive.test.ts",
+      "lines": 65,
+      "sha256": "5b2bd457bec29aa14c99a26967bd6afa15de93f789b1583a7ad7efec01e981da"
+    },
+    {
+      "path": "apps/worker/tsconfig.json",
+      "lines": 16,
+      "sha256": "938831c6e59e6595f82da88426b198d47b608b252d0412d4a34e990e546350a5"
+    },
+    {
+      "path": "db/history/0078_push_receipt_token_generation.original.sql",
+      "lines": 46,
+      "sha256": "e9fad771c8422e1667460d5b7fe6a66cc2d51fa581729003f2025883a75d96ba"
+    },
+    {
+      "path": "db/maintenance/definer_policies.sql",
+      "lines": 180,
+      "sha256": "e66f36171d4f5822c4584eb24a670db1507c5953d979f78aa35c4366a1af56fb"
+    },
+    {
+      "path": "db/maintenance/preflight_checks.sql",
+      "lines": 49,
+      "sha256": "f40cfc233632657c7502b6206db0ca559df1f4f57eae3a4373fabdb0a27760ff"
+    },
+    {
+      "path": "db/maintenance/relocate_extensions.sql",
+      "lines": 39,
+      "sha256": "1d2ae4fc1f6f3ebe44f66ce34d5eb171560065e7669e1701f7e524278acd806b"
+    },
+    {
+      "path": "db/migrations/0001_extensions_and_types.sql",
+      "lines": 97,
+      "sha256": "0bd065e402de920d3471b60718d5b82aa605af7be6704ccb78d85f345a0cd449"
+    },
+    {
+      "path": "db/migrations/0002_identity.sql",
+      "lines": 142,
+      "sha256": "80e6b90561e13a4a8ad2fd6a05f3016fa8826c466079afe5b5e203f30cd0d0e7"
+    },
+    {
+      "path": "db/migrations/0003_medications.sql",
+      "lines": 175,
+      "sha256": "26a8919927ba9c70afeb38870c5a405815740281d703d2cd21a93e4b7963bcdd"
+    },
+    {
+      "path": "db/migrations/0004_doses.sql",
+      "lines": 111,
+      "sha256": "9d1e60e74eab05e4f12a67d5d97f9ecbc29c3bd701eb97f401c82db55d81e734"
+    },
+    {
+      "path": "db/migrations/0005_caregivers.sql",
+      "lines": 106,
+      "sha256": "faf795688c298acf9d6e850d8150ef7b60af9bc82e537a21281eb260afcad270"
+    },
+    {
+      "path": "db/migrations/0006_notifications.sql",
+      "lines": 90,
+      "sha256": "583b0208cfad2853e31bb8ef7f2ed153938c3f823de9268ea7ef8d1b647c7510"
+    },
+    {
+      "path": "db/migrations/0007_emergency_and_audit.sql",
+      "lines": 104,
+      "sha256": "a4fc63e66e100eb6ae263c58bf8d91f21e6fb192a50622fc6aeae509d99dc478"
+    },
+    {
+      "path": "db/migrations/0008_security_rls.sql",
+      "lines": 415,
+      "sha256": "cd1f24aa1d479d02a5b1fc316e11407243142fd8e374ff18e68a8177dadd350a"
+    },
+    {
+      "path": "db/migrations/0009_caregiver_privilege_guard.sql",
+      "lines": 170,
+      "sha256": "f9d662e275aad23f61d489060b7322ff6168ab04ad108a7e1468bc13f6e29dd3"
+    },
+    {
+      "path": "db/migrations/0010_otp_functions.sql",
+      "lines": 118,
+      "sha256": "6fe43e0f4dc547b734aec2886aafa89eeef5b9d0f737a3c4b0e7b9e9072cc7ea"
+    },
+    {
+      "path": "db/migrations/0011_auth_plane.sql",
+      "lines": 170,
+      "sha256": "138649d3748510829d44bf9cabb8f247b9d74d0e8fdbabe2b5a764c7ed205211"
+    },
+    {
+      "path": "db/migrations/0012_dose_delete_policy.sql",
+      "lines": 21,
+      "sha256": "1284707069c08088a261f180e4aaf8a8b54d5af6dfca8ffaeb72001608ba08c2"
+    },
+    {
+      "path": "db/migrations/0013_adherence_visibility.sql",
+      "lines": 22,
+      "sha256": "13411d661a89acea964ce9b74ff6503bb76051c3d46260394c23823b00131c1b"
+    },
+    {
+      "path": "db/migrations/0014_audit_redaction.sql",
+      "lines": 64,
+      "sha256": "0f515dbf434b769329c03fba3a146d657b385e2557396565fe855901f531c7dc"
+    },
+    {
+      "path": "db/migrations/0015_password_auth.sql",
+      "lines": 142,
+      "sha256": "72284f4044f8808c5399e0f827726c65863f3e8aa87da8edfd5791dabdad724b"
+    },
+    {
+      "path": "db/migrations/0016_credentials_out_of_reach.sql",
+      "lines": 136,
+      "sha256": "11042072ff4bfc0cdfb984484a70c1abf3f145157882d97804b86598cb03236b"
+    },
+    {
+      "path": "db/migrations/0017_register_creates_profile.sql",
+      "lines": 88,
+      "sha256": "e1b27a38e717952c48bfcff4cd6d1636f6b72c2032833836955afcc8b1d5fd7e"
+    },
+    {
+      "path": "db/migrations/0018_emergency_card_disclosure.sql",
+      "lines": 92,
+      "sha256": "5e9232e2f18c01454dadf61c4ff9054e5d602164c0939367896d0c84ca01d89d"
+    },
+    {
+      "path": "db/migrations/0019_client_event_scope.sql",
+      "lines": 37,
+      "sha256": "a5ca5b7fc444c149ed5f762a70f91d6bc957b2b2ac58988070e19bf90535b6fa"
+    },
+    {
+      "path": "db/migrations/0020_notification_privacy.sql",
+      "lines": 29,
+      "sha256": "9b9d3b890c534127d3e32101a4c1d97b5ba166551b8a807fb686993986cb335d"
+    },
+    {
+      "path": "db/migrations/0021_worker_least_privilege.sql",
+      "lines": 167,
+      "sha256": "9f7fd05e59237c8da52c01d69f8221279c70a683835058b7a158c133ab080481"
+    },
+    {
+      "path": "db/migrations/0022_password_change_by_user_id.sql",
+      "lines": 46,
+      "sha256": "cee817193deb75041c237cb5307acbdd758940e34c91a411739cc4bae0574dbe"
+    },
+    {
+      "path": "db/migrations/0023_disabled_and_superseded.sql",
+      "lines": 145,
+      "sha256": "e1369b0394cbf603ba25734db327951aac8ab03537e09c3a6a4bb21ebd173980"
+    },
+    {
+      "path": "db/migrations/0024_disable_revokes_sessions.sql",
+      "lines": 78,
+      "sha256": "d1987cb7826bb69f878bfc1be0ee2339aed2d247c9ef17cd2c9a999524b57b59"
+    },
+    {
+      "path": "db/migrations/0025_missed_event_uniqueness.sql",
+      "lines": 48,
+      "sha256": "7cd3798b6135fb08e152f5fff5cda0d64abc41f9e7ca686d33ab1ace82cc54fd"
+    },
+    {
+      "path": "db/migrations/0026_delivery_lease.sql",
+      "lines": 49,
+      "sha256": "2617ca940a12def7c9476789c547e7b45b9c93088d4cd7d472de8f9938c47c80"
+    },
+    {
+      "path": "db/migrations/0027_lock_does_not_slide.sql",
+      "lines": 61,
+      "sha256": "17790ea8f208773f47a548889cf6b9f2ec179e50e538c477bcecfd18b9101009"
+    },
+    {
+      "path": "db/migrations/0028_one_live_otp_challenge.sql",
+      "lines": 112,
+      "sha256": "68b70556fba43a33b67978f531d9df05b1195f9a73c071e29ed323e3bafc142b"
+    },
+    {
+      "path": "db/migrations/0029_shared_auth_rate_limit.sql",
+      "lines": 136,
+      "sha256": "294c528da1aa8e3d443df57bd89ed07f0ace74aa2171aed231e01328fe148fce"
+    },
+    {
+      "path": "db/migrations/0030_definer_privilege_model.sql",
+      "lines": 203,
+      "sha256": "3c20a1752079903e511c2bcfa52ff19812d81916a363316a0f7d4fc6d092ebc3"
+    },
+    {
+      "path": "db/migrations/0031_enable_otp_rls.sql",
+      "lines": 37,
+      "sha256": "30d4efdee06002a4ea600473ab32cc221c89d95fb777ed29a6008b31bfad924b"
+    },
+    {
+      "path": "db/migrations/0032_advisor_hardening.sql",
+      "lines": 42,
+      "sha256": "a2d66baddfb372a57eb841ca791e970f928700de3351542fa030f01644725e63"
+    },
+    {
+      "path": "db/migrations/0033_caregiver_revoke_notification_policy.sql",
+      "lines": 25,
+      "sha256": "279f054c660c80cd3b539cc8d4fa315a786073ade3631f13faa4366af50caa15"
+    },
+    {
+      "path": "db/migrations/0034_stock_unit_consistency.sql",
+      "lines": 94,
+      "sha256": "54cb86ec1ef4463cf650b8096c4fa10354d458900d412b63f1b1854c0f7d5e74"
+    },
+    {
+      "path": "db/migrations/0035_disable_unavailable_caregiver_channels.sql",
+      "lines": 19,
+      "sha256": "5cdc24f8886d118e4a2b7303dc480013fadfe7c95201fb2aafd98d3a2796a949"
+    },
+    {
+      "path": "db/migrations/0036_clear_terminal_snooze_state.sql",
+      "lines": 15,
+      "sha256": "767fdad546c6e76a76bb3b67c4712ddcc83d196f13a5c2c2e29028a3ca9ef6a0"
+    },
+    {
+      "path": "db/migrations/0037_stock_ledger_event_identity.sql",
+      "lines": 32,
+      "sha256": "5bf8cc1f732ae12e3ab78aeaf93def2ea9e42931892497408a76322201b255b0"
+    },
+    {
+      "path": "db/migrations/0038_execute_account_erasure.sql",
+      "lines": 139,
+      "sha256": "9ccb61e69ed5976d87cd17347f0be5453b61afd502fcac3edd86d4710f5c08df"
+    },
+    {
+      "path": "db/migrations/0039_worker_retention_boundaries.sql",
+      "lines": 117,
+      "sha256": "a278778e99577c6e0f68c6c5931480f1c0e91f7d83e6dd6aacd8aae1a056acae"
+    },
+    {
+      "path": "db/migrations/0040_account_erasure_audit_detach.sql",
+      "lines": 89,
+      "sha256": "cc6ffefa0f7c100adeef3e9ab9b806abc540afae6880c4a40b33418c45cac23d"
+    },
+    {
+      "path": "db/migrations/0041_medication_external_reference_integrity.sql",
+      "lines": 63,
+      "sha256": "061b8aafdc694ee13570f08c1ce117667f7ad8408b3d22071e1282c6fc296fb8"
+    },
+    {
+      "path": "db/migrations/0042_dose_snooze_status_invariant.sql",
+      "lines": 31,
+      "sha256": "c0a15b56aee81f1615890572f5b7527efb242d0975cf44f7a16f3f340db0e33f"
+    },
+    {
+      "path": "db/migrations/0043_caregiver_notification_permission_revocation.sql",
+      "lines": 64,
+      "sha256": "627493a280b8cc56fb5ea0eecc45976424cfe3a1e4be27d62a38419d44ef1ea4"
+    },
+    {
+      "path": "db/migrations/0044_logout_refresh_descendant_revocation.sql",
+      "lines": 49,
+      "sha256": "4144e00335e568f69ed8ca23d2b6951ac4513c1af0aadeef08673963b29413fc"
+    },
+    {
+      "path": "db/migrations/0045_dose_client_event_history.sql",
+      "lines": 54,
+      "sha256": "1c7f5eadc431be7cad72fef35324bef1be62bb5af8f4448d591c74c9006017c0"
+    },
+    {
+      "path": "db/migrations/0046_push_token_account_switch.sql",
+      "lines": 72,
+      "sha256": "c096042460246ee5111a8a730d73831475473242e99e029bb8cd2be8c5c6dc1f"
+    },
+    {
+      "path": "db/migrations/0047_worker_materialization_privileges.sql",
+      "lines": 23,
+      "sha256": "a3b2dcea954ef5a49175fc31984033c43c80a363844d3077d110f40ba0a3dd52"
+    },
+    {
+      "path": "db/migrations/0048_admin_operational_read_model.sql",
+      "lines": 96,
+      "sha256": "97da95830426ec661323f798ed8df2d8bbb00819e3509657251c2ec84053ea43"
+    },
+    {
+      "path": "db/migrations/0049_caregiver_digest_permission_revocation.sql",
+      "lines": 64,
+      "sha256": "fd3a9bed668db99b2538ef375996b1deaebb9353c2912a0b62319eb078767aa3"
+    },
+    {
+      "path": "db/migrations/0050_logout_deactivates_push_token.sql",
+      "lines": 61,
+      "sha256": "a36a6fc02f17cc41b726c16a7ec9f75b57647c2e90564be8b03c0aeaa81a0a30"
+    },
+    {
+      "path": "db/migrations/0051_session_revocation_push_boundary.sql",
+      "lines": 61,
+      "sha256": "bc79e5400d15a832744d898354fa191e6ac92dd9c0f5160a65921894f4833299"
+    },
+    {
+      "path": "db/migrations/0052_expired_session_push_boundary.sql",
+      "lines": 56,
+      "sha256": "365c80796701db05e09fc786606f518f4d2fd3e722bf6bae48669ab099501358"
+    },
+    {
+      "path": "db/migrations/0053_runtime_operational_tables_read_only.sql",
+      "lines": 27,
+      "sha256": "24adb81a1973038d27495d154fc722da65ccb44c70a844479c538ade3801d67a"
+    },
+    {
+      "path": "db/migrations/0054_password_change_refresh_serialization.sql",
+      "lines": 153,
+      "sha256": "254c80fc5152e54e356f40830c0b2e9144f785f66259a4030441917448453328"
+    },
+    {
+      "path": "db/migrations/0055_account_erasure_profile_object_ownership.sql",
+      "lines": 60,
+      "sha256": "98e95a3c350656a4af8556358e3b5a9dd6d9b5b2051b72dedd53ca9a4cc9c67c"
+    },
+    {
+      "path": "db/migrations/0056_deletion_pending_push_guard.sql",
+      "lines": 67,
+      "sha256": "07cba98c383993b3020e8bbc34df3aa9d6453a27eeeffac812b07a6b6a255160"
+    },
+    {
+      "path": "db/migrations/0057_password_change_push_collision.sql",
+      "lines": 92,
+      "sha256": "ef52f26f047d5d62b7cbbadc385f105ae1428bb8d0e0f90f0ab3d82d04e3785a"
+    },
+    {
+      "path": "db/migrations/0058_refresh_reuse_lineage_isolation.sql",
+      "lines": 132,
+      "sha256": "dda14c80703248ce336fe36f636a9249aff1bb77f2ff476f740b3655f574d821"
+    },
+    {
+      "path": "db/migrations/0059_unreplaced_session_revocation_push_boundary.sql",
+      "lines": 65,
+      "sha256": "b40ccef0806c15224763f78fcebb98e12d4436a57963be623f522cc1ecd78b8b"
+    },
+    {
+      "path": "db/migrations/0060_logout_refresh_lineage_isolation.sql",
+      "lines": 77,
+      "sha256": "4f1defff48e85c8e63b724ddb866741cfe24b2ad6e0a772bc2ce8880167fdfc2"
+    },
+    {
+      "path": "db/migrations/0061_push_token_session_binding.sql",
+      "lines": 302,
+      "sha256": "f9992cc8b8ae13f4e987e1c5c62d62e55920f46e5401e232b4ce4bf2f48f4281"
+    },
+    {
+      "path": "db/migrations/0062_note_measurement_dose_profile_integrity.sql",
+      "lines": 67,
+      "sha256": "3d5232115deea02fa40cf4d2cd1f35cf4a3c2ad0e56c15b5f65df25022e07d4a"
+    },
+    {
+      "path": "db/migrations/0063_account_disable_refresh_serialization.sql",
+      "lines": 52,
+      "sha256": "c0403f7c9c8bbe6a718701d4d9ce438dab0e090d044f700a82a5e590eca2b02c"
+    },
+    {
+      "path": "db/migrations/0064_dose_event_profile_integrity.sql",
+      "lines": 44,
+      "sha256": "f34238a104946b1e8d50f0398ff77b14c661dad78b123004cce0bd21c208c56b"
+    },
+    {
+      "path": "db/migrations/0065_logout_all_refresh_serialization.sql",
+      "lines": 52,
+      "sha256": "f9f4c04ac70cbdcf9c3afe2528b7fe83169b2cb01de82e6ac9d26c1bf857ac50"
+    },
+    {
+      "path": "db/migrations/0066_symptom_note_length_contract.sql",
+      "lines": 20,
+      "sha256": "eb440020d85e1b96095fbfe434ee7dc65704f4acdbc10ab68f97c7d0c30125f6"
+    },
+    {
+      "path": "db/migrations/0067_session_delete_push_binding.sql",
+      "lines": 50,
+      "sha256": "2debb21944fde8f8edf7c86506588db70f6f2aa1e4ff860f77a303261ab9d58e"
+    },
+    {
+      "path": "db/migrations/0068_caregiver_notification_rule_profile_integrity.sql",
+      "lines": 66,
+      "sha256": "1e766c1ac74ad6a2625834ab383c2ca860e6b5f2256e2a595abad3ae67222251"
+    },
+    {
+      "path": "db/migrations/0069_medication_profile_graph_integrity.sql",
+      "lines": 107,
+      "sha256": "ee0a82401f94267f02d8afeb89d635d3d15d59085a15ddfa53502b2f4cfb224d"
+    },
+    {
+      "path": "db/migrations/0070_dose_schedule_graph_integrity.sql",
+      "lines": 105,
+      "sha256": "eb854fd9101bc14066430ddc90e8fd0f3dae48ae7928720d5300bd61e801dac5"
+    },
+    {
+      "path": "db/migrations/0071_notification_delivery_clinical_graph_integrity.sql",
+      "lines": 142,
+      "sha256": "212eccdeafcfb3a0556dfe98818626e7e8cf7bbc17c501396a72a8aa6246a7cb"
+    },
+    {
+      "path": "db/migrations/0072_stock_transaction_clinical_graph_integrity.sql",
+      "lines": 97,
+      "sha256": "87e9893747cbd4dbebc415e7242db79ba5c21ee57b62c858d93cdccec4baf43e"
+    },
+    {
+      "path": "db/migrations/0073_consent_profile_owner_integrity.sql",
+      "lines": 73,
+      "sha256": "c91b4e378727ad158a3a23e61238496f75d3665c6eff0241bfe5dc8b7d644121"
+    },
+    {
+      "path": "db/migrations/0074_patient_profile_identity_reassignment.sql",
+      "lines": 47,
+      "sha256": "c9c93d79c10f06427aff6f650008f5e6f27546af94786d8c63e863a0e4da7ee5"
+    },
+    {
+      "path": "db/migrations/0075_push_delivery_receipts.sql",
+      "lines": 73,
+      "sha256": "dce1f27e5e0c6a35d5309097b147c805290fa2e6b550576b0d48c6ff15cc6306"
+    },
+    {
+      "path": "db/migrations/0076_push_endpoint_exact_session.sql",
+      "lines": 34,
+      "sha256": "e925868d0f2a0d45686d27c96522ae1b6c2b9dc624f4561b7dd42efba1740517"
+    },
+    {
+      "path": "db/migrations/0077_push_receipt_claim_recovery.sql",
+      "lines": 67,
+      "sha256": "43898bf6c9f53eab01ffa0aa3e4268c64d020a27eba854cbea932af7264fc02d"
+    },
+    {
+      "path": "db/migrations/0078_push_receipt_token_generation.sql",
+      "lines": 49,
+      "sha256": "f9f3e19795f09c7f137741dd486e0908532cd3fc1cca78215db57cb4b1cffc1c"
+    },
+    {
+      "path": "db/migrations/0079_audit_preview_ledger_repair.sql",
+      "lines": 51,
+      "sha256": "29a8dfc7f72c927807b06bfc4ee9d02b90b9c57df5a009249b5e661a0987d5ec"
+    },
+    {
+      "path": "db/migrations/0080_remove_unused_push_receipt_claim.sql",
+      "lines": 15,
+      "sha256": "629eea61526bef7fa7e7ff891ed4b8b75f5ec096a64db72d91fefe9d494f9f5e"
+    },
+    {
+      "path": "db/migrations/0081_caregiver_invitation_phone_binding.sql",
+      "lines": 69,
+      "sha256": "09b34714c81565e53a5688c1def7d0e636c9297cb67177a48996b906d529b0f8"
+    },
+    {
+      "path": "db/migrations/0082_verified_caregiver_phone.sql",
+      "lines": 128,
+      "sha256": "8a72dec943a8b01e99a596c26dc7211af5e7de6257f1d9c0c35eb44af5cfffe1"
+    },
+    {
+      "path": "db/migrations/0083_medication_create_request_identity.sql",
+      "lines": 12,
+      "sha256": "7e17ea344e427e6e6b512cbcc57fd4e6b64154874a3841ef75627ad75c1c873e"
+    },
+    {
+      "path": "db/migrations/0084_password_recovery.sql",
+      "lines": 59,
+      "sha256": "1c6952565ed4421e178f399933463e9526263276278bbd8caf1a1975da9b863f"
+    },
+    {
+      "path": "db/migrations/0085_push_receipt_portable_hash.sql",
+      "lines": 50,
+      "sha256": "6421218936fc64c02adaea50cf1eee5b32ed288be23a070e63a1be89fc343116"
+    },
+    {
+      "path": "db/migrations/0086_account_email_recovery.sql",
+      "lines": 174,
+      "sha256": "8d93c4a08a113e03cfb19fb364f49f8e9c0763efa57dc07cd6af8321e43c30bf"
+    },
+    {
+      "path": "db/migrations/0087_email_onboarding.sql",
+      "lines": 37,
+      "sha256": "f3166c7cd80f18fa57839ff47cfbd914cba87c7bcc4f4f73546a475bcbf0ae97"
+    },
+    {
+      "path": "db/migrations/0088_verified_email_caregiver_invites.sql",
+      "lines": 154,
+      "sha256": "c75444fe3cbadf0cacfdf6fc0424a62f7e0efc536db35790ea59d5fc40943c4e"
+    },
+    {
+      "path": "db/migrations/0089_caregiver_email_worker_verification.sql",
+      "lines": 18,
+      "sha256": "816c04284de0ba79c326c7e5e210e6b2a1f60e46c7aa68c15759bdc43d61ea57"
+    },
+    {
+      "path": "db/migrations/0090_preserve_recorded_dose_history.sql",
+      "lines": 39,
+      "sha256": "e5a127c66b888fd1381d4b20983fa44f6d0fbfee2643b35ab2a53726cb2ac40a"
+    },
+    {
+      "path": "db/migrations/0091_notification_terminal_retention.sql",
+      "lines": 10,
+      "sha256": "84b912359d5767e147c4d87f8884929e6a81faba3052b6caaa48a9bf6e285522"
+    },
+    {
+      "path": "db/migrations/0092_order_private_dose_actions.sql",
+      "lines": 54,
+      "sha256": "2bdc15104aa72ed1c0ac1e657d9ec510f56413cb21fe777fce41ccfc2e93b6f3"
+    },
+    {
+      "path": "db/migrations/0093_automatic_dose_stock_transitions.sql",
+      "lines": 113,
+      "sha256": "68cfc8735a9b687cad74479d799bc566c61710dda81510c8f34387c67cd8705e"
+    },
+    {
+      "path": "db/migrations/0094_caregiver_invitation_review.sql",
+      "lines": 77,
+      "sha256": "4b5009023ae30c2bf99f4b5d5aa201978ce966f563cb4d56f49e425ec065f4be"
+    },
+    {
+      "path": "db/migrations/0095_verified_email_registration.sql",
+      "lines": 118,
+      "sha256": "aafbbe36ff37977266f442ca05fad21f2e7482e24a5bd27f7420b0521f7df97e"
+    },
+    {
+      "path": "db/seed/rls_probe.sql",
+      "lines": 248,
+      "sha256": "73ba09159c961354f4106b906fe71b668ef6fe9af69ca84b42e813abf51ba1b7"
+    },
+    {
+      "path": "docker-compose.yml",
+      "lines": 79,
+      "sha256": "e4406f3f67c527096497b9324ff44ecb7391b0cb07757e509fe720a4657ffd8d"
+    },
+    {
+      "path": "docs/CI-SECURITY-GATES.md",
+      "lines": 144,
+      "sha256": "66b01cfa90f65216482030f2705ad1bf4b41967991a6e8fc884715ee327b301b"
+    },
+    {
+      "path": "docs/FINDING-notification-phi.md",
+      "lines": 166,
+      "sha256": "55954f76637e439a05a779bd2f0ad21da154f8c6071d651cd069184d7c272b84"
+    },
+    {
+      "path": "docs/OTP-RLS-HOTFIX-2026-09-06.md",
+      "lines": 9,
+      "sha256": "52c68462e30f46db3fa20f8654d5cb953f15900ed1236468c28c4b54686a515e"
+    },
+    {
+      "path": "docs/P18-RELEASE-CANDIDATE-REHEARSAL.md",
+      "lines": 764,
+      "sha256": "40bf64161d6ca5c04f28f2a591db5fac36b8460a12ff4e241f07f18970a4fc21"
+    },
+    {
+      "path": "docs/P18R-REMEDIATION.md",
+      "lines": 515,
+      "sha256": "72e688eced05d2a4c2ee3a26772da8babd286c557540e8ae38d3ad30d348d641"
+    },
+    {
+      "path": "docs/P19-FINAL-ADVERSARIAL-REVIEW.md",
+      "lines": 633,
+      "sha256": "a64540776159cd93bf89384d90fd0cbae89d295cba6358b9b8df5128b7bb5d3f"
+    },
+    {
+      "path": "docs/PRODUCTION-RELEASE-RUNBOOK.md",
+      "lines": 591,
+      "sha256": "bfcb0af515a5a7beb9be3fcf1e251986cdc1a2aff365fab498cc137ff7bdd5d7"
+    },
+    {
+      "path": "docs/PUSH-DELIVERY-SEMANTICS.md",
+      "lines": 127,
+      "sha256": "08825fbc4eeac303c0b8d4a1030a81e27efc6104a19f24f7c1510fe567da7d0c"
+    },
+    {
+      "path": "docs/RELEASE-STATUS-2026-09-06.md",
+      "lines": 22,
+      "sha256": "889c061f827736b0c17dad46e2d88914b60b52be603d118e9af44219178719b1"
+    },
+    {
+      "path": "docs/RENDER-CLEANUP-RUNBOOK.md",
+      "lines": 156,
+      "sha256": "e8c6ed932708b2ff902014b934efb26920a007cb808fe54f273994dea3957bb3"
+    },
+    {
+      "path": "docs/RUNBOOK-migrate-preflight.md",
+      "lines": 177,
+      "sha256": "edf857dec7aeafb6e18a7dd42e99d7cb76aafe654241505bdb6ee03a2d73ce39"
+    },
+    {
+      "path": "docs/RUNBOOK-proxy-topology.md",
+      "lines": 97,
+      "sha256": "918e6936a2fdb8c89d58c50106b906f74a4ec6774a946f781bacc130ae6dd123"
+    },
+    {
+      "path": "docs/RUNBOOK-retention-dry-run.md",
+      "lines": 148,
+      "sha256": "83bd086691a44af76ac76845800f2a97bbdee274081f4efce38a507efe267b3d"
+    },
+    {
+      "path": "docs/api.md",
+      "lines": 200,
+      "sha256": "056d15d6ea63adc69ea5ced4318425af4f5caba2bbdcda181e912e6df369b968"
+    },
+    {
+      "path": "docs/architecture.md",
+      "lines": 117,
+      "sha256": "439b43f8c14583aba8e1321a152a84f09a1c0d615fde108db7a840fd47da7f14"
+    },
+    {
+      "path": "docs/audit/2026-09-09-auth-transition-lifecycle.md",
+      "lines": 53,
+      "sha256": "9096c2e266005a404c2dbe089c27fe1efe16c8027ec6182e6a1b15dfaad0abb4"
+    },
+    {
+      "path": "docs/audit/2026-09-09-bootstrap-plaintext-boundary.md",
+      "lines": 31,
+      "sha256": "3bb4cd2ba57bb117d8fdb802003dab99d2972149ae70e606f8bbb3e640ca2a0e"
+    },
+    {
+      "path": "docs/audit/2026-09-09-ci-apt-independent-verification.md",
+      "lines": 27,
+      "sha256": "21fef992c2928d93bac4f3edce6b309a0f10798f068253e9a06dd11a1f171f49"
+    },
+    {
+      "path": "docs/audit/2026-09-09-ci-postgres-source-scope.md",
+      "lines": 23,
+      "sha256": "4ee61fb2caa1aa64329a9c30f75c915ee81bdf6ccd9e1995db2d6a84301b11c3"
+    },
+    {
+      "path": "docs/audit/2026-09-09-ci-source-identity-assertions.md",
+      "lines": 84,
+      "sha256": "3dc274e684d9b3f8889df1e3431097f1c2a54e62f99a184bccfa8cf8f039853d"
+    },
+    {
+      "path": "docs/audit/2026-09-09-ci-test-parser-safety.md",
+      "lines": 28,
+      "sha256": "d9e46ec94b00832abae06d6c7f1273b81b56f15d84bdf52ce4b4d4ebf33fd214"
+    },
+    {
+      "path": "docs/audit/2026-09-09-codeql-evidence-visibility.md",
+      "lines": 22,
+      "sha256": "2a740b85ebc8d5716440ca05c23b90034d3a8b982cc73a43fc65c024e43309bf"
+    },
+    {
+      "path": "docs/audit/2026-09-09-codeql-rule-metadata.md",
+      "lines": 53,
+      "sha256": "f09c7c8fa8d56771546aa57e032fba2f8e8c3c2c2d6b45fff1e2a81941b3eec3"
+    },
+    {
+      "path": "docs/audit/2026-09-09-generated-web-scan-evidence.md",
+      "lines": 76,
+      "sha256": "e0bbf9e4af7a800d0a8ff95d3fc78f20e6d5bf72bb57a3d3a2b4d09cf2611aa1"
+    },
+    {
+      "path": "docs/audit/2026-09-09-notification-caller-intent.md",
+      "lines": 35,
+      "sha256": "bbcf7d459e226ec7d33a637febfb2a3b321c9c6453686aa513ffc9374b7d13b2"
+    },
+    {
+      "path": "docs/audit/2026-09-09-notification-schedule-races.md",
+      "lines": 37,
+      "sha256": "075e59b5c8034faf9177778d8c799d01fe35ad34bfaffc362b6955192884d7d5"
+    },
+    {
+      "path": "docs/audit/2026-09-09-offline-test-cli-boundary.md",
+      "lines": 30,
+      "sha256": "c630a23e4068527d84d634b49ca015a7ff2055647796dfe104cea76f655fda7b"
+    },
+    {
+      "path": "docs/audit/2026-09-09-offline-today-rollover.md",
+      "lines": 32,
+      "sha256": "2077cecd1262ab3891606588cf6171f56767d1b6edf33a0e2c7fa6ff1ad30c9e"
+    },
+    {
+      "path": "docs/audit/2026-09-09-preference-bootstrap-commit-race.md",
+      "lines": 45,
+      "sha256": "ad042a0fe2802ff92ad6383d3bcfa9d3b53900ed661678521d0a400154d78980"
+    },
+    {
+      "path": "docs/audit/2026-09-09-preference-session-intent.md",
+      "lines": 114,
+      "sha256": "0367c2a4b67ccd36dc805b4308462dbdd911bffe2fce2f3cf3a52cfca84bc975"
+    },
+    {
+      "path": "docs/audit/2026-09-09-profile-screen-races.md",
+      "lines": 42,
+      "sha256": "6ba144b9d24e4e853c9244107e7426642b8c91841c5c626c044ccb32e5fee5e1"
+    },
+    {
+      "path": "docs/audit/2026-09-09-profile-self-identity.md",
+      "lines": 23,
+      "sha256": "af971e0ed09f701c86eee36cac365f65c076a357e648d53eac7f245d848a3f1a"
+    },
+    {
+      "path": "docs/audit/2026-09-09-provider-read-sync-races.md",
+      "lines": 37,
+      "sha256": "4cb623067c50a1490cbf1764d13654cd02a4d5df13c9425551e9cf576d4c1c46"
+    },
+    {
+      "path": "docs/audit/2026-09-09-route-matcher-literal-integrity.md",
+      "lines": 57,
+      "sha256": "200e5b262e84cc0b534f832ad8fdfbf03aedd8449c3ed7090982085abd4fe0ac"
+    },
+    {
+      "path": "docs/audit/2026-09-09-s3-upload-content-type-reference.md",
+      "lines": 74,
+      "sha256": "646405bac014d67e709a9bc478fd68768dc45f0f8f0f657bcdbc238d4c9819e5"
+    },
+    {
+      "path": "docs/audit/2026-09-09-today-owner-permissions.md",
+      "lines": 67,
+      "sha256": "c58a89c00217465bf03598516445fb2a8d7d2eae379d9f35f5902dd3404d767e"
+    },
+    {
+      "path": "docs/audit/2026-09-09-web-hardening-minifier-identity.md",
+      "lines": 55,
+      "sha256": "1092637aa519d2bb7177642cf6af92c26eaa945f0c06019f85a992bec9142293"
+    },
+    {
+      "path": "docs/audit/2026-09-09-web-linking-origin-and-query-hardening.md",
+      "lines": 72,
+      "sha256": "0780feb8e43f0e17620eefac640d44866da217d175c315485cb905cd4997047d"
+    },
+    {
+      "path": "docs/audit/2026-09-09-web-test-bootstrap-order.md",
+      "lines": 61,
+      "sha256": "39e6d34fc60a5b2a9867747aa91b062315b5c9709078c1a205d049e8deb21a88"
+    },
+    {
+      "path": "docs/audit/2026-09-13-capture-upload-content-type.md",
+      "lines": 44,
+      "sha256": "d0be798bf572913ea15287ce8aaefdb98b4a8aa4f315d52599147916e90997f7"
+    },
+    {
+      "path": "docs/audit/2026-09-13-clinical-route-url-privacy.md",
+      "lines": 72,
+      "sha256": "8eec6ba47ce3e62ac9572442e3e000c64512e4e115bd4c3f73206b810adff943"
+    },
+    {
+      "path": "docs/audit/2026-09-13-emergency-qr-load-safety.md",
+      "lines": 76,
+      "sha256": "ba01b23d7b707648f3ed16344dd679e493bef9f8ce38cd1a03deb65f8cbbb52f"
+    },
+    {
+      "path": "docs/audit/2026-09-13-escalation-editor-patient-stage.md",
+      "lines": 58,
+      "sha256": "12cb9adf82b2b2823709cac589d93f06c8bf5a12ad644afabec610d867ec15f4"
+    },
+    {
+      "path": "docs/audit/2026-09-13-escalation-patient-first-contract.md",
+      "lines": 57,
+      "sha256": "7c5bac83995d7c393b7d8d0d6344bbbb7adf4e7d54d6f2073faed324908f9e55"
+    },
+    {
+      "path": "docs/audit/2026-09-13-medication-confirm-strength-integrity.md",
+      "lines": 20,
+      "sha256": "559b088b52c6e618518457075c6630f02d138f5a79ccc20ef99827c2b8d6b4b7"
+    },
+    {
+      "path": "docs/audit/2026-09-13-medication-edit-load-safety.md",
+      "lines": 24,
+      "sha256": "832534daee37c6e8d80c582e2950fb594344ba7b89c3294232e9fee5acda80bf"
+    },
+    {
+      "path": "docs/audit/2026-09-13-medication-edit-metadata-roundtrip.md",
+      "lines": 37,
+      "sha256": "71095bcf989fb3ebe0b66e799c7b317b262b149a6ac4bdb1a1453fa6b92d0914"
+    },
+    {
+      "path": "docs/audit/2026-09-13-medication-editor-signed-out.md",
+      "lines": 35,
+      "sha256": "6dbe28b73f93870f4122f0c0709666a58e46b536f876ba5c33cfe07bd1ec9947"
+    },
+    {
+      "path": "docs/audit/2026-09-13-push-provider-receipts.md",
+      "lines": 48,
+      "sha256": "a1eed533f95dff17ade06f6a838ba60d171456bcd6adb3959f2f65af95b1c928"
+    },
+    {
+      "path": "docs/audit/2026-09-13-schedule-edit-load-safety.md",
+      "lines": 30,
+      "sha256": "8b78f707128345747786cd3135e14379ddea87ec7c8e2472e9128e951e1b9ba5"
+    },
+    {
+      "path": "docs/audit/2026-09-13-schedule-optional-constraint-integrity.md",
+      "lines": 21,
+      "sha256": "eaf86a55fbf46a6fb6ad04dbf44beaf09cb767269d638dc2591f30861604b2a3"
+    },
+    {
+      "path": "docs/audit/2026-09-13-schedule-time-input-integrity.md",
+      "lines": 34,
+      "sha256": "cac88c154682fb233b260ccbde73243bbbbddd8e991ae8b64a30350084b2f025"
+    },
+    {
+      "path": "docs/audit/2026-09-13-stock-load-refill-safety.md",
+      "lines": 41,
+      "sha256": "e15908cd9cf6150ff6d771a4c4b909b5fc79413474e3a80578c2ec5dacdf2576"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/ANDROID-INTERACTION.md",
+      "lines": 84,
+      "sha256": "674331ef1a93e7bc2f5e49baec3397b3c511ab514d7fa0ee19cb13c76eaa2466"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/FOLLOW-UP.md",
+      "lines": 23,
+      "sha256": "c89bec1671708a90f6134cac5aeebc80b50b85a113eb1220ca17f0472e72c670"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/MATRIX.md",
+      "lines": 63,
+      "sha256": "abaa80de7d60772c63a4b37881154d7b8fb3747e4aa1d790f9dfac908948380c"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/MIGRATION-RECOVERY.md",
+      "lines": 54,
+      "sha256": "500b60a492e1c171c56485d14b6aa20b7012948f8f0a17f45a31dc61dc0341de"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/PASSWORD-RECOVERY.md",
+      "lines": 35,
+      "sha256": "febc7c2c556bae1a034c5ab4e2d1fdb2278d6a6ecf28d9977acece5845c44930"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/PHONE-PREVIEW.md",
+      "lines": 25,
+      "sha256": "27d609f509517795188320092b9eba176479bcba5a336c5134376a1036e742d8"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/README.md",
+      "lines": 80,
+      "sha256": "2d227959a91e3d607ab4296c71ef89d6c300d8ca5ea6fcaa13249417ded7ff8e"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/REQUESTS.md",
+      "lines": 94,
+      "sha256": "7949143413961b6ecc6021017ddc90502d3fbd3b990011d6e9e04fb83c346c20"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/ROLLOUT.md",
+      "lines": 49,
+      "sha256": "0c0091bbaf122f0972e35735b3786540d44805236c39d053d42a39939d7464e3"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/catalog-readonly.json",
+      "lines": 97,
+      "sha256": "4c08c0bf6377067d9c69c5610a795b3b8fac9ab0d4ad0a7e2ad57b3c5987504d"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/apk-sha256.txt",
+      "lines": 1,
+      "sha256": "817da5cf4e4d8b9378f8d7f251e8fc9846615885c2ee444a9d4d7d3b480404dc"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/app-commit.txt",
+      "lines": 1,
+      "sha256": "676cf4baa80154b30e42e5ad44d6a4de75bdb173aaa5118f5072c5c2f15b97e8"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/backend-version.json",
+      "lines": 7,
+      "sha256": "0b60ba56076312ca388f175382bed1decf8e61eea1fcf9fa0957ca9dd8801014"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/device.txt",
+      "lines": 1,
+      "sha256": "633fbfc3b92b012914165717ce367282664c75ad9f6e533b4a1ad6e2418ec93a"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/large-ar-font200-persisted.json",
+      "lines": 21,
+      "sha256": "8a4e70a83ea15beda8a53c113d9362ffedeb80ab7c24981294d80bbc1445d41c"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/results.json",
+      "lines": 39,
+      "sha256": "370f5bfe70057440b4397ad42616b485168dc4505845645ca6a7f0ea11a2c8a4"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/159d62e/small-ar-persisted.json",
+      "lines": 21,
+      "sha256": "8a4e70a83ea15beda8a53c113d9362ffedeb80ab7c24981294d80bbc1445d41c"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/apk-sha256.txt",
+      "lines": 1,
+      "sha256": "299e56a4ea62d05a47692c8f98b8bf01d5f42cbd49862d8f8dde27f0b6db794d"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/app-commit.txt",
+      "lines": 1,
+      "sha256": "49e20c9449d41ae20ac5a8b668c9358f673e8e7a0e1eb49b03455f30ccfc1dea"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/backend-version.json",
+      "lines": 7,
+      "sha256": "0b60ba56076312ca388f175382bed1decf8e61eea1fcf9fa0957ca9dd8801014"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/device.txt",
+      "lines": 1,
+      "sha256": "633fbfc3b92b012914165717ce367282664c75ad9f6e533b4a1ad6e2418ec93a"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/dose-results.json",
+      "lines": 18,
+      "sha256": "b31796a78178d9ee6dec734192aae06ad60d09df5c63226eecf08d98d3d57377"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/dose-tracked-persisted.json",
+      "lines": 26,
+      "sha256": "fc2a0532c8c7e07f811182a8c4c63782ec9aa68a32d63ded94f368deaf0a6ecb"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/dose-untracked-persisted.json",
+      "lines": 22,
+      "sha256": "46fc18db9a0aca6d28d7dce4c212d0ca5f6e905233b7a011d3e7e974f6be4600"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/large-ar-font200-persisted.json",
+      "lines": 21,
+      "sha256": "8a4e70a83ea15beda8a53c113d9362ffedeb80ab7c24981294d80bbc1445d41c"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/results.json",
+      "lines": 39,
+      "sha256": "370f5bfe70057440b4397ad42616b485168dc4505845645ca6a7f0ea11a2c8a4"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/evidence/f8513aa/small-ar-persisted.json",
+      "lines": 21,
+      "sha256": "8a4e70a83ea15beda8a53c113d9362ffedeb80ab7c24981294d80bbc1445d41c"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/follow-up-evidence.json",
+      "lines": 115,
+      "sha256": "80d73687708d70536814d8096e6a9760de77795f1f90e128d7c2d3ddd8df1ec4"
+    },
+    {
+      "path": "docs/audit/2026-09-16-final/preflight-readonly.sql",
+      "lines": 24,
+      "sha256": "aae9cfe909053d86380799bd1c159ffcdd66518e7b0ebc7fe19048be853f44e4"
+    },
+    {
+      "path": "docs/audit/2026-09-19-account-registration-reset.md",
+      "lines": 81,
+      "sha256": "3219f3c636e230ab78a60cb5b595223deaab184117a1aa9810597ed0c27d5322"
+    },
+    {
+      "path": "docs/audit/2026-09-19-auth-startup.md",
+      "lines": 34,
+      "sha256": "a7f5033f0dd874ec8c043eddf6e335df10343416fbee91944e07bf0afd142038"
+    },
+    {
+      "path": "docs/audit/2026-09-19-authenticated-account-rate-budget.md",
+      "lines": 75,
+      "sha256": "98dc9dad064e4377535c6bfdba316bb13850d484de43ec333b1f015717d9151c"
+    },
+    {
+      "path": "docs/audit/2026-09-19-browser-followup.md",
+      "lines": 50,
+      "sha256": "d4c7794cf0315f714b6caa181e0eef98a86f1dba7ed3660f809d064bab0ef21c"
+    },
+    {
+      "path": "docs/audit/2026-09-19-erasure-readiness.md",
+      "lines": 64,
+      "sha256": "d49baa164cb630ac122987168a861c66ca7d52f7b94e01c76d8e173fc1df63d0"
+    },
+    {
+      "path": "docs/audit/2026-09-19-full-audit.md",
+      "lines": 81,
+      "sha256": "329d9b7a4c033571ebebdc052120f9a6ff1f2ad1cdcaadd8aa6e22fa26f28496"
+    },
+    {
+      "path": "docs/audit/2026-09-19-invitation-deletion-notification-review.md",
+      "lines": 120,
+      "sha256": "844d0ab02d44aedb1a91a45c2dc3b487fd6816c3ef7010ae9319ca6bb0242262"
+    },
+    {
+      "path": "docs/audit/2026-09-19-legacy-audit-reconciliation.md",
+      "lines": 203,
+      "sha256": "69b6f9f38f54414b488c9b48b731cf13d522fb8e4f3304fc2437dd2fddf66dde"
+    },
+    {
+      "path": "docs/audit/2026-09-19-password-lockout-oracle.md",
+      "lines": 83,
+      "sha256": "12b835ed96bdf259d7591c73063bd3ada536c02ff5f764def0398b6970901c25"
+    },
+    {
+      "path": "docs/audit/2026-09-19-patient-preview-acceptance.md",
+      "lines": 139,
+      "sha256": "faa769fbde4fc614dc50110288ead1c56f2b1a7153656c9f4b863e356a3ee316"
+    },
+    {
+      "path": "docs/audit/2026-09-19-preview-account-email.md",
+      "lines": 41,
+      "sha256": "4aed7e5174bb2d912ec2f34c7deb485690f14a171d8894c6de5f5cfc9cf92fc7"
+    },
+    {
+      "path": "docs/audit/2026-09-19-web-confirmation-recovery.md",
+      "lines": 52,
+      "sha256": "aeb66d1d633e6390b0e68f9a3f350dca564261f976cfb313df05e4e0b69a2231"
+    },
+    {
+      "path": "docs/audit/2026-09-20-account-reset-follow-up.md",
+      "lines": 326,
+      "sha256": "b781650fe413c2bc3780e91f3f153182890ea6a30644d615d275d1fafa94df2c"
+    },
+    {
+      "path": "docs/audit/2026-09-20-browser-invitation-registration.md",
+      "lines": 92,
+      "sha256": "f66f05b59ad485c3660f99064386186d9a4812cc0b3c53a214604cfc40b59d9e"
+    },
+    {
+      "path": "docs/audit/2026-09-20-ios10-apple-upload.md",
+      "lines": 88,
+      "sha256": "e5a3801ea960f3d4c5a03a3e708945e401bdc5b17edd425ccdfc0cc83ae92201"
+    },
+    {
+      "path": "docs/audit/2026-09-20-ios10-production-backend.md",
+      "lines": 93,
+      "sha256": "de8b2c68064319e15ebf07d6da1c7810d3f8d18249499e80f7f4463386c09d82"
+    },
+    {
+      "path": "docs/audit/2026-09-20-ios10-submit-workflow.md",
+      "lines": 100,
+      "sha256": "0ba042287d1b4bc2b05d99c5a1fc445b4a22a34d45fe2ee739fc1a6f204fc1cf"
+    },
+    {
+      "path": "docs/audit/2026-09-20-native-direction-reversal.md",
+      "lines": 85,
+      "sha256": "72b3bdfea3eede59de02de8d4ab2491c6d26d1d448ce1cd3dda5142429193919"
+    },
+    {
+      "path": "docs/audit/2026-09-20-phone-guidance-ios10.md",
+      "lines": 91,
+      "sha256": "6efa2e263d2ab3160c65d2c2a9df38adfe3c444f7f4785f9fd4993c1b1c76b02"
+    },
+    {
+      "path": "docs/audit/2026-09-20-pre-auth-locale-persistence.md",
+      "lines": 42,
+      "sha256": "7154acb2b4357b62d827309369c3adef69da32f32d6a3577985d514db96d4b89"
+    },
+    {
+      "path": "docs/audit/2026-09-20-preview-live-verification.md",
+      "lines": 112,
+      "sha256": "f764c11bee89ad76087671a198a5741579316d02b2399c1cf328966bae71ce85"
+    },
+    {
+      "path": "docs/audit/2026-09-20-proof-first-email-registration.md",
+      "lines": 84,
+      "sha256": "25d6aa5ce75562b4541132457d0b13c26b59fe68bd5c6dcaafb6166c67465cd4"
+    },
+    {
+      "path": "docs/audit/2026-09-20-proof-first-phone-linking.md",
+      "lines": 89,
+      "sha256": "338f4faccea17fe1ac7c8e00c79fedcbf168fbccc148c318c5b20a308af92411"
+    },
+    {
+      "path": "docs/audit/2026-09-20-rate-window-ci-repair.md",
+      "lines": 68,
+      "sha256": "4d898386becc2cc085b88ee46fe0204dfd4d083ccab301033e1a3e05dfc618cc"
+    },
+    {
+      "path": "docs/audit/2026-09-20-recovery-rate-limit-escape.md",
+      "lines": 57,
+      "sha256": "72c33de77c309f03bae2d471e4b546a9983dd8141529d93a4465302703c15c2c"
+    },
+    {
+      "path": "docs/audit/2026-09-20-registration-mail-guidance.md",
+      "lines": 72,
+      "sha256": "7346e12d1351e195632453ea9d574fd86a9f14b8f4c9bc89e39adf49212324e6"
+    },
+    {
+      "path": "docs/audit/2026-09-20-rendered-dose-photo.md",
+      "lines": 36,
+      "sha256": "771c67883d335c01ad885e6bc7c3cbfda4404f9c0cbe19fe35f9a4b045641bc4"
+    },
+    {
+      "path": "docs/audit/2026-09-20-rendered-three-role-revocation.md",
+      "lines": 74,
+      "sha256": "3e2050339cb5422d4664a94a1803f5f4a7d1a091f2076597d39a8afee1eb0397"
+    },
+    {
+      "path": "docs/audit/2026-09-20-testflight-upload-readiness.md",
+      "lines": 135,
+      "sha256": "d1a51d1186f910225e8ac42247f3e823188099d10d64f13a97bda27a6873cbe6"
+    },
+    {
+      "path": "docs/audit/render-request-path-privacy-2026-09-10.md",
+      "lines": 57,
+      "sha256": "d19306da722b2df4bd9e9890cd59083f386d87a6f79a5f62c60d0652256c8b17"
+    },
+    {
+      "path": "docs/caregiver-push-release-checklist.md",
+      "lines": 52,
+      "sha256": "80ad949ae6e6c21086d58d73fd76db7c0c88e3947364646a125373e0e6ee22d8"
+    },
+    {
+      "path": "docs/findings.md",
+      "lines": 159,
+      "sha256": "8076362f934dba99ee3438463e5dce678f2abaeade78a3548bca133eb994ce85"
+    },
+    {
+      "path": "docs/integrations.md",
+      "lines": 69,
+      "sha256": "e17029054fce75026b8a68d7124dffcf70f07fad64246897a4889ca23be4dcff"
+    },
+    {
+      "path": "docs/medical-safety.md",
+      "lines": 100,
+      "sha256": "0e7b92ad40958bf1f6b5323547eb3e83a6f5ba2058beac56aca93402ccbc2d5a"
+    },
+    {
+      "path": "docs/operations.md",
+      "lines": 57,
+      "sha256": "2a0c9ae6795a54552815719447ccbbe55fd25d5b35a05e1a81884eb38aa39ee2"
+    },
+    {
+      "path": "docs/release/2026-09-14-audit-preview.md",
+      "lines": 81,
+      "sha256": "b53e3c53f55640058f8dc92dff6bac9192ce85118b76da85f22494579497f5c5"
+    },
+    {
+      "path": "docs/release/2026-09-14-data-precheck.sql",
+      "lines": 91,
+      "sha256": "fa9a7beb869d615df9f256f6ca81caaf78ef22d90bc63f68cabfb83c116c777d"
+    },
+    {
+      "path": "docs/release/2026-09-14-readiness.md",
+      "lines": 201,
+      "sha256": "87191a00edd76109673adbcba1894c7a9a0e60f6f8162efcf62aad271de3a022"
+    },
+    {
+      "path": "docs/release/2026-09-14-recovery-rehearsal.md",
+      "lines": 112,
+      "sha256": "04776963fddd970456a56371a7376df5d9607d5b12c69c1c7c4843ff0b08561a"
+    },
+    {
+      "path": "docs/release/2026-09-14-runtime-recovery.md",
+      "lines": 98,
+      "sha256": "b1fe73048679232b4c4d64564001bcdff4be818dbd0aafc717a07979b8eb640b"
+    },
+    {
+      "path": "docs/release/2026-09-16-caregiver-phone-verification.md",
+      "lines": 66,
+      "sha256": "7be2e9978c3d293e512a996bc69d8c4b28250a91246ea8120480750d9630e5d4"
+    },
+    {
+      "path": "docs/release/2026-09-17-ios-preparation.md",
+      "lines": 35,
+      "sha256": "47226cee2e381ff2db08a8d246e2d34b2c12447c4d346640c3cdec22077535ed"
+    },
+    {
+      "path": "docs/release/2026-09-18-patient-feedback.md",
+      "lines": 92,
+      "sha256": "7e57f6a9dfdfab10b2942f0ba1c3cc93b4095639ba87e48d9cf1ae66e0979744"
+    },
+    {
+      "path": "docs/release/email-account-recovery.md",
+      "lines": 113,
+      "sha256": "94f3cefba356c064ba7e9564514d1b1eb64be4fbe152b8846b2ba74bebac187d"
+    },
+    {
+      "path": "docs/release/private-image-storage.md",
+      "lines": 100,
+      "sha256": "73e3e5bb654f2f2606617f8b1eac775d0802b8046a0ba1441594d7868874bb74"
+    },
+    {
+      "path": "docs/release/r2-cors.production.json",
+      "lines": 8,
+      "sha256": "e5ee0385450195127b09be21ee2027a723374664418d8759dc353ede0f715c27"
+    },
+    {
+      "path": "docs/security.md",
+      "lines": 119,
+      "sha256": "651d274a7487f761307c1d8062e5d62d0a5616492817449028f5b464a2a6bf52"
+    },
+    {
+      "path": "docs/status.md",
+      "lines": 41,
+      "sha256": "acfadc4dde8863e428e79998650409d46e953e22b8707f5ccce77d45e9e174ee"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "lines": 75,
+      "sha256": "96238704718701950ebc2de1990eaf6b7a18d9c3fcf8c829f748e7e94ade27d0"
+    },
+    {
+      "path": "package.json",
+      "lines": 46,
+      "sha256": "8725dabc86a2b5e206bb99fb2b2f384a141da44e156ea15c5dd711447bbb1be6"
+    },
+    {
+      "path": "packages/core/package.json",
+      "lines": 14,
+      "sha256": "67202ccd3bf76cbf4470c694df52f46120dd7f39b4dfe750d470dd4e15f2bb32"
+    },
+    {
+      "path": "packages/core/src/adherence.ts",
+      "lines": 147,
+      "sha256": "9cf663723b035509f32ad69f98380a4aa85da5559aa8121b47d093ceb3873d1b"
+    },
+    {
+      "path": "packages/core/src/authorization.ts",
+      "lines": 120,
+      "sha256": "d0edbd2f6eaa232ef61cf153f0216028ff37b0c9cf47f7340b8b972b764af9df"
+    },
+    {
+      "path": "packages/core/src/dose-status.ts",
+      "lines": 248,
+      "sha256": "24a599026d4ec428882cf7a5924040db008f9293cc40459cf3257011b2e55a3e"
+    },
+    {
+      "path": "packages/core/src/duplicates.ts",
+      "lines": 163,
+      "sha256": "314471bf48d3f50e57320193a5684619b25ab3687d4adbff0688fb9f91b478a4"
+    },
+    {
+      "path": "packages/core/src/escalation.ts",
+      "lines": 237,
+      "sha256": "d4cc256bd9828f199b1ace6925ae8545d32ca50d2927a2fc49fb85695d371536"
+    },
+    {
+      "path": "packages/core/src/index.ts",
+      "lines": 9,
+      "sha256": "1883cdcc6edcaf681b56277ad9a7fd9ad4d21e69e266e1c8be9d74550f7c6c91"
+    },
+    {
+      "path": "packages/core/src/schedule.ts",
+      "lines": 291,
+      "sha256": "00f482e6e31a93590190a55f0e6cce0fb8af0dffea77c1d613669843eca6a0fc"
+    },
+    {
+      "path": "packages/core/src/stock.ts",
+      "lines": 121,
+      "sha256": "a61ba2eecc894daf7b68b562212c301b933a5146a59c2d0025d1e9ef2987984e"
+    },
+    {
+      "path": "packages/core/src/time.ts",
+      "lines": 230,
+      "sha256": "6453cfd867a55a46a62c89147f95a44608987809cc35866043844fdf9b67c676"
+    },
+    {
+      "path": "packages/core/src/travel.ts",
+      "lines": 96,
+      "sha256": "4ff7f0db69ed15023b59a4ca56efa82a2ab87ea38acce59dcc658e77d846defc"
+    },
+    {
+      "path": "packages/core/test/adherence.test.ts",
+      "lines": 175,
+      "sha256": "5df7557eef2e4c4f7cc5040f3b7a0f388a524b30ca7643eacf2f161f96dc073a"
+    },
+    {
+      "path": "packages/core/test/authorization.test.ts",
+      "lines": 132,
+      "sha256": "82993a69213d983f54ce5beb1616a6f5c1286195d04eeeb0906cbb753f6c8da7"
+    },
+    {
+      "path": "packages/core/test/caregiver-locale.test.ts",
+      "lines": 78,
+      "sha256": "b2638429febfde5b58967576839ca9b98137f524536984945be85fad7a9ab5ed"
+    },
+    {
+      "path": "packages/core/test/dose-status.test.ts",
+      "lines": 211,
+      "sha256": "5da60a389cd533e8cbc65fffdae77f57adff35cd3ae1ea463cd383b83314b002"
+    },
+    {
+      "path": "packages/core/test/duplicates.test.ts",
+      "lines": 103,
+      "sha256": "7bbb0c6c89b91a4ddea7d3f33c39bce65fa48bbb5e16032e629d748a6ca8dda8"
+    },
+    {
+      "path": "packages/core/test/escalation.test.ts",
+      "lines": 264,
+      "sha256": "44b1ee620a1d89590bf1153ce33fa98925445e26c7a7015e1b42a137297b5080"
+    },
+    {
+      "path": "packages/core/test/helpers.ts",
+      "lines": 22,
+      "sha256": "638bef09131d2993b5d39c3c0342b34d002f4bcd6a2a03d54c4ddfc0bbc5d3b9"
+    },
+    {
+      "path": "packages/core/test/interval-active-window-stock.test.ts",
+      "lines": 59,
+      "sha256": "9ef47d82adc5ce52497af86af1770971d0ad4e42f8d8f4b1c85f674808139662"
+    },
+    {
+      "path": "packages/core/test/reminder-time-boundaries.test.ts",
+      "lines": 46,
+      "sha256": "ae1131bb9cff64d759caa543a7ffa4ecc7faadaf5300ef2090eb0c2718590b8f"
+    },
+    {
+      "path": "packages/core/test/schedule.test.ts",
+      "lines": 162,
+      "sha256": "3d7c3fc89716c6253c51279f87ca7fa9fd4be9d5182f07880563eae3318cfaec"
+    },
+    {
+      "path": "packages/core/test/stock.test.ts",
+      "lines": 171,
+      "sha256": "dcf43fe89eccce8098ae20eb5957063e3d047854dca69f378998b36121ed511c"
+    },
+    {
+      "path": "packages/core/test/time.test.ts",
+      "lines": 113,
+      "sha256": "5c5f32cf9eb2853e1887df12d59a59f33a3a312cf69257b328b122d3250f5882"
+    },
+    {
+      "path": "packages/core/test/travel.test.ts",
+      "lines": 60,
+      "sha256": "64281a07830813767a139c4e7d2c123b18535b866ab62d162ba13389160a5f86"
+    },
+    {
+      "path": "packages/core/tsconfig.json",
+      "lines": 10,
+      "sha256": "bcad306eb84e12c7d3e9ed94a1ba62d68f53f7d9ab5390960aeef37986e1a4c8"
+    },
+    {
+      "path": "packages/shared/package.json",
+      "lines": 14,
+      "sha256": "3a48c1f3ea7301c1bc906aedbc5e5f0470b91fb9fb80a6bac86f5fc0b58449c4"
+    },
+    {
+      "path": "packages/shared/src/contracts.ts",
+      "lines": 591,
+      "sha256": "4a5562a58255f3b2084fd22c35deabcfbdae8a70c1dd7886272ca2622ba162ed"
+    },
+    {
+      "path": "packages/shared/src/design.ts",
+      "lines": 155,
+      "sha256": "7fa8033414fc8205a7f0e99ac7affba1c932114bda5598e05228760a4449bd22"
+    },
+    {
+      "path": "packages/shared/src/enums.ts",
+      "lines": 349,
+      "sha256": "77c66c282dddac03eb41f17284610da642c39ab2101f6c65170accb6fb159786"
+    },
+    {
+      "path": "packages/shared/src/errors.ts",
+      "lines": 94,
+      "sha256": "d32ff49ea9a192e0f615cb42741d4bc65dabee54c6f262f486edb3eb9c183223"
+    },
+    {
+      "path": "packages/shared/src/escalation-contract.ts",
+      "lines": 19,
+      "sha256": "3c2ddb4f445ebae9c870e5863beba5f80868f4cf7ced980365f29cffce0a9e95"
+    },
+    {
+      "path": "packages/shared/src/i18n.ts",
+      "lines": 2250,
+      "sha256": "59288247c6ead092bbd0c10ebdd9e40c71c8cb1edfce76c5c613e2212a1dfb0d"
+    },
+    {
+      "path": "packages/shared/src/index.ts",
+      "lines": 10,
+      "sha256": "1a4caf92d4a927a84e73990f0475197714f57e2a3493fd479a4c5f7e8e790082"
+    },
+    {
+      "path": "packages/shared/src/logging.ts",
+      "lines": 272,
+      "sha256": "7f6196ca7486d1a5d7e423a1b16d4ca81522c5a6210793ff4d94f85cf9a3d4a2"
+    },
+    {
+      "path": "packages/shared/src/medication-input.ts",
+      "lines": 37,
+      "sha256": "c148bf277d35802a9c482e6a12e4afc9e4c58262492f66e316902954a6313b8d"
+    },
+    {
+      "path": "packages/shared/src/reminder-text.ts",
+      "lines": 151,
+      "sha256": "eeb8cf54f64561d0fdfa52d0c36f773b4344a37b6b7af455e5577a21b12e54fd"
+    },
+    {
+      "path": "packages/shared/src/types.ts",
+      "lines": 462,
+      "sha256": "6a4ef97d5ab1ba9fbb1c7d0b5c36f563de5b185b69a07c90c85e6c5408857adb"
+    },
+    {
+      "path": "packages/shared/test/caregiver-presets.test.ts",
+      "lines": 76,
+      "sha256": "fb33f8807b10b31a762683fc9d94b1c9aaa801c816f3387f08dda288fd1dc4e5"
+    },
+    {
+      "path": "packages/shared/test/civil-date-contract.test.ts",
+      "lines": 11,
+      "sha256": "4c58b6fd5b1e1c2d3784cfeea7ce8c25334dcd2ab76bb8ec557fa640bba4eb4c"
+    },
+    {
+      "path": "packages/shared/test/design.test.ts",
+      "lines": 43,
+      "sha256": "6b3d86b26ab38e55b9602eee9f0816ab600def0a5c4c3193ee82ea3dc1a1d419"
+    },
+    {
+      "path": "packages/shared/test/escalation-patient-first-contract.test.ts",
+      "lines": 46,
+      "sha256": "adc6d132f746c20134c6559a28113ac50feeb8061401cd4aadd771eb7c29d8b3"
+    },
+    {
+      "path": "packages/shared/test/grouped-reminder.test.ts",
+      "lines": 79,
+      "sha256": "2b64e3921f549a2b5dc48f5f88f396beb12cf8245784141c2265ba65f805c9ef"
+    },
+    {
+      "path": "packages/shared/test/i18n.test.ts",
+      "lines": 59,
+      "sha256": "011fdb558267fcf3908b08dccda3e812bea91aa1968617b544fae5c46899a131"
+    },
+    {
+      "path": "packages/shared/test/medication-input.test.ts",
+      "lines": 31,
+      "sha256": "fa731fcbca454e6bdabef1869077b8641daa8532da3244c09083ec8ff017d242"
+    },
+    {
+      "path": "packages/shared/test/reminder-text.test.ts",
+      "lines": 222,
+      "sha256": "e1cb8163c6afed4ff64c85a3485866ac85b78777b999661aaea70c294d5c8a61"
+    },
+    {
+      "path": "packages/shared/tsconfig.json",
+      "lines": 5,
+      "sha256": "cffb57d8fe94be33390c86107889c369af89d2aaa8e8c679b74e5421e11f9f93"
+    },
+    {
+      "path": "preview.mjs",
+      "lines": 18,
+      "sha256": "4a5205332ccc0e9b24114d579bfafbc55327b400f68573105b06db749503f1f4"
+    },
+    {
+      "path": "render.yaml",
+      "lines": 209,
+      "sha256": "bb4f2f959fe09692cd6d641e656ab22d4e7232bbbf69d067d52643751089c4b1"
+    },
+    {
+      "path": "scripts/android-interaction/check.py",
+      "lines": 299,
+      "sha256": "770ba3a2680fef8e7bf08e220799ab758c7f6e3a3cf6d3c1dd5a9c8df3161a15"
+    },
+    {
+      "path": "scripts/android-interaction/dose_check.py",
+      "lines": 155,
+      "sha256": "14c519623ae30d5e7b49d903dc064d2bdf445b207165caa740de35d5e3a40ffd"
+    },
+    {
+      "path": "scripts/android-interaction/run.sh",
+      "lines": 31,
+      "sha256": "eadf32f485f22ac6a0e42d5710043d00e5c994cda3f29d6286863893b05d5e76"
+    },
+    {
+      "path": "scripts/audit-gate.mjs",
+      "lines": 344,
+      "sha256": "5f0ca266e342424eb837a2fcef225aff3d619f797845d7e991ffd8f32c86c875"
+    },
+    {
+      "path": "scripts/audit-preview-runtime.mjs",
+      "lines": 63,
+      "sha256": "a51dd50a5973409b4419a44217b3549709b741e5c9ec36cc7d774265f2bfc8d4"
+    },
+    {
+      "path": "scripts/audit-preview-start.mjs",
+      "lines": 280,
+      "sha256": "fbc2dfba9301babc55901d4e3ebcb28fe3038d1e8f3776bfd54b27a4dbcde17f"
+    },
+    {
+      "path": "scripts/build-audit-preview-web.mjs",
+      "lines": 106,
+      "sha256": "a352a7a2781dd8a1617c0dbdd66d9e5fed06dd62e39e312492c22c5652f752f4"
+    },
+    {
+      "path": "scripts/build-web.sh",
+      "lines": 18,
+      "sha256": "0bfd82574eebc17be953de08e06dc8e9a8914f52362db99e7d4bb4bdb9a51e64"
+    },
+    {
+      "path": "scripts/codeql-evidence.cjs",
+      "lines": 85,
+      "sha256": "0250f23b83125e7283fb6676ce424afc80cedb275ab4f57c7e8dbc53bb282717"
+    },
+    {
+      "path": "scripts/container-checks.sh",
+      "lines": 190,
+      "sha256": "5612b17ad9524ff3368c4ba04f08719a5081236da98764d3744767ab9eed211c"
+    },
+    {
+      "path": "scripts/db-bootstrap-roles.sh",
+      "lines": 97,
+      "sha256": "df6fea2ea55dd08001645531827c160ce1e3c1782acde895e117948e26385aa1"
+    },
+    {
+      "path": "scripts/db-compose-init.sh",
+      "lines": 34,
+      "sha256": "dcca43f6f48edd196a68d33aa9c71ad327b7f0322222f9111a4c240c7072d953"
+    },
+    {
+      "path": "scripts/db-reset.sh",
+      "lines": 83,
+      "sha256": "98d9e508198576635ab88c4b096b909fb8f335a954134238378cd8b8c83566bd"
+    },
+    {
+      "path": "scripts/dev-api.sh",
+      "lines": 11,
+      "sha256": "b2b1aece1c2af58ec41c6ae5a52c5774eb5ebdbadd5683680928a09c7e1193f6"
+    },
+    {
+      "path": "scripts/dev-pg.sh",
+      "lines": 20,
+      "sha256": "c1c26a880ba3f4106d3fce56b5c4b20c8627eb8823d171b71de0a58c3a9cda61"
+    },
+    {
+      "path": "scripts/final-audit/build-ui-fixture.mjs",
+      "lines": 62,
+      "sha256": "d1fb8d04886cfd9e0b1271aae6cc2a2d4a5ca8cacaa55ad0f69bafbfbfad4406"
+    },
+    {
+      "path": "scripts/final-audit/markdown-cell.mjs",
+      "lines": 9,
+      "sha256": "f2c148181c1a8f07072ab0c564f8a45d8668ffbd3e1908efdeff0c6c1b1924bf"
+    },
+    {
+      "path": "scripts/final-audit/request-inventory.mjs",
+      "lines": 34,
+      "sha256": "c5e96058654827b38a6507f7a63cae8a88782edd841f3e5d37834d25fe99452e"
+    },
+    {
+      "path": "scripts/inline-web.py",
+      "lines": 178,
+      "sha256": "776ecf371e1feb6d3ff1f3c0e49f3ea35f2a8a0300a3afc0b3a4d8c22476c832"
+    },
+    {
+      "path": "scripts/managed-postgres-smoke.sh",
+      "lines": 232,
+      "sha256": "cc7e067542bfc0c387cc597e300a5291fbe0417aae487c10d8351adefadfbc4b"
+    },
+    {
+      "path": "scripts/migrate.sh",
+      "lines": 348,
+      "sha256": "7ef847637b752a754a99f47a3c4fb6c2f75c70418128fd263358c6872cbdfcc7"
+    },
+    {
+      "path": "scripts/migration-history.d.mts",
+      "lines": 1,
+      "sha256": "cbafec49dc466e931aaf1562994d2df5b33f61c742c3d2725282753b8604f700"
+    },
+    {
+      "path": "scripts/migration-history.mjs",
+      "lines": 16,
+      "sha256": "1f4c370657bb616143f23efcf8925bcb73b315915402f0119b71a3f76cd235f7"
+    },
+    {
+      "path": "scripts/ops/preview-account-inventory-20260920.cjs",
+      "lines": 76,
+      "sha256": "969ffcfdea7c65e97a4139b597c446c30a332e6370025c22df45c22d1ea8bc84"
+    },
+    {
+      "path": "scripts/ops/preview-account-reset-runner-20260920.cjs",
+      "lines": 121,
+      "sha256": "f5d0aeccd120f3a32fd3e403119bf7a37252d61b3ae5d1214c10406a6cd67786"
+    },
+    {
+      "path": "scripts/ops/reset-accounts-20260919.sql",
+      "lines": 139,
+      "sha256": "d9bfcb4dd6e032884d95b6c45e6b86eb89872eb53631b32d9ff3de18758024c4"
+    },
+    {
+      "path": "scripts/ops/reset-accounts-20260920-preview.sql",
+      "lines": 164,
+      "sha256": "53d5670dd358126d6f00700311bbae0c380f02a7e65138159f4e9f9ea5d4b4ff"
+    },
+    {
+      "path": "scripts/ops/reset-accounts-20260920-production.sql",
+      "lines": 141,
+      "sha256": "d6d18a0ebe2f986eb2b70defc93c1f177ba87e6b0162656dc891b417078be290"
+    },
+    {
+      "path": "scripts/release-recovery-harness.mjs",
+      "lines": 191,
+      "sha256": "a9946a065534986b5bd2c12526f7dea36735a318852e18411d20cd4c33846cb3"
+    },
+    {
+      "path": "scripts/release-runtime-forwarder.mjs",
+      "lines": 35,
+      "sha256": "cadaaa4fa35070a4c6901a8819e2eb0a012a24aeb4d81c4954711381787acf2e"
+    },
+    {
+      "path": "scripts/release-runtime-harness.mjs",
+      "lines": 264,
+      "sha256": "ff475cc2b74afb078a56c7c37bf0166111c44bd561c1c74c6494bb7a0a0e8c5e"
+    },
+    {
+      "path": "scripts/release-runtime-recovery.mjs",
+      "lines": 252,
+      "sha256": "d83dca200e09a666a21222a6b86852803df9ce8f2f4b42cdfff1729c6a5979e5"
+    },
+    {
+      "path": "scripts/serve-web.mjs",
+      "lines": 27,
+      "sha256": "8d5d8cdcad36834e6de09709bf2fead64965b9dcafa903a422b23411ee5eda8f"
+    },
+    {
+      "path": "scripts/test-codeql-evidence.cjs",
+      "lines": 122,
+      "sha256": "242694cd55732b1c65d63b39de9f1fa85723c985c0e43519dd86fafb5cc08387"
+    },
+    {
+      "path": "scripts/upgrade-rehearsal-0033-to-head.sh",
+      "lines": 358,
+      "sha256": "c7a59794567527d5dc486d97a9a74a7ad2aa0832dcfc02a0e77540f57dda4d7f"
+    },
+    {
+      "path": "scripts/upgrade-rehearsal-hotfix-0047.sh",
+      "lines": 81,
+      "sha256": "362fda0c11f64d8f24f9cc381dd37eff534a94ac5d8c7f7cf7c4e5fae1441570"
+    },
+    {
+      "path": "tsconfig.base.json",
+      "lines": 21,
+      "sha256": "db3e69a481354385cf18868570d7a25c38536cfa3fff34ab2316b8bd9e9010a9"
+    },
+    {
+      "path": "vitest.config.ts",
+      "lines": 33,
+      "sha256": "5a810ee0f4a2201e33dd03ba45d52c7aad65c4c87baaa24051e81a099bffb24c"
+    },
+    {
+      "path": "vitest.global-setup.ts",
+      "lines": 18,
+      "sha256": "12fa856683bc3f66fe0e167e5c45a5e9ce39a069539f7fcc9283768cfb781423"
+    },
+    {
+      "path": "vitest.setup.ts",
+      "lines": 29,
+      "sha256": "5cd236406046d41e669429087533657a7b225f2e1acac013eb4780c75cde085a"
+    }
+  ],
+  "excluded": [
+    [
+      "apps/mobile/assets/adaptive-icon.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "apps/mobile/assets/favicon.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "apps/mobile/assets/icon.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "apps/mobile/assets/splash.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "apps/mobile/package-lock.json",
+      "generated dependency lock, inventory/version audit separately"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/159d62e-large-ar-font200-picker-open.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/159d62e-large-ar-font200-quantity.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/159d62e-large-ar-font200-saved.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/before-quantity-units.jpeg",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/f8513aa-dose-tracked-history.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/2026-09-16-final/images/f8513aa-dose-tracked-reopened.png",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/evidence/2026-09-19-dose-photo-note.jpg",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/evidence/2026-09-19-history-dose-note.jpg",
+      "binary asset, inventory only"
+    ],
+    [
+      "docs/audit/evidence/2026-09-20-nurse-due-photo.jpg",
+      "binary asset, inventory only"
+    ],
+    [
+      "package-lock.json",
+      "generated dependency lock, inventory/version audit separately"
+    ]
+  ],
+  "remoteBranches": [
+    "origin 07bf101c8a4720dc74d55de37b0dcb825c7841e5",
+    "origin/audit/advisor-hardening-2026-09-07 717fc6ee2f5af8b886176010f4b1aa45cd04c585",
+    "origin/audit/capture-upload-lifecycle-2026-09-11 a5dfa6f0e704a48f08a01fd7edfa68651a7a986b",
+    "origin/audit/caregiver-push-privacy-2026-09-14 239f2a1af6beea698365556b82b7309e527c87b0",
+    "origin/audit/caregiver-push-routing-2026-09-14 ef10283ecea2246b9a03e99ea313de04cdcbecc3",
+    "origin/audit/datefield-calendar-20260912 6a6cf7a458b99a3edd0ef2c7c7e328cfea5149c2",
+    "origin/audit/e2e-red-white-black-2026-09-09 3c5969a9d7a4ad125bb49c43ad391c4fdec1e39c",
+    "origin/audit/e2e-red-white-black-2026-09-09-web-lang-temp db70b2bdcfa509d975e68a0fbec67aac972412f6",
+    "origin/audit/final-tadawee-20260916 cfcc4e8db8039b053fb04fe63ee3b46cbabaaa8e",
+    "origin/audit/ios10-evidence-20260920 9bf0a3bc66f025907b1efff5a907e629bb334bed",
+    "origin/audit/medication-editor-session-2026-09-13 948bc5e26a27fa0e0cce3bb36acde48b3f9c467f",
+    "origin/audit/post-merge-release-control-2026-09-13 c1dcfb729a09fa58ef4e854f59c63fcc7dfbb5e9",
+    "origin/audit/probe-disable-refresh-race-2026-09-12 987de17e496538528b8cdc50a89651aa2f53599d",
+    "origin/audit/probe-logout-all-refresh-race-2026-09-12 d575075f01de6baecccffedbea5d0eaa48efc22b",
+    "origin/audit/probe-password-refresh-race-2026-09-12 73cecd3af7ddbc23ea399cb004b982d92d1c2193",
+    "origin/audit/render-transport-proof-2026-09-12 40d24b349ac5b4f1a315c445de99f19a63271ea8",
+    "origin/audit/upload-finalization-recovery-2026-09-11 9369f9a338e76893c068cfe4ab96be71a7534b6d",
+    "origin/build/android-apk-audit-2026-09-11 37178e2c5fdb5dafff2ee5985c331c52d8a8a285",
+    "origin/build/android-preview-20260913 0eaad55120e90c4fc98ee59f8503bce58e99dd67",
+    "origin/feat/simplified-medication-entry-2026-09-08 c2465089e428f96b2efadd942ff334886c8fa172",
+    "origin/fix/capture-manual-fallback-quick-create-2026-09-09 c8f9e3f950c808b2ef901d0b128ccb02e00cd180",
+    "origin/fix/caregiver-phone-verification-20260916 ac44deb05b083520e7bd66d171849a611c2e424e",
+    "origin/fix/error-ux-and-revoke-policy-2026-09-08 4ee0b97d618d31ad1edbc83aa2c4049bf0a30092",
+    "origin/fix/ios-patient-feedback-20260918 e59f864a6ae32ec28276b1b786e64b0621506308",
+    "origin/fix/medication-entry-ux-cleanup-2026-09-08 a6be54862f136cc974880fd4c14dc934c8f9fb9c",
+    "origin/fix/migration-psqlrc-role-2026-09-07 a4d17c50ade360671729700418bc970dc6cde689",
+    "origin/fix/migration-role-wrapper-2026-09-07 0b4ef7aefa4bee947c0db6cf4f900b4ca525bcfc",
+    "origin/fix/migration-set-role-2026-09-07 67b5e166461a83648f60fd9c4ee9da6b2d4f6118",
+    "origin/fix/web-revoke-confirm-2026-09-08 9b03b3fefb02ff1c43ea97da8150b9983c726f41",
+    "origin/hotfix/mobile-api-routing-20260916 60b474ea81105529c16f88d5b878c5c274c7b03b",
+    "origin/hotfix/otp-rls-2026-09-06 28b0370ca3893df5e13e93c02436cb488ec41c56",
+    "origin/hotfix/render-pg16-push-receipt-sha256-20260916 eab987bacfe98553ad1d83492217b83363d276f5",
+    "origin/hotfix/worker-materialization-42501-20260912 f855646d9d0896664808a69f1aa414e78b94673e",
+    "origin/main 07bf101c8a4720dc74d55de37b0dcb825c7841e5",
+    "origin/mobile/expo55-store-readiness d369ff085ece5520cdb76dd2892c76efc89367fb",
+    "origin/prepare/ios-testflight-20260917 8651749a3a5fcba41af383eac6b948cb3b0c3abf",
+    "origin/release-import/dawaee-rc-2026-09-06 db7061f1ae8fc52a02d68aea76da8a46ff382b04",
+    "origin/release/dawaee-rc-2026-09-06 82ac845a8f276c264c2dca169d92fe025ba58ad9",
+    "origin/release/serving-api-20260916 4cf23531dfaa5cc7c3790b473f8b4ff9f88d9f72",
+    "origin/release/v1.0.0-local-notifications ee7b5eb893cc04853262c15bc787090a72124f89",
+    "origin/ux/iphone-web-hardening-2026-09-08 044270bec8245ee2060f3c825b41926819418472",
+    "origin/ux/iphone-web-hardening-2026-09-08-a 044270bec8245ee2060f3c825b41926819418472",
+    "origin/ux/iphone-web-hardening-2026-09-08-b 044270bec8245ee2060f3c825b41926819418472",
+    "origin/ux/iphone-web-hardening-2026-09-08-c 044270bec8245ee2060f3c825b41926819418472",
+    "origin/ux/iphone-web-hardening-2026-09-08-final 68d008789a89a7a32c4f76a8e3a86204762f719a",
+    "origin/ux/iphone-web-hardening-2026-09-08-v2 044270bec8245ee2060f3c825b41926819418472",
+    "origin/ux/iphone-web-hardening-2026-09-08-v3 044270bec8245ee2060f3c825b41926819418472"
+  ]
+}
