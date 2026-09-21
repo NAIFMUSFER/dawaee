@@ -9,13 +9,13 @@
  * No reset/seed is run. Unknown partial schemas are refused before migration.
  * The owner connection is closed before either runtime starts. Each child
  * receives only its own database role, never the owner's or its sibling's.
- * Without supplied audit role passwords, fresh passwords are generated on each
- * start. This preview must not share runtime roles with any other service.
+ * Runtime passwords must be supplied and must authenticate existing roles
+ * before migrations. A restart must never silently rotate either credential.
  * Push/OCR remain mocked. Real account email needs the explicit bounded opt-in
  * below and genuine mailbox confirmation. Success is not release approval.
  */
 import assert from 'node:assert/strict';
-import { randomBytes, createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -138,6 +138,8 @@ export function validateRuntimeRole(rows, role) {
 export async function bootstrap(env, apply = false) {
   const ownerUrl = validateTarget(env); // before imports, connections or writes
   validateAccountEmailOptIn(env); // invalid opt-in must fail before migrations too
+  if (apply && [env.DAWAEE_APP_PASSWORD, env.DAWAEE_WORKER_PASSWORD]
+    .some(value => typeof value !== 'string' || !value.trim())) refuse('AUDIT_RUNTIME_PASSWORDS_REQUIRED');
   const { default: pg } = await import('pg');
   const { databaseTlsOptions } = await import('../apps/api/dist/lib/db-tls.js');
   const ssl = databaseTlsOptions({ ...env, DATABASE_SSL: env.DATABASE_SSL ?? 'false' });
@@ -167,9 +169,20 @@ export async function bootstrap(env, apply = false) {
       console.log(`AUDIT_PREVIEW_PREFLIGHT_OK migrations=${ledgerRows}; no migration applied`);
       return null;
     }
+    const appPassword = env.DAWAEE_APP_PASSWORD;
+    const workerPassword = env.DAWAEE_WORKER_PASSWORD;
+    const runtime = {
+      api: runtimeEnvironment(env, ownerUrl, appPassword),
+      worker: runtimeEnvironment(env, ownerUrl, workerPassword, 'dawaee_worker'),
+    };
+    // migrate.sh sets role passwords. On an initialized database, first prove
+    // these are the credentials already in use; never repair a mismatch by
+    // resetting a live role. Empty databases still require supplied passwords.
+    if (ledgerRows > 0) {
+      try { await verifyRuntimeConnections(pg, runtime, ssl); }
+      catch { refuse('AUDIT_EXISTING_RUNTIME_CREDENTIALS_INVALID'); }
+    }
     await runFile('psql', ['--version'], { cwd: ROOT, timeout: 10000 });
-    const appPassword = env.DAWAEE_APP_PASSWORD || randomBytes(32).toString('hex');
-    const workerPassword = env.DAWAEE_WORKER_PASSWORD || randomBytes(32).toString('hex');
     // Consistent TLS behaviour between libpq migration and the Node pools.
     const migrationEnv = {
       PATH: env.PATH, HOME: env.HOME, DATABASE_URL: ownerUrl.toString(),
@@ -198,11 +211,17 @@ export async function bootstrap(env, apply = false) {
     const ledger = await owner.query('SELECT filename, checksum FROM public.schema_migrations');
     if (ledger.rows.length !== expected.size || ledger.rows.some(r => expected.get(r.filename) !== r.checksum
       && !isKnownMigrationHistory(r.filename, r.checksum, expected.get(r.filename)))) refuse('AUDIT_LEDGER_VERIFICATION_FAILED');
-    const runtime = {
-      api: runtimeEnvironment(env, ownerUrl, appPassword),
-      worker: runtimeEnvironment(env, ownerUrl, workerPassword, 'dawaee_worker'),
-    };
-    for (const [kind, childEnv] of Object.entries(runtime)) {
+    await verifyRuntimeConnections(pg, runtime, ssl);
+    console.log(`AUDIT_PREVIEW_SCHEMA_READY migrations=${expected.size} runtime=dawaee_app,dawaee_worker; synthetic data only; NOT_RELEASE_APPROVAL`);
+    return runtime;
+  } finally {
+    if (locked) await owner.query('SELECT pg_advisory_unlock(741209, 17)').catch(() => undefined);
+    await owner.end().catch(() => undefined);
+  }
+}
+
+async function verifyRuntimeConnections(pg, runtime, ssl) {
+  for (const [kind, childEnv] of Object.entries(runtime)) {
       const role = kind === 'api' ? 'dawaee_app' : 'dawaee_worker';
       const sibling = kind === 'api' ? 'dawaee_worker' : 'dawaee_app';
       const client = new pg.Client({ connectionString: childEnv.DATABASE_URL, ssl, connectionTimeoutMillis: 10000 });
@@ -215,12 +234,6 @@ export async function bootstrap(env, apply = false) {
           FROM pg_roles r WHERE r.rolname = current_user`, [DB_OWNER, sibling]);
         validateRuntimeRole(check.rows, role);
       } finally { await client.end(); }
-    }
-    console.log(`AUDIT_PREVIEW_SCHEMA_READY migrations=${expected.size} runtime=dawaee_app,dawaee_worker; synthetic data only; NOT_RELEASE_APPROVAL`);
-    return runtime;
-  } finally {
-    if (locked) await owner.query('SELECT pg_advisory_unlock(741209, 17)').catch(() => undefined);
-    await owner.end().catch(() => undefined);
   }
 }
 
