@@ -313,7 +313,7 @@ describe('every SECURITY DEFINER flow works under a non-BYPASSRLS owner', () => 
     const res = await send({
       method: 'POST',
       url: '/v1/auth/register',
-      payload: { email, displayName: 'نموذج المُعرِّف', password: pw, locale: 'ar', deviceId: 'definer-test-device' },
+      payload: { email, locale: 'ar', deviceId: 'definer-test-device' },
     });
     expect(res.statusCode, res.body.slice(0, 200)).toBe(202);
     expect((await one<{users:string}>(root,`SELECT count(*)::text AS users FROM users WHERE email='${email}'`)).users).toBe('0');

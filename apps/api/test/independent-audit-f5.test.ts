@@ -90,3 +90,28 @@ describe('F5: measure actual persisted email budgets without provider I/O', () =
     }
   });
 });
+
+describe('F4: installed one-step registration clients receive an explicit upgrade refusal', () => {
+  it.each([
+    { displayName: 'Legacy', password: 'Synthetic legacy password 491!' },
+    { phone: '+966500001234', password: 'Synthetic legacy password 491!' },
+    { displayName: 'Legacy' },
+    { password: 'x'.repeat(100_000) },
+  ])('does not enqueue, reserve an identity or spend mail budgets for a legacy shape', async legacy => {
+    const email = `f4-${randomUUID()}@example.test`;
+    const before = await budgets();
+    const result = await http.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '198.18.54.1', headers: { 'accept-language': 'en' }, payload: { email, ...legacy } });
+    expect(result.statusCode, result.body).toBe(426);
+    expect(result.json().error).toMatchObject({ code: 'upgrade_required', message: expect.stringContaining('Update') });
+    expect(result.headers['cache-control']).toBe('no-store');
+    expect(result.body).not.toContain(email);
+    expect(await budgets()).toEqual(before);
+    expect((await owner('SELECT count(*)::int AS n FROM email_registration_challenges WHERE email=$1', [email])).rows[0].n).toBe(0);
+    expect((await owner('SELECT count(*)::int AS n FROM users WHERE email=$1', [email])).rows[0].n).toBe(0);
+  });
+  it('also gives phone-only installed clients Arabic update guidance before schema validation', async () => {
+    const result = await http.inject({ method: 'POST', url: '/v1/auth/register', payload: { phone: '+966500001234', displayName: 'قديم', password: 'Synthetic legacy password 491!' } });
+    expect(result.statusCode).toBe(426);
+    expect(result.json().error.message).toContain('حدّث التطبيق');
+  });
+});

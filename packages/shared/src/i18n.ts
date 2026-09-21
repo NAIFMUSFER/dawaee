@@ -720,6 +720,7 @@ export const MESSAGES = {
     'error.dose_already_resolved': 'تم تسجيل هذه الجرعة مسبقاً.',
     'error.voice_confidence_too_low': 'لم نتمكن من التأكد من الأمر الصوتي. يرجى التأكيد يدوياً.',
     'error.internal_error': 'حدث خطأ غير متوقع. حاول مرة أخرى.',
+    'error.upgrade_required': 'حدّث التطبيق لإنشاء حساب بالبريد الإلكتروني، ثم أكمل التسجيل من الرابط المرسل إلى بريدك.',
 
     'common.notSet': 'غير محدد',
     'common.dismiss': 'إخفاء',
@@ -1819,6 +1820,7 @@ export const MESSAGES = {
     'error.dose_already_resolved': 'This dose was already recorded.',
     'error.voice_confidence_too_low': 'We could not confirm the voice command. Please confirm manually.',
     'error.internal_error': 'Something went wrong. Please try again.',
+    'error.upgrade_required': 'Update the app to create an account by email, then complete registration using the link sent to your mailbox.',
 
     'common.notSet': 'Not set',
     'common.dismiss': 'Dismiss',

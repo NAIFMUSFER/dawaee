@@ -162,7 +162,7 @@ describe('two API instances share one authentication budget', () => {
     for (let i = 0; i < max * 2; i++) {
       const app = i % 2 === 0 ? alpha : beta;
       const r = await register(app, {
-        phone, displayName: 'S', password: PW, locale: 'ar', deviceId: `srl-reg-${seq++}-${Date.now() % 10000}`,
+        email: `auth-${phone.replace(/\D/g, '')}@example.test`, locale: 'ar', deviceId: `srl-reg-${seq++}-${Date.now() % 10000}`,
       }, `203.0.113.${i + 1}`);
       if (r.statusCode !== 429) allowed++;
     }
@@ -443,7 +443,7 @@ describe('the limiter stores nothing that identifies anyone', () => {
   it('no phone number, email address or IP address appears in the table', async () => {
     const phone = newPhone();
     await login(alpha, phone, '198.51.100.77');
-    await register(alpha, { email: 'privacy-probe@example.com', displayName: 'P', password: PW, locale: 'ar', deviceId: `srl-p-${seq++}` }, '198.51.100.78');
+    await register(alpha, { email: 'privacy-probe@example.com', locale: 'ar', deviceId: `srl-p-${seq++}` }, '198.51.100.78');
 
     const { rows } = await owner.query<{ scope: string; key_hash: string }>('SELECT scope, key_hash FROM auth_rate_buckets');
     expect(rows.length).toBeGreaterThan(0);

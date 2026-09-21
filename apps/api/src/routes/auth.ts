@@ -151,6 +151,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
   }, async (req, reply) => {
     reply.header('Cache-Control', 'no-store');
+    // The one-step contract expected session tokens. A successful mailbox
+    // acknowledgement cannot safely satisfy that installed client contract.
+    const incoming = req.body;
+    if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)
+      && ['password', 'displayName', 'phone'].some(key => Object.prototype.hasOwnProperty.call(incoming, key))) {
+      throw new AppError(ERROR_CODES.UPGRADE_REQUIRED, 426,
+        t(req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar', 'error.upgrade_required'));
+    }
     if (!passwordLoginEnabled() || !accountEmailReady()) {
       throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Account email is unavailable');
     }
