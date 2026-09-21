@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createWorkerContext, runJob } from '../../worker/src/context.js';
 import { materializeJob } from '../../worker/src/jobs/materialize.js';
 import { housekeepingJob } from '../../worker/src/jobs/housekeeping.js';
@@ -10,8 +10,8 @@ import { auditClient, auditTransaction, createAuditDatabase } from './independen
 let db: PGlite;
 const now = new Date('2026-09-21T06:00:00Z');
 const owner = (sql: string, values: unknown[] = []) => auditTransaction(db, 'dawaee_migrator', tx => tx.query(sql, values));
-beforeAll(async () => { db = await createAuditDatabase(); }, 60_000);
-afterAll(async () => { await db?.close(); });
+beforeEach(async () => { db = await createAuditDatabase(); }, 60_000);
+afterEach(async () => { await db?.close(); });
 
 async function seedSchedule(malformed: boolean) {
   const user = randomUUID(), profile = randomUUID(), medication = randomUUID(), schedule = randomUUID();
@@ -80,5 +80,39 @@ describe('F16: a corrupt schedule must not roll back another patient materializa
     expect.soft(stored.rows[0].count, 'F16: healthy patient doses were rolled back by the corrupt row').toBe(goodInserts);
     expect.soft(run.items_processed).toBe(goodInserts);
     expect.soft(run.metadata.failedSteps).toHaveLength(1);
+  });
+
+  it('rolls back the failing schedule inserts after a SQL error and continues both earlier and later patients', async () => {
+    const earlier = await seedSchedule(false), broken = await seedSchedule(false), later = await seedSchedule(false);
+    await owner('UPDATE medication_schedules SET materialized_through=$2 WHERE id=$1', [broken, new Date('2026-09-20T00:00:00Z')]);
+    await owner('UPDATE medication_schedules SET materialized_through=$2 WHERE id=$1', [later, new Date('2026-09-21T00:00:00Z')]);
+    const client = auditClient(db), realQuery = client.query.bind(client);
+    const inserted: string[] = [];
+    client.query = (async (sql: string, values: unknown[] = []) => {
+      if (sql.startsWith('UPDATE medication_schedules SET materialized_through') && values[0] === broken) {
+        // This happens AFTER insertOccurrences. An ordinary catch without
+        // ROLLBACK TO SAVEPOINT cannot restore a failed SQL transaction.
+        return realQuery('SELECT 1 / 0');
+      }
+      const result = await realQuery(sql, values);
+      if (sql.includes('INSERT INTO dose_occurrences') && result.rowCount) inserted.push((values[0] as string[])[0]!);
+      return result;
+    }) as typeof client.query;
+    const pool = { connect: async () => client, query: client.query.bind(client) } as unknown as pg.Pool;
+    const ctx = createWorkerContext({ pool, now: () => now });
+    await db.exec('SET ROLE dawaee_worker');
+    try { await runJob(ctx, 'materialize', tx => materializeJob(ctx, tx)); }
+    finally { await db.exec('RESET ROLE'); }
+    expect(inserted.slice(0, 2)).toEqual([earlier, broken]);
+    const counts = (await owner('SELECT schedule_id,count(*)::int AS n FROM dose_occurrences GROUP BY schedule_id')).rows;
+    expect.soft(counts.find(row => row.schedule_id === earlier)?.n).toBe(14);
+    expect.soft(counts.find(row => row.schedule_id === broken)).toBeUndefined();
+    expect.soft(counts.find(row => row.schedule_id === later)?.n).toBe(14);
+    const run = (await owner("SELECT succeeded,items_processed,metadata FROM job_runs WHERE job_name='materialize' ORDER BY id DESC LIMIT 1")).rows[0];
+    expect.soft(run.succeeded).toBe(false);
+    expect.soft(run.items_processed).toBe(28);
+    expect.soft(run.metadata.failedSteps).toEqual([{ step: 'schedule', error: expect.stringContaining('22012') }]);
+    const brokenHorizon = (await owner('SELECT materialized_through FROM medication_schedules WHERE id=$1', [broken])).rows[0].materialized_through;
+    expect(new Date(brokenHorizon).toISOString()).toBe('2026-09-20T00:00:00.000Z');
   });
 });
