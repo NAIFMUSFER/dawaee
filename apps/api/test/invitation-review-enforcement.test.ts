@@ -72,14 +72,19 @@ describe('F19: every HTTP acceptance requires the reviewed permission set', () =
     await owner("UPDATE caregiver_relationships SET status='revoked' WHERE id=$1", [invitation.id]);
     expect((await send('/v1/caregivers/invitations/accept', reviewed)).statusCode).toBe(404);
   });
-  it.each(['wrong-user', 'unverified-email', 'expired', 'archived'])('refuses direct reviewed acceptance for %s', async failure => {
+  it.each(['wrong-user', 'unverified-email', 'expired', 'archived', 'self'])('refuses direct reviewed acceptance for %s', async failure => {
     const invitation = await invite();
     const shown = (await send('/v1/caregivers/invitations/preview', { token: invitation.token })).json();
     const consent = { relationshipId: shown.id, role: shown.role, permissions: shown.permissions };
     if (failure === 'unverified-email') await owner('DELETE FROM user_email_verifications WHERE user_id=$1', [recipient]);
     if (failure === 'expired') await owner("UPDATE caregiver_relationships SET invitation_expires_at=now()-interval '1 second' WHERE id=$1", [invitation.id]);
     if (failure === 'archived') await owner('UPDATE patient_profiles SET archived_at=now() WHERE id=$1', [profile]);
+    if (failure === 'self') await owner('UPDATE patient_profiles SET owner_user_id=$1 WHERE id=$2', [recipient, profile]);
     expect((await send('/v1/caregivers/invitations/accept', consent, failure === 'wrong-user' ? stranger : recipient)).statusCode).toBe(failure === 'expired' ? 410 : 404);
     expect((await owner('SELECT status FROM caregiver_relationships WHERE id=$1', [invitation.id])).rows[0].status).toBe('pending');
+  });
+  it('refuses a missing invitation at both current boundaries', async () => {
+    expect((await send('/v1/caregivers/invitations/preview', { token: 'x'.repeat(43) })).statusCode).toBe(404);
+    expect((await send('/v1/caregivers/invitations/accept', { relationshipId: randomUUID(), role: 'caregiver', permissions: ['view_schedule'] })).statusCode).toBe(404);
   });
 });

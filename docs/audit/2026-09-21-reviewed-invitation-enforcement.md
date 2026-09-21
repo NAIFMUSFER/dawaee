@@ -27,3 +27,11 @@ Validation:
 Rollout implication: older installed clients cannot accept through the retired
 routes. Their request gets an explicit update/review message. General legacy
 registration contract F4 is a separate repair.
+
+CI follow-up: both PostgreSQL 16 and 17 passed 2,948 of 2,949 tests, exposing
+one source assertion that still expected the retired token-only route. It now
+checks the current preview/reviewed-accept contract. Added real SQL cases for
+self and missing invitations so the behavior is covered independently of that
+source assertion. The focused follow-up passed 12/12 tests (9 SQL/HTTP and
+3 mobile), with changed-file ESLint and diff checks passing. Native CI will be
+rerun on the combined candidate before integration.

@@ -12,16 +12,13 @@ const ACCEPT = join(ROOT, 'apps/mobile/app/caregiver/accept.tsx');
 const API = join(ROOT, 'apps/api/src/routes/caregivers.ts');
 
 describe('caregiver invitation account switching', () => {
-  it('the API classifies both missing and self-invitations as invitation_invalid', () => {
+  it('the current preview and reviewed acceptance expose invitation_invalid refusals', () => {
     const src = readFileSync(API, 'utf8');
-    const acceptRoute = src.slice(
-      src.indexOf("app.post('/v1/caregivers/accept'"),
-      src.indexOf("app.patch('/v1/caregivers/:relationshipId/permissions'"),
-    );
-
-    expect(acceptRoute).toContain('ERROR_CODES.INVITATION_INVALID');
-    expect(acceptRoute).toContain('AppError.badRequest(ERROR_CODES.INVITATION_INVALID');
-    expect(acceptRoute).toContain('new AppError(ERROR_CODES.INVITATION_INVALID, 404');
+    const preview = src.slice(src.indexOf("app.post('/v1/caregivers/invitations/preview'"), src.indexOf("app.post('/v1/caregivers/invitations/accept'"));
+    const accept = src.slice(src.indexOf("app.post('/v1/caregivers/invitations/accept'"), src.indexOf("app.post('/v1/caregivers/accept'"));
+    // Actual self/missing recipient behavior is exercised against SQL/RLS in
+    // invitation-review-enforcement; this check only locates the client contract.
+    for (const route of [preview, accept]) expect(route).toContain('new AppError(ERROR_CODES.INVITATION_INVALID, 404');
   });
 
   it.each(['ios', 'web'])('preserves the token after a wrong-account rejection on %s until explicit acceptance', async (platform) => {
