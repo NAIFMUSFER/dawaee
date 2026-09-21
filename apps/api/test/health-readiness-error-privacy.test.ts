@@ -7,7 +7,11 @@ vi.mock('../src/lib/schema-contract.js', () => ({
   requiredSchemaRevision: () => '0070_dose_schedule_graph_integrity.sql',
   checkSchemaContract: h.schema,
 }));
-vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: 'production' }) }) );
+vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: 'production',
+  ACCOUNT_EMAIL_PROVIDER: 'resend', ACCOUNT_EMAIL_SENDER_VERIFIED: true,
+  RESEND_API_KEY: 'synthetic-readiness-key', ACCOUNT_EMAIL_FROM: 'accounts@example.test',
+  ACCOUNT_EMAIL_BASE_URL: 'https://accounts.example.test',
+}) }) );
 
 import { registerHealthRoutes } from '../src/routes/health.js';
 
@@ -20,7 +24,7 @@ const PRIVATE_MARKERS = [
   'internal.db.invalid',
 ];
 const PRIVATE_ERROR = PRIVATE_MARKERS.join('; ');
-const JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'];
+const JOBS = ['materialize', 'reminders', 'dispatch', 'push-receipts', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'];
 const PHASES = ['database', 'schema', 'worker'] as const;
 type Phase = typeof PHASES[number];
 let app: ReturnType<typeof Fastify>;
