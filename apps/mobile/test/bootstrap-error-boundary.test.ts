@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath, URL } from 'node:url';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -52,7 +53,7 @@ function loadModule(file: string, mocks: Record<string, unknown>, globals: Recor
  * renderer, live backend, encryption test or physical-device lifecycle test.
  */
 async function boot(failure?: Failure, hasStoredSession = true, storedLocale: 'ar' | 'en' | null = null) {
-  let tokens: { accessToken: string; refreshToken: string } | null = hasStoredSession
+  let tokens: { accessToken: string; refreshToken: string; retryNonce?: string } | null = hasStoredSession
     ? { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' } : null;
   let tokenClears = 0;
   let snapshotReads = 0;
@@ -73,6 +74,9 @@ async function boot(failure?: Failure, hasStoredSession = true, storedLocale: 'a
     'expo-constants': {},
     './clinical-changes.js': clinicalChanges,
     './access-changes.js': accessChanges,
+    './refresh-nonce.js': loadModule(fileURLToPath(new URL('../src/api/refresh-nonce.ts', import.meta.url)), {
+      'expo-crypto': { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) },
+    }),
     './token-store.js': {
       readSession: async () => tokens,
       writeSession: async (next: NonNullable<typeof tokens>) => { tokens = next; },
