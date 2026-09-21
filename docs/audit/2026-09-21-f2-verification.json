@@ -1,0 +1,76 @@
+{
+  "finding": "F2",
+  "verdict": "confirmed_partially",
+  "pullRequest": 33,
+  "url": "https://github.com/NAIFMUSFER/dawaee/pull/33",
+  "base": "9bf0a3bc66f025907b1efff5a907e629bb334bed",
+  "head": "ebff1633dec158aa1bc07f97afab56cd7c56c33e",
+  "localCommits": [
+    {
+      "local": "33611d571810f4f57725eaa3a1bd28767774e133",
+      "remote": "c6d532a76e7087b80517eea560dda03afb49bf83",
+      "tree": "2a6d36fa4d86ab977377c8414956673c9bfc576a"
+    },
+    {
+      "local": "3c3976b04ae9d2a5cbe7636b3c1fb0da84656e9a",
+      "remote": "ebff1633dec158aa1bc07f97afab56cd7c56c33e",
+      "tree": "a4c19837713005efda0fdc02ea9ee1a768ca4669"
+    }
+  ],
+  "regressionBefore": {
+    "tests": 2,
+    "failed": 2
+  },
+  "regressionAfter": {
+    "tests": 2,
+    "passed": 2
+  },
+  "local": {
+    "eslint": "passed",
+    "serverTypecheck": "passed",
+    "mobileTypecheck": "passed",
+    "fullVitest": {
+      "passed": 1938,
+      "failed": 3,
+      "skipped": 976,
+      "filesPassed": 247,
+      "filesFailed": 134,
+      "total": 2917,
+      "reason": "Native PostgreSQL/psql unavailable; fixture setup fails. Skipped tests are consequences of failed hooks, not inserted skips."
+    }
+  },
+  "ci": {
+    "runId": 35591526484,
+    "status": "success",
+    "pg16Rls": "passed",
+    "pg17Rls": "passed",
+    "pg16MigrationTwice": "passed",
+    "pg17MigrationTwice": "passed",
+    "pg16": {
+      "tests": 2917,
+      "files": 381,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    },
+    "pg17": {
+      "tests": 2917,
+      "files": 381,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    }
+  },
+  "security": {
+    "runId": 35591526496,
+    "status": "success"
+  },
+  "preview": "not_deployed",
+  "production": "not_deployed",
+  "device": "not_tested",
+  "integration": {
+    "candidate": "audit/ios10-evidence-20260920",
+    "method": "fast-forward",
+    "head": "ebff1633dec158aa1bc07f97afab56cd7c56c33e"
+  }
+}
