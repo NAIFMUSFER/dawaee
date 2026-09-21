@@ -30,6 +30,17 @@ async function seedSchedule(malformed: boolean) {
 }
 
 describe('F16: a corrupt schedule must not roll back another patient materialization', () => {
+  it('still aborts the job when the worker loses its occurrence INSERT privilege', async () => {
+    await seedSchedule(false);
+    await owner(`REVOKE INSERT (schedule_id, medication_id, patient_profile_id, scheduled_at,
+      scheduled_local_date, scheduled_local_time, scheduled_timezone, dose_quantity, dose_unit, status)
+      ON dose_occurrences FROM dawaee_worker`);
+    const ctx = createWorkerContext({ pool: {} as pg.Pool, now: () => now });
+    await expect(auditTransaction(db, 'dawaee_worker', tx => materializeJob(ctx, tx)))
+      .rejects.toMatchObject({ code: '42501' });
+    expect((await owner('SELECT count(*)::int AS count FROM dose_occurrences')).rows[0].count).toBe(0);
+  });
+
   it('counterexample: housekeeping preserves later work after a real SQL error in its first step', async () => {
     await owner(`INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
       VALUES('audit-housekeeping',$1,now()-interval '2 days',1)`, ['0'.repeat(64)]);
