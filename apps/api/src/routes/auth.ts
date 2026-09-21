@@ -17,6 +17,7 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
 import { clearBudget, enforceAuthBudget } from './../auth/rate-budget.js';
 import { accountEmailReady, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
+import { enqueueAccountEmail } from '../auth/email-capacity.js';
 
 export function registerAuthRoutes(app: FastifyInstance): void {
   /**
@@ -168,15 +169,18 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       ip: { scope: 'register:ip', value: req.ip },
       identifier: { scope: 'register:identifier', value: email },
     });
+    await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:recipient', value: email } });
+    await enforceAuthBudget({ identifier: { scope: 'email:hour', value: email } });
     const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
     const payload = await sealEmailJob({ email, token: secret, purpose: 'register', locale: body.locale });
-    await withTransaction(tx => tx.query(
+    await withTransaction(tx => enqueueAccountEmail(tx, tokenHash, () => tx.query(
       'SELECT app.request_email_registration($1,$2,$3,$4)',
-      [email, emailTokenHash(secret), body.locale, payload],
-    ));
+      [email, tokenHash, body.locale, payload],
+    )));
 
-    // Identical for an existing or available address. No account, password or
-    // session exists until the mailbox holder completes the emailed form.
+    // Identical for an existing or available address, including when provider
+    // capacity is full. A capacity-dependent status would expose existence.
     return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
   });
 

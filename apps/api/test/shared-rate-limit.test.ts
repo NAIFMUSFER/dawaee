@@ -166,7 +166,35 @@ describe('two API instances share one authentication budget', () => {
       }, `203.0.113.${i + 1}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, `${allowed} registrations allowed against a budget of ${max}`).toBe(max);
+    // Recipient cooldown is tighter than the general registration-attempt cap.
+    expect(allowed).toBeGreaterThanOrEqual(1);
+    expect(allowed).toBeLessThanOrEqual(2); // permits one fixed-window seam
+    const counted = await owner.query("SELECT sum(count)::int AS hits FROM auth_rate_buckets WHERE scope='register:identifier'");
+    expect(counted.rows[0].hits).toBe(max * 2);
+  });
+
+  it('two replicas reserve only the final remaining email slot', async () => {
+    await consumeBudget('email:global', 'account-email');
+    const { rows: [key] } = await owner.query("SELECT key_hash FROM auth_rate_buckets WHERE scope='email:global' LIMIT 1");
+    // Seed both adjacent daily windows to avoid depending on a midnight seam.
+    await owner.query(`WITH boundary AS (
+      SELECT to_timestamp(floor(extract(epoch FROM now())/86400)*86400) AS start
+    ) INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+      SELECT 'email:global',$1,start+make_interval(days=>step),99 FROM boundary CROSS JOIN generate_series(0,1) AS offsets(step)
+      ON CONFLICT(scope,key_hash,window_start) DO UPDATE SET count=99`, [key.key_hash]);
+    const emails = [`capacity-alpha-${Date.now()}@example.test`, `capacity-beta-${Date.now()}@example.test`];
+    const replies = await Promise.all([
+      register(alpha, { email: emails[0] }, '198.18.59.1'),
+      register(beta, { email: emails[1] }, '198.18.59.2'),
+    ]);
+    expect(replies.map(reply => reply.statusCode)).toEqual([202, 202]);
+    expect(replies[0]!.json()).toEqual(replies[1]!.json());
+    const queued = await owner.query('SELECT count(*)::int AS n FROM email_registration_challenges WHERE email=ANY($1)', [emails]);
+    const windows = await owner.query("SELECT count FROM auth_rate_buckets WHERE scope='email:global'");
+    expect(windows.rows.every(row => row.count <= 100)).toBe(true);
+    // At a midnight boundary each of the two separate daily slots is valid.
+    expect(queued.rows[0].n).toBe(windows.rows.reduce((n, row) => n + Number(row.count) - 99, 0));
+    expect(queued.rows[0].n).toBeGreaterThanOrEqual(1);
   });
 
   it('one instance sees the attempts the other already counted', async () => {
