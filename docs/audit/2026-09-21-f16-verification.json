@@ -61,15 +61,35 @@
     "eslint": "passed",
     "serverTypecheck": "passed",
     "mobileTypecheck": "passed",
-    "nativePostgres": "First-head native row isolation and retry test passed on PostgreSQL 16; updated-head full matrix pending"
+    "nativePostgres": "Passed in both native CI matrix jobs"
   },
   "ci": {
     "runId": 35601095922,
-    "status": "pending"
+    "status": "success",
+    "pg16": {
+      "jobId": 106337270198,
+      "tests": 2942,
+      "passed": 2942,
+      "skipped": 0,
+      "files": 387,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    },
+    "pg17": {
+      "jobId": 106337270120,
+      "tests": 2942,
+      "passed": 2942,
+      "skipped": 0,
+      "files": 387,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    }
   },
   "security": {
     "runId": 35601095944,
-    "status": "in_progress"
+    "status": "success"
   },
   "preview": "not_deployed",
   "production": "not_deployed",
@@ -93,7 +113,16 @@
       },
       "reason": "First implementation caught missing privileges; three existing native rejection controls failed. Narrowed SQL error isolation to data/constraint classes without changing those tests.",
       "securityRunId": 35599927578,
-      "security": "success"
+      "security": "success",
+      "pg17": {
+        "jobId": 106333352778,
+        "status": "cancelled_when_head_advanced"
+      }
     }
-  ]
+  ],
+  "integration": {
+    "candidate": "audit/ios10-evidence-20260920",
+    "method": "fast-forward",
+    "head": "75a826b7db89cd940a3f4153d6aa038ae4881be0"
+  }
 }
