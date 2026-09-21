@@ -1,0 +1,99 @@
+{
+  "finding": "F16",
+  "verdict": "partially_confirmed",
+  "pullRequest": 35,
+  "url": "https://github.com/NAIFMUSFER/dawaee/pull/35",
+  "base": "c555cd576ea517579d735cd6bf0ddaa612cc0946",
+  "head": "75a826b7db89cd940a3f4153d6aa038ae4881be0",
+  "commits": [
+    {
+      "local": "afe1d5efba33c2e639c7ae30f7f379c8170ee1f0",
+      "remote": "1fbb5b7ed91b4df0964b3f34ab85f2e70d49f192",
+      "tree": "f4e919a24486a92f885f272427b3f934b977281e"
+    },
+    {
+      "local": "32914bb9bde0a863a084453702c46a8035d072bf",
+      "remote": "f7611486049d443002049614c92362eb7b85860e",
+      "tree": "311fce6ac3eaf56ddb51502ef3c73be17004e932"
+    },
+    {
+      "local": "de574ce42f935d516714d93211a64b38359776cc",
+      "remote": "074a2da0d7adb9ee09924c90554ba0d1a39d53fc",
+      "tree": "308ca2874e661a04b6882909c80ad0051f6d7aa5"
+    },
+    {
+      "local": "9661afe1b1e2bfd5a3b9bf6c589178e5f6b54e41",
+      "remote": "0f1972a113c9ca47d9c5a9a3b2648ffdb63eb500",
+      "tree": "e6c38a64eb1ad43487f0c92c492a520874ea6fdb"
+    },
+    {
+      "local": "29915c534632a0106509489c37a984888c87fb14",
+      "remote": "75a826b7db89cd940a3f4153d6aa038ae4881be0",
+      "tree": "7ebd52d65344315de293041c84742a1229b2f2b6"
+    }
+  ],
+  "regressionBefore": {
+    "tests": 3,
+    "failed": 2,
+    "passed": 1,
+    "healthyDosesInserted": 14,
+    "healthyDosesCommitted": 0,
+    "housekeepingCounterexample": "passed"
+  },
+  "regressionAfter": {
+    "tests": 4,
+    "passed": 4,
+    "failed": 0,
+    "malformedRule": {
+      "healthyDosesCommitted": 14,
+      "brokenDosesCommitted": 0
+    },
+    "sqlErrorAfterInsert": {
+      "earlier": 14,
+      "broken": 0,
+      "later": 14,
+      "itemsRecorded": 28,
+      "succeeded": false
+    },
+    "missingPrivilege": "SQLSTATE 42501 still rejects; no old assertions changed"
+  },
+  "local": {
+    "eslint": "passed",
+    "serverTypecheck": "passed",
+    "mobileTypecheck": "passed",
+    "nativePostgres": "First-head native row isolation and retry test passed on PostgreSQL 16; updated-head full matrix pending"
+  },
+  "ci": {
+    "runId": 35601095922,
+    "status": "pending"
+  },
+  "security": {
+    "runId": 35601095944,
+    "status": "in_progress"
+  },
+  "preview": "not_deployed",
+  "production": "not_deployed",
+  "device": "not_tested",
+  "newMigration": null,
+  "remainingScopeLimits": [
+    "initial selection SQL errors not isolated",
+    "entirely corrupt batch fairness not established"
+  ],
+  "previewBlockedBy": "N26 bootstrap credential-rotation boundary",
+  "previousCi": [
+    {
+      "head": "074a2da0d7adb9ee09924c90554ba0d1a39d53fc",
+      "runId": 35599927817,
+      "pg16": {
+        "jobId": 106333352768,
+        "total": 2941,
+        "passed": 2938,
+        "failed": 3,
+        "files": 387
+      },
+      "reason": "First implementation caught missing privileges; three existing native rejection controls failed. Narrowed SQL error isolation to data/constraint classes without changing those tests.",
+      "securityRunId": 35599927578,
+      "security": "success"
+    }
+  ]
+}
