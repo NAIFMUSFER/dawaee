@@ -1,0 +1,219 @@
+{
+  "observedAt": "2026-09-21T10:44:12.870689+00:00",
+  "production": {
+    "serverVersion": "17.6",
+    "migrationMatch": {
+      "productionCount": 95,
+      "localCount": 95,
+      "mismatches": [],
+      "missing": []
+    },
+    "ledgerMd5WithoutTrailingNewline": "dd07cc3908d47d2a0fc89a10b9ea81b4",
+    "forcedRlsTables": 33,
+    "jobs24h": [
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "digests",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.723+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "dispatch",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.634+00:00"
+      },
+      {
+        "runs": 24,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "housekeeping",
+        "processed": 8612,
+        "latest_started": "2026-09-21T10:27:43.267+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "mark-missed",
+        "processed": 20,
+        "latest_started": "2026-09-21T10:43:43.689+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "materialize",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.601+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "push-receipts",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.674+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "reminders",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.617+00:00"
+      },
+      {
+        "runs": 1440,
+        "commits": [
+          "63b5b8d33a502b8e3d3cd2ca94b1855266665f90",
+          "e59f864a6ae32ec28276b1b786e64b0621506308"
+        ],
+        "failures": 0,
+        "job_name": "stock-alerts",
+        "processed": 0,
+        "latest_started": "2026-09-21T10:43:43.704+00:00"
+      }
+    ],
+    "latestJobs": [
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "digests",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.723+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "dispatch",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.634+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "housekeeping",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:27:43.267+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "mark-missed",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.689+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "materialize",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.601+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "push-receipts",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.674+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "reminders",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.617+00:00"
+      },
+      {
+        "commit": "e59f864a6ae32ec28276b1b786e64b0621506308",
+        "job_name": "stock-alerts",
+        "succeeded": true,
+        "started_at": "2026-09-21T10:43:43.704+00:00"
+      }
+    ],
+    "roles": [
+      {
+        "rolname": "dawaee_app",
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolbypassrls": false,
+        "rolcreaterole": false
+      },
+      {
+        "rolname": "dawaee_owner",
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolbypassrls": false,
+        "rolcreaterole": true
+      },
+      {
+        "rolname": "dawaee_worker",
+        "rolsuper": false,
+        "rolcreatedb": false,
+        "rolbypassrls": false,
+        "rolcreaterole": false
+      }
+    ],
+    "connections": [
+      {
+        "usename": "dawaee_app",
+        "sessions": 2
+      },
+      {
+        "usename": "dawaee_worker",
+        "sessions": 2
+      }
+    ]
+  },
+  "logsWindow": {
+    "start": "2026-09-20T10:44:12Z",
+    "end": "2026-09-21T10:44:12Z"
+  },
+  "productionLogSummary": {
+    "api": {
+      "handledInvalidCredentials": 11
+    },
+    "worker": {
+      "databaseAuthenticationAtDeploy": 1
+    }
+  },
+  "previewLogSummary": {
+    "count": 371,
+    "groups": {
+      "consent_required": 1,
+      "invalid_credentials": 6,
+      "db_auth": 1,
+      "invitation_invalid": 8,
+      "token_expired": 67,
+      "ENOENT": 141,
+      "not_found": 141,
+      "high_risk_confirmation_required": 1,
+      "forbidden": 5
+    }
+  },
+  "limitations": [
+    "Render environment read requires browser login; no secret values read or changed",
+    "Preview database connector failed twice: SSL/TLS required/unexpected EOF",
+    "No device test",
+    "Direct git push has no authenticated credential; connector publication pending"
+  ]
+}
