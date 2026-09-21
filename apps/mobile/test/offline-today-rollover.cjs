@@ -68,6 +68,24 @@ function scenarios(screenFile, hookFile) {
     const item = cards(h.tree)[0].dose;
     assert.equal(item.scheduledTimezone, 'Asia/Riyadh');
     assert.doesNotThrow(() => new Intl.DateTimeFormat('ar-SA', { timeZone: item.scheduledTimezone }).format(new Date(item.scheduledAt)));
+    assert.equal(item.medication.strengthValue, null);
+    assert.equal(item.medication.instructions, null);
+    assert.equal(item.medication.notes, null);
+    assert.equal(item.notes.length, 0);
+  });
+  add('offline Today retains medication strength, instructions and both kinds of notes', [{ ...today,
+    medicationForm: 'capsule', strengthValue: 25, strengthUnit: 'mg',
+    instructions: 'Synthetic instructions', medicationNotes: 'Synthetic medication note',
+    notes: [{ id: 'synthetic-note', text: 'Synthetic dose note', tags: ['nausea'], recordedAt: '2026-09-09T21:00:00Z' }],
+  }], async h => {
+    const item = cards(h.tree)[0].dose;
+    assert.equal(item.medication.form, 'capsule');
+    assert.equal(item.medication.strengthValue, 25);
+    assert.equal(item.medication.strengthUnit, 'mg');
+    assert.equal(item.medication.instructions, 'Synthetic instructions');
+    assert.equal(item.medication.notes, 'Synthetic medication note');
+    assert.equal(item.notes[0].text, 'Synthetic dose note');
+    assert.equal(item.notes[0].tags[0], 'nausea');
   });
   add('an unresolved prior-day cached dose cannot hide the current-day schedule', [yesterday, today], async h => {
     upcoming(h, ['TODAY']);

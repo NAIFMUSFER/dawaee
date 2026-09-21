@@ -1,6 +1,7 @@
 /** Stable machine-readable error codes. The client maps these to localized text. */
 export const ERROR_CODES = {
   VALIDATION_FAILED: 'validation_failed',
+  UPGRADE_REQUIRED: 'upgrade_required',
   UNAUTHENTICATED: 'unauthenticated',
   TOKEN_EXPIRED: 'token_expired',
   /**

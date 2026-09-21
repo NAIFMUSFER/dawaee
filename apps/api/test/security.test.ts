@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, PANADOL, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
@@ -170,8 +171,8 @@ describe('caregiver permission scope', () => {
     const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
     expect(token, 'invite response did not contain a fragment token').toBeTruthy();
 
-    const accept = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(son), payload: { token },
+    const accept = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(son), payload: { token },
     });
     expect(accept.statusCode).toBe(200);
 
@@ -265,16 +266,16 @@ describe('caregiver permission scope', () => {
       env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
     });
 
-    const res = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(stranger), payload: { token },
+    const res = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(stranger), payload: { token },
     });
     expect(res.statusCode).toBe(410);
     expect(res.json().error.code).toBe('invitation_expired');
   });
 
   it('refuses a forged or reused invitation token', async () => {
-    const forged = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(stranger),
+    const forged = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(stranger),
       payload: { token: 'a'.repeat(43) },
     });
     expect(forged.statusCode).toBe(404);

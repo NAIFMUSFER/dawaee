@@ -64,7 +64,7 @@ afterAll(async () => { await h.close(); });
 describe('registration', () => {
   it('acknowledges a mailbox request without creating an account or session', async () => {
     const email='proof-before-account@example.test';
-    const res=await register({email,phone:'0566000001',displayName:'Legacy ignored',password:'correct horse battery'});
+    const res=await register({email});
     expect(res.statusCode).toBe(202);
     expect(res.json()).toEqual({accepted:true,retryAfterSeconds:60});
     expect(res.json().accessToken).toBeUndefined(); expect(res.json().refreshToken).toBeUndefined();
@@ -81,11 +81,11 @@ describe('registration', () => {
     expect({status:known.statusCode,body:known.body}).toEqual({status:unknown.statusCode,body:unknown.body});
   });
 
-  it('rejects malformed legacy fields but never uses them as credentials', async () => {
+  it('rejects legacy fields with update guidance before credential work', async () => {
     const short = await register({ email:'legacy-short@example.test', password: 'short1' });
-    expect(short.statusCode).toBe(400);
+    expect(short.statusCode).toBe(426);
     const badPhone = await register({ email:'legacy-phone@example.test', phone:'not-a-phone' });
-    expect(badPhone.statusCode).toBe(400);
+    expect(badPhone.statusCode).toBe(426);
   });
 
   it('requires an email', async () => {
@@ -106,8 +106,7 @@ describe('registration', () => {
       h.app.inject({
         method: 'POST', url: '/v1/auth/register',
         remoteAddress: address,
-        payload: { ...DEVICE, phone: `05670000${String(n).padStart(2, '0')}`, email: `rate-${n}@example.test`,
-          displayName: 'x', password: 'correct horse battery' },
+        payload: { ...DEVICE, email: `rate-${n}@example.test` },
       });
 
     let limited: Awaited<ReturnType<typeof attempt>> | null = null;

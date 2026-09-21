@@ -58,7 +58,10 @@ export class ExpoPushProvider implements PushProvider {
         if (!res.ok || !Array.isArray(json.data)) {
           const errorCode = res.ok ? 'malformed_provider_response' : `http_${res.status}`;
           for (const _ of batch) {
-            results.push({ ok: false, errorCode, retryable: res.ok || res.status >= 500 });
+            // HTTP throttling is temporary just like MessageRateExceeded in
+            // a ticket. Let the durable dispatcher apply bounded backoff;
+            // never loop/retry here or mark a rate-limited device invalid.
+            results.push({ ok: false, errorCode, retryable: res.ok || res.status === 429 || res.status >= 500 });
           }
           continue;
         }

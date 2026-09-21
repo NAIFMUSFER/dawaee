@@ -276,6 +276,13 @@ export interface CachedSchedule {
     id: string; scheduledAt: string; scheduledLocalTime: string; scheduledLocalDate: string;
     medicationName: string; doseQuantity: number; doseUnit: string; foodInstruction: string; status: string;
     scheduledTimezone?: string; medicationId?: string; imageKey?: string | null;
+    // Optional for snapshots written by older clients; stored only in the
+    // existing encrypted, account/profile-bound cache.
+    medicationForm?: DoseView['medication']['form'];
+    strengthValue?: number | null;
+    strengthUnit?: DoseView['medication']['strengthUnit'];
+    instructions?: string | null; medicationNotes?: string | null;
+    notes?: DoseView['notes'];
     snoozedUntil?: string | null; confirmedAt?: string | null;
     thresholds?: DoseView['thresholds'];
   }>;

@@ -8,6 +8,7 @@ import {
   INITIAL_LOCK_STATE,
   isLockExemptPath,
   lockReducer,
+  privacyPreviewCovered,
   RELOCK_GRACE_MS,
 } from '../src/security/lock-state.js';
 import type { LockState } from '../src/security/lock-state.js';
@@ -103,6 +104,27 @@ describe('leaving the foreground', () => {
     expect(s.verifiedAreas).toContain('reports');
     s = lockReducer(s, { type: 'appStatus', status: 'background', now: 0 });
     expect(s.verifiedAreas).toEqual([]);
+  });
+});
+
+describe('task-switcher privacy does not depend on opting into app lock', () => {
+  it('covers every non-active OS state and reveals only the active app', () => {
+    expect(privacyPreviewCovered('inactive')).toBe(true);
+    expect(privacyPreviewCovered('background')).toBe(true);
+    expect(privacyPreviewCovered('active')).toBe(false);
+  });
+
+  it('wires the independent shield into the rendered presentation phase', () => {
+    const gate = readFileSync(join(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
+    expect(gate).toContain('setPreviewCovered(privacyPreviewCovered(status))');
+    expect(gate).toContain("const presentationPhase = previewCovered ? 'covered' : phase");
+    expect(gate).toContain("presentationPhase !== 'unlocked' || areaLocked");
+
+    const listenerStart = gate.indexOf("RNAppState.addEventListener('change'");
+    const listenerEnd = gate.indexOf('return () => sub.remove()', listenerStart);
+    const listener = gate.slice(listenerStart, listenerEnd);
+    expect(listener).not.toContain('appLockEnabled');
+    expect(listener).not.toContain('enabled)');
   });
 });
 

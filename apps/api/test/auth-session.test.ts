@@ -717,10 +717,10 @@ describe('password handling', () => {
 
   it('bounds the input so a long password is not a CPU DoS', async () => {
     const res = await h.app.inject({
-      method: 'POST', url: '/v1/auth/register', remoteAddress: '10.9.9.9',
+      method: 'POST', url: '/v1/auth/email/complete', remoteAddress: '10.9.9.9',
       payload: {
-        phone: '+966500009999', displayName: 'DoS', deviceId: 'd',
-        password: 'a'.repeat(100_000),
+        token: 'a'.repeat(43), purpose: 'register', displayName: 'DoS',
+        newPassword: 'a'.repeat(100_000),
       },
     });
     expect(res.statusCode, 'a 100k-character password was accepted').toBe(400);

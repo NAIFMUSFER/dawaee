@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const provider = vi.hoisted(() => ({ verify: vi.fn() }));
@@ -36,7 +37,7 @@ const verify = () => h.app.inject({ method: 'POST', url: '/v1/auth/phone-verific
 describe('caregiver phone verification lifecycle', () => {
   it('keeps password registration unverified and requests proof without consuming the invitation', async () => {
     expect((await status()).json()).toEqual({ phone: caregiver.phone, verified: false });
-    const result = await h.app.inject({ method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(caregiver), payload: { token } });
+    const result = await reviewAndAcceptInvitation(options => h.app.inject(options), { method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(caregiver), payload: { token } });
     expect(result.statusCode).toBe(403);
     expect(result.json().error.code).toBe('phone_verification_required');
   });
@@ -70,7 +71,7 @@ describe('caregiver phone verification lifecycle', () => {
     expect(result.statusCode, result.body).toBe(200);
     expect(result.json()).toEqual({ verified: true });
     expect((await status()).json().verified).toBe(true);
-    const accepted = await h.app.inject({ method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(caregiver), payload: { token } });
+    const accepted = await reviewAndAcceptInvitation(options => h.app.inject(options), { method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(caregiver), payload: { token } });
     expect(accepted.statusCode, accepted.body).toBe(200);
     const profiles = await h.app.inject({ method: 'GET', url: '/v1/profiles', headers: authHeaders(caregiver) });
     expect(profiles.json().profiles.map((p: { id: string }) => p.id)).toContain(patient.profileId);

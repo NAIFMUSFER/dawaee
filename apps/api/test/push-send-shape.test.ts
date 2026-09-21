@@ -23,6 +23,28 @@ afterEach(() => {
 });
 
 describe('Expo push send response integrity', () => {
+  it.each([[429, true], [500, true], [503, true], [400, false], [401, false], [403, false]])(
+    'classifies HTTP %i as retryable=%s without invalidating devices', async (status, retryable) => {
+      const request = vi.fn(async () => response(Number(status), { errors: [{ message: 'private-provider-marker' }] }));
+      vi.stubGlobal('fetch', request);
+      const provider = new ExpoPushProvider({ EXPO_ACCESS_TOKEN: undefined } as Config);
+      const results = await provider.send([message('token-a'), message('token-b')]);
+      expect(results).toEqual(Array.from({ length: 2 }, () => ({
+        ok: false, errorCode: `http_${status}`, retryable,
+      })));
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(results)).not.toContain('private-provider-marker');
+    },
+  );
+
+  it('retains rate-limit classification when the 429 response is not JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('temporary limit', { status: 429 })));
+    const provider = new ExpoPushProvider({ EXPO_ACCESS_TOKEN: undefined } as Config);
+    expect(await provider.send([message('token-a')])).toEqual([
+      { ok: false, errorCode: 'http_429', retryable: true },
+    ]);
+  });
+
   it('preserves one result per message when Expo returns a short ticket array', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response(200, {
       data: [{ status: 'ok', id: 'ticket-1' }],

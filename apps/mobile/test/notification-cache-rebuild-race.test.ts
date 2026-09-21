@@ -36,6 +36,8 @@ vi.mock('expo-notifications', () => ({
   SchedulableTriggerInputTypes: { DATE: 'date' },
   IosAuthorizationStatus: { PROVISIONAL: 3 },
   cancelAllScheduledNotificationsAsync: io.cancelAll,
+  dismissAllNotificationsAsync: vi.fn(async () => undefined),
+  clearLastNotificationResponseAsync: vi.fn(async () => undefined),
   scheduleNotificationAsync: io.schedule,
 }));
 vi.mock('../src/storage/offline-queue.js', () => ({

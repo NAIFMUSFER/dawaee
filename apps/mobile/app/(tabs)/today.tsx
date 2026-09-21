@@ -48,16 +48,18 @@ function cachedDoseToView(d: CachedSchedule['doses'][number], timezone: string):
     snoozedUntil: d.snoozedUntil ?? null,
     snoozeCount: 0,
     confirmedAt: d.confirmedAt ?? null,
+    notes: d.notes ?? [],
     thresholds: d.thresholds,
     escalationStage: 0,
     medication: {
       name: d.medicationName,
-      form: 'tablet',
+      form: d.medicationForm ?? 'tablet',
       imageKey: d.imageKey ?? null,
-      strengthValue: null,
-      strengthUnit: null,
+      strengthValue: d.strengthValue ?? null,
+      strengthUnit: d.strengthUnit ?? null,
       foodInstruction: d.foodInstruction as DoseView['medication']['foodInstruction'],
-      instructions: null,
+      instructions: d.instructions ?? null,
+      notes: d.medicationNotes ?? null,
     },
   };
 }

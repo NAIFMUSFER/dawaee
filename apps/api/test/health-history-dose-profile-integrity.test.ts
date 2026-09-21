@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -59,7 +60,7 @@ describe('patient-history dose references stay inside one patient profile', () =
     const invite=await h.app.inject({method:'POST',url:'/v1/caregivers/invite',headers:authHeaders(alice),payload:{patientProfileId:alice.profileId,invitedName:'Caregiver',invitedPhone:bob.phone,role:'caregiver',permissions:['view_schedule','view_medications','view_history','confirm_dose'],escalationPriority:1}});
     expect(invite.statusCode,invite.body).toBe(200);
     const token=invite.json().invitationLink.split('/invite/')[1];
-    const accepted=await h.app.inject({method:'POST',url:'/v1/caregivers/accept',headers:authHeaders(bob),payload:{token}});
+    const accepted=await reviewAndAcceptInvitation(options => h.app.inject(options), {method:'POST',url: '/v1/caregivers/invitations/preview',headers:authHeaders(bob),payload:{token}});
     expect(accepted.statusCode,accepted.body).toBe(200);
     const note=await h.app.inject({method:'POST',url:'/v1/notes',headers:authHeaders(bob),payload:{profileId:alice.profileId,doseOccurrenceId:aliceDoseId,text:'Caregiver note for this dose'}});
     expect(note.statusCode,note.body).toBe(200);

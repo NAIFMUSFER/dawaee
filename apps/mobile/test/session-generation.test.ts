@@ -52,8 +52,12 @@ const settle = <T>(promise: Promise<T>) => promise.then(
 );
 // The test controls the boundary, rather than relying on a lucky network delay.
 async function until(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise<void>((r) => setImmediate(r));
-  expect(predicate(), 'controlled interleaving was not reached').toBe(true);
+  // Module/native-host initialization can need actual I/O turns. A fixed
+  // number of setImmediate spins can finish before that I/O on busy CI hosts.
+  // The gate still controls the interleaving; failure remains time bounded.
+  await vi.waitFor(() => {
+    expect(predicate(), 'controlled interleaving was not reached').toBe(true);
+  }, { timeout: 2000, interval: 5 });
 }
 
 let client: typeof import('../src/api/client.js');

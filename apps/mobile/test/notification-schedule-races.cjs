@@ -20,7 +20,9 @@ function dose(id, minutes = 30) {
 }
 function loadModule(file, platform = 'ios') {
   const state = {
-    active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
+    active: [], presented: ['synthetic-medication'], lastResponse: 'synthetic-old-account-action',
+    dismissals: 0, responseClears: 0, dismiss: null, clearResponse: null,
+    scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
     pushPosts: [], textInputs: [], tokenReads: 0, tokenGate: null, notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
   };
   const native = {
@@ -34,6 +36,16 @@ function loadModule(file, platform = 'ios') {
       state.cancellations++;
       if (state.cancel) await state.cancel(state.cancellations);
       state.active = [];
+    },
+    dismissAllNotificationsAsync: async () => {
+      state.dismissals++;
+      if (state.dismiss) await state.dismiss();
+      state.presented = [];
+    },
+    clearLastNotificationResponseAsync: async () => {
+      state.responseClears++;
+      if (state.clearResponse) await state.clearResponse();
+      state.lastResponse = null;
     },
     scheduleNotificationAsync: async (notification) => {
       state.scheduledCalls.push(notification);
@@ -182,6 +194,31 @@ function scenarios(file) {
     await until(() => state.scheduledCalls.length === 1);
     const cancelled = api.cancelAllLocalNotifications(); await flush(); gate.resolve();
     await Promise.all([old, cancelled]); assert.equal(state.active.length, 0, 'old medication reminders survived cancellation');
+  });
+  add('logout removes delivered medication text and the previous account action as well as pending alerts', async (api, state) => {
+    await api.rescheduleLocalNotifications([dose('A')], 'en');
+    await api.cancelAllLocalNotifications();
+    assert.equal(state.active.length, 0);
+    assert.equal(state.presented.length, 0);
+    assert.equal(state.lastResponse, null);
+    assert.equal(state.dismissals, 1);
+    assert.equal(state.responseClears, 1);
+  });
+  add('a failed pending-alert cancellation still clears delivered text and stale actions', async (api, state) => {
+    state.cancel = () => { throw new Error('controlled pending cleanup failure'); };
+    await assert.rejects(api.cancelAllLocalNotifications(), /controlled pending cleanup failure/);
+    assert.equal(state.presented.length, 0);
+    assert.equal(state.lastResponse, null);
+  });
+  add('a failed delivered-alert dismissal still clears stale actions and does not poison a new account schedule', async (api, state) => {
+    state.dismiss = () => { throw new Error('controlled delivered cleanup failure'); };
+    const cleanup = api.cancelAllLocalNotifications();
+    const next = api.rescheduleLocalNotifications([dose('B')], 'en');
+    await assert.rejects(cleanup, /controlled delivered cleanup failure/);
+    await next;
+    assert.equal(state.lastResponse, null);
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].content.data.doseId, 'B');
   });
   add('new private rebuild wins over an older named rebuild', async (api, state) => {
     const gate = deferred(); state.schedule = (n) => n.content.data.doseId === 'A' ? gate.promise : undefined;

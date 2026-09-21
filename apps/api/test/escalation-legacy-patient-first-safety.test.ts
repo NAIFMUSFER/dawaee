@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness } from './harness.js';
@@ -68,9 +69,9 @@ describe('legacy escalation policy safety', () => {
     const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
     const fragment = new URL(invitationLink).hash.slice(1);
     const invitationToken = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
-    const accepted = await h.app.inject({
+    const accepted = await reviewAndAcceptInvitation(options => h.app.inject(options), {
       method: 'POST',
-      url: '/v1/caregivers/accept',
+      url: '/v1/caregivers/invitations/preview',
       headers: authHeaders(caregiver),
       payload: { token: invitationToken },
     });
