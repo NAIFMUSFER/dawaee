@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, PANADOL, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
@@ -49,8 +50,8 @@ beforeAll(async () => {
   const fragment = new URL(invitationLink).hash.slice(1);
   const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
   expect(token, 'invite response did not contain a fragment token').toBeTruthy();
-  const accepted = await h.app.inject({
-    method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(caregiver), payload: { token },
+  const accepted = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+    method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(caregiver), payload: { token },
   });
   expect(accepted.statusCode, accepted.body).toBe(200);
 }, 120_000);

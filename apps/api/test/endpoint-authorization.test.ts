@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -1284,8 +1285,8 @@ describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
     ids.relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
     const token = (invite.json<{ invitationLink: string }>().invitationLink).split('/invite/')[1]!;
 
-    const accepted = await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(helper), payload: { token },
+    const accepted = await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(helper), payload: { token },
     });
     expect(accepted.statusCode, accepted.body).toBe(200);
   }, 120_000);
@@ -1679,8 +1680,8 @@ describe('P12-13 a dose id in the body must belong to the same patient', () => {
     });
     expect(invite.statusCode, invite.body).toBe(200);
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
 
     // Setup check: the caregiver really can see the dose, so the lookup will
@@ -1797,8 +1798,8 @@ describe('P12-14 a caregiver missing view_medications is told so', () => {
     });
     expect(invite.statusCode, invite.body).toBe(200);
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(narrow), payload: { token },
     })).statusCode).toBe(200);
   }, 120_000);
 
@@ -1983,8 +1984,8 @@ describe('P19-1 an image is medication identity, and needs the same permission',
     expect(invite.statusCode, invite.body).toBe(200);
     relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(narrow), payload: { token },
     })).statusCode).toBe(200);
   }, 120_000);
 

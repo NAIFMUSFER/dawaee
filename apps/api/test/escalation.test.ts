@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
 
@@ -67,8 +68,8 @@ async function acceptInvite(inviter: TestUser, invitee: TestUser, permissions: s
   const fragment = new URL(invitationLink).hash.slice(1);
   const token = fragment.startsWith('/invite/') ? fragment.slice('/invite/'.length) : fragment;
   expect(token, 'invite response did not contain a fragment token').toBeTruthy();
-  const accepted = await h.app.inject({
-    method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(invitee), payload: { token },
+  const accepted = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+    method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(invitee), payload: { token },
   });
   expect(accepted.statusCode).toBe(200);
   return invite.json().relationshipId as string;

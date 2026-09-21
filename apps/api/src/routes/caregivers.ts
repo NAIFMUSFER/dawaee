@@ -167,18 +167,15 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
     });
   });
 
+  // Installed clients that omit the reviewed grant must update before joining.
+  // Keep the authenticated routes so their failure is explicit and uniform.
+  const reviewRequired = (language: string | undefined): never => {
+    throw new AppError(ERROR_CODES.INVITATION_CHANGED, 409,
+      t(language?.startsWith('en') ? 'en' : 'ar', 'accept.reviewRequired'));
+  };
   app.post('/v1/caregivers/incoming/accept', async req => {
-    const id = requireUuid((req.body as { relationshipId?: string })?.relationshipId, 'relationshipId');
-    const { userId } = currentUser(req);
-    return withUser(userId, async tx => {
-      const { rows } = await tx.query('SELECT * FROM app.accept_email_invitation($1)', [id]);
-      const result = rows[0];
-      if (result?.outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
-      if (result?.outcome !== 'accepted') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
-      await recordAudit(tx, { actorUserId: userId, actorRole: 'caregiver', patientProfileId: result.patient_profile_id,
-        action: 'caregiver.accepted', entityType: 'caregiver_relationship', entityId: id, requestId: req.id, ipHash: req.ipHash });
-      return { accepted: true, relationshipId: id, profileId: result.patient_profile_id };
-    });
+    requireUuid((req.body as { relationshipId?: string })?.relationshipId, 'relationshipId');
+    reviewRequired(req.headers['accept-language']);
   });
 
   // The bearer belongs in the JSON body, never a URL/query/server access log.
@@ -214,43 +211,9 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
     });
   });
 
-  /**
-   * Accept an invitation. Token validation happens inside the database
-   * (`app.accept_caregiver_invitation`), which also burns the token so a link
-   * cannot be reused or shared onward.
-   */
-  app.post('/v1/caregivers/accept', async (req) => {
-    const body = acceptInvitationSchema.parse(req.body);
-    const { userId } = currentUser(req);
-
-    return withUser(userId, async (tx) => {
-      const { rows } = await tx.query<{ relationship_id: string | null; patient_profile_id: string | null; outcome: string }>(
-        'SELECT * FROM app.accept_caregiver_invitation($1, $2)',
-        [sha256(body.token), userId],
-      );
-      const outcome = rows[0]?.outcome ?? 'invalid';
-
-      if (outcome === 'verification_required') {
-        throw new AppError(ERROR_CODES.PHONE_VERIFICATION_REQUIRED, 403, 'Verify your account phone before accepting this invitation');
-      }
-      if (outcome === 'expired') throw new AppError(ERROR_CODES.INVITATION_EXPIRED, 410, 'This invitation has expired');
-      if (outcome === 'already_used') throw new AppError(ERROR_CODES.INVITATION_ALREADY_USED, 409, 'This invitation was already used');
-      if (outcome === 'self') throw AppError.badRequest(ERROR_CODES.INVITATION_INVALID, 'You cannot be your own caregiver');
-      if (outcome !== 'accepted') throw new AppError(ERROR_CODES.INVITATION_INVALID, 404, 'Invitation not found');
-
-      await recordAudit(tx, {
-        actorUserId: userId, actorRole: 'caregiver',
-        patientProfileId: rows[0]!.patient_profile_id,
-        action: 'caregiver.accepted', entityType: 'caregiver_relationship',
-        entityId: rows[0]!.relationship_id, requestId: req.id, ipHash: req.ipHash,
-      });
-
-      const { rows: profile } = await tx.query(
-        'SELECT id, display_name FROM patient_profiles WHERE id = $1',
-        [rows[0]!.patient_profile_id],
-      );
-      return { accepted: true, relationshipId: rows[0]!.relationship_id, profile: profile[0] ?? null };
-    });
+  app.post('/v1/caregivers/accept', async req => {
+    acceptInvitationSchema.parse(req.body);
+    reviewRequired(req.headers['accept-language']);
   });
 
   app.patch('/v1/caregivers/:relationshipId/permissions', async (req) => {

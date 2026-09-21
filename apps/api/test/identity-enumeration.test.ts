@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createEmailAccount, resetDatabase, startHarness, type Harness } from './harness.js';
@@ -346,8 +347,8 @@ describe('invitation states are gated behind holding the token', () => {
     const phone = newPhone();
     const acct = await makeAccount(phone);
     const token = acct.token;
-    const r = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
+    const r = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
       payload: { token: 'x'.repeat(48) },
     });
     expect(r.statusCode).toBe(404);

@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -48,12 +49,14 @@ describe('reported patient, caregiver and nurse journeys through HTTP and Postgr
     const a=await invite(caregiver,'caregiver'),b=await invite(nurse,'nurse');
     const fragment=new URL(a.invitationLink).hash.slice(1);
     const token=fragment.startsWith('/invite/')?fragment.slice('/invite/'.length):fragment;
-    const wrong=await h.app.inject({method:'POST',url:'/v1/caregivers/accept',headers:authHeaders(nurse),payload:{token}});
+    const wrong=await reviewAndAcceptInvitation(options => h.app.inject(options), {method:'POST',url: '/v1/caregivers/invitations/preview',headers:authHeaders(nurse),payload:{token}});
     expect(wrong.statusCode).toBe(404);
-    await post(caregiver,'/v1/caregivers/accept',{token});
+    const caregiverReview=await post(caregiver,'/v1/caregivers/invitations/preview',{token});
+    await post(caregiver,'/v1/caregivers/invitations/accept',{relationshipId:caregiverReview.id,role:caregiverReview.role,permissions:caregiverReview.permissions});
     const pending=await read(nurse,'/v1/caregivers/incoming');
     expect(pending.invitations.map((r:any)=>r.id)).toContain(b.relationshipId);
-    for(let i=0;i<2;i++) await post(nurse,'/v1/caregivers/incoming/accept',{relationshipId:b.relationshipId});
+    const nurseReview=await post(nurse,'/v1/caregivers/invitations/preview',{relationshipId:b.relationshipId});
+    for(let i=0;i<2;i++) await post(nurse,'/v1/caregivers/invitations/accept',{relationshipId:nurseReview.id,role:nurseReview.role,permissions:nurseReview.permissions});
     for(const helper of [caregiver,nurse]) expect((await read(helper,'/v1/profiles')).profiles).toContainEqual(expect.objectContaining({id:patient.profileId,role:'caregiver'}));
     const own=await read(patient,'/v1/profiles');
     expect(own.profiles.map((r:any)=>r.id)).not.toContain(caregiver.profileId);
