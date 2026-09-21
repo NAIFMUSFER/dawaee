@@ -21,3 +21,15 @@ was weakened or bypassed.
 
 CI/security on the published head, hosted deployment and a physical-device
 check remain required. No real patient data or hosted accounts were modified.
+# Full CI follow-up
+
+The first full CI run 35620830670 failed the CLI boundary assertion on both
+PostgreSQL versions because it still expected ten scenarios after the new
+clinical-context scenario made eleven. Updated the exact expected count; the
+external-file rejection and nonzero failure checks remain unchanged.
+
+PostgreSQL 17 also exposed two session-generation harness setup timeouts before
+their controlled request boundaries. The same suite passed on 16. Replace the
+100 immediate event-loop spin budget with a bounded two-second wait for the
+same predicate; explicit response/storage gates and all assertions remain.
+This is a harness scheduling correction, not a claimed session product fix.
