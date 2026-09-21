@@ -156,7 +156,10 @@ export const setPasswordSchema = z.object({
   newPassword: z.string().min(10).max(200),
 });
 
-export const refreshSchema = z.object({ refreshToken: z.string().min(20).max(512) });
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(20).max(512),
+  retryNonce: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
 
 export const registerPushTokenSchema = z.object({
   token: z.string().min(10).max(512),

@@ -358,7 +358,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     // to key on that an attacker does not already hold.
     await enforceAuthBudget({ ip: { scope: 'refresh:ip', value: req.ip } });
 
-    const attempt = await withTransaction((tx) => rotateSessionAttempt(tx, body.refreshToken, req.ipHash));
+    const attempt = await withTransaction((tx) => rotateSessionAttempt(tx, body.refreshToken, req.ipHash, body.retryNonce));
     const rotated = assertRotated(attempt);
     return {
       accessToken: await signAccessToken(rotated.userId, rotated.sessionId, rotated.isAdmin),

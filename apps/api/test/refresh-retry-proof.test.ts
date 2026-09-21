@@ -40,6 +40,12 @@ async function rotated() {
 const age = (id: string) => owner("UPDATE auth_sessions SET revoked_at=now()-interval '2 days' WHERE id=$1", [id]);
 
 describe('durable refresh retry capability', () => {
+  it('exposes the definer entrypoint only to the API runtime role', async () => {
+    const result = await owner(`SELECT
+      has_function_privilege('dawaee_app','app.rotate_session_retry(text,text,text,int,text)','EXECUTE') AS api,
+      has_function_privilege('dawaee_worker','app.rotate_session_retry(text,text,text,int,text)','EXECUTE') AS worker`);
+    expect(result.rows[0]).toEqual({ api: true, worker: false });
+  });
   it('returns the exact live successor after a lost response, without another row or extended expiry', async () => {
     const { user, initial, proof, child } = await rotated();
     await age(initial.sessionId);
