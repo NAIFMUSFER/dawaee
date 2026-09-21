@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Native entropy host; retain the real nonce generation and persistence path.
 vi.mock('expo-crypto', async () => {
   const { randomBytes } = await import('node:crypto');
-  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+  return { getRandomBytesAsync: vi.fn(async (size: number) => new Uint8Array(randomBytes(size))) };
 });
+import { getRandomBytesAsync } from 'expo-crypto';
 
 const h = vi.hoisted(() => ({
   disk: new Map<string, string>(),
@@ -41,6 +42,7 @@ beforeEach(async () => {
   vi.stubEnv('EXPO_PUBLIC_API_URL', 'https://audit.invalid');
   vi.stubEnv('EXPO_PUBLIC_DEMO', '0');
   h.disk.clear();
+  vi.mocked(getRandomBytesAsync).mockClear();
   h.get.mockReset().mockImplementation(async (k: string) => h.disk.get(k) ?? null);
   h.set.mockReset().mockImplementation(async (k: string, v: string) => { h.disk.set(k, v); });
   h.readSession.mockReset().mockResolvedValue(INITIAL);
@@ -62,6 +64,8 @@ describe('one persisted identity per installation, even during first-use overlap
     expect(ids[0]).toBe(h.disk.get(DEVICE_KEY));
     expect(h.get).toHaveBeenCalledTimes(1);
     expect(h.set).toHaveBeenCalledTimes(1);
+    expect(getRandomBytesAsync).toHaveBeenCalledWith(16);
+    expect(ids[0]).toMatch(/^dev-[0-9a-f]{32}$/);
   });
 
   it('a caller arriving while persistence is pending joins the existing operation', async () => {
@@ -88,6 +92,17 @@ describe('one persisted identity per installation, even during first-use overlap
     await client.storeSession(NEXT_ACCOUNT);
     expect(await client.getDeviceId()).toBe('existing-installation');
     expect(h.set).not.toHaveBeenCalled();
+    expect(getRandomBytesAsync).not.toHaveBeenCalled();
+  });
+
+  it('refuses an ephemeral fallback if native entropy fails and can retry', async () => {
+    vi.mocked(getRandomBytesAsync).mockRejectedValueOnce(new Error('native entropy unavailable'));
+    const results = await Promise.allSettled([client.getDeviceId(), client.getDeviceId()]);
+    expect(results.map(r => r.status)).toEqual(['rejected', 'rejected']);
+    expect(h.set).not.toHaveBeenCalled();
+    const id = await client.getDeviceId();
+    expect(id).toMatch(/^dev-[0-9a-f]{32}$/);
+    expect(id).toBe(h.disk.get(DEVICE_KEY));
   });
 
   it('a fresh runtime reads the same ID instead of relying on a memory-only cache', async () => {
