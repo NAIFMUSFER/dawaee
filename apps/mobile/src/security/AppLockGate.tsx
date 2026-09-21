@@ -14,6 +14,7 @@ import {
   INITIAL_LOCK_STATE,
   isLockExemptPath,
   lockReducer,
+  privacyPreviewCovered,
 } from './lock-state';
 import type { AppStatus } from './lock-state';
 import { AppLockContext, type AppLockApi } from './AppLockContext';
@@ -54,6 +55,12 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   const [verifying, setVerifying] = useState(false);
   const [failed, setFailed] = useState(false);
   const [availability, setAvailability] = useState<LocalAuthAvailability | null>(null);
+  // The task-switcher shield is a privacy control, not an app-lock feature.
+  // Keep it active whenever the OS is allowed to snapshot the app, including
+  // for signed-in patients who chose not to enable biometric locking.
+  const [previewCovered, setPreviewCovered] = useState(() =>
+    privacyPreviewCovered(toStatus(RNAppState.currentState)),
+  );
 
   /**
    * The lock protects a session. Signed out there is nothing behind it, and a
@@ -100,7 +107,9 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const sub = RNAppState.addEventListener('change', (next) => {
-      dispatch({ type: 'appStatus', status: toStatus(next), now: Date.now() });
+      const status = toStatus(next);
+      setPreviewCovered(privacyPreviewCovered(status));
+      dispatch({ type: 'appStatus', status, now: Date.now() });
     });
     return () => sub.remove();
   }, []);
@@ -151,6 +160,10 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   // audit that removed the one exemption this gate used to carry.
   const exempt = isLockExemptPath(pathname ?? '');
   const phase = exempt ? 'unlocked' : effective.phase;
+  // A background/inactive preview always wins over both an unlocked app and
+  // the interactive lock screen. The snapshot must be an opaque blank surface,
+  // never medication content or even a half-rendered unlock prompt.
+  const presentationPhase = previewCovered ? 'covered' : phase;
 
   /**
    * The per-area gate, resolved from the route in the same place as the
@@ -159,14 +172,14 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
    * inside each of the fifteen screens means a deep link, a notification, or a
    * screen added next month cannot route around it.
    */
-  const area = exempt || phase !== 'unlocked' ? null : areaForPath(pathname ?? '');
+  const area = exempt || presentationPhase !== 'unlocked' ? null : areaForPath(pathname ?? '');
   const areaLocked = area !== null && api.needsArea(area);
   // An opaque overlay is only a visual boundary. Without removing the mounted
   // route tree from accessibility, TalkBack/VoiceOver (and web AT via aria)
   // can still discover PHI underneath the lock. Keep the screen mounted to
   // preserve drafts, but make it non-existent to assistive technology while
   // either the whole-app or per-area gate is active.
-  const contentHiddenFromAccessibility = phase !== 'unlocked' || areaLocked;
+  const contentHiddenFromAccessibility = presentationPhase !== 'unlocked' || areaLocked;
 
   const verifyCurrentArea = useCallback(async () => {
     if (area === null) return;
@@ -203,7 +216,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
           content is never on screen behind a dismissible sheet — and never in
           a screenshot.
         */}
-        {phase === 'unlocked' && areaLocked ? (
+        {presentationPhase === 'unlocked' && areaLocked ? (
           <View
             accessibilityViewIsModal
             style={{
@@ -230,7 +243,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
           </View>
         ) : null}
 
-        {phase === 'unlocked' ? null : (
+        {presentationPhase === 'unlocked' ? null : (
           <View
             accessibilityViewIsModal
             importantForAccessibility="yes"
@@ -254,7 +267,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
               button in it is both useless — nobody is there to press it — and
               a hint about what the app is.
             */}
-            {phase === 'locked' ? (
+            {presentationPhase === 'locked' ? (
               <>
                 <Txt variant="h1" weight="bold" accessibilityRole="header" align="center">
                   {t('applock.lockedTitle')}
