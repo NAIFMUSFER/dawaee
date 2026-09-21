@@ -21,6 +21,11 @@ export async function materializeJob(ctx: WorkerContext, client: PoolClient): Pr
       await client.query('RELEASE SAVEPOINT materialize_schedule');
       created += result.created;
     } catch (err) {
+      // Only PostgreSQL data/constraint errors are local to a selected row.
+      // Missing privileges/schema, failed connections, timeouts and transaction
+      // failures must retain the existing fatal-job behavior.
+      const code = (err as { code?: unknown } | null)?.code;
+      if (code !== undefined && (typeof code !== 'string' || !/^(22|23)[0-9A-Z]{3}$/.test(code))) throw err;
       // SQL errors abort the transaction until rollback to the savepoint.
       // Keep this schedule's doses and horizon atomic while preserving other
       // patients' work. A failed rollback remains a fatal job error.

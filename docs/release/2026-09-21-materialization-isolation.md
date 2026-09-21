@@ -28,6 +28,14 @@ after release. On an item error, rollback to that savepoint removes all of that
 schedule's inserts and horizon changes; later schedules continue. Failed
 rollback/release is not swallowed and still aborts the outer job.
 
+PostgreSQL isolation is limited to data exceptions (SQLSTATE class 22) and
+constraint violations (class 23). Coded permission/schema, connection, timeout
+and transaction failures remain fatal. The first savepoint implementation
+caught those too; a new local privilege regression failed against it. The
+classifier restores the pre-existing native missing-privilege controls without
+changing their assertions. Uncoded JavaScript rule expansion errors remain
+item failures and are sanitized.
+
 The existing `runJob` partial-failure contract commits healthy work but records
 `succeeded = false`, the committed item count and a sanitized `failedSteps`
 entry. No patient, medication or schedule identifiers, rule content, raw error
@@ -37,8 +45,9 @@ are involved.
 
 ## Validation and limits
 
-The three PGlite cases pass after the repair: healthy 14 versus broken 0 in the
+The four PGlite cases pass after the repair: healthy 14 versus broken 0 in the
 malformed-rule case, and healthy 14 + 14 versus broken 0 after a real SQL error.
+The missing INSERT privilege case still rejects with SQLSTATE 42501.
 The separate native PostgreSQL test also requires earlier and later work to
 commit, then removes its synthetic error and requires exactly 14 newly created
 doses with no duplicates. CI must execute it on PostgreSQL 16 and 17; the local
