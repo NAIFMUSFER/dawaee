@@ -225,7 +225,19 @@ export async function cancelAllLocalNotifications(): Promise<void> {
   return withScheduleMutation(async () => {
     const N = await load();
     if (!N) return;
-    await N.cancelAllScheduledNotificationsAsync();
+    // Delivered medication text and Expo's cold-start action outlive pending
+    // schedules. Clear all three within the same mutation lease so cleanup
+    // finishes before a later account can schedule its own reminders. A native
+    // failure must not skip the other privacy cleanup operations.
+    const failures: unknown[] = [];
+    for (const clear of [
+      () => N.cancelAllScheduledNotificationsAsync(),
+      () => N.dismissAllNotificationsAsync(),
+      () => N.clearLastNotificationResponseAsync(),
+    ]) {
+      try { await clear(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw failures[0];
   });
 }
 
