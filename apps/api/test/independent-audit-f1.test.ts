@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { PoolClient } from 'pg';
 import Fastify from 'fastify';
 import { SignJWT } from 'jose';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -70,6 +70,9 @@ describe('F1: committed refresh response lost between server and installed clien
     const client = moduleAt<typeof import('../../mobile/src/api/client.js')>(root + 'api/client.ts', {
       '@react-native-async-storage/async-storage': { getItem: async () => 'audit-f1-device', setItem: async () => undefined },
       'expo-constants': {}, './access-changes.js': changes, './clinical-changes.js': clinical,
+      './refresh-nonce.js': moduleAt(root + 'api/refresh-nonce.ts', {
+        'expo-crypto': { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) },
+      }),
       './token-store.js': {
         readSession: async () => stored,
         writeSession: async (next: NonNullable<typeof stored>) => { stored = next; },

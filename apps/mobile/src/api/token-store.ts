@@ -48,6 +48,8 @@ const LEGACY_REFRESH_KEY = 'dawaee.refreshToken';
 export interface SessionTokens {
   accessToken: string;
   refreshToken: string;
+  /** Secret for a pending rotation, atomic with its predecessor token pair. */
+  retryNonce?: string;
 }
 
 /**
@@ -179,7 +181,11 @@ function parse(raw: string | null): SessionTokens | null {
     const parsed = JSON.parse(raw) as Partial<SessionTokens>;
     if (typeof parsed.accessToken !== 'string' || typeof parsed.refreshToken !== 'string') return null;
     if (!parsed.accessToken || !parsed.refreshToken) return null;
-    return { accessToken: parsed.accessToken, refreshToken: parsed.refreshToken };
+    return {
+      accessToken: parsed.accessToken, refreshToken: parsed.refreshToken,
+      ...(typeof parsed.retryNonce === 'string' && /^[0-9a-f]{64}$/.test(parsed.retryNonce)
+        ? { retryNonce: parsed.retryNonce } : {}),
+    };
   } catch {
     // A corrupt entry is a signed-out user, not a crash on launch.
     return null;

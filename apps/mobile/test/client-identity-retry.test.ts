@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Native entropy host; retain the real nonce generation and persistence path.
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
 const h = vi.hoisted(() => ({
   disk: new Map<string, string>(),
   get: vi.fn(), set: vi.fn(), readSession: vi.fn(), writeSession: vi.fn(),

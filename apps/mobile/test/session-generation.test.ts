@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-type Session = { accessToken: string; refreshToken: string };
+// Native entropy host; retain the real nonce generation and persistence path.
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
+type Session = { accessToken: string; refreshToken: string; retryNonce?: string };
 const storage = vi.hoisted(() => ({
   session: null as Session | null,
   read: null as (() => Promise<Session | null>) | null,
@@ -260,14 +266,61 @@ describe('keychain ordering is part of the session boundary', () => {
     expect(signedOut).toBe(0);
   });
 
-  it('keeps the rotated memory pair but deletes the dead persisted token on write failure', async () => {
+  it('does not send a refresh until its recovery secret is durably stored', async () => {
     storage.write = async () => { throw new Error('synthetic keychain failure'); };
     handler = async (url, init) => url.endsWith('/v1/auth/refresh') ? reply(200, A2)
       : new Headers(init.headers).get('authorization') === `Bearer ${A.accessToken}`
         ? expired() : reply(200, { ok: true });
-    await expect(client.api.get('/v1/me')).resolves.toEqual({ ok: true });
-    expect(storage.session).toBeNull();
+    await expect(client.api.get('/v1/me')).rejects.toBeInstanceOf(client.NetworkError);
+    expect(refreshCalls()).toHaveLength(0);
+    expect(storage.session).toEqual(A);
     expect(client.isSignedIn()).toBe(true);
+    expect(signedOut).toBe(0);
+  });
+
+  it('retains the precommitted proof after a successor write fails and recovers across restart', async () => {
+    storage.write = async tokens => {
+      if (tokens.refreshToken === A2.refreshToken) throw new Error('synthetic successor write failure');
+    };
+    const presented: Session[] = [];
+    handler = async (url, init) => {
+      if (url.endsWith('/v1/auth/refresh')) {
+        const body = JSON.parse(String(init.body));
+        expect(storage.session?.retryNonce).toBe(body.retryNonce);
+        presented.push(body); return reply(200, A2);
+      }
+      return new Headers(init.headers).get('authorization') === `Bearer ${A.accessToken}`
+        ? expired() : reply(200, { ok: true });
+    };
+    await expect(client.api.get('/v1/me')).rejects.toBeInstanceOf(client.NetworkError);
+    const pending = storage.session;
+    expect(pending).toEqual({ ...A, retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    storage.write = null;
+    vi.resetModules();
+    client = await import('../src/api/client.js');
+    expect(await client.loadStoredSession()).toBe(true);
+    await expect(client.api.get('/v1/me')).resolves.toEqual({ ok: true });
+    expect(presented).toHaveLength(2);
+    expect(presented[1]).toEqual(presented[0]);
+    expect(storage.session).toEqual(A2);
+    expect(signedOut).toBe(0);
+  });
+
+  it('cannot send account A proof after a switch during its secure-store write', async () => {
+    const gate = deferred<void>();
+    let writing = false;
+    storage.write = async tokens => {
+      if (tokens.retryNonce) { writing = true; await gate.promise; }
+    };
+    handler = async () => expired();
+    const old = settle(client.api.get('/v1/me'));
+    await until(() => writing);
+    const current = client.storeSession(B);
+    gate.resolve();
+    await current;
+    expect((await old).ok).toBe(false);
+    expect(refreshCalls()).toHaveLength(0);
+    expect(storage.session).toEqual(B);
     expect(signedOut).toBe(0);
   });
 });
@@ -282,7 +335,7 @@ describe('current-session and anonymous controls remain valid', () => {
       expect(result.error).toMatchObject({ status });
       expect(result.error).not.toBeInstanceOf(client.NetworkError);
     }
-    expect(storage.session).toEqual(A);
+    expect(storage.session).toEqual({ ...A, retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(signedOut).toBe(0);
   });
 
@@ -301,7 +354,7 @@ describe('current-session and anonymous controls remain valid', () => {
     const result = await settle(client.api.get('/v1/me'));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBeInstanceOf(client.NetworkError);
-    expect(storage.session).toEqual(A);
+    expect(storage.session).toEqual({ ...A, retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
     expect(signedOut).toBe(0);
   });
 

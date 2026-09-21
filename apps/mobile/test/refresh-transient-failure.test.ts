@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Native entropy host; retain the real nonce generation and persistence path.
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
 /**
  * Regression proof for transient failures on /v1/auth/refresh.
  *
@@ -80,6 +86,7 @@ describe('transient refresh failures do not destroy authentication state', () =>
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit) => {
       if (url.endsWith('/v1/auth/refresh')) return new Promise((_resolve, reject) => {
+        if (options.signal!.aborted) { reject(new Error('synthetic timeout')); return; }
         options.signal!.addEventListener('abort', () => reject(new Error('synthetic timeout')));
       });
       const payload = { error: { code: 'token_expired' } };
@@ -89,7 +96,7 @@ describe('transient refresh failures do not destroy authentication state', () =>
       const pending = client.api.get('/v1/doses').catch(error => error);
       await vi.advanceTimersByTimeAsync(15_001);
       expect(await pending).toBeInstanceOf(client.NetworkError);
-      expect(storedSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1' });
+      expect(storedSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1', retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
       expect(signedOut).toBe(0);
     } finally { vi.useRealTimers(); vi.stubGlobal('fetch', previousFetch); }
   });
@@ -99,6 +106,7 @@ describe('transient refresh failures do not destroy authentication state', () =>
 
     expect(storedSession(), '429 erased a still-valid refresh token').toEqual({
       accessToken: 'A1', refreshToken: 'R1',
+      retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(signedOut, '429 was misclassified as an authentication rejection').toBe(0);
   });
@@ -109,6 +117,7 @@ describe('transient refresh failures do not destroy authentication state', () =>
 
     expect(storedSession(), '503 erased a still-valid refresh token').toEqual({
       accessToken: 'A1', refreshToken: 'R1',
+      retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(signedOut, '503 was misclassified as an authentication rejection').toBe(0);
   });
