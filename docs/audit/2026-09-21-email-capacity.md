@@ -30,3 +30,9 @@ PGlite is a single connection and is not concurrency evidence. No real mail,
 hosted account/database write or deployment occurred. Migration 0097 and its API
 code must roll out together; deploy migrations before starting the new API.
 Provider delivery retries are bounded separately and are not extra API jobs.
+
+The native normalization fixture now expects case variants to hit the same
+recipient cooldown and leave one queued job. Its whitespace positive control
+uses a fresh address and asserts the normalized stored address. The previous
+fixture expected repeated immediate sends, which conflicts with the repaired
+cooldown. Native execution is still delegated to CI, not claimed locally.
