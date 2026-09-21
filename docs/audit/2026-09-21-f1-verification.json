@@ -87,9 +87,27 @@
   },
   "ci": {
     "runId": 35596994754,
-    "status": "pending",
-    "pg16Job": 106324006764,
-    "pg17Job": 106324006771
+    "status": "success",
+    "pg16": {
+      "jobId": 106324006764,
+      "tests": 2937,
+      "passed": 2937,
+      "skipped": 0,
+      "files": 385,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    },
+    "pg17": {
+      "jobId": 106324006771,
+      "tests": 2937,
+      "passed": 2937,
+      "skipped": 0,
+      "files": 385,
+      "rlsPerDatabase": 30,
+      "databases": 2,
+      "migrationSecondPass": "no pending migrations"
+    }
   },
   "security": {
     "runId": 35596994756,
@@ -120,7 +138,8 @@
   ],
   "integration": {
     "candidate": "audit/ios10-evidence-20260920",
-    "status": "waiting_for_full_ci",
-    "currentHead": "ebff1633dec158aa1bc07f97afab56cd7c56c33e"
-  }
+    "method": "fast-forward",
+    "head": "c555cd576ea517579d735cd6bf0ddaa612cc0946"
+  },
+  "previewBlockedBy": "N26: preview bootstrap may rotate role credentials; values not read, no secret change authorized"
 }
