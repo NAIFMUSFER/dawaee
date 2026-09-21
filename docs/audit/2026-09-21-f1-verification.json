@@ -1,0 +1,126 @@
+{
+  "finding": "F1",
+  "verdict": "confirmed",
+  "pullRequest": 34,
+  "url": "https://github.com/NAIFMUSFER/dawaee/pull/34",
+  "base": "ebff1633dec158aa1bc07f97afab56cd7c56c33e",
+  "head": "c555cd576ea517579d735cd6bf0ddaa612cc0946",
+  "commits": [
+    {
+      "local": "e1b08205624e212c87c904c8d811b1da8bd7ad7d",
+      "remote": "20c806394f863ee54fd6d1ba7971f7fa8b2d9b05",
+      "tree": "f92dc43c0c58232508b95fe69f866436eeaef168"
+    },
+    {
+      "local": "408e689bfdbee67124715255ae0d746014e699ff",
+      "remote": "a0ba167ea6cc72b3eda5768544373abc83d0fc00",
+      "tree": "2a74b03e1e576b76c03abee13c1ff63ff00d1efe"
+    },
+    {
+      "local": "2e1eeb63d3d7f0ab90c762aa012c818ce077c132",
+      "remote": "cc4a06d1eafebbcc7daed6cba702984086f78063",
+      "tree": "a806d4f61d719255682fcb57d4cdfb1bf1141563"
+    },
+    {
+      "local": "78b9fb250c648120dce1a4a3bbdd324ccf63a7dd",
+      "remote": "e4f8b042a392b2f8ea440f4301db41e2e51307b5",
+      "tree": "0dd7f7d6a9ed71a9662e8a5b330c78b59a535b1a"
+    },
+    {
+      "local": "978cbd6899e50f586fa35495cf41e159f962fc26",
+      "remote": "69597ba9564626a1651ce9eff9ad7e0197d66bb8",
+      "tree": "a788d72145121547ea47df807a68a3e931b35f83"
+    },
+    {
+      "local": "7b58ecf45252a27b8f422cd92588b5059d225647",
+      "remote": "4de077d4d5a507e91b8d0840750c179648f45b6a",
+      "tree": "93432a87a1c6bfb85cb2b0db6cbb92e4b694db6f"
+    },
+    {
+      "local": "97ed1083ab9d113543b1fd213f2f5db02d447768",
+      "remote": "c555cd576ea517579d735cd6bf0ddaa612cc0946",
+      "tree": "42c1d33eacf1ee28671fcc6fcf96aab6d5bfba47"
+    }
+  ],
+  "regressionBefore": {
+    "tests": 1,
+    "failed": 1,
+    "refreshStatuses": [
+      200,
+      409
+    ],
+    "queuedActionsRemaining": 0
+  },
+  "regressionAfter": {
+    "tests": 1,
+    "passed": 1,
+    "refreshStatuses": [
+      200,
+      200
+    ],
+    "cancellations": 0,
+    "tokenClears": 0,
+    "purgeCount": 0,
+    "destroyedKeyCount": 0,
+    "queuedActionsRemaining": 2
+  },
+  "local": {
+    "targeted": {
+      "tests": 109,
+      "files": 9,
+      "passed": 109,
+      "failed": 0
+    },
+    "eslint": "passed",
+    "serverTypecheck": "passed",
+    "mobileTypecheck": "passed",
+    "fullVitest": {
+      "status": "incomplete",
+      "reason": "Native PostgreSQL/psql absent; fixture hooks fail. Stalled local run interrupted. CI runs the complete unmodified suite on actual PostgreSQL."
+    },
+    "bootstrapPrivacy": {
+      "tests": 16,
+      "files": 1,
+      "passed": 16,
+      "failed": 0
+    }
+  },
+  "ci": {
+    "runId": 35596994754,
+    "status": "pending",
+    "pg16Job": 106324006764,
+    "pg17Job": 106324006771
+  },
+  "security": {
+    "runId": 35596994756,
+    "status": "success"
+  },
+  "preview": "not_deployed",
+  "production": "not_deployed",
+  "device": "not_tested",
+  "migration": "0096_refresh_retry_capability.sql",
+  "previousCi": [
+    {
+      "head": "69597ba9564626a1651ce9eff9ad7e0197d66bb8",
+      "runId": 35595240414,
+      "status": "failed",
+      "reason": "New test used a matcher absent from locked Vitest; replaced with equivalent count and argument assertions."
+    },
+    {
+      "head": "4de077d4d5a507e91b8d0840750c179648f45b6a",
+      "runId": 35595402056,
+      "status": "failed",
+      "tests": {
+        "total": 2937,
+        "passed": 2921,
+        "failed": 16
+      },
+      "reason": "Bootstrap VM test host did not load the new nonce module; real runtime, native concurrency and all other tests passed. Host now loads actual module with native entropy double; no assertions removed."
+    }
+  ],
+  "integration": {
+    "candidate": "audit/ios10-evidence-20260920",
+    "status": "waiting_for_full_ci",
+    "currentHead": "ebff1633dec158aa1bc07f97afab56cd7c56c33e"
+  }
+}
