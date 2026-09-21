@@ -5,6 +5,9 @@ export function cacheDose(d: DoseView): CachedSchedule['doses'][number] {
   return { id: d.id, scheduledAt: d.scheduledAt, scheduledLocalTime: d.scheduledLocalTime,
     scheduledLocalDate: d.scheduledLocalDate, scheduledTimezone: d.scheduledTimezone,
     medicationId: d.medicationId, medicationName: d.medication.name, imageKey: d.medication.imageKey,
+    medicationForm: d.medication.form, strengthValue: d.medication.strengthValue,
+    strengthUnit: d.medication.strengthUnit, instructions: d.medication.instructions,
+    medicationNotes: d.medication.notes ?? null, notes: d.notes ?? [],
     doseQuantity: d.doseQuantity, doseUnit: d.doseUnit, foodInstruction: d.medication.foodInstruction,
     status: d.status, snoozedUntil: d.snoozedUntil, confirmedAt: d.confirmedAt, thresholds: d.thresholds };
 }
@@ -25,4 +28,3 @@ export function queuedPatch(action: QueuedAction): Pick<DoseView, 'status' | 'co
   return { status: 'snoozed', confirmedAt: null,
     snoozedUntil: Number.isFinite(deadline) ? new Date(deadline).toISOString() : null };
 }
-

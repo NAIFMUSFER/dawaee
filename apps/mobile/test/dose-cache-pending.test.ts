@@ -37,4 +37,13 @@ describe('durable pending-dose display over an older online response', () => {
     expect(new Intl.DateTimeFormat('en-GB', { timeZone: cached.scheduledTimezone, hour: '2-digit', minute: '2-digit' })
       .format(new Date(cached.scheduledAt))).toBe('15:00');
   });
+  it('retains the clinical text shown at confirmation through JSON persistence', () => {
+    const notes = [{ id: 'note-a', text: 'Synthetic dose note', tags: ['nausea'], recordedAt: at }];
+    const cached = JSON.parse(JSON.stringify(cacheDose({ ...dose, notes,
+      medication: { ...dose.medication, form: 'capsule', strengthValue: 25, strengthUnit: 'mg',
+        instructions: 'Synthetic instructions', notes: 'Synthetic medication note' },
+    })));
+    expect(cached).toMatchObject({ medicationForm: 'capsule', strengthValue: 25, strengthUnit: 'mg',
+      instructions: 'Synthetic instructions', medicationNotes: 'Synthetic medication note', notes });
+  });
 });
