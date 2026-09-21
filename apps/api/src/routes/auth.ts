@@ -17,6 +17,7 @@ import { authenticate, currentUser } from '../middleware/context.js';
 import { recordAudit } from '../services/audit-service.js';
 import { clearBudget, enforceAuthBudget } from './../auth/rate-budget.js';
 import { accountEmailReady, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
+import { enqueueAccountEmail } from '../auth/email-capacity.js';
 
 export function registerAuthRoutes(app: FastifyInstance): void {
   /**
@@ -150,6 +151,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     config: { rateLimit: { max: 6, timeWindow: '10 minutes' } },
   }, async (req, reply) => {
     reply.header('Cache-Control', 'no-store');
+    // The one-step contract expected session tokens. A successful mailbox
+    // acknowledgement cannot safely satisfy that installed client contract.
+    const incoming = req.body;
+    if (incoming && typeof incoming === 'object' && !Array.isArray(incoming)
+      && ['password', 'displayName', 'phone'].some(key => Object.prototype.hasOwnProperty.call(incoming, key))) {
+      throw new AppError(ERROR_CODES.UPGRADE_REQUIRED, 426,
+        t(req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar', 'error.upgrade_required'));
+    }
     if (!passwordLoginEnabled() || !accountEmailReady()) {
       throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Account email is unavailable');
     }
@@ -168,15 +177,18 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       ip: { scope: 'register:ip', value: req.ip },
       identifier: { scope: 'register:identifier', value: email },
     });
+    await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:recipient', value: email } });
+    await enforceAuthBudget({ identifier: { scope: 'email:hour', value: email } });
     const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
     const payload = await sealEmailJob({ email, token: secret, purpose: 'register', locale: body.locale });
-    await withTransaction(tx => tx.query(
+    await withTransaction(tx => enqueueAccountEmail(tx, tokenHash, () => tx.query(
       'SELECT app.request_email_registration($1,$2,$3,$4)',
-      [email, emailTokenHash(secret), body.locale, payload],
-    ));
+      [email, tokenHash, body.locale, payload],
+    )));
 
-    // Identical for an existing or available address. No account, password or
-    // session exists until the mailbox holder completes the emailed form.
+    // Identical for an existing or available address, including when provider
+    // capacity is full. A capacity-dependent status would expose existence.
     return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
   });
 
@@ -358,7 +370,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     // to key on that an attacker does not already hold.
     await enforceAuthBudget({ ip: { scope: 'refresh:ip', value: req.ip } });
 
-    const attempt = await withTransaction((tx) => rotateSessionAttempt(tx, body.refreshToken, req.ipHash));
+    const attempt = await withTransaction((tx) => rotateSessionAttempt(tx, body.refreshToken, req.ipHash, body.retryNonce));
     const rotated = assertRotated(attempt);
     return {
       accessToken: await signAccessToken(rotated.userId, rotated.sessionId, rotated.isAdmin),

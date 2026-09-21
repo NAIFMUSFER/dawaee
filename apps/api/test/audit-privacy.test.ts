@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { redactUrl } from '../src/lib/logger.js';
@@ -285,8 +286,8 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
     const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
     const token = invitationLink.split('/invite/')[1]!;
     expect(token, 'invite response did not contain a fragment token').toBeTruthy();
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
 
     const doses = await send({

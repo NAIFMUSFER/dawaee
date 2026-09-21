@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createEmailAccount, resetDatabase, startHarness, type Harness } from './harness.js';
@@ -90,8 +91,11 @@ describe('sign-in tells nobody which accounts exist', () => {
 
   it('an email that exists and one that never did are the same answer', async () => {
     const phone = newPhone();
-    await makeAccount(phone, `enum-${n}@example.com`);
-    const known = probe(await login(`enum-${n - 1}@example.com`, 'not the right password'));
+    const email = `enum-${n}@example.com`;
+    const account = await makeAccount(phone, email);
+    expect((await owner.query('SELECT id FROM users WHERE email=$1', [email])).rows).toEqual([{ id: account.userId }]);
+    expect((await login(email, PW)).statusCode).toBe(200);
+    const known = probe(await login(email, 'not the right password'));
     const unknown = probe(await login('definitely-nobody@example.com', 'not the right password'));
     expect(known).toEqual(unknown);
   });
@@ -293,21 +297,25 @@ describe('one phone number is one identity however it is written', () => {
     const local = '0598765432';
     const international = '+966598765432';
     const first = await register({ phone: local, displayName: 'N1', password: PW, locale: 'ar', deviceId: `norm-a-${Date.now() % 100000}` });
-    expect(first.statusCode).toBe(202);
+    expect(first.statusCode).toBe(426);
     const second = await register({ phone: international, displayName: 'N2', password: PW, locale: 'ar', deviceId: `norm-b-${Date.now() % 100000}` });
-    expect(second.statusCode, 'a typed but unproved number was reserved by registration').toBe(202);
+    expect(second.statusCode, 'a typed but unproved number was reserved by registration').toBe(426);
     const rows = await owner.query<{ phone_e164: string | null }>(
       "SELECT phone_e164 FROM users WHERE email IN ('auth-0598765432@example.test','auth-966598765432@example.test') ORDER BY email",
     );
     expect(rows.rows).toEqual([]);
   });
 
-  it('email case does not create a second account', async () => {
-    const first = await register({ email: 'Case.Test@Example.COM', displayName: 'E1', password: PW, locale: 'ar', deviceId: `mail-a-${Date.now() % 100000}` });
+  it('email case shares the recipient cooldown without creating another queued job', async () => {
+    const first = await register({ email: 'Case.Test@Example.COM', locale: 'ar', deviceId: `mail-a-${Date.now() % 100000}` });
     expect(first.statusCode).toBe(202);
-    const second = await register({ email: 'case.test@example.com', displayName: 'E2', password: PW, locale: 'ar', deviceId: `mail-b-${Date.now() % 100000}` });
-    expect(second.statusCode, 'letter case disclosed whether a request already existed').toBe(202);
-    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email='case.test@example.com'")).rows).toHaveLength(2);
+    // Pin this synthetic cooldown across a possible fixed-window minute seam.
+    await owner.query(`INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+      SELECT scope,key_hash,window_start+interval '60 seconds',count FROM auth_rate_buckets WHERE scope='email:recipient'
+      ON CONFLICT(scope,key_hash,window_start) DO NOTHING`);
+    const second = await register({ email: 'case.test@example.com', locale: 'ar', deviceId: `mail-b-${Date.now() % 100000}` });
+    expect(second.statusCode, 'case variants bypassed the same recipient cooldown').toBe(429);
+    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email='case.test@example.com'")).rows).toHaveLength(1);
   });
 
   /**
@@ -316,8 +324,9 @@ describe('one phone number is one identity however it is written', () => {
    * so the same value could log in but could not register.
    */
   it('a pasted address with surrounding whitespace is the same account, not a rejection', async () => {
-    const padded = await register({ email: '  case.test@example.com  ', displayName: 'E3', password: PW, locale: 'ar', deviceId: `mail-c-${Date.now() % 100000}` });
+    const padded = await register({ email: '  fresh.pasted@example.com  ', locale: 'ar', deviceId: `mail-c-${Date.now() % 100000}` });
     expect(padded.statusCode, 'whitespace was rejected instead of trimmed').toBe(202);
+    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email='fresh.pasted@example.com'")).rows).toEqual([{ email: 'fresh.pasted@example.com' }]);
   });
 
   it('registration and sign-in agree on the spelling of an address', async () => {
@@ -330,8 +339,8 @@ describe('one phone number is one identity however it is written', () => {
   });
 
   it('plus-addressing stays distinct, because it identifies a different mailbox owner', async () => {
-    const a = await register({ email: 'plus@example.com', displayName: 'P1', password: PW, locale: 'ar', deviceId: `plus-a-${Date.now() % 100000}` });
-    const b = await register({ email: 'plus+tag@example.com', displayName: 'P2', password: PW, locale: 'ar', deviceId: `plus-b-${Date.now() % 100000}` });
+    const a = await register({ email: 'plus@example.com', locale: 'ar', deviceId: `plus-a-${Date.now() % 100000}` });
+    const b = await register({ email: 'plus+tag@example.com', locale: 'ar', deviceId: `plus-b-${Date.now() % 100000}` });
     expect(a.statusCode).toBe(202);
     // Collapsing these would let one person seize an address they do not own.
     expect(b.statusCode).toBe(202);
@@ -346,8 +355,8 @@ describe('invitation states are gated behind holding the token', () => {
     const phone = newPhone();
     const acct = await makeAccount(phone);
     const token = acct.token;
-    const r = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
+    const r = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
       payload: { token: 'x'.repeat(48) },
     });
     expect(r.statusCode).toBe(404);

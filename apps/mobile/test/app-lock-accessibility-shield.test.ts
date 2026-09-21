@@ -6,9 +6,9 @@ const ROOT = resolve(import.meta.dirname, '../../..');
 const gate = readFileSync(resolve(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
 
 describe('App Lock assistive-technology boundary', () => {
-  it('hides the mounted route tree for both whole-app and per-area locks', () => {
+  it('hides the mounted route tree for preview, whole-app and per-area locks', () => {
     expect(gate).toContain(
-      "const contentHiddenFromAccessibility = phase !== 'unlocked' || areaLocked;",
+      "const contentHiddenFromAccessibility = presentationPhase !== 'unlocked' || areaLocked;",
     );
   });
 

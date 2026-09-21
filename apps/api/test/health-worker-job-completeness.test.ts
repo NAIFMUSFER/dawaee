@@ -2,13 +2,17 @@ import Fastify from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const COMMIT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const h = vi.hoisted(() => ({ query: vi.fn(), env: 'production', workerRequired: false }));
+const h = vi.hoisted(() => ({ query: vi.fn(), env: 'production', workerRequired: false, emailConfigured: true }));
 vi.mock('../src/lib/db.js', () => ({ getPool: () => ({ query: h.query }) }));
 vi.mock('../src/lib/schema-contract.js', () => ({
   requiredSchemaRevision: () => '0049_caregiver_digest_permission_revocation.sql',
   checkSchemaContract: vi.fn(async () => ({ ok: true, revision: '0049_caregiver_digest_permission_revocation.sql', missing: [], mismatched: [] })),
 }));
-vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: h.env, WORKER_READINESS_REQUIRED: h.workerRequired }) }));
+vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: h.env, WORKER_READINESS_REQUIRED: h.workerRequired,
+  ACCOUNT_EMAIL_PROVIDER: 'resend', ACCOUNT_EMAIL_SENDER_VERIFIED: h.emailConfigured,
+  RESEND_API_KEY: 'synthetic-readiness-key', ACCOUNT_EMAIL_FROM: 'accounts@example.test',
+  ACCOUNT_EMAIL_BASE_URL: 'https://accounts.example.test',
+}) }));
 import { registerHealthRoutes } from '../src/routes/health.js';
 
 let app: ReturnType<typeof Fastify>;
@@ -48,10 +52,12 @@ describe('production readiness covers reminders and account erasure', () => {
   beforeEach(() => {
     h.env = 'production';
     h.workerRequired = false;
+    h.emailConfigured = true;
     workerRows = [
       { job_name: 'materialize', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'reminders', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'dispatch', started_at: new Date(), succeeded: true, build_commit: COMMIT },
+      { job_name: 'push-receipts', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'mark-missed', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'stock-alerts', started_at: new Date(), succeeded: true, build_commit: COMMIT },
       { job_name: 'digests', started_at: new Date(), succeeded: true, build_commit: COMMIT },
@@ -60,7 +66,7 @@ describe('production readiness covers reminders and account erasure', () => {
   });
   afterAll(async () => { vi.unstubAllEnvs(); await app.close(); });
 
-  it.each(['materialize', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'])(
+  it.each(['materialize', 'reminders', 'dispatch', 'push-receipts', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'])(
     'returns 503 when %s is the only failed prerequisite',
     async (jobName) => {
       workerRows = workerRows.map((row) => row.job_name === jobName ? { ...row, succeeded: false } : row);
@@ -69,6 +75,26 @@ describe('production readiness covers reminders and account erasure', () => {
       expectPublicWorkerFailure(response.body);
     },
   );
+
+  it.each(['missing', 'stale', 'mismatched'] as const)('rejects %s receipt tracking even when all other jobs succeed', async kind => {
+    workerRows = kind === 'missing' ? workerRows.filter(row => row.job_name !== 'push-receipts')
+      : workerRows.map(row => row.job_name !== 'push-receipts' ? row : {
+        ...row,
+        ...(kind === 'stale' ? { started_at: new Date(Date.now() - 181_000) } : { build_commit: 'b'.repeat(40) }),
+      });
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expectPublicWorkerFailure(response.body);
+  });
+
+  it('does not report ready when mandatory account email is unconfigured, while liveness remains healthy', async () => {
+    h.emailConfigured = false;
+    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().failedChecks).toEqual(['accountEmail']);
+    for (const value of ['synthetic-readiness-key', 'accounts@example.test', 'resend']) expect(response.body).not.toContain(value);
+    expect((await app.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+  });
 
   it('does not report ready when cleanup has never run after a worker restart', async () => {
     workerRows = workerRows.filter(row => row.job_name !== 'housekeeping');

@@ -115,7 +115,7 @@ PW='SmokeTest!Pass123'
 request_registration() {
   curl -sS -o /tmp/smoke-reg.json -w '%{http_code}' -X POST "$BASE/v1/auth/register" \
     -H 'content-type: application/json' -H "x-forwarded-for: $(ip)" \
-    -d "{\"email\":\"$1\",\"displayName\":\"smoke\",\"password\":\"$PW\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
+    -d "{\"email\":\"$1\",\"locale\":\"ar\",\"deviceId\":\"smoke-device-$2\"}"
 }
 
 complete_registration() {

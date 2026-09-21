@@ -111,6 +111,19 @@ services:
         sync: false
       - key: OTP_DEBUG_ECHO
         value: ""
+      # Account registration/recovery are mandatory email flows. Supply the
+      # existing verified sender and origin per environment; never commit a key
+      # or overwrite live configuration during a later Blueprint sync.
+      - key: ACCOUNT_EMAIL_PROVIDER
+        sync: false
+      - key: ACCOUNT_EMAIL_SENDER_VERIFIED
+        sync: false
+      - key: ACCOUNT_EMAIL_FROM
+        sync: false
+      - key: ACCOUNT_EMAIL_BASE_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
       # --- providers: leave unset to keep the recording mocks ---
       - key: PUSH_PROVIDER
         sync: false

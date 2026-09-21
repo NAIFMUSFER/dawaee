@@ -2,6 +2,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
 /**
  * Session tokens, which used to sit in AsyncStorage.
  *
@@ -269,18 +274,17 @@ describe('the pair is written and read as one value', () => {
   });
 
   /**
-   * If persisting a rotated pair fails, whatever is on disk still names the
-   * refresh token the server just invalidated. Leaving it produces a launch
-   * days later that 401s and signs the user out for no visible reason; the
-   * client clears instead, so the next launch is a clean sign-in.
+   * The pending proof makes the old pair recoverable. A failed successor
+   * write must retain that complete pair/proof, never persist a half-pair,
+   * and never use the successor until its durable write succeeds.
    */
-  it('clears storage when a rotated pair cannot be persisted', async () => {
+  it('retains only the recoverable pair when a rotated pair cannot be persisted', async () => {
     const client = await import('../src/api/client.js');
     await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
-    secureFails = 'write';
     const sentAuthorizations: Array<string | null> = [];
     vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
       const refresh = String(url).endsWith('/v1/auth/refresh');
+      if (refresh) secureFails = 'write'; // Proof was persisted before HTTP.
       const authorization = new Headers(init.headers).get('authorization');
       if (!refresh) sentAuthorizations.push(authorization);
       const expired = !refresh && authorization === 'Bearer A1';
@@ -292,14 +296,15 @@ describe('the pair is written and read as one value', () => {
       });
     });
     try {
-      await expect(client.api.get('/v1/me')).resolves.toEqual({ ok: true });
-      expect(sentAuthorizations).toEqual(['Bearer A1', 'Bearer A2']);
-      // Actual client recovery must remove R1, not merely contain a call with
-      // a particular spelling. The successful rotation still works in memory.
+      await expect(client.api.get('/v1/me')).rejects.toBeInstanceOf(client.NetworkError);
+      expect(sentAuthorizations).toEqual(['Bearer A1']);
       expect(client.isSignedIn()).toBe(true);
-      expect(secure.size).toBe(0);
+      expect(secure.size).toBe(1);
+      expect(await store.readSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1',
+        retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
       expect([...async_.keys()]).toEqual([]);
-      expect(await store.readSession()).toBeNull();
+      expect(await client.loadStoredSession()).toBe(true);
+      expect(client.isSignedIn()).toBe(true);
     } finally {
       secureFails = 'no';
       await client.clearSession();
@@ -309,20 +314,21 @@ describe('the pair is written and read as one value', () => {
 });
 
 /**
- * The rotation failure boundary, end to end.
+ * Explicit cleanup of a legacy rotation without an independent retry proof.
  *
  * The server revokes the presented token INSIDE the rotation — migration 0011,
  * `app.rotate_session`: `UPDATE auth_sessions SET revoked_at = now(),
  * replaced_by = new_id WHERE id = s.id`. So by the time R2 reaches the client,
  * R1 is already dead. Worse than dead: presenting R1 again takes the
  * `revoked_at IS NOT NULL` branch, which returns `reuse_detected` and revokes
- * EVERY session on that device. Restoring R1 after a failed write would
+ * its replacement lineage. Restoring R1 alone after a failed write would
  * therefore not merely fail to authenticate — it would sign the user out of
  * every session they have on that phone and record a theft event.
  *
- * So a failed write of R2 must leave nothing behind that names R1.
+ * These tests retain the explicit-clear contract for an unrecoverable legacy
+ * pair. The opt-in durable-proof path is exercised through the client above.
  */
-describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
+describe('explicit cleanup of a legacy rotation without a durable retry proof', () => {
   it('destroys the stored R1 rather than keeping it', async () => {
     // The client is holding R1, persisted from an earlier sign-in.
     await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
@@ -332,7 +338,7 @@ describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
     secureFails = 'write';
     await expect(store.writeSession({ accessToken: 'A2', refreshToken: 'R2' })).rejects.toThrow();
 
-    // This is the client's recovery, exactly as client.ts performs it.
+    // Legacy rotations without a retry proof still require explicit cleanup.
     secureFails = 'no';
     await store.clearStoredSession();
 
@@ -363,6 +369,16 @@ describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
     expect(fn).toContain('UPDATE auth_sessions SET revoked_at = now(), replaced_by = new_id');
     // ...and that replaying it is treated as theft, not as a retry.
     expect(fn).toContain("'reuse_detected'");
+  });
+});
+
+describe('the pending refresh proof survives secure storage and restart', () => {
+  it('reads the complete atomic pair and proof without a plaintext copy', async () => {
+    const pending = { accessToken: 'A1', refreshToken: 'R1', retryNonce: 'ab'.repeat(32) };
+    await store.writeSession(pending);
+    expect(await store.readSession()).toEqual(pending);
+    expect([...async_.values()].join('')).not.toContain(pending.retryNonce);
+    expect(optionsSeen.every(option => (option.options as { keychainAccessible?: unknown })?.keychainAccessible === AFU_DEVICE_ONLY)).toBe(true);
   });
 });
 

@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   authHeaders, resetDatabase, signIn, startHarness,
@@ -45,9 +46,9 @@ describe('caregiver invitation phone binding', () => {
     // The invitation is addressed to `intended.phone`. Possession of a copied
     // or forwarded bearer link must not let another authenticated account bind
     // itself as the caregiver.
-    const stolen = await h.app.inject({
+    const stolen = await reviewAndAcceptInvitation(options => h.app.inject(options), {
       method: 'POST',
-      url: '/v1/caregivers/accept',
+      url: '/v1/caregivers/invitations/preview',
       headers: authHeaders(attacker),
       payload: { token },
     });
@@ -57,18 +58,18 @@ describe('caregiver invitation phone binding', () => {
     // A wrong-account attempt must not consume the capability. The account
     // whose verified application identity carries the invited phone can still
     // redeem the exact same token once.
-    const accepted = await h.app.inject({
+    const accepted = await reviewAndAcceptInvitation(options => h.app.inject(options), {
       method: 'POST',
-      url: '/v1/caregivers/accept',
+      url: '/v1/caregivers/invitations/preview',
       headers: authHeaders(intended),
       payload: { token },
     });
     expect(accepted.statusCode, accepted.body).toBe(200);
     expect(accepted.json<{ accepted: boolean }>().accepted).toBe(true);
 
-    const replay = await h.app.inject({
+    const replay = await reviewAndAcceptInvitation(options => h.app.inject(options), {
       method: 'POST',
-      url: '/v1/caregivers/accept',
+      url: '/v1/caregivers/invitations/preview',
       headers: authHeaders(intended),
       payload: { token },
     });

@@ -39,7 +39,7 @@ describe('native modal content follows the same app/area privacy gate', () => {
       expect(readFileSync(file, 'utf8'), file).not.toMatch(/import\s*\{[^}]*\bModal\b[^}]*\}\s*from ['"]react-native['"]/);
     }
     const gate = readFileSync(resolve('apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
-    expect(gate).toContain('const contentHiddenFromAccessibility = phase !== \'unlocked\' || areaLocked;');
+    expect(gate).toContain('const contentHiddenFromAccessibility = presentationPhase !== \'unlocked\' || areaLocked;');
     expect(gate).toContain('contentBlocked: contentHiddenFromAccessibility');
   });
 });

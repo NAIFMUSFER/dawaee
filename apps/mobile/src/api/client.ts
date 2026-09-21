@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import type { ErrorCode } from '@dawaee/shared';
 import { clearStoredSession, readSession, writeSession } from './token-store.js';
+import { createRefreshNonce } from './refresh-nonce.js';
 
 /**
  * API client.
@@ -181,6 +182,7 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
+let retryNonce: string | undefined;
 let refreshInFlight: { generation: number; promise: Promise<RefreshResult> } | null = null;
 // Changes only at explicit session boundaries, not on same-session rotation.
 let sessionGeneration = 0;
@@ -222,6 +224,7 @@ export async function loadStoredSession(): Promise<boolean> {
   if (generation !== sessionGeneration) return false;
   accessToken = stored?.accessToken ?? null;
   refreshToken = stored?.refreshToken ?? null;
+  retryNonce = stored?.retryNonce;
   return stored !== null;
 }
 
@@ -238,6 +241,7 @@ export async function storeSession(tokens: { accessToken: string; refreshToken: 
   const snapshot = { ...tokens };
   accessToken = snapshot.accessToken;
   refreshToken = snapshot.refreshToken;
+  retryNonce = undefined;
   await withSessionStorage(async () => {
     requireSession(generation);
     await writeSession(snapshot);
@@ -249,6 +253,7 @@ export async function clearSession(): Promise<void> {
   advanceSession();
   accessToken = null;
   refreshToken = null;
+  retryNonce = undefined;
   // Run after any already-started write, so it cannot resurrect credentials.
   await withSessionStorage(clearStoredSession);
 }
@@ -335,10 +340,25 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
+      const proof = await withSessionStorage(async () => {
+        requireSession(generation);
+        const stored = await readSession();
+        requireSession(generation);
+        // Do not overwrite another runtime's already-persisted successor.
+        // Retain the established 409/adopt path for that legacy race.
+        if (stored && stored.refreshToken !== presented) return undefined;
+        const pendingNonce = retryNonce ?? stored?.retryNonce ?? await createRefreshNonce();
+        requireSession(generation);
+        await writeSession({ accessToken: accessToken!, refreshToken: presented, retryNonce: pendingNonce });
+        requireSession(generation);
+        retryNonce = pendingNonce;
+        return pendingNonce;
+      });
+      requireSession(generation);
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: presented }),
+        body: JSON.stringify({ refreshToken: presented, retryNonce: proof }),
         signal: controller.signal,
       });
       requireSession(generation);
@@ -351,6 +371,7 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
           if (stored && stored.refreshToken !== presented) {
             accessToken = stored.accessToken;
             refreshToken = stored.refreshToken;
+            retryNonce = stored.retryNonce;
             return 'ok';
           }
           await rejectSession(generation);
@@ -366,9 +387,6 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
       requireSession(generation);
-      // This is a rotation, not a new account. Preserve the shared generation.
-      accessToken = body.accessToken;
-      refreshToken = body.refreshToken;
       try {
         await withSessionStorage(async () => {
           requireSession(generation);
@@ -376,6 +394,10 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
         });
       } catch {
         requireSession(generation);
+        // The old pair plus its precommitted nonce can recover this exact
+        // successor after restart. Keep it and do not rotate the successor
+        // again until persistence succeeds. No stale token is used alone.
+        if (proof) return 'offline';
         // A failed keychain write must not leave the now-dead presented token
         // behind. This run keeps the new memory pair. Check again inside the
         // storage lock so cleanup can never delete a later login's tokens.
@@ -385,6 +407,11 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
         }).catch(() => undefined);
       }
       requireSession(generation);
+      // Commit memory only after the durable pair is ready. Preserve the
+      // generation so concurrent requests still share this rotation.
+      accessToken = body.accessToken;
+      refreshToken = body.refreshToken;
+      retryNonce = undefined;
       return 'ok';
     } catch (err) {
       if (err instanceof ApiError) throw err;

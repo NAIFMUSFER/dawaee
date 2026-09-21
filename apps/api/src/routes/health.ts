@@ -4,6 +4,7 @@ import { checkSchemaContract, requiredSchemaRevision } from '../lib/schema-contr
 import { assessWorkerHeartbeat, runtimeCommit } from '../lib/deployment-coherence.js';
 import { loadConfig } from '../config.js';
 import type { Providers } from '../providers/index.js';
+import { accountEmailReady } from '../providers/account-email.js';
 
 export function buildIdentity(): { commit: string; version: string; builtAt: string; schema: string } {
   let schema = 'unknown';
@@ -29,7 +30,7 @@ export function assessIntegrationReadiness(providers: Providers, isProduction: b
     : { ok: false, detail: `unavailable or non-production providers: ${mockedIntegrations.join(', ')}` } };
 }
 
-const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'] as const;
+const REQUIRED_WORKER_JOBS = ['materialize', 'reminders', 'dispatch', 'push-receipts', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'] as const;
 
 export function registerHealthRoutes(app: FastifyInstance, providers: Providers): void {
   app.get('/health', async () => ({ status: 'ok', service: 'dawaee-api', time: new Date().toISOString() }));
@@ -73,13 +74,19 @@ export function registerHealthRoutes(app: FastifyInstance, providers: Providers)
           if (!result.ok) failures.push(`${jobName}: ${result.detail ?? 'unhealthy'}`);
         }
         checks.worker = failures.length === 0
-          ? { ok: true, detail: 'materialize, reminders, dispatch, mark-missed, stock-alerts, digests, and housekeeping healthy' }
+          ? { ok: true, detail: 'materialize, reminders, dispatch, push-receipts, mark-missed, stock-alerts, digests, and housekeeping healthy' }
           : { ok: false, detail: failures.join('; ') };
       } catch { checks.worker = { ok: false, detail: 'unverifiable' }; }
     }
 
     const integrationReadiness = assessIntegrationReadiness(providers, cfg.NODE_ENV === 'production');
-    if (cfg.NODE_ENV === 'production') checks.integrations = integrationReadiness.check;
+    if (cfg.NODE_ENV === 'production') {
+      checks.integrations = integrationReadiness.check;
+      // Registration and recovery refuse requests when this mandatory provider
+      // is incomplete. Check configuration only: no mail or provider request
+      // is sent by readiness, and /health remains process liveness.
+      checks.accountEmail = { ok: accountEmailReady(cfg) };
+    }
     const failedChecks = Object.entries(checks).filter(([, check]) => !check.ok).map(([name]) => name);
     const healthy = failedChecks.length === 0;
     const time = new Date().toISOString();

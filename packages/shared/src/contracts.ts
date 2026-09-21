@@ -117,9 +117,9 @@ export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
     email: emailInput,
-    // Kept optional for installed clients that still send the old one-step
-    // shape.  They are never trusted or stored: the mailbox holder chooses
-    // both values on the emailed, one-time registration page.
+    // Retained in the shared type for older callers. The HTTP route explicitly
+    // refuses this one-step shape with upgrade_required before any work.
+    // The mailbox holder chooses these values on the registration page.
     displayName: z.string().min(1).max(120).optional(),
     password: z.string().min(10).max(200).optional(),
     locale: z.enum(LOCALES).default('ar'),
@@ -156,7 +156,10 @@ export const setPasswordSchema = z.object({
   newPassword: z.string().min(10).max(200),
 });
 
-export const refreshSchema = z.object({ refreshToken: z.string().min(20).max(512) });
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(20).max(512),
+  retryNonce: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
 
 export const registerPushTokenSchema = z.object({
   token: z.string().min(10).max(512),

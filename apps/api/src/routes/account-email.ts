@@ -12,6 +12,7 @@ import { recordAudit } from '../services/audit-service.js';
 import { accountEmailReady, drainAccountEmails, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
 import { auditAccountEmailDeliveryAllowed } from '../providers/audit-account-email.js';
 import { registerAccountEmailPage } from './account-email-page.js';
+import { enqueueAccountEmail } from '../auth/email-capacity.js';
 
 const email = z.string().trim().toLowerCase().email().max(320);
 const requestSchema = z.object({ email }).strict();
@@ -42,13 +43,15 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
     await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:account', value: userId } });
     await enforceAuthBudget({ identifier: { scope: 'email:recipient', value: body.email } });
     await enforceAuthBudget({ identifier: { scope: 'email:hour', value: body.email } });
-    await enforceAuthBudget({ identifier: { scope: 'email:global', value: 'account-email' } });
     const { rows } = await withTransaction(tx => tx.query<{ password_hash: string | null }>('SELECT app.password_hash_for_user($1) AS password_hash', [userId]));
     const hash = rows[0]?.password_hash;
     if (!hash || !await verifyPassword(body.currentPassword, hash)) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Incorrect current password');
     const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
     const payload = await sealEmailJob({ email: body.email, token: secret, purpose: 'verify', locale: req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar' });
-    const result = await withUser(userId, tx => tx.query<{ accepted: boolean }>('SELECT app.request_email_verification($1,$2,$3,$4,$5,$6) AS accepted', [userId, sessionId, body.email, emailTokenHash(secret), hash, payload]));
+    const capacity = await withUser(userId, tx => enqueueAccountEmail(tx, tokenHash, () => tx.query<{ accepted: boolean }>('SELECT app.request_email_verification($1,$2,$3,$4,$5,$6) AS accepted', [userId, sessionId, body.email, tokenHash, hash, payload])));
+    if (capacity.limited) throw new AppError(ERROR_CODES.RATE_LIMITED, 429, 'Too many attempts. Please try again later.', { meta: { retryAfterSeconds: capacity.retryAfterSeconds } });
+    const result = capacity.result;
     if (!result.rows[0]?.accepted) throw new AppError(ERROR_CODES.CONFLICT, 409, 'Unable to verify this email');
     return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
   });
@@ -57,10 +60,11 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
     const body = requestSchema.parse(req.body);
     await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:recipient', value: body.email } });
     await enforceAuthBudget({ identifier: { scope: 'email:hour', value: body.email } });
-    await enforceAuthBudget({ identifier: { scope: 'email:global', value: 'account-email' } });
     const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
     const payload = await sealEmailJob({ email: body.email, token: secret, purpose: 'reset', locale: req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar' });
-    await withTransaction(tx => tx.query('SELECT app.request_email_recovery($1,$2,$3)', [body.email, emailTokenHash(secret), payload]));
+    await withTransaction(tx => enqueueAccountEmail(tx, tokenHash, () => tx.query('SELECT app.request_email_recovery($1,$2,$3)', [body.email, tokenHash, payload])));
+    // Preserve the same response for unknown recipients and exhausted capacity.
     return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
   });
   app.post('/v1/auth/email/complete', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {

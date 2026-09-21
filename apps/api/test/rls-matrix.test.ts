@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeaders, resetDatabase, signIn, startHarness, type Harness, type TestUser } from './harness.js';
@@ -191,8 +192,8 @@ async function inviteAndAccept(
   const token = (invite.json().invitationLink as string).split('/invite/')[1]!;
   expect(token, `no token in invite response: ${invite.body}`).toBeTruthy();
 
-  const accept = await h.app.inject({
-    method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(invitee),
+  const accept = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+    method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(invitee),
     payload: { token },
   });
   expect(accept.statusCode, `accept: ${accept.body}`).toBe(200);
@@ -700,8 +701,8 @@ describe('caregiver invitations', () => {
    */
   it('a spent invitation cannot be redeemed a second time', async () => {
     const { token } = await inviteAndAccept(bob, carol, ['view_medications'], 5);
-    const again = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(dave),
+    const again = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(dave),
       payload: { token },
     });
     expect(again.statusCode, 'a spent invitation was redeemed twice').not.toBe(200);
@@ -723,8 +724,8 @@ describe('caregiver invitations', () => {
     await ownerPool.query(
       "UPDATE caregiver_relationships SET invitation_expires_at = now() - interval '1 day' WHERE status='pending'",
     );
-    const accept = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(dave),
+    const accept = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(dave),
       payload: { token },
     });
     expect(accept.statusCode, 'an expired invitation was accepted').not.toBe(200);

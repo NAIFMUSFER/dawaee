@@ -62,6 +62,19 @@ const KEY_PREFIX = 'dawaee.cacheKey.v1.';
  */
 export const KEY_VERSION = 1;
 
+// Serialize key lifecycle operations per account. Do not cache key bytes: each
+// operation still checks SecureStore, and failures cannot poison a later try.
+const keyOperations = new Map<string, Promise<void>>();
+function orderedKeyOperation<T>(name: string, operation: () => Promise<T>): Promise<T> {
+  const previous = keyOperations.get(name) ?? Promise.resolve();
+  const result = previous.then(operation);
+  const tail = result.then(() => undefined, () => undefined);
+  keyOperations.set(name, tail);
+  void tail.then(() => { if (keyOperations.get(name) === tail) keyOperations.delete(name); });
+  return result;
+}
+
+
 interface SecureStoreModule {
   getItemAsync: (key: string, options?: object) => Promise<string | null>;
   setItemAsync: (key: string, value: string, options?: object) => Promise<void>;
@@ -116,33 +129,35 @@ export async function getOrCreateCacheKey(userId: string): Promise<Uint8Array | 
   const store = secureStore();
   if (!store) return null;
   const name = keyNameFor(userId);
-  const opts = accessOptions(store);
+  return orderedKeyOperation(name, async () => {
+    const opts = accessOptions(store);
 
-  let existing: string | null = null;
-  try {
-    existing = await store.getItemAsync(name, opts);
-  } catch {
-    // Keystore invalidated (passcode or biometric enrolment changed), or the
-    // entry is unreadable. Do NOT mint a replacement here: that would silently
-    // orphan every existing ciphertext and look identical to a first run. The
-    // caller decides, and `resetCacheKey` is the deliberate way to do it.
-    throw new CacheKeyUnavailable('unreadable');
-  }
+    let existing: string | null = null;
+    try {
+      existing = await store.getItemAsync(name, opts);
+    } catch {
+      // Keystore invalidated (passcode or biometric enrolment changed), or the
+      // entry is unreadable. Do NOT mint a replacement here: that would silently
+      // orphan every existing ciphertext and look identical to a first run. The
+      // caller decides, and `resetCacheKey` is the deliberate way to do it.
+      throw new CacheKeyUnavailable('unreadable');
+    }
 
-  if (existing) {
-    const bytes = fromBase64(existing);
-    if (bytes.length === KEY_BYTES) return bytes;
-    // A wrong-sized key is not usable and not repairable.
-    throw new CacheKeyUnavailable('malformed');
-  }
+    if (existing) {
+      const bytes = fromBase64(existing);
+      if (bytes.length === KEY_BYTES) return bytes;
+      // A wrong-sized key is not usable and not repairable.
+      throw new CacheKeyUnavailable('malformed');
+    }
 
-  const fresh = generateKey();
-  try {
-    await store.setItemAsync(name, toBase64(fresh), opts);
-  } catch {
-    throw new CacheKeyUnavailable('write failed');
-  }
-  return fresh;
+    const fresh = generateKey();
+    try {
+      await store.setItemAsync(name, toBase64(fresh), opts);
+    } catch {
+      throw new CacheKeyUnavailable('write failed');
+    }
+    return fresh;
+  });
 }
 
 /** The key if one exists, without creating one. */
@@ -150,10 +165,13 @@ export async function peekCacheKey(userId: string): Promise<Uint8Array | null> {
   const store = secureStore();
   if (!store) return null;
   try {
-    const raw = await store.getItemAsync(keyNameFor(userId), accessOptions(store));
-    if (!raw) return null;
-    const bytes = fromBase64(raw);
-    return bytes.length === KEY_BYTES ? bytes : null;
+    const name = keyNameFor(userId);
+    return await orderedKeyOperation(name, async () => {
+      const raw = await store.getItemAsync(name, accessOptions(store));
+      if (!raw) return null;
+      const bytes = fromBase64(raw);
+      return bytes.length === KEY_BYTES ? bytes : null;
+    });
   } catch {
     return null;
   }
@@ -172,7 +190,8 @@ export async function peekCacheKey(userId: string): Promise<Uint8Array | null> {
 export async function destroyCacheKey(userId: string): Promise<void> {
   const store = secureStore();
   if (!store) return;
-  await store.deleteItemAsync(keyNameFor(userId), accessOptions(store)).catch(() => undefined);
+  const name = keyNameFor(userId);
+  await orderedKeyOperation(name, () => store.deleteItemAsync(name, accessOptions(store)).catch(() => undefined));
 }
 
 /**
@@ -188,14 +207,17 @@ export async function destroyCacheKey(userId: string): Promise<void> {
  * which is documented rather than hidden.
  */
 export async function resetCacheKey(userId: string): Promise<Uint8Array | null> {
-  await destroyCacheKey(userId);
   const store = secureStore();
   if (!store) return null;
-  const fresh = generateKey();
-  try {
-    await store.setItemAsync(keyNameFor(userId), toBase64(fresh), accessOptions(store));
-  } catch {
-    throw new CacheKeyUnavailable('write failed');
-  }
-  return fresh;
+  const name = keyNameFor(userId);
+  return orderedKeyOperation(name, async () => {
+    await store.deleteItemAsync(name, accessOptions(store)).catch(() => undefined);
+    const fresh = generateKey();
+    try {
+      await store.setItemAsync(name, toBase64(fresh), accessOptions(store));
+    } catch {
+      throw new CacheKeyUnavailable('write failed');
+    }
+    return fresh;
+  });
 }

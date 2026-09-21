@@ -142,7 +142,9 @@ export async function readSlot(slot: CacheSlot, userId: string): Promise<string 
   // succeed but produced something unopenable would otherwise take the
   // plaintext with it.
   try {
-    const verified = open(JSON.parse(envelope), key, KEY_VERSION);
+    const persisted = await AsyncStorage.getItem(name);
+    if (persisted === null) return plaintext;
+    const verified = open(JSON.parse(persisted), key, KEY_VERSION);
     if (verified !== plaintext) return plaintext;
   } catch {
     return plaintext;

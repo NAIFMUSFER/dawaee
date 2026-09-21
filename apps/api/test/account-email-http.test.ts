@@ -3,7 +3,8 @@ import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@dawaee/shared';
 import { ZodError } from 'zod';
-const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), recoveredBudget: vi.fn(), audit: vi.fn(), ready: true }));
+const io = vi.hoisted(() => ({ query: vi.fn(), budget: vi.fn(), password: vi.fn(), hash: vi.fn(), recoveredBudget: vi.fn(), audit: vi.fn(), ready: true, limited: false }));
+vi.mock('../src/auth/email-capacity.js', () => ({ enqueueAccountEmail: async (_tx: unknown, _hash: string, enqueue: () => Promise<unknown>) => ({ result: await enqueue(), limited: io.limited, retryAfterSeconds: 60 }) }));
 vi.mock('../src/lib/db.js', () => ({ withTransaction: (fn: any) => fn({ query: io.query }), withUser: (_id: string, fn: any) => fn({ query: io.query }) }));
 vi.mock('../src/middleware/context.js', () => ({
   authenticate: async (req: any) => { if (req.headers.authorization !== 'Bearer synthetic') throw AppError.unauthenticated(); req.auth = { userId: 'owner', sessionId: 'session' }; },
@@ -22,7 +23,7 @@ import { registerAccountEmailRoutes } from '../src/routes/account-email.js';
 import { EMAIL_ACTION_SCRIPT } from '../src/routes/account-email-page.js';
 let app: ReturnType<typeof Fastify>;
 beforeEach(async () => {
-  vi.clearAllMocks(); io.ready = true; io.password.mockResolvedValue(true); io.hash.mockResolvedValue('hashed-password');
+  vi.clearAllMocks(); io.ready = true; io.limited = false; io.password.mockResolvedValue(true); io.hash.mockResolvedValue('hashed-password');
   io.query.mockResolvedValue({ rows: [] }); io.budget.mockResolvedValue(undefined);
   app = Fastify();
   app.setErrorHandler((err, _req, reply) => reply.code(err instanceof ZodError ? 400 : (err as any).statusCode ?? (err as any).status ?? 500).send({ error: 'request rejected' }));
@@ -45,6 +46,12 @@ describe('email route boundary (SQL separately tested with PostgreSQL)', () => {
     }
     expect((await request('/v1/auth/email/complete', { token: 'a'.repeat(43), purpose: 'invite' })).statusCode).toBe(400);
     expect(io.query).not.toHaveBeenCalled();
+  });
+  it('keeps anonymous capacity refusal opaque but informs an authenticated email owner', async () => {
+    io.limited = true;
+    expect((await request('/v1/auth/password/recovery/request', { email: 'a@example.com' })).json()).toEqual({ accepted: true, retryAfterSeconds: 60 });
+    io.query.mockResolvedValueOnce({ rows: [{ password_hash: 'stored-hash' }] }).mockResolvedValueOnce({ rows: [{ accepted: true }] });
+    expect((await request('/v1/auth/email/request', { email: 'a@example.com', currentPassword: 'current' }, true)).statusCode).toBe(429);
   });
   it('fails closed when sending is unavailable or budget is exhausted', async () => {
     io.ready = false; expect((await request('/v1/auth/password/recovery/request', { email: 'a@example.com' })).statusCode).toBe(503);

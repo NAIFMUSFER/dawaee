@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Native entropy host; retain the real nonce generation and persistence path.
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
 /**
  * A refresh rotates a bearer credential asynchronously. If the person signs
  * out — or signs into a different account — while that network request is in

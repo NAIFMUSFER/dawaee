@@ -31,11 +31,11 @@ function withExternalSource(check: (source: string) => void): void {
 }
 
 describe('offline Today CLI never evaluates caller-selected files', () => {
-  it('runs all ten checked-in scenarios without depending on the current directory', () => {
+  it('runs all eleven checked-in scenarios without depending on the current directory', () => {
     const result = invoke([]);
     assert.equal(result.error, undefined);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /"total":10,"passed":10,"failed":0/);
+    assert.match(result.stdout, /"total":11,"passed":11,"failed":0/);
   });
 
   it('rejects an external screen path before reading or evaluating its source', () => {

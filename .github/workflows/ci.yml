@@ -2,7 +2,9 @@ name: CI
 
 on:
   push: { branches: [main, 'prepare/ios-testflight-20260917'] }
-  pull_request: { branches: [main, 'prepare/ios-testflight-20260917'] }
+  # Candidate branches require the same gates as main. Branch/path filters
+  # can otherwise leave an exact release commit with no verification at all.
+  pull_request:
 
 # Read-only by default, at the top level, so a job that needs more has to say
 # so. Without this block a workflow inherits whatever the repository default

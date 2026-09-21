@@ -30,6 +30,17 @@ export type LockPhase = 'unlocked' | 'locked' | 'covered';
 /** The OS-reported foreground state, narrowed to what the rule cares about. */
 export type AppStatus = 'active' | 'inactive' | 'background';
 
+/**
+ * Whether the operating system may capture a task-switcher/Recents preview.
+ *
+ * This privacy boundary is deliberately independent of the optional biometric
+ * app lock. A patient who leaves app lock off still must not have medication
+ * names, notes, or history photographed into the system app switcher.
+ */
+export function privacyPreviewCovered(status: AppStatus): boolean {
+  return status !== 'active';
+}
+
 export interface LockState {
   /** The lock is configured on AND there is a session worth protecting. */
   enabled: boolean;
