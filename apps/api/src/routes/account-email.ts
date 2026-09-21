@@ -108,7 +108,8 @@ export function registerAccountEmailRoutes(app: FastifyInstance): void {
     if (!accountEmailReady(cfg) || (cfg.NODE_ENV === 'test' && !auditAccountEmailDeliveryAllowed(cfg))) return;
     const tick = () => {
       if (inflight) return;
-      inflight = drainAccountEmails().catch(() => app.log.warn('Account email delivery temporarily unavailable'))
+      inflight = drainAccountEmails(undefined, diagnostic => app.log.warn(diagnostic, 'Account email delivery failed'))
+        .catch(() => app.log.warn('Account email delivery temporarily unavailable'))
         .finally(() => { inflight = null; });
     };
     timer = setInterval(tick, 5000); timer.unref(); tick();

@@ -51,4 +51,25 @@ describe('account email provider', () => {
       await expect(sendAccountEmail(mail, 'key', request as typeof fetch)).rejects.toThrow('Account email unavailable');
     }
   });
+  it.each([[429, 'rate_limited'], [503, 'provider_unavailable'], [403, 'provider_rejected']] as const)(
+    'classifies HTTP %s without retaining the provider body', async (status, code) => {
+      const response = new Response(`private ${mail.email} ${mail.token}`, { status });
+      const read = vi.spyOn(response, 'text');
+      const error = await sendAccountEmail(mail, 'private-key', async () => response).catch(e => e);
+      expect(error).toMatchObject({ message: 'Account email unavailable', code });
+      expect(JSON.stringify(error)).not.toMatch(/patient@|private-key|private /);
+      expect(read).not.toHaveBeenCalled();
+    });
+  it.each(['{}', 'null', 'not-json'])('classifies a malformed accepted response: %s', async body => {
+    await expect(sendAccountEmail(mail, 'key', async () => new Response(body)))
+      .rejects.toMatchObject({ code: 'invalid_response', message: 'Account email unavailable' });
+  });
+  it('distinguishes timeout and network failures without retaining their cause', async () => {
+    for (const [name, code] of [['TimeoutError', 'timeout'], ['TypeError', 'network']]) {
+      const error = new Error(`${mail.email} ${mail.token}`); error.name = name!;
+      const failure = await sendAccountEmail(mail, 'key', async () => { throw error; }).catch(e => e);
+      expect(failure.code).toBe(code); expect(failure.cause).toBeUndefined();
+      expect(failure.stack).not.toContain(mail.token);
+    }
+  });
 });

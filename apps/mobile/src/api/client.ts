@@ -289,7 +289,11 @@ export function getDeviceId(): Promise<string> {
   const promise = Promise.resolve().then(async () => {
     let id = await AsyncStorage.getItem(DEVICE_KEY);
     if (!id) {
-      id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      // Preserve every installed ID. Only new installations need entropy;
+      // never downgrade to a timestamp or Math.random if the OS RNG fails.
+      const { getRandomBytesAsync } = await import('expo-crypto');
+      const bytes = await getRandomBytesAsync(16);
+      id = `dev-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
       await AsyncStorage.setItem(DEVICE_KEY, id);
     }
     return id;

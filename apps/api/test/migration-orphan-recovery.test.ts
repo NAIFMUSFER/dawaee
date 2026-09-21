@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resetDatabase } from './harness.js';
@@ -14,8 +15,21 @@ const databases: string[] = [];
 
 beforeAll(() => resetDatabase(), 120_000);
 afterAll(async () => {
-  for (const database of databases) await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
-  await admin.end();
+  try {
+    for (const database of databases) {
+      // All fixture pools have been closed. PostgreSQL may still be releasing
+      // their backends; wait for that instead of FORCE, which can attempt to
+      // terminate a backend this deliberately restricted owner cannot signal.
+      // Never grant pg_signal_backend or swallow a permission/other SQL error.
+      for (let attempt = 0; ; attempt++) {
+        try { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); break; }
+        catch (error) {
+          if ((error as { code?: string }).code !== '55006' || attempt >= 39) throw error;
+          await delay(125);
+        }
+      }
+    }
+  } finally { await admin.end(); }
 });
 
 async function fixture(withData: boolean) {
@@ -25,9 +39,11 @@ async function fixture(withData: boolean) {
   const url = new URL(base);
   url.pathname = `/${database}`;
   const pool = new pg.Pool({ connectionString: url.toString(), max: 1 });
-  await pool.query('CREATE SCHEMA app; CREATE TABLE public.orphan_probe(id integer)');
-  if (withData) await pool.query('INSERT INTO orphan_probe VALUES(7)');
-  return { pool, url: url.toString() };
+  try {
+    await pool.query('CREATE SCHEMA app; CREATE TABLE public.orphan_probe(id integer)');
+    if (withData) await pool.query('INSERT INTO orphan_probe VALUES(7)');
+    return { pool, url: url.toString() };
+  } catch (error) { await pool.end(); throw error; }
 }
 
 function migrate(url: string) {
