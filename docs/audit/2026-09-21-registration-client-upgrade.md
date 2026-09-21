@@ -29,3 +29,12 @@ Validation on Node 22.23.2:
 
 This change builds on F5 capacity repair (PR42). No deployment, account write in
 hosted environments or actual email delivery occurred.
+
+Full CI follow-up: run 35624664749 reached the managed-Postgres smoke gate,
+which still sent the legacy one-step payload and correctly received 426. Its
+request now uses email/locale/device metadata; mailbox completion still sets the
+name and password through the real completion endpoint. The gate and its 202,
+no-preproof-identity, verified-credential and RLS assertions are retained. Shell
+syntax validation passed locally; native smoke execution awaits CI. The legacy
+registration in release-runtime-recovery intentionally targets its recorded
+old API fixture and must stay unchanged.
