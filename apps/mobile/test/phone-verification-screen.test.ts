@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const require = createRequire(import.meta.url);
 const { createHarness } = require('./profile-screen-harness.cjs');
 const setups: any[] = [];
-function screen(supported = true) {
+function screen(supported = true, props = {}) {
   let deliver: (proof: string) => Promise<void>;
   const cancel = vi.fn();
   const start = vi.fn(async (_phone: string, onProof: typeof deliver) => {
@@ -14,6 +14,7 @@ function screen(supported = true) {
   });
   const h = createHarness(resolve('apps/mobile/src/components/PhoneVerification.tsx'),
     resolve('apps/mobile/src/hooks/useRequestScope.ts'), {}, {
+      __props: props,
       '@/security/phone-proof': { phoneVerificationSupported: supported, startPhoneProof: start },
     });
   setups.push(h);
@@ -27,6 +28,23 @@ function screen(supported = true) {
 afterEach(() => { for (const h of setups.splice(0)) h.unmount(); });
 
 describe('phone verification screen', () => {
+  it('uses the registration phone and login password without asking for either again, and requires SMS proof before linking', async () => {
+    const onVerified = vi.fn();
+    const { h, start, reply } = screen(true, { initialPhone: '+966500001234', initialPassword: 'synthetic-password', onVerified });
+    await reply({ phone: null, verified: false });
+    expect(h.find('Field', (p: any) => p.label === 'invite.phone').value).toBe('+966500001234');
+    expect(h.find('Field', (p: any) => p.label === 'auth.password')).toBeNull();
+    expect(start).not.toHaveBeenCalled();
+    h.find('Button', (p: any) => p.label === 'phoneVerification.send').onPress(); await h.flush();
+    expect(h.find('Field', (p: any) => p.label === 'invite.phone').editable).toBe(false);
+    h.find('Field', (p: any) => p.label === 'phoneVerification.code').onChangeText('123456'); await h.flush();
+    h.find('Button', (p: any) => p.label === 'phoneVerification.confirm').onPress(); await h.flush();
+    expect(h.batch()[0].payload).toEqual({ idToken: 'synthetic-id-token', currentPassword: 'synthetic-password' });
+    expect(onVerified).not.toHaveBeenCalled();
+    h.app.refreshProfiles.mockRejectedValueOnce(new Error('offline after verified link'));
+    await reply({ linked: true, verified: true });
+    expect(h.text()).toContain('phoneVerification.verified'); expect(onVerified).toHaveBeenCalledTimes(1);
+  });
   it('sends a code only after an explicit action and to the server account phone', async () => {
     const { h, start, reply } = screen();
     await reply({ phone: '+966500092202', verified: false });

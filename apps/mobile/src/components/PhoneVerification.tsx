@@ -6,26 +6,18 @@ import { useRequestScope } from '@/hooks/useRequestScope';
 import { phoneVerificationSupported, startPhoneProof, type PhoneChallenge } from '@/security/phone-proof';
 import { useApp } from '@/state/app-store';
 import { normalizeDigits } from '@dawaee/shared';
+import { phoneForProof } from '@/security/phone-number';
 import { phoneProofErrorKey } from '@/security/phone-proof-errors';
 
-/** Match the API's Saudi-default normalization before asking Firebase to send. */
-function phoneForProof(raw: string): string | null {
-  let value = normalizeDigits(raw).replace(/[\s()\-.]/g, '');
-  if (!/^\+?\d+$/.test(value)) return null;
-  if (value.startsWith('00')) value = `+${value.slice(2)}`;
-  if (value.startsWith('+')) return /^\+[1-9]\d{7,14}$/.test(value) ? value : null;
-  if (value.startsWith('966')) value = `+${value}`;
-  else if (value.startsWith('0')) value = `+966${value.slice(1)}`;
-  else if (value.length >= 8) value = `+966${value}`;
-  return /^\+[1-9]\d{7,14}$/.test(value) ? value : null;
-}
-
-export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
+export function PhoneVerification({ onVerified, initialPhone = '', initialPassword = '' }: {
+  onVerified?: () => void; initialPhone?: string; initialPassword?: string;
+}) {
   const { t } = useI18n();
   const { user, refreshProfiles } = useApp();
   const { begin, capture } = useRequestScope(user?.id ?? '');
-  const [newPhone, setNewPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [newPhone, setNewPhone] = useState(initialPhone);
+  const [password, setPassword] = useState(initialPassword);
+  const [reusePassword, setReusePassword] = useState(Boolean(initialPassword));
   const [phone, setPhone] = useState<string | null>(null);
   const [verified, setVerified] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -66,14 +58,18 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
           if (!current()) return;
           if (!phone) {
             setPhone(targetPhone); setPassword(''); setNewPhone('');
-            await refreshProfiles();
-            if (!current()) return;
           }
           completed.current = true; setVerified(true); setSent(false); setCode('');
+          // A failed profile refresh cannot undo a verified server-side link.
+          await refreshProfiles().catch(() => undefined);
+          if (!current()) return;
           onVerified?.();
         } catch (err) {
           if (current()) {
             setSent(false);
+            if (err instanceof ApiError && err.code === 'invalid_credentials') {
+              setPassword(''); setReusePassword(false);
+            }
             setError(t(!phone && err instanceof ApiError && err.code === 'invalid_credentials'
               ? 'auth.currentPasswordWrong' : !phone ? 'phoneVerification.linkFailed' : 'phoneVerification.failed'));
           }
@@ -110,8 +106,8 @@ export function PhoneVerification({ onVerified }: { onVerified?: () => void }) {
     {!loaded ? <Button label={t('common.retry')} onPress={() => void load()} /> : !phone && !phoneVerificationSupported ?
       <Txt>{t('phoneVerification.androidRequired')}</Txt> : !phone ? <>
       <Txt>{t('phoneVerification.noPhone')}</Txt>
-      <Field label={t('invite.phone')} value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" maxLength={20} />
-      <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" />
+      <Field label={t('invite.phone')} value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" maxLength={20} editable={!busy && !sent} />
+      {!reusePassword ? <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy && !sent} /> : null}
       {sent ? <>
         <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}
           keyboardType="number-pad" textContentType="oneTimeCode" maxLength={6} autoComplete="sms-otp" />

@@ -9,6 +9,9 @@ import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
 import { waitForAuthServer } from '@/api/auth-connection';
 import { landingAfterAuth } from '@/storage/pending-invite';
+import { readRegistrationPhone, clearRegistrationPhone } from '@/storage/registration-phone';
+import { PhoneVerification } from '@/components/PhoneVerification';
+import { phoneVerificationSupported } from '@/security/phone-proof';
 
 interface AuthTokens {
   accessToken: string;
@@ -25,15 +28,27 @@ interface AuthTokens {
 export default function SignInScreen() {
   const { t } = useI18n();
   const theme = useTheme();
-  const { signInWithTokens } = useApp();
+  const { signInWithTokens, user, signedIn } = useApp();
+  const account = useRef(user?.id);
+  account.current = user?.id;
 
   const [identifier, setIdentifier] = useState('');
+  const [loginKind, setLoginKind] = useState<'email' | 'phone'>('email');
   const [password, setPassword] = useState('');
   const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [phoneStep, setPhoneStep] = useState<{ phone: string; email: string; userId: string } | null>(null);
   const action = useRef<AbortController | null>(null);
-  useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => {
+    mounted.current = false; action.current?.abort(); action.current = null;
+  }; }, []);
+  useEffect(() => {
+    if (phoneStep && (!signedIn || user?.id !== phoneStep.userId)) {
+      setPhoneStep(null); setPassword('');
+    }
+  }, [phoneStep, signedIn, user?.id]);
 
   const submit = async () => {
     if (action.current) return;
@@ -59,8 +74,26 @@ export default function SignInScreen() {
       // ever read it back, so they landed on Today and the invitation sat in
       // storage forever — the care circle could not be formed at all.
       if (!current()) return;
+      const draft = phoneVerificationSupported ? await readRegistrationPhone(identifier) : null;
+      if (!current()) return;
+      if (draft && account.current) {
+        const owner = account.current;
+        // Verify the server account before showing a saved contact on a shared
+        // device. Password stays only in this mounted sign-in component.
+        const identity = await api.get<{ email: string | null; verified: boolean }>('/v1/auth/email');
+        if (!current() || account.current !== owner) return;
+        if (identity.verified && identity.email?.toLowerCase() === draft.email) {
+          const status = await api.get<{ phone: string | null; verified: boolean }>('/v1/auth/phone-verification');
+          if (!current() || account.current !== owner) return;
+          if (!status.phone || (status.phone === draft.phone && !status.verified)) {
+            setPhoneStep({ phone: draft.phone, email: draft.email, userId: owner });
+            return;
+          }
+          await clearRegistrationPhone(draft.email);
+        }
+      }
       const landing = await landingAfterAuth();
-      if (current()) router.replace(landing);
+      if (current()) { setPassword(''); router.replace(landing); }
     } catch (err) {
       if (!current()) return;
       if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) setError(t('auth.connectionFailed'));
@@ -73,6 +106,20 @@ export default function SignInScreen() {
 
   const ready = identifier.trim().length >= 3 && password.length > 0;
 
+  const finishPhone = async () => {
+    if (!phoneStep || account.current !== phoneStep.userId) return;
+    const owner = phoneStep.userId;
+    await clearRegistrationPhone(phoneStep.email).catch(() => undefined);
+    const landing = await landingAfterAuth();
+    if (mounted.current && account.current === owner) { setPassword(''); setPhoneStep(null); router.replace(landing); }
+  };
+
+  if (phoneStep && signedIn && user?.id === phoneStep.userId) return <SafeAreaView style={{ flex: 1 }}><Screen>
+    <Txt variant="h1" weight="bold">{t('auth.completeRegistrationPhone')}</Txt>
+    <PhoneVerification key={user.id} initialPhone={phoneStep.phone} initialPassword={password}
+      onVerified={() => void finishPhone()} />
+  </Screen></SafeAreaView>;
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <Screen>
@@ -81,12 +128,18 @@ export default function SignInScreen() {
           <Txt variant="body" color={theme.colors.ink500}>{t('safety.notMedicalAdvice')}</Txt>
         </View>
 
+        <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+          <Button label={t('emailAccount.email')} tone={loginKind === 'email' ? 'primary' : 'secondary'}
+            fullWidth={false} disabled={busy} onPress={() => setLoginKind('email')} />
+          <Button label={t('invite.phone')} tone={loginKind === 'phone' ? 'primary' : 'secondary'}
+            fullWidth={false} disabled={busy} onPress={() => setLoginKind('phone')} />
+        </View>
         <Field
           label={t('auth.identifier')}
           value={identifier}
           onChangeText={setIdentifier}
           placeholder={t('auth.identifierHint')}
-          keyboardType="email-address"
+          keyboardType={loginKind === 'phone' ? 'phone-pad' : 'email-address'}
           autoCapitalize="none"
           autoCorrect={false}
           maxLength={320}
