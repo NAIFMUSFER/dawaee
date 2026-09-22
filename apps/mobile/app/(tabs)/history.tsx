@@ -285,7 +285,8 @@ function HistoryProfileScreen() {
         to: formatDate(dateIso(range.to), timezone),
       });
     }
-    return formatDate(dateIso(range.from), timezone, { day: undefined, month: 'long', year: 'numeric' });
+    // The grid and API range use Gregorian months, even when detail dates use Umm al-Qura.
+    return formatDate(dateIso(range.from), timezone, { calendar: 'gregory', day: undefined, month: 'long', year: 'numeric' });
   }, [mode, anchor, range.from, range.to, dateIso, formatDate, timezone, t]);
 
   if (!activeProfile) {
