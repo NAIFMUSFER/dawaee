@@ -2,7 +2,8 @@
 # Disposable CI emulator only. Never connects to a real phone or production API.
 set -euo pipefail
 test "${GITHUB_ACTIONS:-}" = true
-test "${EXPO_PUBLIC_API_URL:-}" = https://dawaee-audit-preview.onrender.com
+test "${DAWAEE_DEVICE_CI:-}" = 1
+test "${EXPO_PUBLIC_API_URL:-}" = http://127.0.0.1:8080
 mkdir -p android-interaction-evidence
 git rev-parse HEAD > android-interaction-evidence/app-commit.txt
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
@@ -27,5 +28,6 @@ echo 'PASS emulator booted; beginning native interaction'
 adb shell input keyevent 82
 adb shell settings put secure show_ime_with_hard_keyboard 1
 timeout 90 adb install "$APK"
+adb reverse tcp:8080 tcp:8080
 python3 scripts/android-interaction/check.py
 python3 scripts/android-interaction/dose_check.py

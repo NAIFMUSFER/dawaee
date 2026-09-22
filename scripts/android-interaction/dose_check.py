@@ -45,8 +45,7 @@ def scenario(case, tracked):
     identity = uuid.uuid4().hex
     email = "native-dose-" + identity + "@example.invalid"
     password = secrets.token_hex(20) + "A9"
-    tokens = ui.api("/v1/auth/register", {"email": email, "password": password,
-        "displayName": "SyntheticDose", "locale": "ar", "deviceId": "ci-" + identity})
+    tokens = ui.create_account(email, password, "SyntheticDose", "ci-" + identity)
     token = tokens["accessToken"]
     profile = ui.api("/v1/profiles", token=token)["profiles"][0]
     today_path = "/v1/today?profileId=" + profile["id"]
@@ -64,7 +63,7 @@ def scenario(case, tracked):
     medication = ui.api("/v1/medications", payload, token=token)["medication"]
     stock_path = "/v1/medications/" + medication["id"] + "/stock"
     launch()
-    ui.tap("العربية")
+    ui.choose_start_language(case)
     ui.fill("رقم الجوال أو البريد الإلكتروني", email)
     ui.fill("كلمة المرور", password)
     ui.tap("دخول")

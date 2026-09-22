@@ -20,12 +20,15 @@ function dose(id, minutes = 30) {
 }
 function loadModule(file, platform = 'ios') {
   const state = {
+    actionCalls: 0, actionIntents: [], action: async () => null, listener: null,
     active: [], presented: ['synthetic-medication'], lastResponse: 'synthetic-old-account-action',
     dismissals: 0, responseClears: 0, dismiss: null, clearResponse: null,
     scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
     pushPosts: [], textInputs: [], tokenReads: 0, tokenGate: null, notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
   };
   const native = {
+    addNotificationResponseReceivedListener: fn => { state.listener = fn; return { remove: () => { state.listener = null; } }; },
+    getLastNotificationResponseAsync: async () => state.lastResponse,
     setNotificationHandler: handler => { state.foregroundHandler = handler; },
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
@@ -68,7 +71,7 @@ function loadModule(file, platform = 'ios') {
     },
     '../api/client.js': { api: { post: async (path, body) => { state.pushPosts.push({ path, body }); } }, isSignedIn: () => state.signedIn },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
-    './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
+    './actions.js': { createNotificationActionIntent: () => ({ clientEventId: 'intent-' + state.actionCalls, at: '2026-09-22T00:00:00Z' }), ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async (...args) => { state.actionCalls++; state.actionIntents.push(args[3]); return state.action(...args); } },
     'expo-notifications': native,
     '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id),
       readQueue: async () => [], applyQueuedToCache: cache => cache },
@@ -336,6 +339,34 @@ function scenarios(file) {
     assert.equal(await api.syncPushRegistration('device'), true);
     assert.equal(api.getPushRegistrationStatus(), 'registered');
     api.resetPushRegistrationStatus(); assert.equal(api.getPushRegistrationStatus(), 'unknown');
+  });
+  const response = () => ({ actionIdentifier: 'TAKEN', notification: { date: 123,
+    request: { identifier: 'synthetic-action', content: { data: { doseId: 'synthetic-dose' } } } } });
+  add('rejected notification actions remain available and can be retried', async (api, state) => {
+    state.lastResponse = response();
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: false, rejected: true });
+    const stop = await api.startNotificationActionListener(); await flush();
+    assert.equal(state.responseClears, 0);
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: true });
+    state.listener(response()); await flush();
+    assert.equal(state.actionCalls, 2); assert.equal(state.responseClears, 1);
+    assert.equal(state.actionIntents[0], state.actionIntents[1]); stop();
+  });
+  add('unexpected notification action failure releases only its in-flight reservation', async (api, state) => {
+    state.lastResponse = response(); state.action = async () => { throw new Error('synthetic'); };
+    const stop = await api.startNotificationActionListener(); await flush();
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: true });
+    state.listener(response()); await flush();
+    assert.equal(state.actionCalls, 2); assert.equal(state.responseClears, 1);
+    assert.equal(state.actionIntents[0], state.actionIntents[1]); stop();
+  });
+  add('concurrent notification copies dispatch once and accepted queued actions are consumed', async (api, state) => {
+    state.lastResponse = null; const gate = deferred(); state.action = () => gate.promise;
+    const stop = await api.startNotificationActionListener(); await flush();
+    state.lastResponse = response(); state.listener(response()); state.listener(response());
+    await until(() => state.actionCalls === 1);
+    gate.resolve({ action: 'taken', doseId: 'synthetic-dose', synced: false }); await flush();
+    state.listener(response()); await flush(); assert.equal(state.actionCalls, 1); assert.equal(state.responseClears, 1); stop();
   });
   return cases;
 }

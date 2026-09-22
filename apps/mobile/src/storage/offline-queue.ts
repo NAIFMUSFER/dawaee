@@ -76,6 +76,13 @@ function isCurrentOwner(owner: QueueOwner): boolean {
   return owner.userId === currentUserId && owner.generation === ownerGeneration;
 }
 
+/** Fence delayed network fallbacks to the initiating account/session, while
+ * allowing navigation between that account's patient profiles. */
+export function captureQueueOwnership(): () => boolean {
+  const owner = captureOwner();
+  return () => owner !== null && isCurrentOwner(owner);
+}
+
 function requireCurrentOwner(owner: QueueOwner): void {
   if (!isCurrentOwner(owner)) throw new QueuePersistFailed('account changed');
 }

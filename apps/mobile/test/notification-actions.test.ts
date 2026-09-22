@@ -123,6 +123,17 @@ describe('a tap on the reminder', () => {
     expect(enqueue.mock.calls[0]?.[0]).toMatchObject({ at: post.mock.calls[0]?.[1].actionAt, clientEventId: post.mock.calls[0]?.[1].clientEventId });
   });
 
+  it('retains the supplied operation identity and time across a retry', async () => {
+    const intent = { clientEventId: 'same-operation', at: '2026-09-22T08:00:00Z' };
+    post.mockRejectedValueOnce(new NetworkError('lost reply'));
+    enqueue.mockRejectedValueOnce(new Error('journal unavailable'));
+    await applyNotificationAction('SNOOZE', DOSE, () => true, intent);
+    await applyNotificationAction('SNOOZE', DOSE, () => true, intent);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[0]?.[1]).toEqual(post.mock.calls[1]?.[1]);
+    expect(post.mock.calls[1]?.[1]).toMatchObject({ clientEventId: intent.clientEventId, actionAt: intent.at });
+  });
+
   it('ignores a notification that names no dose, and any other action', async () => {
     expect(await applyNotificationAction('TAKEN', { kind: 'low_stock' })).toBeNull();
     expect(await applyNotificationAction('SOMETHING_ELSE', DOSE)).toBeNull();

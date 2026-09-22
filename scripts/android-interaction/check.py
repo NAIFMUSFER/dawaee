@@ -15,7 +15,8 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-BASE = "https://dawaee-audit-preview.onrender.com"
+assert os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("DAWAEE_DEVICE_CI") == "1"
+BASE = "http://127.0.0.1:8080"
 PACKAGE = "app.dawaee.audit"
 OUT = Path("android-interaction-evidence")
 RESULTS = []
@@ -49,6 +50,14 @@ def api(path, body=None, token=None):
             return json.load(response)
     except urllib.error.HTTPError as error:
         raise AssertionError("API HTTP " + str(error.code) + " at " + path.split("?")[0]) from None
+
+
+def create_account(email, password, name, device):
+    seeded = subprocess.run(["node", "--import", "tsx", "scripts/android-interaction/fixture.mts", "seed"],
+        input=json.dumps({"email": email, "password": password, "displayName": name}),
+        text=True, capture_output=True, timeout=30)
+    assert seeded.returncode == 0, "disposable fixture creation failed (details withheld)"
+    return api("/v1/auth/login", {"identifier": email, "password": password, "deviceId": device})
 
 
 def tree():
@@ -87,8 +96,9 @@ def visible(node):
 
 
 def locate(label, prefix=False, field=False, scroll=False, upward=False, attempts=25):
-    for _ in range(attempts):
-        candidates = [n for n in tree() if matches(n, label, prefix) and visible(n)
+    for attempt in range(attempts):
+        nodes = tree()
+        candidates = [n for n in nodes if matches(n, label, prefix) and visible(n)
             and (not field or n.get("class") == "android.widget.EditText")]
         if candidates:
             enabled = [n for n in candidates if n.get("enabled") != "false"]
@@ -96,7 +106,11 @@ def locate(label, prefix=False, field=False, scroll=False, upward=False, attempt
                 # Prefer the accessible action, not its child text.
                 return next((n for n in enabled if n.get("clickable") == "true"), enabled[0])
         if scroll:
-            swipe(upward=upward)
+            # Undo can move a dose from history to the hero card; the button
+            # can then be below the new heading rather than above the viewport.
+            # Search both directions without replaying any state-changing tap.
+            direction = upward if attempt < attempts // 2 else not upward
+            swipe(upward=direction, nodes=nodes)
         else:
             time.sleep(0.5)
     raise AssertionError("UI control unavailable: " + label)
@@ -111,10 +125,19 @@ def tap(label, **kwargs):
     touch(locate(label, **kwargs))
 
 
-def swipe(upward=False, x=None, top=None, bottom=None):
-    x = x if x is not None else WIDTH // 2
-    top = top if top is not None else int(HEIGHT * .30)
-    bottom = bottom if bottom is not None else int(HEIGHT * .73)
+def swipe(upward=False, x=None, top=None, bottom=None, nodes=None):
+    if x is None or top is None or bottom is None:
+        # Persistent banners reduce the content viewport, especially at 200%
+        # font size. A screen-relative swipe can start on that fixed banner
+        # and never reach the ScrollView. Use its actual accessibility bounds.
+        candidates = [n for n in (tree() if nodes is None else nodes)
+            if n.get("scrollable") == "true" and visible(n)]
+        assert candidates, "no visible scroll container for gesture"
+        container = max(candidates, key=lambda n: (bounds(n)[2] - bounds(n)[0]) * (bounds(n)[3] - bounds(n)[1]))
+        x1, y1, x2, y2 = bounds(container)
+        x = x if x is not None else (x1 + x2) // 2
+        top = top if top is not None else y1 + int((y2 - y1) * .20)
+        bottom = bottom if bottom is not None else y1 + int((y2 - y1) * .80)
     start, end = (top, bottom) if upward else (bottom, top)
     adb("shell", "input", "swipe", str(x), str(start), str(x), str(end), "400")
 
@@ -171,6 +194,16 @@ def pick(index, hour, minute):
     locate("الأوقات " + str(index) + ": " + hour + ":" + minute, attempts=5)
 
 
+def choose_start_language(case):
+    # Only called after clearing this disposable app and before entering any
+    # credential. Preserve startup evidence without capturing a failed login.
+    try:
+        tap("العربية")
+    except AssertionError:
+        capture(case + "-startup-failed")
+        raise
+
+
 def scenario(case, width, height, density, font):
     global WIDTH, HEIGHT, AUTHENTICATED
     WIDTH, HEIGHT = width, height
@@ -185,8 +218,7 @@ def scenario(case, width, height, density, font):
     identity = uuid.uuid4().hex
     email = "native-" + identity + "@example.invalid"
     password = secrets.token_hex(20) + "A9"
-    tokens = api("/v1/auth/register", {"email": email, "password": password,
-        "displayName": "SyntheticAndroid", "locale": "ar", "deviceId": "ci-" + identity})
+    tokens = create_account(email, password, "SyntheticAndroid", "ci-" + identity)
     token = tokens["accessToken"]
     profile = api("/v1/profiles", token=token)["profiles"][0]["id"]
     launch = adb("shell", "cmd", "package", "resolve-activity", "--brief",
@@ -195,7 +227,7 @@ def scenario(case, width, height, density, font):
     assert activity, "isolated app has no resolved launcher activity"
     started = adb("shell", "am", "start", "-W", "-n", activity)
     assert "Status: ok" in started, "Android did not finish launching the isolated activity"
-    tap("العربية")
+    choose_start_language(case)
     fill("رقم الجوال أو البريد الإلكتروني", email)
     fill("كلمة المرور", password)
     tap("دخول")

@@ -8,7 +8,7 @@ import {
   canScheduleExactAlarms as canScheduleExactAlarmsOnDevice,
   withExactAlarmScheduleMutation,
 } from '../../modules/exact-alarm-access';
-import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
+import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, createNotificationActionIntent, type NotificationActionIntent, type ActionOutcome } from './actions.js';
 import { notificationPermissionGranted } from './permission.js';
 
 /**
@@ -157,6 +157,8 @@ export async function startNotificationActionListener(
   let revision = 0;
   let liveSeen = false;
   const handled = new Set<string>();
+  const inFlight = new Set<string>();
+  const intents = new Map<string, NotificationActionIntent>();
   const current = () => active && isCurrent();
   const handle = async (response: {
     actionIdentifier: string;
@@ -164,33 +166,41 @@ export async function startNotificationActionListener(
   }): Promise<void> => {
     if (!current()) return;
     const key = JSON.stringify([response.notification.request.identifier, response.notification.date, response.actionIdentifier]);
-    if (handled.has(key)) return;
-    handled.add(key);
+    if (handled.has(key) || inFlight.has(key)) return;
+    inFlight.add(key);
+    const intent = intents.get(key) ?? createNotificationActionIntent();
+    intents.set(key, intent);
     const observed = revision;
-    const outcome = await applyNotificationAction(
-      response.actionIdentifier,
-      response.notification.request.content.data ?? {}, current,
-    );
-    if (outcome && current()) {
+    try {
+      const outcome = await applyNotificationAction(
+        response.actionIdentifier,
+        response.notification.request.content.data ?? {}, current, intent,
+      );
+      if (!outcome || !current()) return;
+      if (outcome.rejected) { onHandled?.(outcome); return; }
+      // The server or durable offline journal accepted the operation. Keep the
+      // same intent on failures; a retry must not create a second dose action.
+      handled.add(key);
+      intents.delete(key);
       onHandled?.(outcome);
-      // Expo keeps the cold-start response available until explicitly cleared.
-      // Without consuming it, reopening the app can replay the same Snooze with
-      // a brand-new clientEventId and move the reminder again.
       const latest = await N.getLastNotificationResponseAsync();
       const latestKey = latest ? JSON.stringify([latest.notification.request.identifier, latest.notification.date, latest.actionIdentifier]) : null;
       if (current() && observed === revision && latestKey === key) await N.clearLastNotificationResponseAsync?.();
+    } finally {
+      inFlight.delete(key);
     }
   };
 
   const sub = N.addNotificationResponseReceivedListener((response) => {
     liveSeen = true;
-    revision++;
+    const key = JSON.stringify([response.notification.request.identifier, response.notification.date, response.actionIdentifier]);
+    if (!inFlight.has(key) && !handled.has(key)) revision++;
     void handle(response as Parameters<typeof handle>[0]).catch(() => undefined);
   });
   void N.getLastNotificationResponseAsync().then(last => {
     if (last && !liveSeen) return handle(last as Parameters<typeof handle>[0]);
   }).catch(() => undefined);
-  return () => { active = false; sub.remove(); handled.clear(); };
+  return () => { active = false; sub.remove(); handled.clear(); inFlight.clear(); intents.clear(); };
 }
 
 // Native scheduling/cancellation are asynchronous. A cancellation must run

@@ -2,7 +2,7 @@ name: Isolated Android test APK
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'audit/ios10-evidence-20260920']
     paths:
       - '.github/workflows/audit-android.yml'
       - 'apps/mobile/**'
