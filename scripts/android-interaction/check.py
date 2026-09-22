@@ -15,7 +15,8 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-BASE = "https://dawaee-audit-preview.onrender.com"
+assert os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("DAWAEE_DEVICE_CI") == "1"
+BASE = "http://127.0.0.1:8080"
 PACKAGE = "app.dawaee.audit"
 OUT = Path("android-interaction-evidence")
 RESULTS = []
@@ -49,6 +50,14 @@ def api(path, body=None, token=None):
             return json.load(response)
     except urllib.error.HTTPError as error:
         raise AssertionError("API HTTP " + str(error.code) + " at " + path.split("?")[0]) from None
+
+
+def create_account(email, password, name, device):
+    seeded = subprocess.run(["node", "--import", "tsx", "scripts/android-interaction/fixture.mts", "seed"],
+        input=json.dumps({"email": email, "password": password, "displayName": name}),
+        text=True, capture_output=True, timeout=30)
+    assert seeded.returncode == 0, "disposable fixture creation failed (details withheld)"
+    return api("/v1/auth/login", {"identifier": email, "password": password, "deviceId": device})
 
 
 def tree():
@@ -185,8 +194,7 @@ def scenario(case, width, height, density, font):
     identity = uuid.uuid4().hex
     email = "native-" + identity + "@example.invalid"
     password = secrets.token_hex(20) + "A9"
-    tokens = api("/v1/auth/register", {"email": email, "password": password,
-        "displayName": "SyntheticAndroid", "locale": "ar", "deviceId": "ci-" + identity})
+    tokens = create_account(email, password, "SyntheticAndroid", "ci-" + identity)
     token = tokens["accessToken"]
     profile = api("/v1/profiles", token=token)["profiles"][0]["id"]
     launch = adb("shell", "cmd", "package", "resolve-activity", "--brief",

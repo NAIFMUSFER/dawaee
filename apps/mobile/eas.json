@@ -66,6 +66,12 @@
       "env": {
         "DAWAEE_AUDIT_BUILD": "0"
       }
+    },
+    "audit-ios-simulator": {
+      "extends": "audit-preview",
+      "ios": {
+        "simulator": true
+      }
     }
   },
   "submit": {

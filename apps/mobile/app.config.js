@@ -16,7 +16,9 @@ module.exports = ({ config }) => {
       extra: { ...config.extra, iosPhoneVerificationEnabled: !!googleServicesFile },
     };
   }
-  const origin = 'https://dawaee-audit-preview.onrender.com';
+  const deviceCI = process.env.DAWAEE_DEVICE_CI === '1';
+  if (deviceCI && process.env.GITHUB_ACTIONS !== 'true') throw new Error('DEVICE_CI_ONLY');
+  const origin = deviceCI ? 'http://127.0.0.1:8080' : 'https://dawaee-audit-preview.onrender.com';
   if (process.env.EXPO_PUBLIC_API_URL !== origin || process.env.EXPO_PUBLIC_DEMO !== '0') {
     throw new Error('AUDIT_MOBILE_TARGET_MISMATCH');
   }
@@ -36,6 +38,8 @@ module.exports = ({ config }) => {
     extra: { ...config.extra, apiBaseUrl: origin, iosPhoneVerificationEnabled: false },
     // The production Firebase client is registered to app.dawaee.mobile.
     // Do not reuse its configuration for an isolated audit installation.
-    plugins: config.plugins.filter((plugin) => !['@react-native-firebase/app', '@react-native-firebase/auth'].includes(plugin)),
+    plugins: config.plugins.filter((plugin) => !['@react-native-firebase/app', '@react-native-firebase/auth'].includes(plugin))
+      .map(plugin => deviceCI && Array.isArray(plugin) && plugin[0] === 'expo-build-properties'
+        ? [plugin[0], { ...plugin[1], android: { ...plugin[1].android, usesCleartextTraffic: true } }] : plugin),
   };
 };

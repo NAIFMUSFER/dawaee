@@ -59,6 +59,21 @@ describe('isolated installed audit build', () => {
     expect(() => configure({ config })).toThrow('AUDIT_MOBILE_TARGET_MISMATCH');
   });
 
+  it('allows loopback only for the disposable CI emulator build', () => {
+    for (const [key, value] of Object.entries(profiles['audit-preview'].env)) vi.stubEnv(key, String(value));
+    vi.stubEnv('DAWAEE_DEVICE_CI', '1');
+    vi.stubEnv('GITHUB_ACTIONS', undefined);
+    vi.stubEnv('EXPO_PUBLIC_API_URL', 'http://127.0.0.1:8080');
+    expect(() => configure({ config })).toThrow('DEVICE_CI_ONLY');
+    vi.stubEnv('GITHUB_ACTIONS', 'true');
+    const result = configure({ config });
+    expect(result.android.package).toBe('app.dawaee.audit');
+    expect(result.extra.apiBaseUrl).toBe('http://127.0.0.1:8080');
+    expect(result.plugins.find((p: unknown[]) => Array.isArray(p) && p[0] === 'expo-build-properties')[1].android.usesCleartextTraffic).toBe(true);
+    vi.stubEnv('EXPO_PUBLIC_API_URL', 'https://dawaee-api.onrender.com');
+    expect(() => configure({ config })).toThrow('AUDIT_MOBILE_TARGET_MISMATCH');
+  });
+
   it('keeps Google Play signing on remote EAS credentials and CI native output as evidence only', () => {
     const production = profiles.production;
     expect(production.credentialsSource).toBe('remote');

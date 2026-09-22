@@ -49,10 +49,16 @@ export interface ActionOutcome {
  * do not recognise is not an error to report to a patient at 8pm, it is simply
  * not ours to act on.
  */
+export interface NotificationActionIntent { clientEventId: string; at: string }
+export function createNotificationActionIntent(): NotificationActionIntent {
+  return { clientEventId: newClientEventId(), at: new Date().toISOString() };
+}
+
 export async function applyNotificationAction(
   actionIdentifier: string,
   data: Record<string, unknown>,
   isCurrent: () => boolean = () => true,
+  intent: NotificationActionIntent = createNotificationActionIntent(),
 ): Promise<ActionOutcome | null> {
   const doseId = typeof data.doseId === 'string' ? data.doseId : null;
   if (!doseId || !isCurrent()) return null;
@@ -64,8 +70,7 @@ export async function applyNotificationAction(
           : null;
   if (!action) return null;
 
-  const clientEventId = newClientEventId();
-  const at = new Date().toISOString();
+  const { clientEventId, at } = intent;
   try {
     const deviceId = await getDeviceId();
     if (!isCurrent()) return null;
