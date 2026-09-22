@@ -53,7 +53,9 @@ async function main(): Promise<void> {
 main().catch((err) => {
   console.error({ err: serializeLoggedError(err) }, 'fatal startup error');
   if (err instanceof Error && (err.name === 'SchemaContractError' || err.name === 'LedgerMissingError')) {
-
+    // Static diagnostic consumed by operators and the startup/recovery probes;
+    // never re-emit err.message, which is not a trusted diagnostic boundary.
+    console.error('database schema is incompatible with this build');
     console.error(
       `this build requires the database to be migrated to ${requiredSchemaRevision()}; ` +
       'run scripts/migrate.sh before starting the API',
