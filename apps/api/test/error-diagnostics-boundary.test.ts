@@ -5,6 +5,9 @@ import { createLogger } from '../src/lib/logger.js';
 import { closePool, getPool } from '../src/lib/db.js';
 import { createWorkerLogger } from '../../worker/src/context.js';
 import { loadConfig } from '../src/config.js';
+import { logStartupFailure } from '../src/lib/startup-diagnostics.js';
+import { SchemaContractError } from '../src/lib/schema-contract.js';
+import { DatabaseTlsMisconfigured } from '../src/lib/db-tls.js';
 
 const CANARY = 'patient free text Zoprexa symptom private';
 
@@ -54,6 +57,25 @@ describe('N1 free-text errors cannot escape through diagnostics', () => {
     expect(JSON.stringify(write.mock.calls)).not.toContain(CANARY);
     expect(JSON.stringify(write.mock.calls)).toContain('08006');
     expect(JSON.stringify(write.mock.calls)).toContain('idle postgres client error');
+  });
+
+  it('preserves startup schema diagnostics using only migration names in this build', () => {
+    const write = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const err = new SchemaContractError(['0020_notification_privacy.sql', CANARY], [CANARY]);
+    err.message = CANARY;
+    logStartupFailure(err);
+    const output = JSON.stringify(write.mock.calls);
+    expect(output).not.toContain(CANARY);
+    expect(output).toContain('0020_notification_privacy.sql');
+    expect(output).toContain('schema is incompatible');
+    expect(output).toContain('run scripts/migrate.sh');
+  });
+
+  it('identifies a TLS startup refusal without quoting a certificate path or message', () => {
+    const write = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    logStartupFailure(new DatabaseTlsMisconfigured(CANARY));
+    expect(JSON.stringify(write.mock.calls)).not.toContain(CANARY);
+    expect(JSON.stringify(write.mock.calls)).toContain('certificate verification');
   });
 
   it('protects both actual logger factories, including worker tick error shape', () => {

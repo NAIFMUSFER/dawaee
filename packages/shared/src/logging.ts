@@ -90,7 +90,7 @@ export const LOG_REDACTED_PATHS: readonly string[] = [
 const LOG_ERROR_TYPES = new Set([
   'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
   'URIError', 'EvalError', 'AggregateError', 'AbortError', 'TimeoutError',
-  'DatabaseError', 'SchemaContractError', 'LedgerMissingError',
+  'DatabaseError', 'SchemaContractError', 'LedgerMissingError', 'DatabaseTlsMisconfigured',
 ]);
 const LOG_SYSTEM_CODES = new Set([
   'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',

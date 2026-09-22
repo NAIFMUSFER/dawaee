@@ -20,6 +20,12 @@ types and targeted ESLint pass. Existing database-backed log tests retain real
 SQLSTATE assertions and now explicitly reject message/stack/metadata output.
 The complete PostgreSQL CI matrix remains the merge gate.
 
+Startup probes initially exposed two diagnostic compatibility requirements:
+missing migration filenames and the TLS refusal marker. A separate startup
+boundary retains only migration filenames present in the packaged build and a
+fixed TLS diagnostic, never the exception message or certificate path. Two
+additional probes verify those useful diagnostics without the free-text canary.
+
 Scope: this hardens error output. `sanitizeOperationalError` still performs
 pattern-based filtering for strings persisted to job/provider records; this
 change does not establish universal free-text privacy in those records, erase
