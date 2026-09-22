@@ -1,3 +1,4 @@
+import { serializeLoggedError } from '@dawaee/shared';
 import { createWorkerContext, runJob, type WorkerContext } from './context.js';
 import { materializeJob } from './jobs/materialize.js';
 import { reminderJob } from './jobs/reminders.js';
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
     if (Object.values(result).some((v) => v > 0)) ctx.log.info(result, 'tick completed');
     await runHousekeeping();
   }, tickSeconds * 1000, err => {
-    ctx.log.error({ err: (err as Error).message }, 'tick failed');
+    ctx.log.error({ err }, 'tick failed');
   });
 
   const shutdown = async (signal: string) => {
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
 
 if (process.env.WORKER_ENABLED !== 'false' && import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error('fatal worker error:', err);
+    console.error({ err: serializeLoggedError(err) }, 'fatal worker error');
     process.exit(1);
   });
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DatabaseTlsMisconfigured } from './lib/db-tls.js';
 
 /**
  * Environment configuration. Parsed once at boot and validated hard: a missing
@@ -194,7 +195,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // medication records — and holding the owner password the connection
     // string carries.
     if (cfg.DATABASE_SSL !== 'true') {
-      throw new Error(
+      throw new DatabaseTlsMisconfigured(
         `DATABASE_SSL must be "true" in production (got "${cfg.DATABASE_SSL}"); ` +
         'certificate verification cannot be disabled for a production database',
       );

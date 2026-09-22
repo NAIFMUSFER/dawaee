@@ -213,10 +213,10 @@ describe('P13-2 a database error does not carry the row that caused it', () => {
     apiLogger(sink.stream).error({ err: uniqueErr, requestId: 'probe' }, 'unhandled error');
     const err = sink.objects()[0]!.err as Record<string, unknown>;
     expect(err.code, 'the SQLSTATE is the most useful field there is').toBe('23505');
-    expect(err.constraint).toBe('users_phone_e164_key');
-    expect(err.table).toBe('users');
-    expect(err.message).toContain('users_phone_e164_key');
-    expect(err.stack).toBeTruthy();
+    expect(err).not.toHaveProperty('message');
+    expect(err).not.toHaveProperty('stack');
+    expect(err).not.toHaveProperty('constraint');
+    expect(err).not.toHaveProperty('table');
   });
 
   it('the worker serializer behaves identically', () => {
@@ -226,19 +226,17 @@ describe('P13-2 a database error does not carry the row that caused it', () => {
     expect((sink.objects()[0]!.err as Record<string, unknown>).code).toBe('23505');
   });
 
-  it('a plain Error still serializes normally', () => {
+  it('a plain Error keeps its category without quoting arbitrary text', () => {
     const sink = capture();
     apiLogger(sink.stream).error({ err: new Error('ordinary failure') }, 'probe');
     const err = sink.objects()[0]!.err as Record<string, unknown>;
-    expect(err.message).toBe('ordinary failure');
-    expect(err.type).toBe('Error');
-    expect(err.stack).toBeTruthy();
+    expect(err).toEqual({ type: 'Error' });
   });
 
   it('and a non-Error thrown value does not crash the serializer', () => {
     const sink = capture();
     apiLogger(sink.stream).error({ err: 'a bare string' }, 'probe');
-    expect(sink.objects()[0]!.err).toMatchObject({ type: 'string', message: 'a bare string' });
+    expect(sink.objects()[0]!.err).toMatchObject({ type: 'string' });
   });
 });
 
