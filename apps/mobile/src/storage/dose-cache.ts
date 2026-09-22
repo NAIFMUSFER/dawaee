@@ -9,7 +9,7 @@ export function cacheDose(d: DoseView): CachedSchedule['doses'][number] {
     strengthUnit: d.medication.strengthUnit, instructions: d.medication.instructions,
     medicationNotes: d.medication.notes ?? null, notes: d.notes ?? [],
     doseQuantity: d.doseQuantity, doseUnit: d.doseUnit, foodInstruction: d.medication.foodInstruction,
-    status: d.status, snoozedUntil: d.snoozedUntil, confirmedAt: d.confirmedAt, thresholds: d.thresholds };
+    status: d.status, snoozedUntil: d.snoozedUntil, confirmedAt: d.confirmedAt, confirmedReceivedAt: d.confirmedReceivedAt ?? null, thresholds: d.thresholds };
 }
 
 /** Keep unsent decisions visible even after a successful, older server read. */
@@ -21,10 +21,10 @@ export function applyQueuedToDoses(doses: DoseView[], queue: QueuedAction[]): Do
   });
 }
 
-export function queuedPatch(action: QueuedAction): Pick<DoseView, 'status' | 'confirmedAt' | 'snoozedUntil'> {
-  if (action.type === 'taken') return { status: 'taken', confirmedAt: action.at, snoozedUntil: null };
-  if (action.type === 'skipped') return { status: 'skipped', confirmedAt: action.at, snoozedUntil: null };
+export function queuedPatch(action: QueuedAction): Pick<DoseView, 'status' | 'confirmedAt' | 'confirmedReceivedAt' | 'snoozedUntil'> {
+  if (action.type === 'taken') return { status: 'taken', confirmedAt: action.at, confirmedReceivedAt: null, snoozedUntil: null };
+  if (action.type === 'skipped') return { status: 'skipped', confirmedAt: action.at, confirmedReceivedAt: null, snoozedUntil: null };
   const deadline = Date.parse(action.at) + action.minutes * 60_000;
-  return { status: 'snoozed', confirmedAt: null,
+  return { status: 'snoozed', confirmedAt: null, confirmedReceivedAt: null,
     snoozedUntil: Number.isFinite(deadline) ? new Date(deadline).toISOString() : null };
 }

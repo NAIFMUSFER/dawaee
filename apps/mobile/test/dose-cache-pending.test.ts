@@ -47,3 +47,10 @@ describe('durable pending-dose display over an older online response', () => {
       instructions: 'Synthetic instructions', medicationNotes: 'Synthetic medication note', notes });
   });
 });
+
+
+it('persists acceptance independently and clears it for a pending new action', () => {
+  const accepted = { ...dose, confirmedAt: at, confirmedReceivedAt: '2026-09-19T13:00:00Z' };
+  expect(JSON.parse(JSON.stringify(cacheDose(accepted))).confirmedReceivedAt).toBe(accepted.confirmedReceivedAt);
+  expect(applyQueuedToDoses([accepted], [action('taken')])[0]).toMatchObject({ confirmedAt: at, confirmedReceivedAt: null });
+});
