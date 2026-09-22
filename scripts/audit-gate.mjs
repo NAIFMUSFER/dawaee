@@ -126,11 +126,13 @@ const BASELINE = [
       + 'query-string -> decode-uri-component. Denial of service via a malformed percent-encoded '
       + 'string. The only attacker-controlled input that reaches it is a deep link the user opens; '
       + 'the worst outcome is the app becoming unresponsive and being restarted, with no data '
-      + 'exposure. Fixed only by expo-router@57, a major upgrade. Carried from P14 as PROPOSED '
-      + 'ACCEPTED RISK / BLOCKED BY UPSTREAM.',
+      + 'exposure. The maintainer fixes this in decode-uri-component 0.5.0, which is ESM; '
+      + 'the installed query-string 7.1.3 calls require(), so a direct override is not a '
+      + 'verified compatible repair. This runtime advisory remains OPEN under the existing '
+      + 'reviewed exception; no specific Expo Router major is asserted to be required.',
     endsWhen:
       'expo-router or @react-navigation resolves query-string to a version depending on '
-      + 'decode-uri-component >= 0.2.3, or the advisory is withdrawn.',
+      + 'decode-uri-component >= 0.5.0 with native deep-link regression tests, or the advisory is withdrawn.',
   },
 ];
 

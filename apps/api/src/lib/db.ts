@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { serializeLoggedError } from '@dawaee/shared';
 import { createHash } from 'node:crypto';
 import { loadConfig } from '../config.js';
 import { databaseTlsOptions } from './db-tls.js';
@@ -56,8 +57,7 @@ export function getPool(): pg.Pool {
     query_timeout: 20_000,
   });
   pool.on('error', (err) => {
-     
-    console.error({ err: err.message }, 'idle postgres client error');
+    console.error({ err: serializeLoggedError(err) }, 'idle postgres client error');
   });
   return pool;
 }

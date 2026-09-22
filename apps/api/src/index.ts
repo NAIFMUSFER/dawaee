@@ -1,7 +1,9 @@
+import { serializeLoggedError } from '@dawaee/shared';
 import { loadConfig } from './config.js';
 import { buildServer } from './server.js';
 import { closePool, getPool } from './lib/db.js';
-import { assertSchemaContract, requiredSchemaRevision } from './lib/schema-contract.js';
+import { assertSchemaContract } from './lib/schema-contract.js';
+import { logStartupFailure } from './lib/startup-diagnostics.js';
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -20,7 +22,9 @@ async function main(): Promise<void> {
     attempts: 5,
     delayMs: 2000,
 
-    onRetry: (n, err) => console.warn(`database not reachable yet (attempt ${n}): ${err.message}`),
+    onRetry: (attempt, err) => console.warn(
+      { attempt, err: serializeLoggedError(err) }, 'database not reachable yet',
+    ),
   });
 
   const { app } = await buildServer();
@@ -40,7 +44,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('unhandledRejection', (reason) => {
-    app.log.error({ reason }, 'unhandled promise rejection');
+    app.log.error({ err: reason }, 'unhandled promise rejection');
   });
 
   await app.listen({ port: cfg.PORT, host: cfg.HOST });
@@ -48,15 +52,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
-
-  console.error('fatal startup error:', message);
-  if (err instanceof Error && (err.name === 'SchemaContractError' || err.name === 'LedgerMissingError')) {
-
-    console.error(
-      `this build requires the database to be migrated to ${requiredSchemaRevision()}; ` +
-      'run scripts/migrate.sh before starting the API',
-    );
-  }
+  logStartupFailure(err);
   process.exit(1);
 });
