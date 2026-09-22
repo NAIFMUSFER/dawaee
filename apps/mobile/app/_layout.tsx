@@ -1,42 +1,29 @@
 import React, { useEffect, useRef } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Alert, Platform, View } from 'react-native';
+import { Alert, AppState, Platform, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { AppProvider, useApp } from '@/state/app-store';
 import { I18nProvider } from '@/i18n';
 import { Loading, PreviewBanner } from '@/components/ui';
-import { PALETTE } from '@dawaee/shared';
-import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration } from '@/notifications';
+import { PALETTE, t } from '@dawaee/shared';
+import { configureCategories, configureChannels, startNotificationActionListener, syncPushRegistration, resetPushRegistrationStatus, subscribeNotificationPermissionChanges } from '@/notifications';
 import { DEMO_MODE } from '@/api/client';
 import { AppLockGate } from '@/security/AppLockGate';
 import { clearClinicalRouteIntents } from '@/navigation/private-navigation';
 import { clearMedicationDrafts } from '@/storage/medication-draft';
-
-/**
- * React Native Web does not implement the native multi-button Alert contract.
- * Screens use that contract before destructive actions (revoking caregiver
- * access, leaving a care circle, etc.), so on Safari the button looked alive
- * but its confirmation callback never ran. Install one web-only adapter at the
- * application boundary: native keeps the real Alert, while web maps the same
- * cancel/confirm contract to the browser's blocking confirm dialog.
- */
-function useWebAlertAdapter() {
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof globalThis.confirm !== 'function') return;
-
-    const nativeAlert = Alert.alert;
-    Alert.alert = (title, message, buttons) => {
-      const actions = buttons ?? [];
-      const confirmAction = actions.find((button) => button.style === 'destructive')
-        ?? actions.find((button) => button.style !== 'cancel');
-      const prompt = message ? `${title}\n\n${message}` : title;
-      if (globalThis.confirm(prompt)) confirmAction?.onPress?.();
-    };
-
-    return () => { Alert.alert = nativeAlert; };
-  }, []);
-}
+import { startCaregiverNotificationListener } from '@/notifications/caregiver-navigation';
+import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';
+import { bindCaregiverNotificationAccount, setCaregiverNotificationIntent } from '@/notifications/caregiver-intent';
+import { bindPatientReminderAccount, setPatientReminderIntent } from '@/notifications/patient-intent';
+import EmailVerificationScreen from './settings/email-verification';
+import { needsEmailVerification } from '@/security/email-onboarding';
+import { landingAfterAuth } from '@/storage/pending-invite';
+import AppNavigator from '@/navigation/AppNavigator';
+import WebAlertHost from '@/components/WebAlertHost';
+import { NotificationHealthNotice } from '@/components/NotificationHealthNotice';
+import { DeletionReceiptNotice, PendingDeletionScreen } from '@/components/AccountDeletionNotice';
 
 /**
  * Root layout.
@@ -51,8 +38,21 @@ function Shell() {
     syncNow: refreshAfterAction,
   } = useApp();
   const router = useRouter();
+  const deletionPending = Boolean(signedIn && user?.deletionScheduledFor);
+  const emailRequired = !deletionPending && !DEMO_MODE && needsEmailVerification(signedIn, user);
+  const wasEmailRequired = useRef(false);
   const clinicalRouteScope = `${signedIn ? (user?.id ?? 'unknown') : 'signed-out'}:${activeProfile?.id ?? 'none'}`;
   const previousClinicalRouteScope = useRef<string | null>(null);
+  const caregiverOwner = ready && signedIn && !deletionPending && user?.id ? user.id : null;
+  bindCaregiverNotificationAccount(caregiverOwner);
+  bindPatientReminderAccount(caregiverOwner);
+  const caregiverSession = useRef({ owner: caregiverOwner, generation: 0 });
+  if (caregiverSession.current.owner !== caregiverOwner) {
+    caregiverSession.current = {
+      owner: caregiverOwner,
+      generation: caregiverSession.current.generation + 1,
+    };
+  }
 
   // This fence is deliberately synchronous. Clearing in useEffect is too late:
   // fixed-route children can read stale process-local ids or OCR medication
@@ -66,7 +66,14 @@ function Shell() {
     previousClinicalRouteScope.current = clinicalRouteScope;
   }
 
-  useWebAlertAdapter();
+  useEffect(() => {
+    let current = true;
+    if (wasEmailRequired.current && !emailRequired && signedIn) {
+      void landingAfterAuth().then(path => { if (current) router.replace(path); });
+    }
+    wasEmailRequired.current = emailRequired;
+    return () => { current = false; };
+  }, [emailRequired, signedIn, user?.id, router]);
 
   useEffect(() => {
     void configureChannels();
@@ -75,20 +82,65 @@ function Shell() {
 
   /** Tell the server which device to reach. */
   useEffect(() => {
-    if (!signedIn || !deviceId) return;
-    void syncPushRegistration(deviceId).catch(() => undefined);
-  }, [signedIn, deviceId]);
+    resetPushRegistrationStatus();
+    if (!ready || !signedIn || deletionPending || !user?.id || emailRequired || !deviceId) return;
+    const generation = caregiverSession.current.generation;
+    let disposed = false;
+    let registering = false;
+    const current = () => !disposed && caregiverSession.current.generation === generation;
+    const register = async (requestPermission: boolean) => {
+      if (registering || !current()) return;
+      registering = true;
+      try { await syncPushRegistration(deviceId, { requestPermission, isCurrent: current }); }
+      catch { /* Foreground/grant events retry transient token/provider errors. */ }
+      finally { registering = false; }
+    };
+    // Registration may reuse an existing grant. The OS prompt belongs to the
+    // explained onboarding/settings action, not the sign-in transition.
+    void register(false);
+    const unsubscribe = subscribeNotificationPermissionChanges(() => { void register(false); });
+    const subscription = AppState.addEventListener('change', next => { if (next === 'active') void register(false); });
+    return () => { disposed = true; unsubscribe(); subscription.remove(); };
+  }, [ready, signedIn, deletionPending, emailRequired, deviceId, user?.id]);
+
+  /** Keep the delivery selection in account-bound memory. The landing resolves
+   * its patient through the authenticated API, after the app lock permits it. */
+  useEffect(() => {
+    if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startCaregiverNotificationListener(
+        native,
+        (selection) => {
+          if (!isCurrent()) return;
+          setCaregiverNotificationIntent(user.id, selection);
+          router.replace('/caregiver/notification');
+        },
+        isCurrent,
+      );
+    }).catch(() => undefined);
+    return () => { cancelled = true; stop?.(); };
+  }, [ready, signedIn, deletionPending, user?.id, router]);
 
   /** Act on the reminder's own buttons. */
   useEffect(() => {
-    if (!signedIn) return;
+    if (!ready || !signedIn || deletionPending || !user?.id || emailRequired) return;
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void startNotificationActionListener(() => { void refreshAfterAction(); })
+    const generation = caregiverSession.current.generation;
+    void startNotificationActionListener(outcome => {
+      if (outcome.rejected) Alert.alert(t(preferences.locale, 'today.actionSaveFailed'));
+      void refreshAfterAction();
+    },
+      () => !cancelled && caregiverSession.current.generation === generation)
       .then((s) => { if (cancelled) s(); else stop = s; })
       .catch(() => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, refreshAfterAction]);
+  }, [ready, signedIn, deletionPending, user?.id, emailRequired, refreshAfterAction, preferences.locale]);
 
   /**
    * A grouped reminder deliberately has no single-dose Taken/Snooze/Skip
@@ -101,33 +153,26 @@ function Shell() {
    * the patient to the doses they were being asked to review.
    */
   useEffect(() => {
-    if (!signedIn || Platform.OS === 'web') return;
-    let stop: (() => void) | undefined;
+    if (!ready || !signedIn || deletionPending || !user?.id || Platform.OS === 'web') return;
+    const generation = caregiverSession.current.generation;
     let cancelled = false;
-
-    void import('expo-notifications').then(async (N) => {
-      const handle = async (response: {
-        notification?: { request?: { content?: { data?: Record<string, unknown> } } };
-      } | null) => {
-        const data = response?.notification?.request?.content?.data ?? {};
-        if (data.kind !== 'dose_group_reminder') return;
-        router.replace('/(tabs)/today');
-        // A cold-start response remains available until it is cleared. If it
-        // stayed there, a later remount could route the patient back to Today
-        // for an old reminder they already reviewed.
-        await N.clearLastNotificationResponseAsync?.();
-      };
-
-      await handle(await N.getLastNotificationResponseAsync());
-      if (cancelled) return;
-      const sub = N.addNotificationResponseReceivedListener((response) => {
-        void handle(response as Parameters<typeof handle>[0]);
-      });
-      stop = () => sub.remove();
+    let stop: (() => void) | undefined;
+    // Both default-tap listeners share the synchronous account-change fence.
+    const isCurrent = () => !cancelled && caregiverSession.current.generation === generation;
+    void import('expo-notifications').then((native) => {
+      if (!isCurrent()) return;
+      stop = startGroupedNotificationListener(
+        native,
+        (doseId) => {
+          if (!isCurrent()) return;
+          setPatientReminderIntent(user.id, { doseId });
+          router.replace('/notification');
+        },
+        isCurrent,
+      );
     }).catch(() => undefined);
-
     return () => { cancelled = true; stop?.(); };
-  }, [signedIn, router]);
+  }, [ready, signedIn, deletionPending, user?.id, router]);
 
   return (
     <I18nProvider
@@ -145,13 +190,15 @@ function Shell() {
       ) : null}
       {ready ? (
         <AppLockGate>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: PALETTE.background },
-              animation: 'slide_from_right',
-            }}
-          />
+          <View style={{ flex: 1 }}>
+          {deletionPending ? <PendingDeletionScreen /> : <AppNavigator />}
+          {signedIn && !deletionPending && !emailRequired ? <NotificationHealthNotice /> : null}
+          <DeletionReceiptNotice />
+          <Modal visible={emailRequired} onRequestClose={() => undefined} animationType="none">
+            {emailRequired ? <EmailVerificationScreen key={user?.id} /> : null}
+          </Modal>
+          <WebAlertHost scope={clinicalRouteScope} />
+          </View>
         </AppLockGate>
       ) : (
         <View style={{ flex: 1, backgroundColor: PALETTE.background, justifyContent: 'center' }}>

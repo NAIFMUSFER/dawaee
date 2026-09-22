@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -23,10 +24,60 @@ export function optionalUuid(value: unknown, field: string): string | null {
   return requireUuid(value, field);
 }
 
+/**
+ * Resolve a private UUID transported either by the legacy query contract or by
+ * Dawaee's privacy-preserving routing header.
+ *
+ * The global preValidation promotion normally copies the header into req.query.
+ * Production Android evidence showed a harder failure mode: the URL correctly
+ * omitted profileId (so Render did not log PHI-adjacent identifiers) while
+ * several handlers still observed an empty query and returned validation_failed.
+ * Reading the authenticated routing metadata again at the handler boundary is a
+ * defence-in-depth fallback; it keeps identifiers out of infrastructure URLs
+ * without making every clinical screen depend on hook mutation succeeding.
+ */
+export function requireRoutedUuid(
+  queryValue: unknown,
+  headers: IncomingHttpHeaders,
+  headerName: string,
+  field: string,
+): string {
+  const fromQuery = optionalUuid(queryValue, field);
+  const rawHeader = headers[headerName.toLowerCase()];
+  if (Array.isArray(rawHeader)) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, `Invalid ${field} routing metadata`, [
+      { path: field, message: 'expected one identifier' },
+    ]);
+  }
+  const fromHeader = rawHeader === undefined || rawHeader === null || rawHeader.trim() === ''
+    ? null
+    : requireUuid(rawHeader.trim(), field);
+  if (fromQuery && fromHeader && fromQuery !== fromHeader) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, `Conflicting ${field} routing metadata`, [
+      { path: field, message: 'query and routing metadata disagree' },
+    ]);
+  }
+  if (fromQuery) return fromQuery;
+  if (fromHeader) return fromHeader;
+  return requireUuid(undefined, field);
+}
+
 export function requireDate(value: unknown, field: string): string {
   if (typeof value !== 'string' || !DATE_RE.test(value)) {
     throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, `${field} must be a date in YYYY-MM-DD form`, [
       { path: field, message: 'expected YYYY-MM-DD' },
+    ]);
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maximumDay = daysInMonth[month - 1];
+  if (year === 0 || maximumDay === undefined || day < 1 || day > maximumDay) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, `${field} must be a real date in YYYY-MM-DD form`, [
+      { path: field, message: 'expected an existing Gregorian calendar date' },
     ]);
   }
   return value;

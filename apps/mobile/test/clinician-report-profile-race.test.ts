@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
+import { localDateInZone } from '@dawaee/core';
 
 const { createHarness, deferred, NetworkError, ApiError } = require('./profile-screen-harness.cjs') as {
   createHarness: (file: string, hookFile: string, profile?: object, overrides?: object) => any;
@@ -70,7 +71,7 @@ function harness() {
       useLocalSearchParams: () => ({ from: '2026-09-01', to: '2026-09-07' }),
     },
     '@/hooks/useTheme': { useTheme: () => testTheme },
-    '@dawaee/core': { addDays, daysBetween },
+    '@dawaee/core': { addDays, daysBetween, localDateInZone },
     '@/api/client': {
       NetworkError,
       ApiError,

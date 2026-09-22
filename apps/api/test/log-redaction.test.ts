@@ -74,6 +74,11 @@ function workerLogger(sink: Writable) {
  * there. The values are distinctive so a match cannot be a coincidence.
  */
 const SECRETS: Array<{ what: string; value: string; payload: () => Record<string, unknown> }> = [
+  { what: 'a refresh retry proof', value: 'ab'.repeat(32), payload: () => ({ retryNonce: 'ab'.repeat(32), req: { body: { retryNonce: 'ab'.repeat(32) } }, attempt: { retryNonce: 'ab'.repeat(32) } }) },
+  { what: 'a recovery password', value: 'probe-new-password-secret', payload: () => ({ newPassword: 'probe-new-password-secret' }) },
+  { what: 'a recovery request password', value: 'probe-body-password-secret', payload: () => ({ req: { body: { newPassword: 'probe-body-password-secret' } } }) },
+  { what: 'a verified credential hash', value: 'probe-credential-hash-secret', payload: () => ({ credentialHash: 'probe-credential-hash-secret' }) },
+  { what: 'a Firebase proof', value: 'probe-firebase-proof-secret', payload: () => ({ idToken: 'probe-firebase-proof-secret' }) },
   { what: 'a medication name', value: 'Zoprexa-Probe', payload: () => ({ medication: 'Zoprexa-Probe' }) },
   { what: 'a medication name nested', value: 'Zoprexa-Probe', payload: () => ({ delivery: { medicationName: 'Zoprexa-Probe' } }) },
   { what: 'a phone number', value: '+966500777111', payload: () => ({ phone: '+966500777111' }) },
@@ -208,10 +213,10 @@ describe('P13-2 a database error does not carry the row that caused it', () => {
     apiLogger(sink.stream).error({ err: uniqueErr, requestId: 'probe' }, 'unhandled error');
     const err = sink.objects()[0]!.err as Record<string, unknown>;
     expect(err.code, 'the SQLSTATE is the most useful field there is').toBe('23505');
-    expect(err.constraint).toBe('users_phone_e164_key');
-    expect(err.table).toBe('users');
-    expect(err.message).toContain('users_phone_e164_key');
-    expect(err.stack).toBeTruthy();
+    expect(err).not.toHaveProperty('message');
+    expect(err).not.toHaveProperty('stack');
+    expect(err).not.toHaveProperty('constraint');
+    expect(err).not.toHaveProperty('table');
   });
 
   it('the worker serializer behaves identically', () => {
@@ -221,19 +226,17 @@ describe('P13-2 a database error does not carry the row that caused it', () => {
     expect((sink.objects()[0]!.err as Record<string, unknown>).code).toBe('23505');
   });
 
-  it('a plain Error still serializes normally', () => {
+  it('a plain Error keeps its category without quoting arbitrary text', () => {
     const sink = capture();
     apiLogger(sink.stream).error({ err: new Error('ordinary failure') }, 'probe');
     const err = sink.objects()[0]!.err as Record<string, unknown>;
-    expect(err.message).toBe('ordinary failure');
-    expect(err.type).toBe('Error');
-    expect(err.stack).toBeTruthy();
+    expect(err).toEqual({ type: 'Error' });
   });
 
   it('and a non-Error thrown value does not crash the serializer', () => {
     const sink = capture();
     apiLogger(sink.stream).error({ err: 'a bare string' }, 'probe');
-    expect(sink.objects()[0]!.err).toMatchObject({ type: 'string', message: 'a bare string' });
+    expect(sink.objects()[0]!.err).toMatchObject({ type: 'string' });
   });
 });
 

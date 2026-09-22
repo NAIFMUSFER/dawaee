@@ -20,6 +20,7 @@ export interface ProfileSummary {
 
 export interface DoseView {
   id: string;
+  patientProfileId?: string;
   medicationId: string;
   scheduleId: string;
   scheduledAt: string;
@@ -32,8 +33,12 @@ export interface DoseView {
   minutesLate: number | null;
   snoozedUntil: string | null;
   snoozeCount: number;
+  thresholds?: { lateAfterMinutes: number; missedAfterMinutes: number };
   confirmedAt: string | null;
+  /** Server acceptance time; independent of the clinical action time. */
+  confirmedReceivedAt?: string | null;
   escalationStage: number;
+  notes?: Array<{ id: string; text: string | null; tags: string[]; recordedAt: string }>;
   medication: {
     name: string;
     form: MedicationForm;
@@ -42,6 +47,7 @@ export interface DoseView {
     strengthUnit: StrengthUnit | null;
     foodInstruction: FoodInstruction;
     instructions: string | null;
+    notes?: string | null;
   };
 }
 

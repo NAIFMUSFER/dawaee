@@ -1,10 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import { hasProfilePermission } from '@/security/profile-permissions';
+import React, { useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { DateField, isValidLocalDate, todayLocalDate } from '@/components/DateField';
 import { MultiPicker, Picker } from '@/components/Picker';
+import { DoseUnitPicker } from '@/components/DoseUnitPicker';
+import { MedicationImageField } from '@/components/MedicationImageField';
 import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { TimeField, isValidTime } from '@/components/TimeField';
 import { useI18n } from '@/i18n';
@@ -12,10 +15,11 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
+import { newClientEventId } from '@/storage/offline-queue';
 import { clearMedicationDrafts, getMedicationPrefillDraft } from '@/storage/medication-draft';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import type { MedicationView } from '@/api/types';
-import { DOSE_UNITS, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
+import { MEDICATION_FORMS, FORM_DOSE_UNITS, MAX_DAILY_TIMES, MAX_DOSE_QUANTITY, parseMedicationNumber, type DoseUnit, type MessageKey, type MedicationForm, type StrengthUnit } from '@dawaee/shared';
 
 const WEEKDAY_ANCHORS = [
   '2024-01-07', '2024-01-08', '2024-01-09', '2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13',
@@ -55,12 +59,20 @@ function QuickCreateMedicationProfileScreen() {
   const { t, formatNumber, formatWeekday } = useI18n();
   const theme = useTheme();
   const arabic = preferences.locale === 'ar';
-  const canAdd = Boolean(activeProfile && (activeProfile.isSelf || activeProfile.permissions?.includes('add_medication')));
+  const canAdd = hasProfilePermission(activeProfile, 'add_medication');
   const { capture: captureSave } = useRequestScope();
 
+  const [notes, setNotes] = useState('');
+  const [imageKey, setImageKey] = useState(prefill.imageKey ?? null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [name, setName] = useState(prefill.name ?? '');
   const [doseQuantity, setDoseQuantity] = useState('1');
-  const [doseUnit, setDoseUnit] = useState<DoseUnit>('tablet');
+  const [form, setForm] = useState<MedicationForm>(prefill.form ?? 'tablet');
+  const [doseUnit, setDoseUnit] = useState<DoseUnit>(FORM_DOSE_UNITS[prefill.form ?? 'tablet'][0]!);
+  const [unitNeedsReview, setUnitNeedsReview] = useState(false);
+  const [stockNeedsReview, setStockNeedsReview] = useState(false);
+  const saveInFlight = useRef(false);
+  const createIntent = useRef<{ input: string; id: string } | null>(null);
   const [times, setTimes] = useState<string[]>(['08:00']);
   const [weekdays, setWeekdays] = useState<string[]>(['0', '1', '2', '3', '4', '5', '6']);
   const [startDate, setStartDate] = useState(() => todayLocalDate(activeProfile?.timezone));
@@ -72,8 +84,8 @@ function QuickCreateMedicationProfileScreen() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState(false);
 
-  const unitOptions = useMemo(
-    () => DOSE_UNITS.map((value) => ({ value, label: t(`unit.${value}` as MessageKey) })),
+  const formOptions = useMemo(
+    () => MEDICATION_FORMS.map((value) => ({ value, label: t(`form.${value}` as MessageKey) })),
     [t],
   );
   const weekdayOptions = useMemo(
@@ -96,44 +108,50 @@ function QuickCreateMedicationProfileScreen() {
   };
 
   const save = async (acknowledgeDuplicate = false) => {
-    if (!activeProfile || !canAdd) return;
+    if (!activeProfile || !canAdd || photoBusy || saveInFlight.current) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setNameError(t('medication.nameRequired'));
       return;
     }
-    const quantity = Number(doseQuantity.replace(',', '.'));
-    if (!Number.isFinite(quantity) || quantity <= 0 || weekdays.length === 0 || times.some((time) => !isValidTime(time))) {
+    const quantity = parseMedicationNumber(doseQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > MAX_DOSE_QUANTITY || unitNeedsReview || stockNeedsReview || weekdays.length === 0 || times.length === 0 || times.length > MAX_DAILY_TIMES || times.some((time) => !isValidTime(time))) {
       setError(t('error.validation_failed'));
+      return;
+    }
+    if (new Set(times).size !== times.length) {
+      setError(t('schedule.duplicateTime'));
       return;
     }
     if (!isValidLocalDate(startDate) || (endDate && (!isValidLocalDate(endDate) || endDate < startDate))) {
       setError(t('error.validation_failed'));
       return;
     }
-    const stockQty = remainingQuantity.trim() === '' ? null : Number(remainingQuantity.replace(',', '.'));
+    const stockQty = remainingQuantity.trim() === '' ? null : parseMedicationNumber(remainingQuantity);
     if (stockQty !== null && (!Number.isFinite(stockQty) || stockQty < 0)) {
       setError(t('error.validation_failed'));
       return;
     }
 
     const isCurrent = captureSave();
+    saveInFlight.current = true;
     setSaving(true);
     setError(null);
     setNameError(null);
     try {
-      const created = await api.post<{ medication: MedicationView }>('/v1/medications', {
+      const input = {
         patientProfileId: activeProfile.id,
         name: trimmedName,
         brandName: prefill.brandName ?? null,
         genericName: prefill.genericName ?? null,
-        form: prefill.form ?? 'other',
+        form,
         strengthValue: prefill.strengthValue ?? null,
         strengthUnit: prefill.strengthUnit ?? null,
         manufacturer: prefill.manufacturer ?? null,
         barcode: prefill.barcode ?? null,
-        imageKey: prefill.imageKey ?? null,
+        imageKey,
         instructions: prefill.instructions ?? null,
+        notes: notes.trim() || null,
         startDate,
         endDate: endDate || null,
         expiryDate: prefill.expiryDate ?? null,
@@ -159,6 +177,13 @@ function QuickCreateMedicationProfileScreen() {
           },
         }),
         ...(acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
+      };
+      const serialized = JSON.stringify(input);
+      if (createIntent.current?.input !== serialized) {
+        createIntent.current = { input: serialized, id: newClientEventId() };
+      }
+      const created = await api.post<{ medication: MedicationView }>('/v1/medications', {
+        ...input, clientRequestId: createIntent.current.id,
       });
       if (!isCurrent()) return;
       clearMedicationDrafts();
@@ -177,6 +202,7 @@ function QuickCreateMedicationProfileScreen() {
         setError(describeError(err));
       }
     } finally {
+      saveInFlight.current = false;
       if (isCurrent()) setSaving(false);
     }
   };
@@ -198,6 +224,7 @@ function QuickCreateMedicationProfileScreen() {
             title={arabic ? 'لا تملك صلاحية إضافة دواء لهذا الملف' : 'You cannot add medication to this profile'}
           />
         ) : null}
+        {activeProfile && canAdd ? <MedicationImageField profileId={activeProfile.id} imageKey={imageKey} name={name} disabled={saving} onChange={setImageKey} onBusyChange={setPhotoBusy} /> : null}
         {error ? <Banner tone="danger" title={error} /> : null}
         {duplicate ? (
           <Banner
@@ -221,6 +248,10 @@ function QuickCreateMedicationProfileScreen() {
                 error={nameError}
                 autoFocus={!prefill.name}
               />
+              <Picker wrap label={t('medication.form')} options={formOptions} value={form} onChange={(next) => {
+                setForm(next);
+                setUnitNeedsReview(!FORM_DOSE_UNITS[next].includes(doseUnit));
+              }} />
             </Card>
 
             <SectionTitle>{t('medication.dose')}</SectionTitle>
@@ -240,19 +271,35 @@ function QuickCreateMedicationProfileScreen() {
                 ))}
               </Row>
               <Field
-                label={arabic ? 'كمية أخرى' : 'Other amount'}
+                label={arabic ? 'كمية الجرعة في كل مرة (يمكنك كتابة كمية أخرى)' : 'Amount per dose (or enter another amount)'}
                 value={doseQuantity}
                 onChangeText={setDoseQuantity}
                 keyboardType="decimal-pad"
               />
-              <Picker label={arabic ? 'الوحدة' : 'Unit'} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
+              <Txt variant="caption">{t('medication.amountShortcuts')}</Txt>
+              <Txt variant="caption">{t('medication.unitQuantityReview')}</Txt>
+              <DoseUnitPicker form={form} value={doseUnit} onChange={(unit) => {
+                if (unit !== doseUnit) {
+                  setDoseQuantity('');
+                  if (remainingQuantity.trim() !== '') setStockNeedsReview(true);
+                  setRemainingQuantity('');
+                }
+                setDoseUnit(unit);
+                setUnitNeedsReview(false);
+              }} />
+              {unitNeedsReview ? <Banner tone="warning" title={t('medication.reviewUnit')}
+                action={<Button tone="secondary" label={t('medication.keepUnit')} onPress={() => setUnitNeedsReview(false)} />} /> : null}
               <Txt variant="caption" color={theme.colors.ink500}>
-                {arabic ? 'مثال: ٢ حبة في كل موعد. تُستخدم هذه الكمية أيضًا لحساب موعد نفاد الدواء.' : 'Example: 2 tablets at each scheduled time. This amount is also used to forecast when stock will run out.'}
+                {t('medication.amountSeparateFromTimes')}
               </Txt>
             </Card>
 
-            <SectionTitle>{t('schedule.title')}</SectionTitle>
+            <Field label={t('medication.notes')} value={notes} onChangeText={setNotes}
+          multiline maxLength={2000} hint={t('notes.medicationHint')} />
+
+        <SectionTitle>{t('schedule.title')}</SectionTitle>
             <Card>
+              <Txt weight="bold">{t('schedule.dailyTimesCount', { count: formatNumber(times.length), max: formatNumber(MAX_DAILY_TIMES) })}</Txt>
               <MultiPicker
                 label={t('schedule.weekdays')}
                 options={weekdayOptions}
@@ -264,13 +311,13 @@ function QuickCreateMedicationProfileScreen() {
               />
               <Divider />
               {times.map((time, index) => (
-                <Row key={`${index}-${time}`} gap={theme.spacing.sm} align="flex-end">
+                <Row key={`time-${index}`} gap={theme.spacing.sm} align="flex-end">
                   <View style={{ flex: 1 }}>
                     <TimeField
                       label={`${t('schedule.times')} ${formatNumber(index + 1)}`}
                       value={time}
                       onChange={(value) => setTimes((current) => current.map((entry, position) => position === index ? value : entry))}
-                      error={!isValidTime(time) ? t('schedule.invalidTime') : null}
+                      error={!isValidTime(time) ? t('schedule.invalidTime') : times.filter((entry) => entry === time).length > 1 ? t('schedule.duplicateTime') : null}
                     />
                   </View>
                   {times.length > 1 ? (
@@ -278,7 +325,7 @@ function QuickCreateMedicationProfileScreen() {
                   ) : null}
                 </Row>
               ))}
-              {times.length < 12 ? <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, '08:00'])} /> : null}
+              {times.length < MAX_DAILY_TIMES ? <Button label={t('schedule.addTime')} tone="secondary" onPress={() => setTimes((current) => [...current, ''])} /> : null}
             </Card>
 
             <Card>
@@ -289,9 +336,10 @@ function QuickCreateMedicationProfileScreen() {
             <SectionTitle>{t('stock.title')}</SectionTitle>
             <Card>
               <Field
-                label={t('stock.currentQuantity')}
+                label={`${t('stock.currentQuantity')} (${t(`unit.${doseUnit}` as MessageKey)})`}
                 value={remainingQuantity}
-                onChangeText={setRemainingQuantity}
+                onChangeText={(value) => { setRemainingQuantity(value); setStockNeedsReview(false); }}
+                error={stockNeedsReview ? t('medication.stockQuantityReview') : null}
                 keyboardType="decimal-pad"
                 placeholder={t('stock.enterNewQuantity')}
                 hint={t('common.optional')}
@@ -299,7 +347,7 @@ function QuickCreateMedicationProfileScreen() {
               <Picker label={t('stock.thresholdLabel')} options={thresholdOptions} value={thresholdDays} onChange={setThresholdDays} />
             </Card>
 
-            <Button label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
+            <Button testID="save-medication" label={t('common.save')} size="large" loading={saving} onPress={() => void save()} />
           </>
         ) : null}
         <Button

@@ -1,0 +1,17 @@
+# Manual upload of the already inspected archive. This workflow never builds.
+# Before running, verify Apple automatic distribution is held OR the matching
+# API/worker and beta acceptance gates are ready. Empty groups do not override
+# automatic distribution configured in App Store Connect.
+name: Upload reviewed iOS build 10
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios10:
+    name: Upload existing iOS 0.1.0 (10)
+    type: submit
+    params:
+      build_id: a9038762-3554-4f76-9b2f-56a3a2930145
+      profile: ios-testflight
+      groups: []

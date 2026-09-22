@@ -59,7 +59,15 @@ export function assessWorkerHeartbeat(input: {
     return { ok: false, detail: `worker heartbeat is stale (${Math.round(ageMs / 1000)}s)` };
   }
   if (!heartbeat.succeeded) {
-    return { ok: false, detail: 'latest reminder job failed' };
+    return { ok: false, detail: 'latest worker job failed' };
+  }
+
+  const apiCommit = input.apiCommit.trim() || 'unknown';
+  if (apiCommit === 'unknown') {
+    return { ok: false, detail: 'API build identity unavailable' };
+  }
+  if (!COMMIT_PATTERN.test(apiCommit)) {
+    return { ok: false, detail: 'API build identity is invalid' };
   }
 
   const workerCommit = heartbeat.buildCommit?.trim() || 'unknown';
@@ -69,8 +77,8 @@ export function assessWorkerHeartbeat(input: {
   if (!COMMIT_PATTERN.test(workerCommit)) {
     return { ok: false, detail: 'worker build identity is invalid' };
   }
-  if (input.apiCommit !== 'unknown' && workerCommit !== input.apiCommit) {
-    return { ok: false, detail: `worker/API commit mismatch (${workerCommit.slice(0, 12)} != ${input.apiCommit.slice(0, 12)})` };
+  if (workerCommit !== apiCommit) {
+    return { ok: false, detail: `worker/API commit mismatch (${workerCommit.slice(0, 12)} != ${apiCommit.slice(0, 12)})` };
   }
 
   return { ok: true, detail: `${workerCommit.slice(0, 12)} · ${Math.round(ageMs / 1000)}s ago` };

@@ -30,8 +30,8 @@ export default function LanguageScreen() {
     <SafeAreaView style={{ flex: 1 }}>
       <Screen>
         <View style={{ alignItems: 'center', gap: theme.spacing.sm, paddingVertical: theme.spacing.xxl }}>
-          <Txt variant="display" weight="bold" align="center">دوائي</Txt>
-          <Txt variant="h3" color={theme.colors.ink500} align="center">Dawaee</Txt>
+          <Txt variant="display" weight="bold" align="center">تداوي</Txt>
+          <Txt variant="h3" color={theme.colors.ink500} align="center">TADAWEE</Txt>
         </View>
 
         <View style={{ gap: theme.spacing.md }}>

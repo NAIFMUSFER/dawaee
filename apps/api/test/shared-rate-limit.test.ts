@@ -6,6 +6,7 @@ import { loadConfig } from '../src/config.js';
 import { resetDatabase } from './harness.js';
 import { BUDGETS, clientAddressUnit, consumeBudget } from '../src/auth/rate-budget.js';
 import type { FastifyInstance } from 'fastify';
+import { hashPassword } from '../src/lib/password.js';
 
 /**
  * Authentication limits that hold when the service is more than one process.
@@ -38,7 +39,73 @@ const login = (app: FastifyInstance, identifier: string, addr: string, password 
   });
 
 const register = (app: FastifyInstance, payload: Record<string, unknown>, addr: string) =>
-  app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload });
+  app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: from(addr), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
+
+async function loginHits(keyHash: string): Promise<number> {
+  const { rows } = await owner.query<{ hits: string }>(
+    "SELECT coalesce(sum(count), 0) AS hits FROM auth_rate_buckets WHERE scope='login:identifier' AND key_hash=$1",
+    [keyHash],
+  );
+  return Number(rows[0]!.hits);
+}
+
+async function seedSpentLoginWindows(keyHash: string, firstOffset = 0): Promise<void> {
+  const budget = BUDGETS['login:identifier'];
+  // Persistence assertions must not accidentally assert a sliding window.
+  // Derive both adjacent fixed windows from the database clock in one statement.
+  // Only this synthetic identifier is touched; production limits are unchanged.
+  await owner.query(
+    `WITH boundary AS (
+       SELECT to_timestamp(floor(extract(epoch FROM now()) / $2::int) * $2::int) AS start
+     )
+     INSERT INTO auth_rate_buckets (scope, key_hash, window_start, count)
+     SELECT 'login:identifier', $1, start + make_interval(secs => $2::int * step), $3::int
+       FROM boundary CROSS JOIN generate_series($4::int, $4::int + 1) AS offsets(step)
+     ON CONFLICT (scope, key_hash, window_start)
+     DO UPDATE SET count = greatest(auth_rate_buckets.count, excluded.count)`,
+    [keyHash, budget.windowSeconds, budget.max, firstOffset],
+  );
+}
+
+async function spentLoginFixture(phone: string, addressPrefix: string): Promise<string> {
+  const before = await owner.query<{ key_hash: string }>(
+    "SELECT DISTINCT key_hash FROM auth_rate_buckets WHERE scope='login:identifier'",
+  );
+  const max = BUDGETS['login:identifier'].max;
+  for (let i = 0; i < max; i++) {
+    const response = await login(alpha, phone, `${addressPrefix}.${i + 1}`);
+    expect(response.statusCode, response.body).toBe(401);
+  }
+  // Discover the opaque key made by the real login path, without duplicating
+  // the application's HMAC or clearing any unrelated fixture's buckets.
+  const { rows } = await owner.query<{ key_hash: string }>(
+    "SELECT DISTINCT key_hash FROM auth_rate_buckets WHERE scope='login:identifier' AND NOT (key_hash = ANY($1::text[]))",
+    [before.rows.map(row => row.key_hash)],
+  );
+  expect(rows).toHaveLength(1);
+  const keyHash = rows[0]!.key_hash;
+  expect(await loginHits(keyHash), 'some login attempts bypassed the database counter').toBe(max);
+  // Ten requests can straddle a ten-minute boundary. Top up the current AND
+  // next bucket so the following replica/restart probes test persistence, not
+  // whether the wall clock happens to cross a legitimate expiry between them.
+  await seedSpentLoginWindows(keyHash);
+  return keyHash;
+}
+
+async function authenticatedAccount(app: FastifyInstance, addr: string) {
+  const email = `api-budget-${seq++}-${Date.now()}@example.test`;
+  const made=await owner.query<{user_id:string}>('SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
+    [null,email,'API budget fixture',await hashPassword(PW),'ar']);
+  await owner.query('INSERT INTO user_email_verifications(user_id,email) VALUES($1,$2)',[made.rows[0]!.user_id,email]);
+  const created=await app.inject({method:'POST',url:'/v1/auth/login',remoteAddress:'10.55.0.1',headers:from(addr),
+    payload:{identifier:email,password:PW,deviceId:`api-budget-device-${seq++}`}});
+  expect(created.statusCode, created.body).toBe(200);
+  const accessToken = created.json<{ accessToken: string }>().accessToken;
+  const headers = { authorization: `Bearer ${accessToken}` };
+  const me = await app.inject({ method: 'GET', url: '/v1/me', headers });
+  expect(me.statusCode, me.body).toBe(200);
+  return { accessToken, headers, email, userId: me.json().user.id as string };
+}
 
 beforeAll(async () => {
   resetDatabase();
@@ -95,45 +162,181 @@ describe('two API instances share one authentication budget', () => {
     for (let i = 0; i < max * 2; i++) {
       const app = i % 2 === 0 ? alpha : beta;
       const r = await register(app, {
-        phone, displayName: 'S', password: PW, locale: 'ar', deviceId: `srl-reg-${seq++}-${Date.now() % 10000}`,
+        email: `auth-${phone.replace(/\D/g, '')}@example.test`, locale: 'ar', deviceId: `srl-reg-${seq++}-${Date.now() % 10000}`,
       }, `203.0.113.${i + 1}`);
       if (r.statusCode !== 429) allowed++;
     }
-    expect(allowed, `${allowed} registrations allowed against a budget of ${max}`).toBe(max);
+    // Recipient cooldown is tighter than the general registration-attempt cap.
+    expect(allowed).toBeGreaterThanOrEqual(1);
+    expect(allowed).toBeLessThanOrEqual(2); // permits one fixed-window seam
+    const counted = await owner.query("SELECT sum(count)::int AS hits FROM auth_rate_buckets WHERE scope='register:identifier'");
+    expect(counted.rows[0].hits).toBe(max * 2);
+  });
+
+  it('two replicas reserve only the final remaining email slot', async () => {
+    await consumeBudget('email:global', 'account-email');
+    const { rows: [key] } = await owner.query("SELECT key_hash FROM auth_rate_buckets WHERE scope='email:global' LIMIT 1");
+    // Seed both adjacent daily windows to avoid depending on a midnight seam.
+    await owner.query(`WITH boundary AS (
+      SELECT to_timestamp(floor(extract(epoch FROM now())/86400)*86400) AS start
+    ) INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+      SELECT 'email:global',$1,start+make_interval(days=>step),99 FROM boundary CROSS JOIN generate_series(0,1) AS offsets(step)
+      ON CONFLICT(scope,key_hash,window_start) DO UPDATE SET count=99`, [key.key_hash]);
+    const emails = [`capacity-alpha-${Date.now()}@example.test`, `capacity-beta-${Date.now()}@example.test`];
+    const replies = await Promise.all([
+      register(alpha, { email: emails[0] }, '198.18.59.1'),
+      register(beta, { email: emails[1] }, '198.18.59.2'),
+    ]);
+    expect(replies.map(reply => reply.statusCode)).toEqual([202, 202]);
+    expect(replies[0]!.json()).toEqual(replies[1]!.json());
+    const queued = await owner.query('SELECT count(*)::int AS n FROM email_registration_challenges WHERE email=ANY($1)', [emails]);
+    const windows = await owner.query("SELECT count FROM auth_rate_buckets WHERE scope='email:global'");
+    expect(windows.rows.every(row => row.count <= 100)).toBe(true);
+    // At a midnight boundary each of the two separate daily slots is valid.
+    expect(queued.rows[0].n).toBe(windows.rows.reduce((n, row) => n + Number(row.count) - 99, 0));
+    expect(queued.rows[0].n).toBeGreaterThanOrEqual(1);
   });
 
   it('one instance sees the attempts the other already counted', async () => {
     const identifier = `+9665${String(7900000 + n++).padStart(8, '0')}`;
-    const max = BUDGETS['login:identifier'].max;
-
-    // Spend the whole budget on alpha only.
-    for (let i = 0; i < max; i++) await login(alpha, identifier, `198.51.100.${100 + i}`);
+    const keyHash = await spentLoginFixture(identifier, '198.51.100');
+    const hits = await loginHits(keyHash);
 
     // Beta has never seen this identifier in its own memory. If the counters
     // were per-process it would happily start again from zero.
     const onBeta = await login(beta, identifier, '198.51.100.199');
     expect(onBeta.statusCode, 'the second instance did not see the first instance\'s attempts').toBe(429);
+    expect(await loginHits(keyHash), 'the second instance did not commit the refused attempt').toBe(hits + 1);
   });
 });
 
 // ══════════════════════════════════════ restart
 
 describe('a restart does not hand back a fresh budget', () => {
-  it('a new process inherits the count the old one accumulated', async () => {
+  it('a fresh server inherits the count the old one accumulated', async () => {
     const phone = newPhone();
-    const max = BUDGETS['login:identifier'].max;
-    for (let i = 0; i < max; i++) await login(alpha, phone, `192.0.2.${i + 1}`);
+    const keyHash = await spentLoginFixture(phone, '192.0.2');
+    const hits = await loginHits(keyHash);
     expect((await login(alpha, phone, '192.0.2.99')).statusCode, 'the budget never closed').toBe(429);
+    expect(await loginHits(keyHash)).toBe(hits + 1);
 
-    // A brand-new server: fresh process state, fresh in-process limiter. This
-    // is what a cold start on the free plan looks like.
+    // A brand-new Fastify server and in-memory limiter, with the same database.
+    // This exercises application reconstruction, not an OS process restart.
     const cfg = loadConfig();
     const restarted = (await buildServer({ providers: buildProviders(cfg) })).app;
     await restarted.ready();
     try {
       const after = await login(restarted, phone, '192.0.2.100');
       expect(after.statusCode, 'restarting the service reset the attacker\'s budget').toBe(429);
+      expect(await loginHits(keyHash), 'the fresh server did not commit the refused attempt').toBe(hits + 2);
     } finally { await restarted.close(); }
+  });
+
+  it('expired fixed windows legitimately give back a budget without a restart', async () => {
+    const phone = newPhone();
+    const keyHash = await spentLoginFixture(phone, '192.0.2');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='login:identifier' AND key_hash=$1", [keyHash]);
+    await seedSpentLoginWindows(keyHash, -2);
+    const hits = await loginHits(keyHash);
+    expect(hits).toBe(BUDGETS['login:identifier'].max * 2);
+
+    const afterExpiry = await login(alpha, phone, '192.0.2.199');
+    expect(afterExpiry.statusCode, 'expired windows were treated as a permanent lock').toBe(401);
+    expect(await loginHits(keyHash)).toBe(hits + 1);
+  });
+});
+
+// ══════════════════════════════════════ authenticated API
+
+describe('a verified session receives a shared account budget after the address guard', () => {
+  it('one account spends one database-backed bucket across replicas and caller-controlled identity hints', async () => {
+    const account = await authenticatedAccount(alpha, '198.51.100.210');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+
+    for (const [app, forged] of [[alpha, 'victim-a'], [beta, 'victim-b']] as const) {
+      const response = await app.inject({
+        method: 'GET', url: '/v1/me', remoteAddress: '10.55.0.1',
+        headers: { ...account.headers, ...from(`198.51.100.${211 + Number(forged.endsWith('b'))}`), 'x-user-id': forged },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+
+    const { rows } = await owner.query<{ key_hash: string; count: number }>(
+      "SELECT key_hash,count FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.count)).toBe(2);
+    expect(rows[0]!.key_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(rows)).not.toContain(account.userId);
+  });
+
+  it('two accounts behind one address do not share their post-authentication budget', async () => {
+    const first = await authenticatedAccount(alpha, '198.51.100.220');
+    const second = await authenticatedAccount(alpha, '198.51.100.220');
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+    for (const account of [first, second]) {
+      expect((await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers })).statusCode).toBe(200);
+    }
+    const { rows } = await owner.query<{ key_hash: string }>(
+      "SELECT key_hash FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(new Set(rows.map((row) => row.key_hash)).size).toBe(2);
+  });
+
+  it('commits the refused hit, reports retry guidance, and never blocks session teardown', async () => {
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+    const account = await authenticatedAccount(alpha, '198.51.100.230');
+    const budget = BUDGETS['api:account'];
+    const { rows } = await owner.query<{ key_hash: string; window_start: Date }>(
+      "SELECT key_hash,window_start FROM auth_rate_buckets WHERE scope='api:account'",
+    );
+    expect(rows).toHaveLength(1);
+    await owner.query(
+      "UPDATE auth_rate_buckets SET count=$2 WHERE scope='api:account' AND key_hash=$1",
+      [rows[0]!.key_hash, budget.max],
+    );
+    // Cover the immediately following fixed window as well. Without this, a
+    // test starting in the final millisecond of a minute legitimately receives
+    // a fresh production window between setup and request.
+    await owner.query(
+      `INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+       VALUES('api:account',$1,$2::timestamptz+make_interval(secs=>$3),$4)
+       ON CONFLICT(scope,key_hash,window_start) DO UPDATE SET count=EXCLUDED.count`,
+      [rows[0]!.key_hash, rows[0]!.window_start, budget.windowSeconds, budget.max],
+    );
+
+    const refused = await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers });
+    expect(refused.statusCode, refused.body).toBe(429);
+    expect(refused.json()).toMatchObject({
+      error: { code: 'rate_limited' },
+      meta: { retryAfterSeconds: expect.any(Number) },
+    });
+    const persisted = await owner.query<{ count: number }>(
+      "SELECT count FROM auth_rate_buckets WHERE scope='api:account' AND key_hash=$1", [rows[0]!.key_hash],
+    );
+    expect(persisted.rows.map((row) => Number(row.count))).toContain(budget.max + 1);
+
+    const logout = await alpha.inject({ method:'POST', url:'/v1/auth/logout', headers: account.headers });
+    expect(logout.statusCode, logout.body).toBe(200);
+    expect((await beta.inject({ method:'GET', url:'/v1/me', headers: account.headers })).statusCode).toBe(401);
+  });
+
+  it('charges a route with overlapping auth hooks once and never trusts an invalid bearer as an account', async () => {
+    const account = await authenticatedAccount(alpha, '198.51.100.240');
+    await owner.query('INSERT INTO user_email_verifications(user_id,email) VALUES($1,$2) ON CONFLICT DO NOTHING', [account.userId, account.email]);
+    await owner.query("DELETE FROM auth_rate_buckets WHERE scope='api:account'");
+
+    const invalid = await alpha.inject({ method:'GET', url:'/v1/me', headers:{authorization:'Bearer not-a-jwt'} });
+    expect(invalid.statusCode).toBe(401);
+    expect(Number((await owner.query("SELECT count(*) AS n FROM auth_rate_buckets WHERE scope='api:account'")).rows[0].n)).toBe(0);
+
+    const overlap = await alpha.inject({
+      method:'POST', url:'/v1/caregivers/notification/resolve', headers:account.headers, payload:{},
+    });
+    expect(overlap.statusCode).toBe(400);
+    const { rows } = await owner.query<{ count: number }>("SELECT count FROM auth_rate_buckets WHERE scope='api:account'");
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.count), 'one request was charged by both auth hooks').toBe(1);
   });
 });
 
@@ -240,7 +443,7 @@ describe('the limiter stores nothing that identifies anyone', () => {
   it('no phone number, email address or IP address appears in the table', async () => {
     const phone = newPhone();
     await login(alpha, phone, '198.51.100.77');
-    await register(alpha, { email: 'privacy-probe@example.com', displayName: 'P', password: PW, locale: 'ar', deviceId: `srl-p-${seq++}` }, '198.51.100.78');
+    await register(alpha, { email: 'privacy-probe@example.com', locale: 'ar', deviceId: `srl-p-${seq++}` }, '198.51.100.78');
 
     const { rows } = await owner.query<{ scope: string; key_hash: string }>('SELECT scope, key_hash FROM auth_rate_buckets');
     expect(rows.length).toBeGreaterThan(0);

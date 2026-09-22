@@ -1,12 +1,22 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Linking, Pressable, Switch, View } from 'react-native';
+import { parseMedicationNumber } from '@dawaee/shared';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { AppState, Linking, Platform, Pressable, Switch, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { useApp } from '@/state/app-store';
-import { inspectCapability, requestPermission, type NotificationCapability } from '@/notifications';
+import {
+  inspectCapability,
+  rebuildRemindersFromCache,
+  requestPermission,
+  type NotificationCapability,
+  syncPushRegistration, getPushRegistrationStatus, subscribeNotificationStatus,
+} from '@/notifications';
+import { planExactAlarmGrantRecovery } from '@/notifications/exact-alarm-recovery';
+import { openExactAlarmSettings } from '../../modules/exact-alarm-access';
 
 /**
  * Notification settings, and an honest diagnosis of what this device will
@@ -47,7 +57,10 @@ function localTimeToMinutes(value: string | null, fallback: number): number {
 export default function NotificationSettingsScreen() {
   const { t, formatNumber, formatTime } = useI18n();
   const theme = useTheme();
-  const { preferences, updatePreferences } = useApp();
+  const { preferences, profiles, signedIn, updatePreferences, user, deviceId } = useApp();
+  const { capture } = useRequestScope(`${signedIn ? user?.id : 'signed-out'}:${deviceId}`);
+  const pushStatus = useSyncExternalStore(subscribeNotificationStatus, getPushRegistrationStatus, getPushRegistrationStatus);
+  const [inspectionFailed, setInspectionFailed] = useState(false);
 
   const [capability, setCapability] = useState<NotificationCapability | null>(null);
   const [checking, setChecking] = useState(true);
@@ -58,16 +71,98 @@ export default function NotificationSettingsScreen() {
   const [customDays, setCustomDays] = useState(String(preferences.lowStockThresholdDays));
   const [customError, setCustomError] = useState<string | null>(null);
 
+  const capabilityRef = useRef<NotificationCapability | null>(null);
+  const selfOwnerProfileId = profiles.find((profile) => profile.isSelf && profile.role === 'owner')?.id ?? null;
+  const exactAlarmRecoveryScope = signedIn && user?.id
+    ? `${user.id}:${selfOwnerProfileId ?? 'none'}`
+    : 'signed-out';
+  const exactAlarmRecoveryScopeRef = useRef(exactAlarmRecoveryScope);
+  exactAlarmRecoveryScopeRef.current = exactAlarmRecoveryScope;
+  const exactAlarmRecoveryContextRef = useRef({
+    signedIn,
+    profiles,
+    locale: preferences.locale,
+    voiceEnabled: preferences.voiceRemindersEnabled,
+    showMedication: preferences.showMedicationInNotifications,
+  });
+  exactAlarmRecoveryContextRef.current = {
+    signedIn,
+    profiles,
+    locale: preferences.locale,
+    voiceEnabled: preferences.voiceRemindersEnabled,
+    showMedication: preferences.showMedicationInNotifications,
+  };
+
   const inspect = useCallback(async () => {
     setChecking(true);
+    setInspectionFailed(false);
     try {
-      setCapability(await inspectCapability());
+      const next = await inspectCapability();
+      capabilityRef.current = next;
+      setCapability(next);
+      return next;
+    } catch {
+      setInspectionFailed(true);
+      return null;
     } finally {
       setChecking(false);
     }
   }, []);
 
   useEffect(() => { void inspect(); }, [inspect]);
+
+  // Android cancels future exact alarms when SCHEDULE_EXACT_ALARM is revoked.
+  // Returning from the app-scoped Alarms & reminders screen therefore needs
+  // more than a status refresh: after an observed denied -> granted transition,
+  // rebuild this account's own cached reminders using the current disclosure
+  // choices. The account/profile scope is re-read after the async OS check so a
+  // logout or account switch cannot schedule a stale patient's reminders.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    let cancelled = false;
+    let recheckInFlight = false;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || recheckInFlight) return;
+
+      const previous = capabilityRef.current;
+      const scopeAtStart = exactAlarmRecoveryScopeRef.current;
+      recheckInFlight = true;
+      setChecking(true);
+
+      void inspectCapability()
+        .then(async (current) => {
+          if (cancelled || scopeAtStart !== exactAlarmRecoveryScopeRef.current) return;
+
+          capabilityRef.current = current;
+          setCapability(current);
+          const context = exactAlarmRecoveryContextRef.current;
+          const plan = planExactAlarmGrantRecovery({
+            platform: Platform.OS,
+            previous,
+            current,
+            signedIn: context.signedIn,
+            profiles: context.profiles,
+            locale: context.locale,
+            voiceEnabled: context.voiceEnabled,
+            showMedication: context.showMedication,
+          });
+          if (!plan) return;
+
+          await rebuildRemindersFromCache(plan.profileId, plan.locale, plan.options);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          recheckInFlight = false;
+          if (!cancelled) setChecking(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, []);
 
   const askPermission = async () => {
     setRequesting(true);
@@ -79,8 +174,19 @@ export default function NotificationSettingsScreen() {
     }
   };
 
+  const recheck = async () => {
+    const current = capture();
+    const scope = exactAlarmRecoveryScopeRef.current;
+    await inspect();
+    if (!current() || !signedIn || !deviceId || scope !== exactAlarmRecoveryScopeRef.current) return;
+    await syncPushRegistration(deviceId, {
+      requestPermission: false,
+      isCurrent: () => current() && scope === exactAlarmRecoveryScopeRef.current && exactAlarmRecoveryContextRef.current.signedIn,
+    }).catch(() => undefined);
+  };
+
   const saveCustomLowStock = () => {
-    const days = Number(customDays);
+    const days = parseMedicationNumber(customDays);
     if (!Number.isInteger(days) || days < 1 || days > 60) {
       setCustomError(t('error.validation_failed'));
       return;
@@ -143,10 +249,12 @@ export default function NotificationSettingsScreen() {
         </Row>
 
         <SectionTitle>{t('notifications.statusTitle')}</SectionTitle>
+        {inspectionFailed ? <Banner tone="warning" title={t('notifications.inspectionFailed')} /> : null}
 
         {checking && !capability ? (
           <Loading label={t('common.loading')} />
-        ) : !capability || !capability.supported ? (
+        ) : inspectionFailed && !capability ? null
+          : !capability || !capability.supported ? (
           <Banner tone="info" title={t('notifications.unsupportedTitle')} body={t('notifications.unsupportedBody')} />
         ) : (
           <View style={{ gap: theme.spacing.md }}>
@@ -173,6 +281,9 @@ export default function NotificationSettingsScreen() {
                 }
               />
             )}
+            {capability.permissionGranted ? <Txt>{t(pushStatus === 'registered'
+              ? 'notifications.registrationReady' : pushStatus === 'failed'
+                ? 'notifications.registrationFailed' : 'notifications.registrationPending')}</Txt> : null}
 
             {capability.permissionGranted && !capability.canScheduleExact ? (
               <Banner
@@ -184,7 +295,9 @@ export default function NotificationSettingsScreen() {
                     <Button
                       label={t('notifications.openSettings')}
                       tone="secondary"
-                      onPress={() => { void Linking.openSettings(); }}
+                      onPress={() => {
+                        if (!openExactAlarmSettings()) void Linking.openSettings();
+                      }}
                     />
                   </View>
                 }
@@ -200,7 +313,7 @@ export default function NotificationSettingsScreen() {
               label={t('notifications.recheck')}
               tone="ghost"
               loading={checking}
-              onPress={() => void inspect()}
+              onPress={() => void recheck()}
             />
           </View>
         )}

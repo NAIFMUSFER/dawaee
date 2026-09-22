@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath, URL } from 'node:url';
 import vm from 'node:vm';
 import ts from 'typescript';
@@ -35,7 +36,7 @@ function loadModule(file: string, mocks: Record<string, unknown>, globals: Recor
   }).outputText;
   vm.runInNewContext(source, {
     module, exports: module.exports, console, URL, Response, AbortController,
-    setTimeout, clearTimeout,
+    setTimeout, clearTimeout, setInterval, clearInterval,
     process: { env: { EXPO_PUBLIC_API_URL: 'https://qa.invalid', EXPO_PUBLIC_DEMO: '0' } },
     require: (name: string) => {
       if (!(name in mocks)) throw new Error(`Unexpected test dependency: ${name}`);
@@ -51,8 +52,8 @@ function loadModule(file: string, mocks: Record<string, unknown>, globals: Recor
  * hooks, HTTP, keychain/cache and native APIs are synthetic. This is not a React
  * renderer, live backend, encryption test or physical-device lifecycle test.
  */
-async function boot(failure?: Failure, hasStoredSession = true) {
-  let tokens: { accessToken: string; refreshToken: string } | null = hasStoredSession
+async function boot(failure?: Failure, hasStoredSession = true, storedLocale: 'ar' | 'en' | null = null) {
+  let tokens: { accessToken: string; refreshToken: string; retryNonce?: string } | null = hasStoredSession
     ? { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' } : null;
   let tokenClears = 0;
   let snapshotReads = 0;
@@ -62,11 +63,20 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   const purged: Array<string | null> = [];
   const destroyed: string[] = [];
   const requested: string[] = [];
+  const directions: Array<'ar' | 'en'> = [];
+  const accessChanges = loadModule(fileURLToPath(new URL('../src/api/access-changes.ts', import.meta.url)), {});
+  const permissions = loadModule(fileURLToPath(new URL('../src/security/profile-permissions.ts', import.meta.url)), {});
+  const clinicalChanges = loadModule(fileURLToPath(new URL('../src/api/clinical-changes.ts', import.meta.url)), {});
   const client = loadModule(fileURLToPath(new URL('../src/api/client.ts', import.meta.url)), {
     '@react-native-async-storage/async-storage': {
       getItem: async () => 'synthetic-device', setItem: async () => undefined,
     },
     'expo-constants': {},
+    './clinical-changes.js': clinicalChanges,
+    './access-changes.js': accessChanges,
+    './refresh-nonce.js': loadModule(fileURLToPath(new URL('../src/api/refresh-nonce.ts', import.meta.url)), {
+      'expo-crypto': { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) },
+    }),
     './token-store.js': {
       readSession: async () => tokens,
       writeSession: async (next: NonNullable<typeof tokens>) => { tokens = next; },
@@ -111,11 +121,18 @@ async function boot(failure?: Failure, hasStoredSession = true) {
   };
   const provider = loadModule(fileURLToPath(new URL('../src/state/app-store.tsx', import.meta.url)), {
     react,
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
+    '../api/access-changes.js': accessChanges,
+    '../api/clinical-changes.js': clinicalChanges,
+    '../security/profile-permissions.js': permissions,
     'react/jsx-runtime': { jsx: (_type: unknown, props: unknown) => props },
     'expo-localization': { getLocales: () => [{ languageCode: 'ar' }] },
     '../api/client.js': client,
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => hasStoredSession ? ACCOUNT : null },
     '../storage/offline-queue.js': {
+      subscribeQueueChanges: () => () => undefined,
+      invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined,
       flushQueue: async () => ({ offline: false }),
       purgeLocalCaches: async (owner: string | null) => { purged.push(owner); },
       queueSize: async () => 2,
@@ -134,7 +151,16 @@ async function boot(failure?: Failure, hasStoredSession = true) {
       purgePrivacyHideIntents: async () => undefined,
       readPrivacyHideIntent: async () => ({ kind: 'none' }),
     },
-    '../i18n/index.js': { applyNativeDirection: () => ({ restartRequired: false }) },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => storedLocale,
+      writeLocalePreference: async () => true,
+    },
+    '../i18n/index.js': {
+      applyNativeDirection: (locale: 'ar' | 'en') => {
+        directions.push(locale);
+        return { restartRequired: locale === 'ar' };
+      },
+    },
     '../notifications/index.js': {
       cancelAllLocalNotifications: async () => { cancellations++; },
       rebuildRemindersFromCache: async () => undefined,
@@ -154,6 +180,7 @@ async function boot(failure?: Failure, hasStoredSession = true) {
     await new Promise<void>((resolve) => setImmediate(resolve));
     return {
       state, snapshotReads, snapshotWrites, cacheOwner, requested,
+      directions,
       sessionRetained: client.isSignedIn(), tokenClears, cancellations, purged, destroyed,
     };
   } finally {
@@ -168,6 +195,7 @@ function renderEntry(state: AppState, sessionRetained = false): unknown {
   const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
   const module = loadModule(fileURLToPath(new URL('../app/index.tsx', import.meta.url)), {
     react,
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
     'react/jsx-runtime': { jsx, jsxs: jsx },
     'expo-router': { Redirect: 'Redirect' },
     '@/state/app-store': { useApp: () => state },
@@ -238,6 +266,14 @@ describe('cold-start errors cannot silently become cached authorization', () => 
     expect(result.snapshotReads).toBe(0);
     expect(result.cacheOwner).toBeNull();
     expect(result.state.signedIn).toBe(false);
+  });
+
+  it('restores an explicit first-run language before showing signed-out screens', async () => {
+    const result = await boot(undefined, false, 'en');
+    expect(result.state.signedIn).toBe(false);
+    expect(result.state.preferences.locale).toBe('en');
+    expect(result.directions).toEqual(['en']);
+    expect(result.requested).toEqual([]);
   });
 
   it('explicit cold-start session rejection destroys the restored account cache key', async () => {

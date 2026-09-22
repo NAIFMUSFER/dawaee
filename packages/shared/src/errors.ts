@@ -1,6 +1,7 @@
 /** Stable machine-readable error codes. The client maps these to localized text. */
 export const ERROR_CODES = {
   VALIDATION_FAILED: 'validation_failed',
+  UPGRADE_REQUIRED: 'upgrade_required',
   UNAUTHENTICATED: 'unauthenticated',
   TOKEN_EXPIRED: 'token_expired',
   /**
@@ -27,12 +28,19 @@ export const ERROR_CODES = {
   INVITATION_EXPIRED: 'invitation_expired',
   INVITATION_INVALID: 'invitation_invalid',
   INVITATION_ALREADY_USED: 'invitation_already_used',
+  INVITATION_CHANGED: 'invitation_changed',
+  PHONE_VERIFICATION_REQUIRED: 'phone_verification_required',
   DOSE_ALREADY_RESOLVED: 'dose_already_resolved',
   DOSE_NOT_ACTIONABLE: 'dose_not_actionable',
   VOICE_CONFIDENCE_TOO_LOW: 'voice_confidence_too_low',
   STOCK_TRACKING_DISABLED: 'stock_tracking_disabled',
   CONSENT_REQUIRED: 'consent_required',
   UPLOAD_REJECTED: 'upload_rejected',
+  UPLOAD_FAILED: 'upload_failed',
+  OCR_BILLING: 'ocr_billing',
+  OCR_CONFIGURATION: 'ocr_configuration',
+  OCR_TIMEOUT: 'ocr_timeout',
+  OCR_NO_TEXT: 'ocr_no_text',
   PROVIDER_UNAVAILABLE: 'provider_unavailable',
   INTERNAL: 'internal_error',
 } as const;

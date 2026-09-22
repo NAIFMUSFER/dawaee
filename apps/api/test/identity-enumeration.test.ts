@@ -1,6 +1,7 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { resetDatabase, startHarness, type Harness } from './harness.js';
+import { createEmailAccount, resetDatabase, startHarness, type Harness } from './harness.js';
 
 /**
  * Whether an outsider can learn that a given phone number or email address has
@@ -46,7 +47,7 @@ const probe = (r: { statusCode: number; body: string }): Probe => {
 };
 
 const register = (payload: Record<string, unknown>) =>
-  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload });
+  h.app.inject({ method: 'POST', url: '/v1/auth/register', remoteAddress: '10.55.0.1', headers: fromNewClient(), payload: { ...(payload.phone ? { email: `auth-${String(payload.phone).replace(/\D/g, '')}@example.test` } : {}), ...payload } });
 
 const login = (identifier: string, password: string) =>
   h.app.inject({
@@ -58,11 +59,13 @@ let n = 0;
 const newPhone = () => `+9665${String(3100000 + n++).padStart(8, '0')}`;
 
 async function makeAccount(phone: string, email?: string) {
-  const r = await register({
-    phone, ...(email ? { email } : {}), displayName: 'Test', password: PW, locale: 'ar',
-    deviceId: `enum-dev-${n}-${Date.now() % 100000}`,
-  });
-  expect(r.statusCode, `account setup failed: ${r.body}`).toBe(200);
+  const accountEmail = email ?? `auth-${phone.replace(/\D/g, '')}@example.test`;
+  const r = await createEmailAccount(h,accountEmail,'Test',PW,`enum-dev-${n}-${Date.now() % 100000}`);
+  // Registration no longer reserves an unproved phone. This owner-only test
+  // fixture attaches it so the suite can probe established phone accounts;
+  // proof-first linking itself is covered at the HTTP provider boundary.
+  await owner.query('UPDATE users SET phone_e164=$1 WHERE lower(email)=$2', [phone, accountEmail.toLowerCase()]);
+  await owner.query(`INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE phone_e164=$1 ON CONFLICT DO NOTHING`, [phone]);
   return r;
 }
 
@@ -88,8 +91,11 @@ describe('sign-in tells nobody which accounts exist', () => {
 
   it('an email that exists and one that never did are the same answer', async () => {
     const phone = newPhone();
-    await makeAccount(phone, `enum-${n}@example.com`);
-    const known = probe(await login(`enum-${n - 1}@example.com`, 'not the right password'));
+    const email = `enum-${n}@example.com`;
+    const account = await makeAccount(phone, email);
+    expect((await owner.query('SELECT id FROM users WHERE email=$1', [email])).rows).toEqual([{ id: account.userId }]);
+    expect((await login(email, PW)).statusCode).toBe(200);
+    const known = probe(await login(email, 'not the right password'));
     const unknown = probe(await login('definitely-nobody@example.com', 'not the right password'));
     expect(known).toEqual(unknown);
   });
@@ -131,16 +137,17 @@ describe('sign-in tells nobody which accounts exist', () => {
     expect(lockedWrongPw.status).toBe(401);
   });
 
-  it('the account holder is still told they are locked out', async () => {
+  it('a correct guess during a lock reveals neither the password nor the lock', async () => {
     const phone = newPhone();
     await makeAccount(phone);
     for (let i = 0; i < 9; i++) await login(phone, `wrong-guess-${i}`);
 
-    // Whoever can supply the password is the holder in every practical sense,
-    // and a password that silently stops working is a support call.
+    // A correct candidate is not proof that the requester is the owner. A
+    // different response would keep password guessing useful during the lock.
     const holder = probe(await login(phone, PW));
-    expect(holder.status, 'the real user gets no explanation for the lockout').toBe(429);
-    expect(holder.code).toBe('account_locked');
+    expect(holder).toEqual(probe(await login(newPhone(), PW)));
+    expect(holder.status).toBe(401);
+    expect(holder.code).toBe('invalid_credentials');
   });
 
   /**
@@ -215,7 +222,7 @@ describe('rate limiting cannot be sidestepped with a header', () => {
         method: 'POST', url: '/v1/auth/register', remoteAddress: '10.66.0.1',
         ...(hdr ? { headers: hdr } : {}),
         payload: {
-          phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
+          email: `burst-${run}-${i}@example.test`, phone: `+9665${String(90000000 + run * 100 + i)}`.slice(0, 13), displayName: 'B', password: PW, locale: 'ar',
           deviceId: `burst-${run}-${i}-${Date.now() % 100000}`,
         },
       });
@@ -270,6 +277,7 @@ describe('one phone number is one identity however it is written', () => {
     const same = [
       '+966512345678', '00966512345678', '0512345678', '966512345678',
       '+966 51 234 5678', '+966-51-234-5678', ' +966512345678 ',
+      '+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '۰۵۱۲۳۴۵۶۷۸',
     ];
     const normalised = same.map((v) => normalizePhone(v));
     expect(new Set(normalised).size, `variants disagreed: ${JSON.stringify(normalised)}`).toBe(1);
@@ -278,28 +286,36 @@ describe('one phone number is one identity however it is written', () => {
 
   it('a form that cannot be normalised is refused, never treated as a new identity', async () => {
     const { normalizePhone } = await import('../src/lib/crypto.js');
-    // Arabic-Indic digits and a zero-width space. Neither is accepted as a
-    // second spelling of an existing number — they are rejected outright, which
-    // is the safe direction: no duplicate account, no second rate-limit bucket.
-    for (const odd of ['+٩٦٦٥١٢٣٤٥٦٧٨', '٠٥١٢٣٤٥٦٧٨', '+966512345678​']) {
+    // Invisible characters and malformed numbers must never create a second
+    // identity. Arabic and Persian digits above share the canonical identity.
+    for (const odd of ['+966512345678​', '٠٥١٢٣٤٥٦٧٨x', '++966512345678']) {
       expect(normalizePhone(odd), `${JSON.stringify(odd)} was accepted as an identifier`).toBeNull();
     }
   });
 
-  it('the same number in two spellings cannot register twice', async () => {
+  it('legacy phone input never reserves an unproved number in either spelling', async () => {
     const local = '0598765432';
     const international = '+966598765432';
     const first = await register({ phone: local, displayName: 'N1', password: PW, locale: 'ar', deviceId: `norm-a-${Date.now() % 100000}` });
-    expect(first.statusCode).toBe(200);
+    expect(first.statusCode).toBe(426);
     const second = await register({ phone: international, displayName: 'N2', password: PW, locale: 'ar', deviceId: `norm-b-${Date.now() % 100000}` });
-    expect(second.statusCode, 'the same number registered twice under two spellings').toBe(409);
+    expect(second.statusCode, 'a typed but unproved number was reserved by registration').toBe(426);
+    const rows = await owner.query<{ phone_e164: string | null }>(
+      "SELECT phone_e164 FROM users WHERE email IN ('auth-0598765432@example.test','auth-966598765432@example.test') ORDER BY email",
+    );
+    expect(rows.rows).toEqual([]);
   });
 
-  it('email case does not create a second account', async () => {
-    const first = await register({ email: 'Case.Test@Example.COM', displayName: 'E1', password: PW, locale: 'ar', deviceId: `mail-a-${Date.now() % 100000}` });
-    expect(first.statusCode).toBe(200);
-    const second = await register({ email: 'case.test@example.com', displayName: 'E2', password: PW, locale: 'ar', deviceId: `mail-b-${Date.now() % 100000}` });
-    expect(second.statusCode, 'letter case produced a second account').toBe(409);
+  it('email case shares the recipient cooldown without creating another queued job', async () => {
+    const first = await register({ email: 'Case.Test@Example.COM', locale: 'ar', deviceId: `mail-a-${Date.now() % 100000}` });
+    expect(first.statusCode).toBe(202);
+    // Pin this synthetic cooldown across a possible fixed-window minute seam.
+    await owner.query(`INSERT INTO auth_rate_buckets(scope,key_hash,window_start,count)
+      SELECT scope,key_hash,window_start+interval '60 seconds',count FROM auth_rate_buckets WHERE scope='email:recipient'
+      ON CONFLICT(scope,key_hash,window_start) DO NOTHING`);
+    const second = await register({ email: 'case.test@example.com', locale: 'ar', deviceId: `mail-b-${Date.now() % 100000}` });
+    expect(second.statusCode, 'case variants bypassed the same recipient cooldown').toBe(429);
+    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email='case.test@example.com'")).rows).toHaveLength(1);
   });
 
   /**
@@ -308,14 +324,14 @@ describe('one phone number is one identity however it is written', () => {
    * so the same value could log in but could not register.
    */
   it('a pasted address with surrounding whitespace is the same account, not a rejection', async () => {
-    const padded = await register({ email: '  case.test@example.com  ', displayName: 'E3', password: PW, locale: 'ar', deviceId: `mail-c-${Date.now() % 100000}` });
-    expect(padded.statusCode, 'whitespace was rejected instead of trimmed').toBe(409);
+    const padded = await register({ email: '  fresh.pasted@example.com  ', locale: 'ar', deviceId: `mail-c-${Date.now() % 100000}` });
+    expect(padded.statusCode, 'whitespace was rejected instead of trimmed').toBe(202);
+    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email='fresh.pasted@example.com'")).rows).toEqual([{ email: 'fresh.pasted@example.com' }]);
   });
 
   it('registration and sign-in agree on the spelling of an address', async () => {
     const email = `Agree.${Date.now() % 100000}@Example.com`;
-    const made = await register({ email, displayName: 'E4', password: PW, locale: 'ar', deviceId: `mail-d-${Date.now() % 100000}` });
-    expect(made.statusCode).toBe(200);
+    await createEmailAccount(h,email,'E4',PW,`mail-d-${Date.now() % 100000}`);
     for (const spelling of [email, email.toLowerCase(), `  ${email}  `, email.toUpperCase()]) {
       const r = await login(spelling, PW);
       expect(r.statusCode, `sign-in refused the spelling ${JSON.stringify(spelling)}`).toBe(200);
@@ -323,11 +339,12 @@ describe('one phone number is one identity however it is written', () => {
   });
 
   it('plus-addressing stays distinct, because it identifies a different mailbox owner', async () => {
-    const a = await register({ email: 'plus@example.com', displayName: 'P1', password: PW, locale: 'ar', deviceId: `plus-a-${Date.now() % 100000}` });
-    const b = await register({ email: 'plus+tag@example.com', displayName: 'P2', password: PW, locale: 'ar', deviceId: `plus-b-${Date.now() % 100000}` });
-    expect(a.statusCode).toBe(200);
+    const a = await register({ email: 'plus@example.com', locale: 'ar', deviceId: `plus-a-${Date.now() % 100000}` });
+    const b = await register({ email: 'plus+tag@example.com', locale: 'ar', deviceId: `plus-b-${Date.now() % 100000}` });
+    expect(a.statusCode).toBe(202);
     // Collapsing these would let one person seize an address they do not own.
-    expect(b.statusCode).toBe(200);
+    expect(b.statusCode).toBe(202);
+    expect((await owner.query("SELECT email FROM email_registration_challenges WHERE email LIKE 'plus%@example.com'")).rows).toHaveLength(2);
   });
 });
 
@@ -337,9 +354,9 @@ describe('invitation states are gated behind holding the token', () => {
   it('an invented token is refused without naming anyone', async () => {
     const phone = newPhone();
     const acct = await makeAccount(phone);
-    const token = acct.json<{ accessToken: string }>().accessToken;
-    const r = await h.app.inject({
-      method: 'POST', url: '/v1/caregivers/accept', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
+    const token = acct.token;
+    const r = await reviewAndAcceptInvitation(options => h.app.inject(options), {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
       payload: { token: 'x'.repeat(48) },
     });
     expect(r.statusCode).toBe(404);
@@ -371,7 +388,7 @@ describe('the profile-update conflict is an oracle, and it is throttled', () => 
     await makeAccount(newPhone(), victimEmail);
 
     const attacker = await makeAccount(newPhone());
-    const token = attacker.json<{ accessToken: string }>().accessToken;
+    const token = attacker.token;
 
     const taken = await h.app.inject({
       method: 'PATCH', url: '/v1/me', headers: { authorization: `Bearer ${token}`, ...fromNewClient() },
@@ -382,7 +399,7 @@ describe('the profile-update conflict is an oracle, and it is throttled', () => 
 
   it('cannot be asked at a rate that makes enumeration worthwhile', async () => {
     const attacker = await makeAccount(newPhone());
-    const token = attacker.json<{ accessToken: string }>().accessToken;
+    const token = attacker.token;
 
     // One client address, as production presents it: the trusted proxy appends
     // the address it observed, so an attacker cannot choose their own bucket.

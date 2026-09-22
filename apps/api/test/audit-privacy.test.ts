@@ -1,6 +1,8 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { redactUrl } from '../src/lib/logger.js';
+import { openEmailJob } from '../src/providers/account-email.js';
 import {
   authHeaders, resetDatabase, signIn, startHarness, PANADOL, type Harness, type TestUser,
 } from './harness.js';
@@ -37,11 +39,29 @@ const PROBE = {
   condition: 'probe-condition-text',
   symptom: 'probe-symptom-free-text',
   carerPhone: '+966500098009',
+  registrationDevice: 'probe-untrusted-registration-device',
 };
 
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  const registration = await send({
+    method: 'POST', url: '/v1/auth/register',
+    payload: { email: 'audit-registration@example.test', deviceId: PROBE.registrationDevice },
+  });
+  expect(registration.statusCode, registration.body).toBe(202);
+  const registrationJob = psql(
+    "SELECT payload FROM email_registration_challenges WHERE email = 'audit-registration@example.test'",
+  );
+  const registrationMail = await openEmailJob(registrationJob);
+  const completion = await send({
+    method: 'POST', url: '/v1/auth/email/complete',
+    payload: {
+      token: registrationMail.token, purpose: 'register', displayName: 'Audit registration',
+      newPassword: 'Audit registration phrase!',
+    },
+  });
+  expect(completion.statusCode, completion.body).toBe(200);
   patient = await signIn(h, '+966500098001');
   other = await signIn(h, '+966500098002');
   admin = await signIn(h, '+966500098003');
@@ -119,9 +139,10 @@ describe('P13-9 the audit trail records the act, not the contents', () => {
     expect(rows).not.toMatch(/\beyJ[A-Za-z0-9_-]{4,}\./);
   });
 
-  it('records the device identifier verbatim, whatever the client chose', () => {
-    const row = psql("SELECT coalesce(new_value::text,'') FROM audit_logs WHERE action = 'auth.register' LIMIT 1");
-    expect(row).toContain('deviceId');
+  it('does not attribute pre-proof registration to an untrusted device identifier', () => {
+    expect(psql("SELECT count(*) FROM audit_logs WHERE action = 'auth.register'")).toBe('1');
+    const row = psql("SELECT coalesce(new_value::text,'') FROM audit_logs WHERE action = 'auth.register'");
+    expect(row).not.toContain(PROBE.registrationDevice);
   });
 
   it('records a caregiver invitation without the phone number it was sent to', () => {
@@ -265,8 +286,8 @@ describe('P13-11 the audit trail cannot be rewritten or misattributed', () => {
     const invitationLink = invite.json<{ invitationLink: string }>().invitationLink;
     const token = invitationLink.split('/invite/')[1]!;
     expect(token, 'invite response did not contain a fragment token').toBeTruthy();
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
 
     const doses = await send({

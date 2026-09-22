@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { Button, Card, Row, Txt } from './ui.js';
 import { useI18n } from '../i18n/index.js';
 import { useTheme } from '../hooks/useTheme.js';

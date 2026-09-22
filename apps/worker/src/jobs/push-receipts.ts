@@ -79,15 +79,33 @@ export async function pushReceiptJob(ctx: WorkerContext, client: PoolClient): Pr
   if (rows.length === 0) return { itemsProcessed: 0 };
 
   const byDelivery = rows.map((row) => ({ row, tickets: tickets(row.provider_receipts) }));
+  const malformedIds = byDelivery
+    .filter((entry) => entry.tickets.length === 0)
+    .map((entry) => entry.row.id);
+  let processed = 0;
+  if (malformedIds.length > 0) {
+    // These tickets were written durably and cannot become valid later. If a
+    // complete LIMIT window contains only malformed values, returning without
+    // settling them selects the same poison batch forever and starves every
+    // newer receipt. Isolate the bad rows with a generic detail that does not
+    // copy corrupted provider data into operational logs or user-visible state.
+    const result = await client.query(
+      `UPDATE notification_deliveries
+          SET status = 'failed', error_code = $2, error_detail = $3
+        WHERE id = ANY($1::uuid[]) AND status = 'sent' AND delivered_at IS NULL`,
+      [malformedIds, 'push_receipt_malformed', 'Stored push receipt tickets were invalid'],
+    );
+    processed += result.rowCount ?? 0;
+  }
   const ids = [...new Set(byDelivery.flatMap((entry) => entry.tickets.map((ticket) => ticket.providerMessageId)))];
-  if (ids.length === 0) return { itemsProcessed: 0 };
+  if (ids.length === 0) return { itemsProcessed: processed };
 
   let providerReceipts: PushReceiptResult[];
   try {
     providerReceipts = await getReceipts(ids);
   } catch (err) {
     return {
-      itemsProcessed: 0,
+      itemsProcessed: processed,
       failures: [{
         step: 'provider-receipts',
         error: sanitizeOperationalError(err instanceof Error ? err.message : 'unknown receipt error'),
@@ -96,7 +114,6 @@ export async function pushReceiptJob(ctx: WorkerContext, client: PoolClient): Pr
   }
   const receiptById = new Map(providerReceipts.map((receipt) => [receipt.providerMessageId, receipt]));
 
-  let processed = 0;
   for (const { row, tickets: rowTickets } of byDelivery) {
     if (rowTickets.length === 0) continue;
     const resolved = rowTickets

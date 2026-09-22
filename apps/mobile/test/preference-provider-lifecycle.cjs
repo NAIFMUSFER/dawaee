@@ -57,6 +57,7 @@ function makeProvider(file, notificationsFile, options = {}) {
   };
   const imports = {
     react: hooks,
+    'react-native': { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } },
     'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
     'expo-localization': { getLocales: () => [{ languageCode: 'en' }] },
     '../api/client.js': { api: {
@@ -69,8 +70,10 @@ function makeProvider(file, notificationsFile, options = {}) {
     // bootstrap. This harness is not exercising secure-storage/JWT parsing —
     // restored-session-owner.test.ts does that directly — so return the seeded
     // authenticated account and keep these lifecycle scenarios focused.
+    '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => seed.user?.id ?? null },
-    '../storage/offline-queue.js': { setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
+    '../storage/offline-queue.js': { writeOfflineBootstrap: options.writeOfflineBootstrap || (async () => true), subscribeQueueChanges: () => () => undefined,
+      invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined, setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
       queueSize: async () => 0, flushQueue: async () => ({ offline: false }) },
     '../storage/notification-privacy-intent.js': {
       markPrivacyHidePending: async (userId) => {
@@ -88,6 +91,10 @@ function makeProvider(file, notificationsFile, options = {}) {
       privacyHidePendingCount: async (userId) => userId && privacyIntents.has(userId) ? 1 : 0,
       purgePrivacyHideIntents: async () => { privacyIntents.clear(); },
     },
+    '../storage/locale-preference.js': {
+      readLocalePreference: async () => null,
+      writeLocalePreference: async () => true,
+    },
     '../storage/cache-key.js': { destroyCacheKey: async () => {} },
     '../i18n/index.js': { applyNativeDirection: (locale) => { directions.push(locale); return { restartRequired: locale === 'ar' }; } },
     '../notifications/index.js': native.api,
@@ -97,6 +104,13 @@ function makeProvider(file, notificationsFile, options = {}) {
   }).outputText;
   const exports = {};
   vm.runInNewContext(compiled, { exports, Date, console, require: (id) => {
+    const pure = { '../api/access-changes.js': '../src/api/access-changes.ts',
+      '../api/clinical-changes.js': '../src/api/clinical-changes.ts',
+      '../security/profile-permissions.js': '../src/security/profile-permissions.ts' };
+    if (pure[id] && !imports[id]) {
+      const output = ts.transpileModule(fs.readFileSync(require('node:path').resolve(__dirname, pure[id]), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+      imports[id] = {}; vm.runInNewContext(output, { exports: imports[id] });
+    }
     if (!(id in imports)) throw new Error(`unmocked import ${id}`); return imports[id];
   } }, { filename: file });
   let value;

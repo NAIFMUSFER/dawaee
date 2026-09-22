@@ -2,6 +2,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('expo-crypto', async () => {
+  const { randomBytes } = await import('node:crypto');
+  return { getRandomBytesAsync: async (size: number) => new Uint8Array(randomBytes(size)) };
+});
+
 /**
  * Session tokens, which used to sit in AsyncStorage.
  *
@@ -22,11 +27,21 @@ const secure = new Map<string, string>();
 
 let secureFails: 'no' | 'read' | 'write' = 'no';
 let platform = 'ios';
+let secureDeleteFails = false;
+let markerReadFails = false;
+let markerWriteDropped = false;
+let secureWriteDropped = false;
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
-    getItem: async (k: string) => async_.get(k) ?? null,
-    setItem: async (k: string, v: string) => { async_.set(k, v); },
+    getItem: async (k: string) => {
+      if (markerReadFails && k === 'dawaee.session.signedOut.v1') throw new Error('storage unavailable');
+      return async_.get(k) ?? null;
+    },
+    setItem: async (k: string, v: string) => {
+      if (markerWriteDropped && k === 'dawaee.session.signedOut.v1') return;
+      async_.set(k, v);
+    },
     removeItem: async (k: string) => { async_.delete(k); },
     multiRemove: async (keys: string[]) => {
       // Cleanup can fail — storage full, a platform quirk. When it does, the
@@ -61,10 +76,12 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: async (k: string, v: string, options?: unknown) => {
     optionsSeen.push({ op: 'set', options });
     if (secureFails === 'write') throw new Error('keychain unavailable');
+    if (secureWriteDropped) return;
     secure.set(k, v);
   },
   deleteItemAsync: async (k: string, options?: unknown) => {
     optionsSeen.push({ op: 'delete', options });
+    if (secureDeleteFails) throw new Error('keychain unavailable');
     secure.delete(k);
   },
 }));
@@ -82,12 +99,80 @@ beforeEach(() => {
   secureFails = 'no';
   legacyDeleteFails = false;
   platform = 'ios';
+  secureDeleteFails = false;
+  markerReadFails = false;
+  markerWriteDropped = false;
+  secureWriteDropped = false;
 });
 
 const legacy = (a: string, r: string) => {
   async_.set(LEGACY_ACCESS, a);
   async_.set(LEGACY_REFRESH, r);
 };
+
+describe('logout survives failed credential deletion and process restart', () => {
+  it('detects a dropped logout marker while still attempting credential cleanup', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    markerWriteDropped = true;
+    await expect(store.clearStoredSession()).rejects.toThrow('logout marker failed');
+    expect(secure.size).toBe(0);
+  });
+
+  it('does not remove the logout decision when a new secure write silently disappears', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureWriteDropped = true;
+    await expect(store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' })).rejects.toThrow();
+    expect(await store.readSession()).toBeNull();
+  });
+
+  it('retries deletion on reopening once secure storage recovers', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureDeleteFails = false;
+    expect(await store.readSession()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+  it('does not restore an undeleted secure session in a fresh module', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    expect(secure.get(SECURE_KEY)).toContain('OLD_R');
+    vi.resetModules();
+    const restarted = await import('../src/api/token-store.js');
+    expect(await restarted.readSession()).toBeNull();
+  });
+
+  it('does not migrate undeleted legacy credentials after logout', async () => {
+    legacy('OLD_A', 'OLD_R');
+    legacyDeleteFails = true;
+    await store.clearStoredSession();
+    expect(async_.get(LEGACY_REFRESH)).toBe('OLD_R');
+    expect(await store.migrateLegacyTokens()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+
+  it('fails closed if the durable logout decision cannot be read', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    markerReadFails = true;
+    expect(await store.readSession()).toBeNull();
+  });
+
+  it('keeps logout after a failed new sign-in write, then admits a successful new session', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureFails = 'write';
+    await expect(store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' })).rejects.toThrow();
+    expect(await store.readSession()).toBeNull();
+    secureFails = 'no';
+    await store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' });
+    expect(await store.readSession()).toEqual({ accessToken: 'NEW_A', refreshToken: 'NEW_R' });
+    expect([...async_.values()].join('')).not.toContain('NEW_R');
+  });
+});
 
 describe('nothing writes a token to AsyncStorage any more', () => {
   it('puts a new session in the keychain and nowhere else', async () => {
@@ -269,18 +354,17 @@ describe('the pair is written and read as one value', () => {
   });
 
   /**
-   * If persisting a rotated pair fails, whatever is on disk still names the
-   * refresh token the server just invalidated. Leaving it produces a launch
-   * days later that 401s and signs the user out for no visible reason; the
-   * client clears instead, so the next launch is a clean sign-in.
+   * The pending proof makes the old pair recoverable. A failed successor
+   * write must retain that complete pair/proof, never persist a half-pair,
+   * and never use the successor until its durable write succeeds.
    */
-  it('clears storage when a rotated pair cannot be persisted', async () => {
+  it('retains only the recoverable pair when a rotated pair cannot be persisted', async () => {
     const client = await import('../src/api/client.js');
     await client.storeSession({ accessToken: 'A1', refreshToken: 'R1' });
-    secureFails = 'write';
     const sentAuthorizations: Array<string | null> = [];
     vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
       const refresh = String(url).endsWith('/v1/auth/refresh');
+      if (refresh) secureFails = 'write'; // Proof was persisted before HTTP.
       const authorization = new Headers(init.headers).get('authorization');
       if (!refresh) sentAuthorizations.push(authorization);
       const expired = !refresh && authorization === 'Bearer A1';
@@ -292,14 +376,15 @@ describe('the pair is written and read as one value', () => {
       });
     });
     try {
-      await expect(client.api.get('/v1/me')).resolves.toEqual({ ok: true });
-      expect(sentAuthorizations).toEqual(['Bearer A1', 'Bearer A2']);
-      // Actual client recovery must remove R1, not merely contain a call with
-      // a particular spelling. The successful rotation still works in memory.
+      await expect(client.api.get('/v1/me')).rejects.toBeInstanceOf(client.NetworkError);
+      expect(sentAuthorizations).toEqual(['Bearer A1']);
       expect(client.isSignedIn()).toBe(true);
-      expect(secure.size).toBe(0);
+      expect(secure.size).toBe(1);
+      expect(await store.readSession()).toEqual({ accessToken: 'A1', refreshToken: 'R1',
+        retryNonce: expect.stringMatching(/^[0-9a-f]{64}$/) });
       expect([...async_.keys()]).toEqual([]);
-      expect(await store.readSession()).toBeNull();
+      expect(await client.loadStoredSession()).toBe(true);
+      expect(client.isSignedIn()).toBe(true);
     } finally {
       secureFails = 'no';
       await client.clearSession();
@@ -309,20 +394,21 @@ describe('the pair is written and read as one value', () => {
 });
 
 /**
- * The rotation failure boundary, end to end.
+ * Explicit cleanup of a legacy rotation without an independent retry proof.
  *
  * The server revokes the presented token INSIDE the rotation — migration 0011,
  * `app.rotate_session`: `UPDATE auth_sessions SET revoked_at = now(),
  * replaced_by = new_id WHERE id = s.id`. So by the time R2 reaches the client,
  * R1 is already dead. Worse than dead: presenting R1 again takes the
  * `revoked_at IS NOT NULL` branch, which returns `reuse_detected` and revokes
- * EVERY session on that device. Restoring R1 after a failed write would
+ * its replacement lineage. Restoring R1 alone after a failed write would
  * therefore not merely fail to authenticate — it would sign the user out of
  * every session they have on that phone and record a theft event.
  *
- * So a failed write of R2 must leave nothing behind that names R1.
+ * These tests retain the explicit-clear contract for an unrecoverable legacy
+ * pair. The opt-in durable-proof path is exercised through the client above.
  */
-describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
+describe('explicit cleanup of a legacy rotation without a durable retry proof', () => {
   it('destroys the stored R1 rather than keeping it', async () => {
     // The client is holding R1, persisted from an earlier sign-in.
     await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
@@ -332,13 +418,13 @@ describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
     secureFails = 'write';
     await expect(store.writeSession({ accessToken: 'A2', refreshToken: 'R2' })).rejects.toThrow();
 
-    // This is the client's recovery, exactly as client.ts performs it.
+    // Legacy rotations without a retry proof still require explicit cleanup.
     secureFails = 'no';
     await store.clearStoredSession();
 
     // Nothing on disk names either token. The next launch is a sign-in.
     expect(secure.size).toBe(0);
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
     expect(await store.readSession()).toBeNull();
   });
 
@@ -363,6 +449,16 @@ describe('a refresh rotation whose write fails cannot leave R1 behind', () => {
     expect(fn).toContain('UPDATE auth_sessions SET revoked_at = now(), replaced_by = new_id');
     // ...and that replaying it is treated as theft, not as a retry.
     expect(fn).toContain("'reuse_detected'");
+  });
+});
+
+describe('the pending refresh proof survives secure storage and restart', () => {
+  it('reads the complete atomic pair and proof without a plaintext copy', async () => {
+    const pending = { accessToken: 'A1', refreshToken: 'R1', retryNonce: 'ab'.repeat(32) };
+    await store.writeSession(pending);
+    expect(await store.readSession()).toEqual(pending);
+    expect([...async_.values()].join('')).not.toContain(pending.retryNonce);
+    expect(optionsSeen.every(option => (option.options as { keychainAccessible?: unknown })?.keychainAccessible === AFU_DEVICE_ONLY)).toBe(true);
   });
 });
 
@@ -424,7 +520,7 @@ describe('a legacy delete that keeps failing never makes the stale copy win', ()
   });
 });
 
-describe('signing out leaves nothing behind', () => {
+describe('signing out leaves only a non-secret logout decision', () => {
   it('removes the keychain entry and both legacy keys', async () => {
     await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
     legacy('OLD_A', 'OLD_R'); // a device that upgraded but never launched since
@@ -432,13 +528,13 @@ describe('signing out leaves nothing behind', () => {
     await store.clearStoredSession();
 
     expect(secure.size).toBe(0);
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
   });
 
   it('still clears the legacy keys when the keychain is empty', async () => {
     legacy('OLD_A', 'OLD_R');
     await store.clearStoredSession();
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
   });
 });
 
@@ -582,9 +678,15 @@ describe('the browser is handled on purpose, not by accident', () => {
  */
 describe('nothing new writes plaintext to AsyncStorage', () => {
   const ALLOWED: Array<[string, string]> = [
+    // A constant '1' only: no account, token, or health data. Prevents loading
+    // undeleted credentials after logout; new verified secure writes clear it.
+    ['dawaee.session.signedOut.v1', 'apps/mobile/src/api/token-store.ts'],
     // Not a credential and not PHI: a random device identifier, which the API
     // treats as an opaque label. Asserted separately above.
     ['dawaee.deviceId', 'apps/mobile/src/api/client.ts'],
+    // Presentation-only and account-free: the language chosen on the first-run
+    // screen. It contains no identity, credential, or health information.
+    ['dawaee.localePreference', 'apps/mobile/src/storage/locale-preference.ts'],
     // Legacy names, only ever READ and then deleted by the migrations.
     ['dawaee.accessToken', 'apps/mobile/src/api/token-store.ts'],
     ['dawaee.refreshToken', 'apps/mobile/src/api/token-store.ts'],

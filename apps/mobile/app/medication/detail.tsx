@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import React, { useCallback, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Loading } from '@/components/ui';
+import { Button, EmptyState, Loading, Screen } from '@/components/ui';
 import { MedicationDetailView, type MedicationDetail, type StockResponse } from '@/components/MedicationDetailView';
 import { useI18n } from '@/i18n';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
@@ -10,6 +11,8 @@ import { api, ApiError, NetworkError } from '@/api/client';
 import { getMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import type { DoseView, MedicationScheduleView, MedicationView } from '@/api/types';
 import type { MessageKey, ScheduleRule } from '@dawaee/shared';
+
+import { localDateInZone } from '@dawaee/core';
 
 const RECORDED: ReadonlySet<DoseView['status']> = new Set(['taken', 'taken_late', 'skipped', 'missed']);
 const HISTORY_DAYS = 30;
@@ -22,10 +25,24 @@ function shiftDate(date: string, days: number): string {
 
 export default function MedicationDetailScreen() {
   const { user, activeProfile } = useApp();
+  const { t } = useI18n();
   const selection = user && activeProfile
     ? getMedicationDetailRouteIntent(user.id, activeProfile.id)
     : null;
   const medicationId = selection?.medicationId;
+  if (!medicationId) {
+    return (
+      <SafeAreaView style={{ flex: 1 }}>
+        <Screen>
+          <EmptyState
+            title={t('medication.selectAgain')}
+            body={t('medication.selectAgainBody')}
+            action={<Button label={t('medication.listTitle')} onPress={() => router.replace('/(tabs)/medications')} />}
+          />
+        </Screen>
+      </SafeAreaView>
+    );
+  }
   const key = `${profileScopeKey(user?.id, activeProfile)}:${medicationId ?? 'none'}`;
   return <MedicationDetailProfileScreen key={key} medicationId={medicationId} />;
 }
@@ -65,18 +82,20 @@ function MedicationDetailProfileScreen({ medicationId }: { medicationId: string 
       return;
     }
     const isCurrent = requestScope.begin();
+    setError(null);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDateInZone(new Date(), activeProfile.timezone);
       const [detail, stockRes, history] = await Promise.all([
         api.get<{ medication: MedicationDetail; schedules: MedicationScheduleView[] }>(`/v1/medications/${medicationId}`),
-        api.get<StockResponse>(`/v1/medications/${medicationId}/stock`).catch(() => null),
-        api.get<{ doses: DoseView[] }>('/v1/doses', {
+        api.get<StockResponse>(`/v1/medications/${medicationId}/stock`),
+        activeProfile.role === 'owner' || activeProfile.permissions?.includes('view_history') ? api.get<{ doses: DoseView[] }>('/v1/doses', {
           profileId: activeProfile.id,
           medicationId,
           from: shiftDate(today, -HISTORY_DAYS),
           to: today,
+          recorded: 'true',
           limit: 20,
-        }).catch(() => ({ doses: [] })),
+        }) : Promise.resolve({ doses: [] }),
       ]);
 
       if (!isCurrent()) return;
@@ -107,7 +126,7 @@ function MedicationDetailProfileScreen({ medicationId }: { medicationId: string 
     }
   }, [activeProfile, describeError, medicationId, requestScope, setOffline]);
 
-  useEffect(() => { void load(); }, [load]);
+  useScreenRefresh(load, activeProfile?.id ?? '');
 
   const weekdayLabels = useMemo(
     () => ['2024-01-07', '2024-01-08', '2024-01-09', '2024-01-10', '2024-01-11', '2024-01-12', '2024-01-13']

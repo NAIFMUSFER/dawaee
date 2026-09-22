@@ -77,6 +77,13 @@ async function main() {
   requireCommand('bash');
   requireCommand('python3');
 
+  // Render restores node_modules across builds. Directory existence cannot
+  // establish that it matches this commit's lockfile (including Expo plugins).
+  const install = spawnSync('npm', ['ci', '--legacy-peer-deps'], {
+    cwd: resolve(ROOT, 'apps/mobile'), env: buildEnvironment(process.env), stdio: 'inherit',
+  });
+  if (install.status !== 0) throw new Error('AUDIT_PREVIEW_WEB_INSTALL_FAILED');
+
   const run = spawnSync('bash', ['scripts/build-web.sh'], {
     cwd: ROOT,
     env: buildEnvironment(process.env),

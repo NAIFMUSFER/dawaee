@@ -1,10 +1,15 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
-import { api } from '../api/client.js';
+import { api, isSignedIn } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
 import { groupedReminderText, reminderText, t } from '@dawaee/shared';
-import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type ActionOutcome } from './actions.js';
+import {
+  canScheduleExactAlarms as canScheduleExactAlarmsOnDevice,
+  withExactAlarmScheduleMutation,
+} from '../../modules/exact-alarm-access';
+import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, createNotificationActionIntent, type NotificationActionIntent, type ActionOutcome } from './actions.js';
+import { notificationPermissionGranted } from './permission.js';
 
 /**
  * Local notifications.
@@ -29,6 +34,27 @@ import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, type
 
 export const MEDICATION_CHANNEL_ID = 'medication-critical';
 export const MEDICATION_CATEGORY_ID = 'MEDICATION_REMINDER';
+export const IOS_PENDING_NOTIFICATION_LIMIT = 64;
+
+export type PushRegistrationStatus = 'unknown' | 'registering' | 'registered' | 'denied' | 'failed' | 'unsupported';
+let pushRegistrationStatus: PushRegistrationStatus = 'unknown';
+const statusListeners = new Set<() => void>();
+export const getPushRegistrationStatus = () => pushRegistrationStatus;
+export const getLocalScheduleStatus = () => localScheduleStatus;
+export function subscribeNotificationStatus(listener: () => void): () => void {
+  statusListeners.add(listener);
+  return () => { statusListeners.delete(listener); };
+}
+function setPushStatus(status: PushRegistrationStatus): void {
+  pushRegistrationStatus = status;
+  for (const listener of statusListeners) listener();
+}
+export function resetPushRegistrationStatus(): void { setPushStatus('unknown'); }
+let localScheduleStatus: ScheduleResult | null = null;
+function publishSchedule(result: ScheduleResult | null): void {
+  localScheduleStatus = result;
+  for (const listener of statusListeners) listener();
+}
 
 type NotificationsModule = typeof import('expo-notifications');
 
@@ -42,6 +68,13 @@ async function load(): Promise<NotificationsModule | null> {
   }
   try {
     cached = (await import('expo-notifications')) as NotificationsModule;
+    // Expo suppresses foreground presentation unless a handler opts in. Read
+    // auth at delivery time to suppress foreground presentation after logout.
+    cached.setNotificationHandler?.({ handleNotification: async () => {
+      const present = isSignedIn();
+      return { shouldShowBanner: present, shouldShowList: present,
+        shouldPlaySound: present, shouldSetBadge: false };
+    } });
   } catch {
     cached = null;
   }
@@ -56,15 +89,13 @@ export interface NotificationCapability {
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
 }
 
-let exactAlarmsObservedUnavailable = false;
-
 export async function inspectCapability(): Promise<NotificationCapability> {
   const N = await load();
   if (!N) return { supported: false, permissionGranted: false, canScheduleExact: false };
 
   const settings = await N.getPermissionsAsync();
-  const granted = settings.granted || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL;
-  const canScheduleExact = Platform.OS !== 'android' ? true : granted && !exactAlarmsObservedUnavailable;
+  const granted = notificationPermissionGranted(settings);
+  const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
     permissionGranted: granted,
@@ -73,13 +104,21 @@ export async function inspectCapability(): Promise<NotificationCapability> {
   };
 }
 
+const permissionListeners = new Set<() => void>();
+export function subscribeNotificationPermissionChanges(listener: () => void): () => void {
+  permissionListeners.add(listener);
+  return () => { permissionListeners.delete(listener); };
+}
+
 export async function requestPermission(): Promise<boolean> {
   const N = await load();
   if (!N) return false;
   const res = await N.requestPermissionsAsync({
     ios: { allowAlert: true, allowSound: true, allowBadge: true, allowProvisional: false },
   });
-  return res.granted;
+  const granted = notificationPermissionGranted(res);
+  if (granted) for (const listener of permissionListeners) listener();
+  return granted;
 }
 
 export async function configureChannels(): Promise<void> {
@@ -109,40 +148,68 @@ export async function configureCategories(locale: Locale): Promise<void> {
 
 export async function startNotificationActionListener(
   onHandled?: (outcome: ActionOutcome) => void,
+  isCurrent: () => boolean = () => isSignedIn(),
 ): Promise<() => void> {
   const N = await load();
   if (!N) return () => undefined;
 
+  let active = true;
+  let revision = 0;
+  let liveSeen = false;
+  const handled = new Set<string>();
+  const inFlight = new Set<string>();
+  const intents = new Map<string, NotificationActionIntent>();
+  const current = () => active && isCurrent();
   const handle = async (response: {
     actionIdentifier: string;
-    notification: { request: { content: { data: Record<string, unknown> } } };
+    notification: { date?: number; request: { identifier?: string; content: { data: Record<string, unknown> } } };
   }): Promise<void> => {
-    const outcome = await applyNotificationAction(
-      response.actionIdentifier,
-      response.notification.request.content.data ?? {},
-    );
-    if (outcome) {
+    if (!current()) return;
+    const key = JSON.stringify([response.notification.request.identifier, response.notification.date, response.actionIdentifier]);
+    if (handled.has(key) || inFlight.has(key)) return;
+    inFlight.add(key);
+    const intent = intents.get(key) ?? createNotificationActionIntent();
+    intents.set(key, intent);
+    const observed = revision;
+    try {
+      const outcome = await applyNotificationAction(
+        response.actionIdentifier,
+        response.notification.request.content.data ?? {}, current, intent,
+      );
+      if (!outcome || !current()) return;
+      if (outcome.rejected) { onHandled?.(outcome); return; }
+      // The server or durable offline journal accepted the operation. Keep the
+      // same intent on failures; a retry must not create a second dose action.
+      handled.add(key);
+      intents.delete(key);
       onHandled?.(outcome);
-      // Expo keeps the cold-start response available until explicitly cleared.
-      // Without consuming it, reopening the app can replay the same Snooze with
-      // a brand-new clientEventId and move the reminder again.
-      await N.clearLastNotificationResponseAsync?.();
+      const latest = await N.getLastNotificationResponseAsync();
+      const latestKey = latest ? JSON.stringify([latest.notification.request.identifier, latest.notification.date, latest.actionIdentifier]) : null;
+      if (current() && observed === revision && latestKey === key) await N.clearLastNotificationResponseAsync?.();
+    } finally {
+      inFlight.delete(key);
     }
   };
 
-  const last = await N.getLastNotificationResponseAsync();
-  if (last) await handle(last as Parameters<typeof handle>[0]);
-
   const sub = N.addNotificationResponseReceivedListener((response) => {
-    void handle(response as Parameters<typeof handle>[0]);
+    liveSeen = true;
+    const key = JSON.stringify([response.notification.request.identifier, response.notification.date, response.actionIdentifier]);
+    if (!inFlight.has(key) && !handled.has(key)) revision++;
+    void handle(response as Parameters<typeof handle>[0]).catch(() => undefined);
   });
-  return () => sub.remove();
+  void N.getLastNotificationResponseAsync().then(last => {
+    if (last && !liveSeen) return handle(last as Parameters<typeof handle>[0]);
+  }).catch(() => undefined);
+  return () => { active = false; sub.remove(); handled.clear(); inFlight.clear(); intents.clear(); };
 }
 
 // Native scheduling/cancellation are asynchronous. A cancellation must run
 // AFTER any already-started native write, or that write can recreate PHI-bearing
 // reminders on a signed-out phone. New intent invalidates older loops at once;
 // the serial tail makes the final native state belong to the newest operation.
+// Android also takes the native exact-alarm recovery lease here so the system's
+// permission-grant receiver cannot replay an older persisted snapshot across a
+// newer logout, privacy change, or Today/cache rebuild.
 let scheduleGeneration = 0;
 let scheduleTail: Promise<void> = Promise.resolve();
 
@@ -156,16 +223,31 @@ export function captureLocalReminderContext(): () => boolean {
 
 function withScheduleMutation<T>(operation: (isCurrent: () => boolean) => Promise<T>): Promise<T> {
   const generation = ++scheduleGeneration;
-  const result = scheduleTail.then(() => operation(() => generation === scheduleGeneration));
+  const result = scheduleTail.then(() => withExactAlarmScheduleMutation(
+    () => operation(() => generation === scheduleGeneration),
+  ));
   scheduleTail = result.then(() => undefined, () => undefined);
   return result;
 }
 
 export async function cancelAllLocalNotifications(): Promise<void> {
+  publishSchedule(null);
   return withScheduleMutation(async () => {
     const N = await load();
     if (!N) return;
-    await N.cancelAllScheduledNotificationsAsync();
+    // Delivered medication text and Expo's cold-start action outlive pending
+    // schedules. Clear all three within the same mutation lease so cleanup
+    // finishes before a later account can schedule its own reminders. A native
+    // failure must not skip the other privacy cleanup operations.
+    const failures: unknown[] = [];
+    for (const clear of [
+      () => N.cancelAllScheduledNotificationsAsync(),
+      () => N.dismissAllNotificationsAsync(),
+      () => N.clearLastNotificationResponseAsync(),
+    ]) {
+      try { await clear(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw failures[0];
   });
 }
 
@@ -173,6 +255,20 @@ export interface ScheduleResult {
   scheduled: number;
   failed: number;
   exactAlarmsUnavailable: boolean;
+  deferred?: number;
+  nextUnscheduledAt?: string | null;
+}
+
+function reminderAt(dose: DoseView): string {
+  return dose.status === 'snoozed' && dose.snoozedUntil ? dose.snoozedUntil : dose.scheduledAt;
+}
+
+function reminderTime(dose: DoseView, locale: Locale): string {
+  if (dose.status !== 'snoozed' || !dose.snoozedUntil) return dose.scheduledLocalTime;
+  return new Intl.DateTimeFormat(locale, {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: dose.scheduledTimezone || undefined,
+  }).format(new Date(dose.snoozedUntil));
 }
 
 function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
@@ -187,14 +283,15 @@ function groupSchedulableDoses(doses: DoseView[], now: number): DoseView[][] {
     if (seenDoseIds.has(dose.id)) continue;
     seenDoseIds.add(dose.id);
 
-    const at = new Date(dose.scheduledAt).getTime();
-    if (at <= now) continue;
+    const instant = reminderAt(dose);
+    const at = Date.parse(instant);
+    if (!Number.isFinite(at) || at <= now) continue;
     if (['taken', 'taken_late', 'skipped', 'cancelled', 'missed'].includes(dose.status)) continue;
-    const bucket = groups.get(dose.scheduledAt);
+    const bucket = groups.get(instant);
     if (bucket) bucket.push(dose);
-    else groups.set(dose.scheduledAt, [dose]);
+    else groups.set(instant, [dose]);
   }
-  return [...groups.values()].sort((a, b) => a[0]!.scheduledAt.localeCompare(b[0]!.scheduledAt));
+  return [...groups.values()].sort((a, b) => Date.parse(reminderAt(a[0]!)) - Date.parse(reminderAt(b[0]!)));
 }
 
 /**
@@ -227,10 +324,18 @@ async function scheduleCurrentNotifications(
 
   let scheduled = 0;
   let failed = 0;
-  let exactAlarmsUnavailable = false;
+  // Expo Android intentionally falls back to an inexact alarm when the special
+  // access is absent. A successful schedule call therefore does not prove exact
+  // delivery. Read the OS source of truth up front so callers can disclose the
+  // degradation even when Expo accepts the fallback without throwing.
+  let exactAlarmsUnavailable = Platform.OS === 'android' && !canScheduleExactAlarmsOnDevice();
   const now = Date.now();
 
-  for (const group of groupSchedulableDoses(doses, now)) {
+  const groups = groupSchedulableDoses(doses, now);
+  const limit = Platform.OS === 'ios' ? IOS_PENDING_NOTIFICATION_LIMIT : groups.length;
+  const deferred = Math.max(0, groups.length - limit);
+  const nextUnscheduledAt = deferred ? reminderAt(groups[limit]![0]!) : null;
+  for (const group of groups.slice(0, limit)) {
     if (!isCurrent()) break;
     const first = group[0]!;
     const grouped = group.length > 1;
@@ -238,7 +343,7 @@ async function scheduleCurrentNotifications(
       ? groupedReminderText({
           locale,
           showMedication: opts.showMedication,
-          time: first.scheduledLocalTime,
+          time: reminderTime(first, locale),
           medications: group.map((dose) => ({
             name: dose.medication.name,
             doseText: `${dose.doseQuantity} ${dose.doseUnit}`,
@@ -249,7 +354,7 @@ async function scheduleCurrentNotifications(
           showMedication: opts.showMedication,
           medicationName: first.medication.name,
           doseText: `${first.doseQuantity} ${first.doseUnit}`,
-          time: first.scheduledLocalTime,
+          time: reminderTime(first, locale),
           food: t(locale, `food.${first.medication.foodInstruction}` as never),
         });
 
@@ -271,7 +376,7 @@ async function scheduleCurrentNotifications(
         },
         trigger: {
           type: N.SchedulableTriggerInputTypes.DATE,
-          date: new Date(first.scheduledAt),
+          date: new Date(reminderAt(first)),
           channelId: MEDICATION_CHANNEL_ID,
         },
       });
@@ -282,12 +387,9 @@ async function scheduleCurrentNotifications(
     }
   }
 
-  if (isCurrent()) {
-    if (exactAlarmsUnavailable) exactAlarmsObservedUnavailable = true;
-    else if (scheduled > 0) exactAlarmsObservedUnavailable = false;
-  }
-
-  return { scheduled, failed, exactAlarmsUnavailable };
+  const result = { scheduled, failed, exactAlarmsUnavailable, deferred, nextUnscheduledAt };
+  if (isCurrent()) publishSchedule(result);
+  return result;
 }
 
 export async function registerPushToken(): Promise<string | null> {
@@ -304,26 +406,37 @@ export async function registerPushToken(): Promise<string | null> {
   }
 }
 
-export async function syncPushRegistration(deviceId: string): Promise<boolean> {
-  const N = await load();
-  if (!N) return false;
-
-  const settings = await N.getPermissionsAsync();
-  const granted = settings.granted
-    || settings.ios?.status === N.IosAuthorizationStatus.PROVISIONAL
-    || (await requestPermission());
-  if (!granted) return false;
-
-  const token = await registerPushToken();
-  if (!token) return false;
-
-  await api.post('/v1/devices/push-token', {
-    token,
-    platform: Platform.OS === 'ios' ? 'ios' : 'android',
-    deviceId,
-    appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
-  });
-  return true;
+export async function syncPushRegistration(deviceId: string,
+  options: { requestPermission?: boolean; isCurrent?: () => boolean } = {}): Promise<boolean> {
+  const current = options.isCurrent ?? (() => isSignedIn());
+  if (!current()) return false;
+  setPushStatus('registering');
+  try {
+    const N = await load();
+    if (!current()) return false;
+    if (!N) { setPushStatus('unsupported'); return false; }
+    const settings = await N.getPermissionsAsync();
+    if (!current()) return false;
+    const granted = notificationPermissionGranted(settings)
+      || (options.requestPermission === true && await requestPermission());
+    if (!current()) return false;
+    if (!granted) { setPushStatus('denied'); return false; }
+    const token = await registerPushToken();
+    if (!current()) return false;
+    if (!token) { setPushStatus('failed'); return false; }
+    await api.post('/v1/devices/push-token', {
+      token,
+      platform: Platform.OS === 'ios' ? 'ios' : 'android',
+      deviceId,
+      appVersion: typeof Constants.expoConfig?.version === 'string' ? Constants.expoConfig.version : undefined,
+    });
+    if (!current()) return false;
+    setPushStatus('registered');
+    return true;
+  } catch (err) {
+    if (current()) setPushStatus('failed');
+    throw err;
+  }
 }
 
 export async function rebuildRemindersFromCache(
@@ -339,15 +452,20 @@ export async function rebuildRemindersFromCache(
   // suppress a newer privacy choice. Storage must stay outside scheduleTail so
   // cancellation never waits on a stalled cache read.
   const expectedGeneration = ++scheduleGeneration;
-  const { readCachedSchedule } = await import('../storage/offline-queue.js');
-  const cache = await readCachedSchedule(profileId);
-  if (!cache || expectedGeneration !== scheduleGeneration) return empty;
+  const { readCachedSchedule, readQueue, applyQueuedToCache } = await import('../storage/offline-queue.js');
+  const stored = await readCachedSchedule(profileId);
+  if (!stored || expectedGeneration !== scheduleGeneration) return empty;
+  const queued = await readQueue();
+  if (expectedGeneration !== scheduleGeneration) return empty;
+  const cache = applyQueuedToCache(stored, queued);
 
   return rescheduleLocalNotifications(
     cache.doses.map((d) => ({
       id: d.id,
       scheduledAt: d.scheduledAt,
       scheduledLocalTime: d.scheduledLocalTime,
+      scheduledTimezone: d.scheduledTimezone || cache.timezone,
+      snoozedUntil: d.snoozedUntil ?? null,
       status: d.status,
       doseQuantity: d.doseQuantity,
       doseUnit: d.doseUnit,

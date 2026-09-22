@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "تداوي",
+    "NSCameraUsageDescription": "لتصوير علبة الدواء أو الوصفة وقراءة بياناتها.",
+    "NSPhotoLibraryUsageDescription": "لاختيار صورة الدواء من مكتبة الصور.",
+    "NSFaceIDUsageDescription": "لحماية بياناتك الصحية عند فتح التطبيق."
+  }
+}

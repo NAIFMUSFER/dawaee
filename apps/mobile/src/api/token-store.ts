@@ -37,6 +37,9 @@ import * as SecureStore from 'expo-secure-store';
  */
 
 const SECURE_KEY = 'dawaee.session.v1';
+// Non-secret logout intent survives a failed keychain/legacy deletion. Only a
+// verified new secure session may remove it; it never contains credentials.
+const SIGNED_OUT_KEY = 'dawaee.session.signedOut.v1';
 
 /**
  * The keys the tokens used to be written to, kept only so they can be found
@@ -48,6 +51,8 @@ const LEGACY_REFRESH_KEY = 'dawaee.refreshToken';
 export interface SessionTokens {
   accessToken: string;
   refreshToken: string;
+  /** Secret for a pending rotation, atomic with its predecessor token pair. */
+  retryNonce?: string;
 }
 
 /**
@@ -179,7 +184,11 @@ function parse(raw: string | null): SessionTokens | null {
     const parsed = JSON.parse(raw) as Partial<SessionTokens>;
     if (typeof parsed.accessToken !== 'string' || typeof parsed.refreshToken !== 'string') return null;
     if (!parsed.accessToken || !parsed.refreshToken) return null;
-    return { accessToken: parsed.accessToken, refreshToken: parsed.refreshToken };
+    return {
+      accessToken: parsed.accessToken, refreshToken: parsed.refreshToken,
+      ...(typeof parsed.retryNonce === 'string' && /^[0-9a-f]{64}$/.test(parsed.retryNonce)
+        ? { retryNonce: parsed.retryNonce } : {}),
+    };
   } catch {
     // A corrupt entry is a signed-out user, not a crash on launch.
     return null;
@@ -220,6 +229,17 @@ export async function migrateLegacyTokens(): Promise<SessionTokens | null> {
     // No secure store on this platform (web). Legacy tokens must still not be
     // left sitting in browser storage where the old build put them.
     await removeLegacy();
+    return null;
+  }
+
+  try {
+    if (await AsyncStorage.getItem(SIGNED_OUT_KEY) !== null) {
+      await store.deleteItemAsync(SECURE_KEY, accessOptions(store)).catch(() => undefined);
+      await removeLegacy();
+      return null;
+    }
+  } catch {
+    // An unreadable logout decision must not re-enable an old session.
     return null;
   }
 
@@ -285,7 +305,15 @@ export async function writeSession(tokens: SessionTokens): Promise<void> {
     throw new TokenStoreUnavailable('module unavailable');
   }
   try {
-    await store.setItemAsync(SECURE_KEY, JSON.stringify(tokens), accessOptions(store));
+    const serialized = JSON.stringify(tokens);
+    await store.setItemAsync(SECURE_KEY, serialized, accessOptions(store));
+    if (await store.getItemAsync(SECURE_KEY, accessOptions(store)) !== serialized) {
+      throw new Error('secure write not retained');
+    }
+    await AsyncStorage.removeItem(SIGNED_OUT_KEY);
+    if (await AsyncStorage.getItem(SIGNED_OUT_KEY) !== null) {
+      throw new Error('logout marker not cleared');
+    }
   } catch {
     // Never mention what failed to write.
     throw new TokenStoreUnavailable('write failed');
@@ -297,11 +325,21 @@ export async function writeSession(tokens: SessionTokens): Promise<void> {
  *
  * Both the secure entry and the legacy keys, because a sign-out on a device
  * that upgraded before the migration ever ran must not leave a working refresh
- * token in plaintext behind it. Best effort throughout: a failure here must
- * never trap someone in a session they are trying to leave.
+ * token in plaintext behind it. Persist the logout decision before attempting
+ * deletion. Cleanup remains best effort, but failure to persist that decision
+ * is reported. If all local storage is unwritable, restart safety cannot be
+ * promised; callers must still clear their in-memory credentials.
  */
 export async function clearStoredSession(): Promise<void> {
   const store = secureStore();
+  let marked = Platform.OS === 'web';
+  if (!marked) {
+    try {
+      await AsyncStorage.setItem(SIGNED_OUT_KEY, '1');
+      marked = await AsyncStorage.getItem(SIGNED_OUT_KEY) === '1';
+    } catch { /* Still attempt both cleanup paths below. */ }
+  }
   if (store) await store.deleteItemAsync(SECURE_KEY, accessOptions(store)).catch(() => undefined);
   await removeLegacy();
+  if (!marked) throw new TokenStoreUnavailable('logout marker failed');
 }

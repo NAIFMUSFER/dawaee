@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -153,6 +154,12 @@ type Exposure =
  */
 const EXPOSURE: Record<string, Exposure> = {
   'GET /': 'public',
+  'GET /account-email': 'public',
+  'GET /v1/auth/password/recovery-options': 'auth-plane',
+  'POST /v1/auth/password/recovery/request': 'auth-plane',
+  'POST /v1/auth/email/complete': 'auth-plane',
+  'GET /v1/auth/email': 'authenticated',
+  'POST /v1/auth/email/request': 'authenticated',
   'GET /health': 'public',
   'GET /health/ready': 'public',
   'GET /app': 'public',
@@ -166,10 +173,16 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/register': 'auth-plane',
   'POST /v1/auth/refresh': 'auth-plane',
   'POST /v1/auth/login': 'auth-plane',
+  // Anonymous account recovery requires fresh signed phone proof. Its account
+  // binding, non-creation, replay, expiry and SQL boundaries have real-PG tests.
+  'POST /v1/auth/password/recover': 'auth-plane',
   'POST /v1/auth/logout': 'authenticated',
   'POST /v1/auth/logout-all': 'authenticated',
   'POST /v1/auth/password': 'authenticated',
   'GET /v1/auth/sessions': 'authenticated',
+  'POST /v1/auth/phone': 'authenticated',
+  'GET /v1/auth/phone-verification': 'authenticated',
+  'POST /v1/auth/phone-verification': 'authenticated',
 
   'GET /v1/adherence': 'authenticated',
   'GET /v1/admin/overview': 'admin',
@@ -196,6 +209,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/me/preferences': 'authenticated',
   'PUT /v1/me/consents': 'authenticated',
   'POST /v1/me/deletion-request': 'authenticated',
+  'POST /v1/me/deletion-cancel': 'authenticated',
 
   'GET /v1/medications': 'authenticated',
   'POST /v1/medications': 'authenticated',
@@ -229,6 +243,10 @@ const EXPOSURE: Record<string, Exposure> = {
   'GET /v1/care-circle': 'authenticated',
   'POST /v1/caregivers/invite': 'authenticated',
   'POST /v1/caregivers/accept': 'authenticated',
+  'POST /v1/caregivers/invitations/preview': 'authenticated',
+  'POST /v1/caregivers/invitations/accept': 'authenticated',
+  'GET /v1/caregivers/incoming': 'authenticated',
+  'POST /v1/caregivers/incoming/accept': 'authenticated',
   'DELETE /v1/caregivers/:relationshipId': 'authenticated',
   'PATCH /v1/caregivers/:relationshipId/permissions': 'authenticated',
   'PUT /v1/caregivers/:relationshipId/notification-rules': 'authenticated',
@@ -239,6 +257,7 @@ const EXPOSURE: Record<string, Exposure> = {
   'PATCH /v1/caregivers/permissions': 'authenticated',
   'PUT /v1/caregivers/notification-rules': 'authenticated',
   'POST /v1/caregivers/revoke': 'authenticated',
+  'POST /v1/caregivers/notification/resolve': 'authenticated',
 
   'GET /v1/escalation-policy': 'authenticated',
   'PUT /v1/escalation-policy': 'authenticated',
@@ -1266,8 +1285,8 @@ describe('P12-10 a caregiver cannot exceed the permissions granted', () => {
     ids.relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
     const token = (invite.json<{ invitationLink: string }>().invitationLink).split('/invite/')[1]!;
 
-    const accepted = await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(helper), payload: { token },
+    const accepted = await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(helper), payload: { token },
     });
     expect(accepted.statusCode, accepted.body).toBe(200);
   }, 120_000);
@@ -1661,8 +1680,8 @@ describe('P12-13 a dose id in the body must belong to the same patient', () => {
     });
     expect(invite.statusCode, invite.body).toBe(200);
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(carer), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(carer), payload: { token },
     })).statusCode).toBe(200);
 
     // Setup check: the caregiver really can see the dose, so the lookup will
@@ -1779,8 +1798,8 @@ describe('P12-14 a caregiver missing view_medications is told so', () => {
     });
     expect(invite.statusCode, invite.body).toBe(200);
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(narrow), payload: { token },
     })).statusCode).toBe(200);
   }, 120_000);
 
@@ -1965,8 +1984,8 @@ describe('P19-1 an image is medication identity, and needs the same permission',
     expect(invite.statusCode, invite.body).toBe(200);
     relationshipId = invite.json<{ relationshipId: string }>().relationshipId;
     const token = invite.json<{ invitationLink: string }>().invitationLink.split('/invite/')[1]!;
-    expect((await send({
-      method: 'POST', url: '/v1/caregivers/accept', headers: authHeaders(narrow), payload: { token },
+    expect((await reviewAndAcceptInvitation(send, {
+      method: 'POST', url: '/v1/caregivers/invitations/preview', headers: authHeaders(narrow), payload: { token },
     })).statusCode).toBe(200);
   }, 120_000);
 

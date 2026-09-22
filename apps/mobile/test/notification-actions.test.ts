@@ -18,13 +18,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const post = vi.fn();
 const enqueue = vi.fn();
+const deviceId = vi.fn();
 
 class NetworkError extends Error {}
 
 vi.mock('../src/api/client.js', () => ({
   api: { post: (...args: unknown[]) => post(...args) },
   NetworkError,
-  getDeviceId: async () => 'device-under-test',
+  getDeviceId: () => deviceId(),
 }));
 
 vi.mock('../src/storage/offline-queue.js', () => ({
@@ -38,6 +39,7 @@ beforeEach(() => {
   post.mockReset();
   enqueue.mockReset();
   post.mockResolvedValue({});
+  deviceId.mockReset().mockResolvedValue('device-under-test');
 });
 
 const DOSE = { doseId: 'dose-1', kind: 'dose_reminder' };
@@ -99,6 +101,37 @@ describe('a tap on the reminder', () => {
 
     expect(enqueue).not.toHaveBeenCalled();
     expect(outcome?.synced).toBe(false);
+    expect(outcome?.rejected).toBe(true);
+  });
+
+  it('reports a local journal write failure instead of pretending the offline tap was saved', async () => {
+    post.mockRejectedValue(new NetworkError('offline'));
+    enqueue.mockRejectedValue(new Error('synthetic storage failure'));
+    await expect(applyNotificationAction('TAKEN', DOSE)).resolves.toMatchObject({ synced: false, rejected: true });
+  });
+
+  it('reports device identity storage failure before dispatching a dose action', async () => {
+    deviceId.mockRejectedValue(new Error('synthetic device storage failure'));
+    await expect(applyNotificationAction('TAKEN', DOSE)).resolves.toMatchObject({ synced: false, rejected: true });
+    expect(post).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same snooze time and client identity after a lost HTTP response', async () => {
+    post.mockRejectedValue(new NetworkError('lost response'));
+    await applyNotificationAction('SNOOZE', DOSE);
+    expect(enqueue.mock.calls[0]?.[0]).toMatchObject({ at: post.mock.calls[0]?.[1].actionAt, clientEventId: post.mock.calls[0]?.[1].clientEventId });
+  });
+
+  it('retains the supplied operation identity and time across a retry', async () => {
+    const intent = { clientEventId: 'same-operation', at: '2026-09-22T08:00:00Z' };
+    post.mockRejectedValueOnce(new NetworkError('lost reply'));
+    enqueue.mockRejectedValueOnce(new Error('journal unavailable'));
+    await applyNotificationAction('SNOOZE', DOSE, () => true, intent);
+    await applyNotificationAction('SNOOZE', DOSE, () => true, intent);
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[0]?.[1]).toEqual(post.mock.calls[1]?.[1]);
+    expect(post.mock.calls[1]?.[1]).toMatchObject({ clientEventId: intent.clientEventId, actionAt: intent.at });
   });
 
   it('ignores a notification that names no dose, and any other action', async () => {

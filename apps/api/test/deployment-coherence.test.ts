@@ -17,6 +17,16 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     }).ok).toBe(true);
   });
 
+  it('refuses readiness when the API build identity is unavailable', () => {
+    const check = assessWorkerHeartbeat({
+      apiCommit: 'unknown',
+      heartbeat: { startedAt: NOW, succeeded: true, buildCommit: API },
+      now: NOW,
+    });
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/API build identity unavailable/i);
+  });
+
   it('refuses the exact production drift this audit found: current API, older worker', () => {
     const check = assessWorkerHeartbeat({
       apiCommit: API,
@@ -69,7 +79,7 @@ describe('P20 deployment coherence: API readiness includes the worker release', 
     const declaration = health.match(/const REQUIRED_WORKER_JOBS = \[([\s\S]*?)\] as const;/)?.[1] ?? '';
     const requiredJobs = [...declaration.matchAll(/'([^']+)'/g)].map((match) => match[1]);
     expect(requiredJobs).toEqual([
-      'materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests',
+      'materialize', 'reminders', 'dispatch', 'push-receipts', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping',
     ]);
 
     expect(health).toContain("metadata->>'buildCommit'");

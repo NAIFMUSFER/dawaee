@@ -41,6 +41,7 @@ export async function loadProfileAccess(
               ON cr.patient_profile_id = pp.id
              AND cr.caregiver_user_id = $2
              AND cr.status = 'active'
+             AND app.caregiver_identity_verified(cr.id)
       WHERE pp.id = $1`,
     [profileId, userId],
   );

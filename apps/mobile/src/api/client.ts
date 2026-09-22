@@ -1,7 +1,10 @@
+import { notifyAccessDenied } from './access-changes.js';
+import { notifyClinicalChange } from './clinical-changes.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import type { ErrorCode } from '@dawaee/shared';
 import { clearStoredSession, readSession, writeSession } from './token-store.js';
+import { createRefreshNonce } from './refresh-nonce.js';
 
 /**
  * API client.
@@ -179,6 +182,7 @@ export class NetworkError extends Error {
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;
+let retryNonce: string | undefined;
 let refreshInFlight: { generation: number; promise: Promise<RefreshResult> } | null = null;
 // Changes only at explicit session boundaries, not on same-session rotation.
 let sessionGeneration = 0;
@@ -220,6 +224,7 @@ export async function loadStoredSession(): Promise<boolean> {
   if (generation !== sessionGeneration) return false;
   accessToken = stored?.accessToken ?? null;
   refreshToken = stored?.refreshToken ?? null;
+  retryNonce = stored?.retryNonce;
   return stored !== null;
 }
 
@@ -236,6 +241,7 @@ export async function storeSession(tokens: { accessToken: string; refreshToken: 
   const snapshot = { ...tokens };
   accessToken = snapshot.accessToken;
   refreshToken = snapshot.refreshToken;
+  retryNonce = undefined;
   await withSessionStorage(async () => {
     requireSession(generation);
     await writeSession(snapshot);
@@ -247,6 +253,7 @@ export async function clearSession(): Promise<void> {
   advanceSession();
   accessToken = null;
   refreshToken = null;
+  retryNonce = undefined;
   // Run after any already-started write, so it cannot resurrect credentials.
   await withSessionStorage(clearStoredSession);
 }
@@ -282,7 +289,11 @@ export function getDeviceId(): Promise<string> {
   const promise = Promise.resolve().then(async () => {
     let id = await AsyncStorage.getItem(DEVICE_KEY);
     if (!id) {
-      id = `dev-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+      // Preserve every installed ID. Only new installations need entropy;
+      // never downgrade to a timestamp or Math.random if the OS RNG fails.
+      const { getRandomBytesAsync } = await import('expo-crypto');
+      const bytes = await getRandomBytesAsync(16);
+      id = `dev-${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
       await AsyncStorage.setItem(DEVICE_KEY, id);
     }
     return id;
@@ -330,11 +341,29 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
   // Start in a microtask so even a synchronously throwing fetch cannot leave
   // a settled promise installed after its own cleanup already ran.
   const promise = Promise.resolve().then(async (): Promise<RefreshResult> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
     try {
+      const proof = await withSessionStorage(async () => {
+        requireSession(generation);
+        const stored = await readSession();
+        requireSession(generation);
+        // Do not overwrite another runtime's already-persisted successor.
+        // Retain the established 409/adopt path for that legacy race.
+        if (stored && stored.refreshToken !== presented) return undefined;
+        const pendingNonce = retryNonce ?? stored?.retryNonce ?? await createRefreshNonce();
+        requireSession(generation);
+        await writeSession({ accessToken: accessToken!, refreshToken: presented, retryNonce: pendingNonce });
+        requireSession(generation);
+        retryNonce = pendingNonce;
+        return pendingNonce;
+      });
+      requireSession(generation);
       const res = await fetch(`${BASE_URL}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: presented }),
+        body: JSON.stringify({ refreshToken: presented, retryNonce: proof }),
+        signal: controller.signal,
       });
       requireSession(generation);
       if (!res.ok) {
@@ -346,6 +375,7 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
           if (stored && stored.refreshToken !== presented) {
             accessToken = stored.accessToken;
             refreshToken = stored.refreshToken;
+            retryNonce = stored.retryNonce;
             return 'ok';
           }
           await rejectSession(generation);
@@ -361,9 +391,6 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
       }
       const body = (await res.json()) as { accessToken: string; refreshToken: string };
       requireSession(generation);
-      // This is a rotation, not a new account. Preserve the shared generation.
-      accessToken = body.accessToken;
-      refreshToken = body.refreshToken;
       try {
         await withSessionStorage(async () => {
           requireSession(generation);
@@ -371,6 +398,10 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
         });
       } catch {
         requireSession(generation);
+        // The old pair plus its precommitted nonce can recover this exact
+        // successor after restart. Keep it and do not rotate the successor
+        // again until persistence succeeds. No stale token is used alone.
+        if (proof) return 'offline';
         // A failed keychain write must not leave the now-dead presented token
         // behind. This run keeps the new memory pair. Check again inside the
         // storage lock so cleanup can never delete a later login's tokens.
@@ -380,12 +411,18 @@ async function refreshAccessToken(generation: number): Promise<RefreshResult> {
         }).catch(() => undefined);
       }
       requireSession(generation);
+      // Commit memory only after the durable pair is ready. Preserve the
+      // generation so concurrent requests still share this rotation.
+      accessToken = body.accessToken;
+      refreshToken = body.refreshToken;
+      retryNonce = undefined;
       return 'ok';
     } catch (err) {
       if (err instanceof ApiError) throw err;
       requireSession(generation);
       return 'offline';
     } finally {
+      clearTimeout(timer);
       if (refreshInFlight?.promise === promise) refreshInFlight = null;
     }
   });
@@ -413,6 +450,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const profileIdValue = query?.profileId;
   const medicationIdValue = query?.medicationId;
   const objectKeyValue = query?.objectKey;
+  const historyCursor = !DEMO_MODE && privatePath.path === '/v1/doses' && typeof query?.cursor === 'string'
+    ? query.cursor : null;
   const routedProfileId = privatePath.profileId ?? (
     profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
       ? String(profileIdValue)
@@ -424,7 +463,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       : null
   );
   const routedScheduleId = privatePath.scheduleId;
-  const routedDoseId = privatePath.doseId;
+  const noteDoseId = privatePath.path === '/v1/notes' && typeof query?.doseOccurrenceId === 'string'
+    ? query.doseOccurrenceId : null;
+  const routedDoseId = privatePath.doseId ?? noteDoseId;
   const routedDeviceId = privatePath.deviceId;
   // Only the signed-read route has an objectKey query contract. Keep arbitrary
   // query fields named objectKey untouched elsewhere, but move this private
@@ -445,6 +486,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     // its established in-memory query contract.
     if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
     if (routedObjectKey && k === 'objectKey') continue;
+    if (historyCursor && k === 'cursor') continue;
+    if (!DEMO_MODE && noteDoseId && k === 'doseOccurrenceId') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
@@ -484,6 +527,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(routedDoseId ? { [DOSE_ID_HEADER]: routedDoseId } : {}),
           ...(routedDeviceId ? { [DEVICE_ID_HEADER]: routedDeviceId } : {}),
           ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
+          ...(historyCursor ? { 'x-dawaee-history-cursor': historyCursor } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -549,20 +593,22 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     }
   }
 
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204) { requireCurrentRequest(); notifyClinicalChange(method, path); return undefined as T; }
 
   const payload = await res.json().catch(() => ({}));
   // Decoding a response is also asynchronous: do not return old-account PHI.
-  if (res.ok) requireCurrentRequest();
+  if (res.ok || res.status === 403) requireCurrentRequest();
   if (!res.ok) {
+    if (!anonymous && res.status === 403) notifyAccessDenied(routedProfileId);
     throw apiErrorFromResponse(res, payload);
   }
+  notifyClinicalChange(method, path);
   return payload as T;
 }
 
 export const api = {
   get: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { method: 'GET', query }),
-  post: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'POST', body, query }),
+  post: <T>(path: string, body?: unknown, query?: RequestOptions['query'], options?: Pick<RequestOptions, 'timeoutMs' | 'signal'>) => request<T>(path, { ...options, method: 'POST', body, query }),
   put: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'PUT', body, query }),
   patch: <T>(path: string, body?: unknown, query?: RequestOptions['query']) => request<T>(path, { method: 'PATCH', body, query }),
   delete: <T>(path: string, query?: RequestOptions['query']) => request<T>(path, { method: 'DELETE', query }),

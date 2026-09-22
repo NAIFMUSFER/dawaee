@@ -15,6 +15,9 @@ import { buildProviders, type Providers } from './providers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerPhoneVerificationRoutes } from './routes/phone-verification.js';
+import { registerAccountEmailRoutes } from './routes/account-email.js';
+import { registerPasswordRecoveryRoutes } from './routes/password-recovery.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
 import { registerDoseRoutes } from './routes/doses.js';
@@ -86,8 +89,9 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     max: 300,
     timeWindow: '1 minute',
     /**
-     * The key is the client address. It is not the user id, and the `req.auth`
-     * branch below is documentation of an intent that does not currently fire.
+     * The key is the client address. It is not the user id; authenticated
+     * accounts receive an additional database-backed budget after their live
+     * session is verified in middleware/context.ts.
      *
      * This plugin runs on `onRequest` by default, and authentication runs in a
      * `preHandler` — so `req.auth` is always undefined here and every limit in
@@ -106,7 +110,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
      * What makes the address trustworthy is the deployment-specific client-IP
      * binding above plus TRUST_PROXY_HOPS; a raw trustProxy:true is forbidden.
      */
-    keyGenerator: (req) => req.auth?.userId ?? req.ip,
+    keyGenerator: (req) => req.ip,
     // `statusCode` is not decoration. The object this returns is thrown, and
     // without a status on it the error handler saw an unrecognised object and
     // answered 500 "an unexpected error occurred" — so every rate-limited
@@ -127,10 +131,23 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
   // in dedicated headers. Promote that metadata back into the established
   // handler query contract only inside the process, so authorization and RLS
   // remain unchanged. Legacy query-only clients continue to work during rollout.
-  app.addHook('preValidation', async (req) => {
+  const promotePrivateRoutingMetadata = (req: Parameters<typeof promoteProfileIdHeader>[0]) => {
     promoteProfileIdHeader(req);
     promoteMedicationIdHeader(req);
     promoteObjectKeyHeader(req);
+  };
+
+  app.addHook('preValidation', async (req) => {
+    promotePrivateRoutingMetadata(req);
+  });
+
+  // Production Android evidence showed profile-scoped reads reaching Render
+  // with the identifier correctly absent from the URL yet arriving at handlers
+  // as validation_failed. Re-promote after Fastify validation so any query
+  // normalization cannot discard the private routing metadata. The operation is
+  // idempotent and rejects disagreement rather than silently choosing a target.
+  app.addHook('preHandler', async (req) => {
+    promotePrivateRoutingMetadata(req);
   });
 
   registerErrorHandler(app);
@@ -138,6 +155,9 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
   registerHealthRoutes(app, providers);
   await app.register(async (scope) => {
     registerAuthRoutes(scope);
+    registerPhoneVerificationRoutes(scope);
+    registerPasswordRecoveryRoutes(scope);
+    registerAccountEmailRoutes(scope);
     registerProfileRoutes(scope);
     registerMedicationRoutes(scope);
     registerDoseRoutes(scope);
@@ -152,8 +172,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
     registerAdminRoutes(scope);
   });
 
-  await registerWebAppRoutes(app);
-
+  await registerWebAppRoutes(app, cfg);
 
   return { app, providers };
 }

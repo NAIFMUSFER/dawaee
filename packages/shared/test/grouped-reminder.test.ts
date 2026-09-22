@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { groupedReminderText } from '../src/reminder-text.js';
@@ -42,17 +43,47 @@ describe('simultaneous dose reminder text', () => {
     expect(mobile).toContain('seenDoseIds.add(dose.id)');
   });
 
-  it('consumes handled cold-start actions so an old Snooze is not replayed on a later app launch', () => {
-    const mobile = readFileSync(join(ROOT, 'apps/mobile/src/notifications/index.ts'), 'utf8');
-    expect(mobile).toContain('if (outcome) {');
-    expect(mobile).toContain('clearLastNotificationResponseAsync');
+  it('consumes handled cold-start actions so an old Snooze is not replayed on a later app launch', async () => {
+    const { loadModule, flush } = createRequire(import.meta.url)(join(ROOT, 'apps/mobile/test/notification-schedule-races.cjs')) as {
+      loadModule: (file: string) => {
+        api: { startNotificationActionListener: () => Promise<() => void> };
+        state: { lastResponse: unknown; action: () => Promise<unknown>; actionCalls: number; responseClears: number };
+      };
+      flush: () => Promise<void>;
+    };
+    const { api, state } = loadModule(join(ROOT, 'apps/mobile/src/notifications/index.ts'));
+    state.lastResponse = { actionIdentifier: 'SNOOZE', notification: { date: 123,
+      request: { identifier: 'cold-start-snooze', content: { data: { doseId: 'synthetic-dose' } } } } };
+    state.action = async () => ({ action: 'snooze', doseId: 'synthetic-dose', synced: true });
+    const stop = await api.startNotificationActionListener();
+    await flush();
+    expect(state.actionCalls).toBe(1);
+    expect(state.responseClears).toBe(1);
+    expect(state.lastResponse).toBeNull();
+    stop();
+    const stopRestarted = await api.startNotificationActionListener();
+    await flush();
+    expect(state.actionCalls).toBe(1);
+    stopRestarted();
   });
 
-  it('routes a grouped notification tap to Today instead of leaving the patient on an unrelated screen', () => {
+  it('resolves the notification patient before opening their Today screen', () => {
     const layout = readFileSync(join(ROOT, 'apps/mobile/app/_layout.tsx'), 'utf8');
-    expect(layout).toContain("data.kind !== 'dose_group_reminder'");
-    expect(layout).toContain("router.replace('/(tabs)/today')");
-    expect(layout).toContain('clearLastNotificationResponseAsync');
+    const landing = readFileSync(join(ROOT, 'apps/mobile/app/notification.tsx'), 'utf8');
+    const listener = readFileSync(join(ROOT, 'apps/mobile/src/notifications/grouped-navigation.ts'), 'utf8');
+    // The Shell owns the fixed route; validation and consumption moved into
+    // the injectable helper. Keep both sides of this wiring contract covered.
+    // Runtime lifecycle coverage also lives in grouped-push-navigation.test.ts
+    // and caregiver-push-navigation.test.ts, which executes the actual Shell.
+    expect(layout).toContain("import { startGroupedNotificationListener } from '@/notifications/grouped-navigation';");
+    expect(layout).toContain('setPatientReminderIntent(user.id, { doseId })');
+    expect(layout).toContain("router.replace('/notification')");
+    expect(landing).toContain('setActiveProfile(selected.profileId)');
+    expect(landing).toContain("router.replace('/(tabs)/today')");
+    expect(listener).toContain('response.actionIdentifier !== defaultAction');
+    expect(listener).toContain("'dose_group_reminder'");
+    expect(listener).toContain('if (groupedResponseKey(latest, native.DEFAULT_ACTION_IDENTIFIER) !== key) return;');
+    expect(listener).toContain('await native.clearLastNotificationResponseAsync();');
   });
 
   it('groups the first server reminder and disables its single-dose category', () => {

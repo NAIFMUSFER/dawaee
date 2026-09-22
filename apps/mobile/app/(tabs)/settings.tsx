@@ -128,6 +128,13 @@ export default function SettingsScreen() {
 
   const familyRows: SettingsRow[] = [
     {
+      key: 'phone-verification',
+      label: t('phoneVerification.title'),
+      hint: t('phoneVerification.body'),
+      essential: true,
+      onPress: () => router.push('/settings/phone-verification'),
+    },
+    {
       key: 'family',
       label: t('family.title'),
       hint: t('settings.familyHint'),
@@ -145,12 +152,13 @@ export default function SettingsScreen() {
       key: 'emergency-qr',
       label: t('emergency.qr'),
       hint: t('emergency.qrWhatIsShown'),
-      essential: false,
+      essential: true,
       onPress: () => router.push('/settings/emergency-qr'),
     },
   ];
 
   const privacyRows: SettingsRow[] = [
+    { key: 'email-verification', label: t('emailAccount.title'), hint: t('emailAccount.verifyBody'), essential: true, onPress: () => router.push('/settings/email-verification') },
     {
       key: 'privacy',
       label: t('settings.privacy'),

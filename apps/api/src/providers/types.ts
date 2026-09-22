@@ -56,6 +56,7 @@ export interface OcrField<T = string> {
   value: T;
   /** 0–1. The UI shows anything below 0.75 as needing careful review. */
   confidence: number;
+  confidenceSource?: 'heuristic' | 'provider';
 }
 
 export interface MedicationOcrResult {

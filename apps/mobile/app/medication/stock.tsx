@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { parseMedicationNumber } from '@dawaee/shared';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Banner, Button, Card, Divider, Field, Loading, Row, Screen, SectionTitle, Txt } from '@/components/ui';
 import { Picker } from '@/components/Picker';
 import { todayLocalDate } from '@/components/DateField';
+import { newClientEventId } from '@/storage/offline-queue';
 import { clearSnooze, readSnooze, setSnooze } from '@/storage/low-stock-snooze';
 import { getMedicationStockRouteIntent } from '@/navigation/private-navigation';
 import { useI18n } from '@/i18n';
@@ -94,6 +96,8 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
   const [medicationName, setMedicationName] = useState('');
   const [loading, setLoading] = useState(Boolean(medicationId));
   const [busy, setBusy] = useState(false);
+  const mutationBusy = useRef(false);
+  const refillIntent = useRef<{ input: string; id: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [snoozedUntil, setSnoozedUntil] = useState<string | null>(null);
 
@@ -155,7 +159,8 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
   );
 
   const adjust = async (body: { delta: number } | { remainingQuantity: number }) => {
-    if (!medicationId || !data || loading) return;
+    if (!medicationId || !data || loading || mutationBusy.current) return;
+    mutationBusy.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -165,32 +170,42 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
     } catch (err) {
       setError(describeError(err));
     } finally {
+      mutationBusy.current = false;
       setBusy(false);
     }
   };
 
   const saveRefill = async () => {
-    if (!medicationId || !data || loading) return;
-    const quantity = Number(refillQuantity.replace(',', '.'));
+    if (!medicationId || !data || loading || mutationBusy.current) return;
+    const quantity = parseMedicationNumber(refillQuantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       setError(t('error.validation_failed'));
       return;
     }
-    const parsedCost = cost.trim() === '' ? null : Number(cost.replace(',', '.'));
+    const parsedCost = cost.trim() === '' ? null : parseMedicationNumber(cost);
     if (parsedCost !== null && (!Number.isFinite(parsedCost) || parsedCost < 0 || parsedCost > 1_000_000)) {
       setError(t('error.validation_failed'));
       return;
     }
+    mutationBusy.current = true;
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/v1/medications/${medicationId}/refill`, {
+      const input = {
         quantityAdded: quantity,
         unit: refillUnit,
         pharmacy: pharmacy.trim() || null,
         cost: parsedCost,
         note: note.trim() || null,
+      };
+      const serialized = JSON.stringify(input);
+      if (refillIntent.current?.input !== serialized) {
+        refillIntent.current = { input: serialized, id: newClientEventId() };
+      }
+      await api.post(`/v1/medications/${medicationId}/refill`, {
+        ...input, clientRequestId: refillIntent.current.id,
       });
+      refillIntent.current = null;
       setRefillQuantity('');
       setPharmacy('');
       setCost('');
@@ -203,6 +218,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
     } catch (err) {
       setError(describeError(err));
     } finally {
+      mutationBusy.current = false;
       setBusy(false);
     }
   };
@@ -353,9 +369,9 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
               />
               <Button
                 label={t('common.save')}
-                disabled={exactQuantity.trim() === '' || !Number.isFinite(Number(exactQuantity.replace(',', '.')))}
+                disabled={exactQuantity.trim() === '' || !Number.isFinite(parseMedicationNumber(exactQuantity))}
                 loading={busy}
-                onPress={() => void adjust({ remainingQuantity: Number(exactQuantity.replace(',', '.')) })}
+                onPress={() => void adjust({ remainingQuantity: parseMedicationNumber(exactQuantity) })}
               />
             </Card>
 
@@ -383,7 +399,7 @@ function StockProfileScreen({ medicationId }: { medicationId?: string }) {
               placeholder={t('stock.enterNewQuantity')}
               autoFocus
             />
-            <Picker label={t('schedule.doseUnit')} options={unitOptions} value={refillUnit} onChange={setRefillUnit} />
+            <Picker wrap label={t('schedule.doseUnit')} options={unitOptions} value={refillUnit} onChange={setRefillUnit} />
             <Field label={t('refill.pharmacy')} value={pharmacy} onChangeText={setPharmacy} />
             <Field label={t('refill.cost')} value={cost} onChangeText={setCost} keyboardType="decimal-pad" />
             <Field label={t('refill.note')} value={note} onChangeText={setNote} multiline />

@@ -71,6 +71,17 @@ Duplicate detection is advisory: it warns with candidates and never blocks. Chan
 
 `/v1/today` returns the next dose, the local day, and a 7-day prefetch window the device caches for offline reminders. Every action carries a `clientEventId` the server treats as an idempotency key.
 
+`GET /v1/doses` filters by displayed dose status before applying `limit` (default 500,
+maximum 2000). Each response adds `nextCursor`, null when complete. For another
+page, send that value in `x-dawaee-history-cursor` with the same profile, date
+range, medication, status and recorded filters. Keep it out of URL query strings:
+it contains row-position metadata. Ordering is scheduled time descending, then
+dose ID descending, preserving timestamp precision. Every page repeats the
+authorization and RLS checks. Pages are live reads, not a transaction snapshot;
+refresh the history to observe changes made while paging. The mobile calendar
+loads all pages before publishing a complete result and discards stale requests
+when the selected profile or date/medication scope changes.
+
 | Method | Path |
 |---|---|
 | `GET` | `/v1/today` |
@@ -197,4 +208,3 @@ Signature-verified, stored raw before being applied.
 
 Keying by user rather than IP where possible means one abusive account cannot
 lock out a shared network — a hospital, or a family home.
-

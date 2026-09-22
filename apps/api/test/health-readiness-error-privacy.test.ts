@@ -7,7 +7,11 @@ vi.mock('../src/lib/schema-contract.js', () => ({
   requiredSchemaRevision: () => '0070_dose_schedule_graph_integrity.sql',
   checkSchemaContract: h.schema,
 }));
-vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: 'production' }) }) );
+vi.mock('../src/config.js', () => ({ loadConfig: () => ({ NODE_ENV: 'production',
+  ACCOUNT_EMAIL_PROVIDER: 'resend', ACCOUNT_EMAIL_SENDER_VERIFIED: true,
+  RESEND_API_KEY: 'synthetic-readiness-key', ACCOUNT_EMAIL_FROM: 'accounts@example.test',
+  ACCOUNT_EMAIL_BASE_URL: 'https://accounts.example.test',
+}) }) );
 
 import { registerHealthRoutes } from '../src/routes/health.js';
 
@@ -20,7 +24,7 @@ const PRIVATE_MARKERS = [
   'internal.db.invalid',
 ];
 const PRIVATE_ERROR = PRIVATE_MARKERS.join('; ');
-const JOBS = ['materialize', 'reminders', 'dispatch', 'mark-missed', 'stock-alerts', 'digests'];
+const JOBS = ['materialize', 'reminders', 'dispatch', 'push-receipts', 'mark-missed', 'stock-alerts', 'digests', 'housekeeping'];
 const PHASES = ['database', 'schema', 'worker'] as const;
 type Phase = typeof PHASES[number];
 let app: ReturnType<typeof Fastify>;
@@ -75,20 +79,44 @@ function failCheck(phase: Phase, error: unknown): void {
   }
 }
 
+function expectMinimalReadinessSurface(
+  responseBody: string,
+  expectedStatus: 'ready' | 'degraded',
+  failedChecks: string[] = [],
+): void {
+  const body = JSON.parse(responseBody) as Record<string, unknown>;
+  expect(body.status).toBe(expectedStatus);
+  expect(typeof body.time).toBe('string');
+
+  const expectedKeys = failedChecks.length > 0
+    ? ['failedChecks', 'status', 'time']
+    : ['status', 'time'];
+  expect(Object.keys(body).sort()).toEqual(expectedKeys);
+  if (failedChecks.length > 0) expect(body.failedChecks).toEqual(failedChecks);
+
+  // Readiness is intentionally public, so it must not double as an operational
+  // inventory endpoint. Exact migration ids, provider names, release identity,
+  // timings, worker details and environment are useful to an operator but also
+  // fingerprint the deployment for an unauthenticated caller.
+  for (const forbidden of [
+    'checks', 'env', 'integrations', 'mockedIntegrations',
+    'expo', 'google_vision', 's3', COMMIT,
+    '0070_dose_schedule_graph_integrity.sql',
+  ]) {
+    expect(responseBody).not.toContain(forbidden);
+  }
+}
+
 async function expectPrivateFailure(phase: Phase): Promise<void> {
   // No Authorization header: readiness is intentionally public.
   const response = await app.inject({ method: 'GET', url: '/health/ready' });
   expect(response.statusCode).toBe(503);
-  const body = response.json<{ status: string; checks: Record<string, { ok: boolean; detail: string }> }>();
-  expect(body.status).toBe('degraded');
-  expect(body.checks[phase]).toEqual({
-    ok: false, detail: phase === 'database' ? 'unreachable' : 'unverifiable',
-  });
+  expectMinimalReadinessSurface(response.body, 'degraded', [phase]);
   for (const marker of PRIVATE_MARKERS) expect(response.body).not.toContain(marker);
 }
 
-describe('public readiness exposes health, not private exception text', () => {
-  it.each(PHASES)('redacts Error messages from the %s check without reporting READY', async (phase) => {
+describe('public readiness exposes health, not private diagnostics', () => {
+  it.each(PHASES)('redacts Error messages and internal check detail from the %s failure', async (phase) => {
     failCheck(phase, new Error(PRIVATE_ERROR));
     await expectPrivateFailure(phase);
   });
@@ -98,13 +126,10 @@ describe('public readiness exposes health, not private exception text', () => {
     await expectPrivateFailure(phase);
   });
 
-  it('still reports ready when every required check and integration is healthy', async () => {
+  it('reports only minimal public readiness when every required check and integration is healthy', async () => {
     const response = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode, response.body).toBe(200);
-    const body = response.json<{ status: string; checks: Record<string, { ok: boolean }> }>();
-    expect(body.status).toBe('ready');
-    expect(Object.keys(body.checks).sort()).toEqual(['database', 'integrations', 'schema', 'worker']);
-    expect(Object.values(body.checks).every((check) => check.ok)).toBe(true);
+    expectMinimalReadinessSurface(response.body, 'ready');
   });
 
   it('keeps process liveness separate from database readiness', async () => {

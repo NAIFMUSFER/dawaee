@@ -38,6 +38,8 @@ export interface ActionOutcome {
   doseId: string;
   /** True when the server accepted it; false when it went to the queue. */
   synced: boolean;
+  /** A server refusal was not queued and must be visible to the patient. */
+  rejected?: boolean;
 }
 
 /**
@@ -47,12 +49,19 @@ export interface ActionOutcome {
  * do not recognise is not an error to report to a patient at 8pm, it is simply
  * not ours to act on.
  */
+export interface NotificationActionIntent { clientEventId: string; at: string }
+export function createNotificationActionIntent(): NotificationActionIntent {
+  return { clientEventId: newClientEventId(), at: new Date().toISOString() };
+}
+
 export async function applyNotificationAction(
   actionIdentifier: string,
   data: Record<string, unknown>,
+  isCurrent: () => boolean = () => true,
+  intent: NotificationActionIntent = createNotificationActionIntent(),
 ): Promise<ActionOutcome | null> {
   const doseId = typeof data.doseId === 'string' ? data.doseId : null;
-  if (!doseId) return null;
+  if (!doseId || !isCurrent()) return null;
 
   const action: NotificationAction | null =
     actionIdentifier === ACTION_TAKEN ? 'taken'
@@ -61,34 +70,38 @@ export async function applyNotificationAction(
           : null;
   if (!action) return null;
 
-  const clientEventId = newClientEventId();
-  const at = new Date().toISOString();
-  const deviceId = await getDeviceId();
-
+  const { clientEventId, at } = intent;
   try {
+    const deviceId = await getDeviceId();
+    if (!isCurrent()) return null;
     if (action === 'taken') {
       await api.post('/v1/dose/action', {
         doseId, action: 'taken', clientEventId, method: 'push_action', deviceId, takenAt: at,
       });
     } else if (action === 'skipped') {
-      await api.post('/v1/dose/action', { doseId, action: 'skip', clientEventId, deviceId });
+      await api.post('/v1/dose/action', { doseId, action: 'skip', clientEventId, deviceId, actionAt: at });
     } else {
       await api.post('/v1/dose/action', {
-        doseId, action: 'snooze', minutes: QUICK_SNOOZE_MINUTES, clientEventId, deviceId,
+        doseId, action: 'snooze', minutes: QUICK_SNOOZE_MINUTES, clientEventId, deviceId, actionAt: at,
       });
     }
-    return { action, doseId, synced: true };
+    return isCurrent() ? { action, doseId, synced: true } : null;
   } catch (err) {
+    if (!isCurrent()) return null;
     // Only a request that never reached the server is worth replaying. A
     // rejection — an already-confirmed dose, a revoked permission — is an
     // answer, and queueing it would replay a refusal forever.
-    if (!(err instanceof NetworkError)) return { action, doseId, synced: false };
+    if (!(err instanceof NetworkError)) return { action, doseId, synced: false, rejected: true };
 
-    await enqueue(
-      action === 'taken' ? { type: 'taken', doseOccurrenceId: doseId, at, clientEventId }
-        : action === 'skipped' ? { type: 'skipped', doseOccurrenceId: doseId, at, clientEventId }
-          : { type: 'snoozed', doseOccurrenceId: doseId, at, clientEventId, minutes: QUICK_SNOOZE_MINUTES },
-    );
-    return { action, doseId, synced: false };
+    try {
+      await enqueue(
+        action === 'taken' ? { type: 'taken', doseOccurrenceId: doseId, at, clientEventId }
+          : action === 'skipped' ? { type: 'skipped', doseOccurrenceId: doseId, at, clientEventId }
+            : { type: 'snoozed', doseOccurrenceId: doseId, at, clientEventId, minutes: QUICK_SNOOZE_MINUTES },
+      );
+      return isCurrent() ? { action, doseId, synced: false } : null;
+    } catch {
+      return isCurrent() ? { action, doseId, synced: false, rejected: true } : null;
+    }
   }
 }

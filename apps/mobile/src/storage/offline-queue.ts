@@ -1,7 +1,11 @@
+import { queuedPatch } from './dose-cache.js';
+export { cacheDose, applyQueuedToDoses } from './dose-cache.js';
 import { api, NetworkError } from '../api/client.js';
+import type { DoseView } from '../api/types.js';
 import { clearSlot, purgeAllSlots, readSlot, writeSlot } from './secure-cache.js';
 import type { CacheSlot } from './secure-cache.js';
 import { LOW_STOCK_SLOT, purgeSnoozes } from './low-stock-snooze.js';
+import { purgeEmergencyQrs } from './emergency-qr.js';
 import { OFFLINE_BOOTSTRAP_SLOT } from './offline-bootstrap.js';
 export { readOfflineBootstrap, writeOfflineBootstrap } from './offline-bootstrap.js';
 
@@ -45,9 +49,22 @@ let ownerGeneration = 0;
 type QueueOwner = { userId: string; generation: number };
 const queueMutations = new Map<string, Promise<void>>();
 const scheduleCacheMutations = new Map<string, Promise<void>>();
+const blockedProfiles = new Set<string>();
+const queueListeners = new Set<() => void>();
+
+export function subscribeQueueChanges(listener: () => void): () => void {
+  queueListeners.add(listener);
+  return () => { queueListeners.delete(listener); };
+}
+
+function notifyQueueChanges(): void {
+  for (const listener of queueListeners) {
+    try { listener(); } catch { /* A display failure cannot undo a durable write. */ }
+  }
+}
 
 export function setCacheOwner(userId: string | null): void {
-  if (userId !== currentUserId) ownerGeneration++;
+  if (userId !== currentUserId) { ownerGeneration++; blockedProfiles.clear(); }
   currentUserId = userId;
 }
 
@@ -57,6 +74,13 @@ function captureOwner(): QueueOwner | null {
 
 function isCurrentOwner(owner: QueueOwner): boolean {
   return owner.userId === currentUserId && owner.generation === ownerGeneration;
+}
+
+/** Fence delayed network fallbacks to the initiating account/session, while
+ * allowing navigation between that account's patient profiles. */
+export function captureQueueOwnership(): () => boolean {
+  const owner = captureOwner();
+  return () => owner !== null && isCurrentOwner(owner);
 }
 
 function requireCurrentOwner(owner: QueueOwner): void {
@@ -149,9 +173,14 @@ async function writeQueue(actions: QueuedAction[], owner: QueueOwner): Promise<v
   const result = await writeSlot(QUEUE_SLOT, owner.userId, JSON.stringify(actions));
   requireCurrentOwner(owner);
   if (!result.ok) throw new QueuePersistFailed(result.reason);
+  notifyQueueChanges();
 }
 
 export async function enqueue(action: QueuedAction): Promise<void> {
+  if (!Number.isFinite(Date.parse(action.at)) || (action.type === 'snoozed'
+    && (!Number.isInteger(action.minutes) || action.minutes < 1 || action.minutes > 720))) {
+    throw new QueuePersistFailed('invalid action');
+  }
   const owner = captureOwner();
   if (!owner) throw new QueuePersistFailed('signed out');
   await mutateQueue(owner, async () => {
@@ -190,7 +219,8 @@ export async function flushQueue(deviceId: string): Promise<FlushResult> {
 
   try {
     const res = await api.post<{
-      results: Array<{ clientEventId: string; ok: boolean; error?: string; replay?: boolean }>;
+      results: Array<{ clientEventId: string; ok: boolean; error?: string; replay?: boolean;
+        status?: string; snoozedUntil?: string | null; snoozeCount?: number }>;
       applied: number; replayed: number; failed: number;
     }>('/v1/doses/sync', { deviceId, actions: queue });
 
@@ -200,6 +230,28 @@ export async function flushQueue(deviceId: string): Promise<FlushResult> {
       res.results.filter((r) => sentIds.has(r.clientEventId) && (r.ok || permanent.has(r.error ?? '')))
         .map((r) => r.clientEventId),
     );
+    // Preserve an accepted response in the encrypted snapshot before dropping
+    // its journal entry. A follow-up GET can still fail on a patchy connection.
+    const accepted = new Map(res.results.filter(result => result.ok && sentIds.has(result.clientEventId))
+      .map(result => [result.clientEventId, result]));
+    await mutateScheduleCache(owner, async () => {
+      const raw = await readSlot(CACHE_SLOT, owner.userId);
+      requireCurrentOwner(owner);
+      const patches = new Map(queue.flatMap(action => {
+        const result = accepted.get(action.clientEventId);
+        if (!result) return [];
+        const patch = { ...queuedPatch(action), ...(result.status ? { status: result.status } : {}),
+          ...(result.snoozedUntil !== undefined ? { snoozedUntil: result.snoozedUntil } : {}) };
+        return [[action.doseOccurrenceId, patch] as const];
+      }));
+      const schedules = decodeCachedSchedules(raw).map(cache => ({ ...cache,
+        doses: cache.doses.map(dose => ({ ...dose, ...patches.get(dose.id) })),
+      }));
+      if (accepted.size > 0 && schedules.length) {
+        const saved = await writeSlot(CACHE_SLOT, owner.userId, JSON.stringify({ version: 2, schedules }));
+        if (!saved.ok) throw new QueuePersistFailed('accepted state cache unavailable');
+      }
+    }, true);
     await mutateQueue(owner, async () => {
       // The request's snapshot is not the current queue: a patient can tap
       // another dose while the network is in flight. Remove only acknowledged
@@ -230,8 +282,19 @@ export interface CachedSchedule {
   doses: Array<{
     id: string; scheduledAt: string; scheduledLocalTime: string; scheduledLocalDate: string;
     medicationName: string; doseQuantity: number; doseUnit: string; foodInstruction: string; status: string;
+    scheduledTimezone?: string; medicationId?: string; imageKey?: string | null;
+    // Optional for snapshots written by older clients; stored only in the
+    // existing encrypted, account/profile-bound cache.
+    medicationForm?: DoseView['medication']['form'];
+    strengthValue?: number | null;
+    strengthUnit?: DoseView['medication']['strengthUnit'];
+    instructions?: string | null; medicationNotes?: string | null;
+    notes?: DoseView['notes'];
+    snoozedUntil?: string | null; confirmedAt?: string | null; confirmedReceivedAt?: string | null;
+    thresholds?: DoseView['thresholds'];
   }>;
 }
+
 
 type CachedScheduleEnvelope = {
   version: 2;
@@ -281,7 +344,7 @@ function decodeCachedSchedules(raw: string | null): CachedSchedule[] {
  * only; no network request is held behind it. Stale account generations are
  * discarded before they can write medication data after a logout/account swap.
  */
-function mutateScheduleCache(owner: QueueOwner, operation: () => Promise<void>): Promise<void> {
+function mutateScheduleCache(owner: QueueOwner, operation: () => Promise<void>, required = false): Promise<void> {
   const previous = scheduleCacheMutations.get(owner.userId) ?? Promise.resolve();
   const result = previous.then(async () => {
     if (!isCurrentOwner(owner)) return;
@@ -294,7 +357,9 @@ function mutateScheduleCache(owner: QueueOwner, operation: () => Promise<void>):
   void settled.then(() => {
     if (scheduleCacheMutations.get(owner.userId) === settled) scheduleCacheMutations.delete(owner.userId);
   });
-  return settled;
+  // During sync, the accepted state must be durable before its journal entry
+  // is removed; failed storage keeps that entry available for idempotent replay.
+  return required ? result : settled;
 }
 
 /**
@@ -305,7 +370,7 @@ function mutateScheduleCache(owner: QueueOwner, operation: () => Promise<void>):
  */
 export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
   const owner = captureOwner();
-  if (!owner) return;
+  if (!owner || blockedProfiles.has(cache.profileId)) return;
   await mutateScheduleCache(owner, async () => {
     let raw: string | null = null;
     try {
@@ -314,7 +379,7 @@ export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
       // Cache corruption/key loss is recoverable: replace it with the fresh
       // server response rather than making a successful Today request fail.
     }
-    if (!isCurrentOwner(owner)) return;
+    if (!isCurrentOwner(owner) || blockedProfiles.has(cache.profileId)) return;
 
     const schedules = decodeCachedSchedules(raw).filter((entry) => entry.profileId !== cache.profileId);
     schedules.push(cache);
@@ -325,7 +390,7 @@ export async function cacheSchedule(cache: CachedSchedule): Promise<void> {
 
 export async function readCachedSchedule(profileId: string): Promise<CachedSchedule | null> {
   const owner = captureOwner();
-  if (!owner) return null;
+  if (!owner || blockedProfiles.has(profileId)) return null;
   let raw: string | null;
   try {
     raw = await readSlot(CACHE_SLOT, owner.userId);
@@ -334,7 +399,25 @@ export async function readCachedSchedule(profileId: string): Promise<CachedSched
   }
   if (!isCurrentOwner(owner) || !raw) return null;
   const cached = decodeCachedSchedules(raw).find((entry) => entry.profileId === profileId) ?? null;
-  return isCurrentOwner(owner) ? cached : null;
+  return isCurrentOwner(owner) && !blockedProfiles.has(profileId) ? cached : null;
+}
+
+/** Hide a refused scope immediately, then remove its encrypted snapshot. */
+export async function invalidateCachedProfile(profileId: string): Promise<void> {
+  blockedProfiles.add(profileId);
+  const owner = captureOwner();
+  if (!owner) return;
+  await mutateScheduleCache(owner, async () => {
+    const raw = await readSlot(CACHE_SLOT, owner.userId).catch(() => null);
+    if (!isCurrentOwner(owner)) return;
+    const schedules = decodeCachedSchedules(raw).filter(cache => cache.profileId !== profileId);
+    await writeSlot(CACHE_SLOT, owner.userId, JSON.stringify({ version: 2, schedules }));
+  });
+}
+
+/** Only a fresh authenticated profile list can restore an invalidated scope. */
+export function restoreCachedProfiles(profileIds: string[]): void {
+  for (const id of profileIds) blockedProfiles.delete(id);
 }
 
 /**
@@ -345,6 +428,7 @@ export async function readCachedSchedule(profileId: string): Promise<CachedSched
  * previous user is exactly what the current session does not have.
  */
 export async function purgeLocalCaches(userId: string | null): Promise<void> {
+  await purgeEmergencyQrs();
   if (userId) {
     await clearSlot(QUEUE_SLOT, userId);
     await clearSlot(CACHE_SLOT, userId);
@@ -364,9 +448,7 @@ export function applyQueuedToCache(cache: CachedSchedule, queue: QueuedAction[])
     doses: cache.doses.map((d) => {
       const action = byId.get(d.id);
       if (!action) return d;
-      if (action.type === 'taken') return { ...d, status: 'taken' };
-      if (action.type === 'skipped') return { ...d, status: 'skipped' };
-      return { ...d, status: 'snoozed' };
+      return { ...d, ...queuedPatch(action) };
     }),
   };
 }

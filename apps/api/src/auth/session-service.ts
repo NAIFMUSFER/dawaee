@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { createHmac } from 'node:crypto';
 import { AppError, ERROR_CODES } from '@dawaee/shared';
 import { loadConfig } from '../config.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
@@ -52,15 +53,25 @@ export async function rotateSessionAttempt(
   tx: PoolClient,
   presentedToken: string,
   ipHash: string | null,
+  retryNonce?: string,
 ): Promise<RotateOutcome> {
   const cfg = loadConfig();
-  const newToken = randomToken(48);
+  // A retry can reconstruct its exact successor without persisting a bearer
+  // token in the database. The nonce is an independent client secret, not a
+  // device identifier; the server key and domain separate this from JWT use.
+  const newToken = retryNonce === undefined ? randomToken(48)
+    : createHmac('sha384', cfg.JWT_SECRET)
+      .update('dawaee.refresh-retry.v1\0').update(retryNonce).update('\0').update(presentedToken)
+      .digest('base64url');
   const { rows } = await tx.query<{
     outcome: string; user_id: string | null; is_admin: boolean | null;
     session_id: string | null; expires_at: Date | null;
   }>(
-    'SELECT * FROM app.rotate_session($1,$2,$3,$4)',
-    [sha256(presentedToken), sha256(newToken), ipHash, cfg.REFRESH_TOKEN_TTL_DAYS],
+    retryNonce === undefined
+      ? 'SELECT * FROM app.rotate_session($1,$2,$3,$4)'
+      : 'SELECT * FROM app.rotate_session_retry($1,$2,$3,$4,$5)',
+    [sha256(presentedToken), sha256(newToken), ipHash, cfg.REFRESH_TOKEN_TTL_DAYS,
+      ...(retryNonce === undefined ? [] : [sha256(retryNonce)])],
   );
   const result = rows[0];
 

@@ -1,3 +1,5 @@
+import { useScreenRefresh } from '@/hooks/useScreenRefresh';
+import { DoseNotesSheet } from '@/components/DoseNotesSheet';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { router } from 'expo-router';
@@ -13,7 +15,7 @@ import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, ApiError, NetworkError } from '@/api/client';
 import type { DoseView, MedicationView } from '@/api/types';
 import { DOSE_STATUS_COLORS, errorMessageKey, type DoseStatus, type MessageKey } from '@dawaee/shared';
-import { addDays, eachDate, weekdayOf } from '@dawaee/core';
+import { addDays, eachDate, weekdayOf, localDateInZone } from '@dawaee/core';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 
 /**
@@ -111,9 +113,7 @@ function startOfWeek(date: string): string {
 }
 
 function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+  return localDateInZone(new Date(), timezone);
 }
 
 export default function HistoryScreen() {
@@ -133,7 +133,8 @@ function HistoryProfileScreen() {
   const [medicationId, setMedicationId] = useState<string | null>(null);
   const [status, setStatus] = useState<DoseStatus | null>(null);
 
-  const [doses, setDoses] = useState<DoseView[]>([]);
+  const [notesFor, setNotesFor] = useState<DoseView | null>(null);
+  const [doseResult, setDoseResult] = useState<{ scope: string; doses: DoseView[] } | null>(null);
   const [medications, setMedications] = useState<MedicationView[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -158,7 +159,10 @@ function HistoryProfileScreen() {
     return { from: startOfMonth(anchor), to: endOfMonth(anchor) };
   }, [mode, anchor]);
 
-  const { begin: beginLoad } = useRequestScope(JSON.stringify([range.from, range.to, medicationId]));
+  const queryScope = JSON.stringify([range.from, range.to, medicationId]);
+  const { begin: beginLoad } = useRequestScope(queryScope);
+  const doses = useMemo(() => doseResult?.scope === queryScope ? doseResult.doses : [], [doseResult, queryScope]);
+  const awaitingScope = doseResult?.scope !== queryScope;
 
   const load = useCallback(async () => {
     const isCurrent = beginLoad();
@@ -170,16 +174,27 @@ function HistoryProfileScreen() {
       // exactly the doses being listed. The status filter deliberately does not:
       // a month grid showing only missed days would misrepresent the month.
       const [doseRes, medRes] = await Promise.all([
-        api.get<{ doses: DoseView[] }>('/v1/doses', {
-          profileId: activeProfile.id,
-          from: range.from,
-          to: range.to,
-          medicationId: medicationId ?? undefined,
-        }),
+        (async () => {
+          const all: DoseView[] = [];
+          const seen = new Set<string>();
+          let cursor: string | undefined;
+          do {
+            const page = await api.get<{ doses: DoseView[]; nextCursor?: string | null }>('/v1/doses', {
+              profileId: activeProfile.id, from: range.from, to: range.to,
+              medicationId: medicationId ?? undefined, cursor,
+            });
+            if (!isCurrent()) return null;
+            all.push(...page.doses);
+            cursor = page.nextCursor ?? undefined;
+            if (cursor && seen.has(cursor)) throw new Error(t('error.internal_error'));
+            if (cursor) seen.add(cursor);
+          } while (cursor);
+          return { doses: [...new Map(all.map(dose => [dose.id, dose])).values()] };
+        })(),
         api.get<{ medications: MedicationView[] }>('/v1/medications', { profileId: activeProfile.id }),
       ]);
-      if (!isCurrent()) return;
-      setDoses(doseRes.doses);
+      if (!isCurrent() || !doseRes) return;
+      setDoseResult({ scope: queryScope, doses: doseRes.doses });
       setMedications(medRes.medications);
       setOffline(false);
     } catch (err) {
@@ -198,9 +213,9 @@ function HistoryProfileScreen() {
         setRefreshing(false);
       }
     }
-  }, [beginLoad, activeProfile, range.from, range.to, medicationId, setOffline, t]);
+  }, [beginLoad, activeProfile, range.from, range.to, medicationId, queryScope, setOffline, t]);
 
-  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useScreenRefresh(load, JSON.stringify([activeProfile?.id, range.from, range.to, medicationId]));
 
   // A day selected in one month must not survive a jump to another.
   useEffect(() => {
@@ -270,7 +285,8 @@ function HistoryProfileScreen() {
         to: formatDate(dateIso(range.to), timezone),
       });
     }
-    return formatDate(dateIso(range.from), timezone, { day: undefined, month: 'long', year: 'numeric' });
+    // The grid and API range use Gregorian months, even when detail dates use Umm al-Qura.
+    return formatDate(dateIso(range.from), timezone, { calendar: 'gregory', day: undefined, month: 'long', year: 'numeric' });
   }, [mode, anchor, range.from, range.to, dateIso, formatDate, timezone, t]);
 
   if (!activeProfile) {
@@ -319,7 +335,7 @@ function HistoryProfileScreen() {
             <Button label={t('common.next')} tone="ghost" fullWidth={false} onPress={() => shift(1)} />
           </Row>
 
-          {loading ? (
+          {loading || (awaitingScope && !error && !offline) ? (
             <Loading label={t('common.loading')} />
           ) : mode === 'month' ? (
             <MonthGrid
@@ -388,7 +404,7 @@ function HistoryProfileScreen() {
           </Row>
         ) : null}
 
-        {loading ? (
+        {loading || (awaitingScope && !error && !offline) ? (
           <Loading />
         ) : groups.length === 0 ? (
           <EmptyState
@@ -415,6 +431,7 @@ function HistoryProfileScreen() {
                   key={dose.id}
                   dose={dose}
                   onPress={() => openMedication(dose.medicationId)}
+                  onNote={() => setNotesFor(dose)}
                 />
               ))}
               <Divider />
@@ -422,6 +439,10 @@ function HistoryProfileScreen() {
           ))
         )}
       </ScrollView>
+      {notesFor ? <DoseNotesSheet key={notesFor.id} profileId={activeProfile.id} dose={notesFor}
+        canRead={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('view_history'))}
+        canWrite={activeProfile.role === 'owner' || Boolean(activeProfile.permissions?.includes('confirm_dose'))}
+        onClose={() => { setNotesFor(null); void load(); }} /> : null}
     </SafeAreaView>
   );
 }

@@ -2,13 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server.js';
-import { closePool } from '../src/lib/db.js';
+import { closePool, withTransaction, withUser } from '../src/lib/db.js';
 import { buildProviders } from '../src/providers/index.js';
 import { loadConfig } from '../src/config.js';
 import type { MockPushProvider } from '../src/providers/index.js';
 import { createWorkerContext, type WorkerContext } from '../../worker/src/context.js';
 import { runTick } from '../../worker/src/index.js';
 import { resetClockSource, setClockSource } from '../src/lib/clock.js';
+import { normalizePhone } from '../src/lib/crypto.js';
+import { hashPassword } from '../src/lib/password.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -117,52 +119,94 @@ function nextRemoteAddress(): string {
  */
 export const TEST_PASSWORD = 'correct horse battery staple';
 
+/** Owner-proof is exercised by the account-email suites. Clinical fixtures
+ * start from the post-proof definer operation so thousands of unrelated tests
+ * do not depend on an email provider or scrape a bearer token from a mailbox. */
+export async function createEmailAccount(
+  h: Harness,
+  email: string,
+  displayName: string,
+  password = TEST_PASSWORD,
+  deviceId = `device-${email}`,
+  locale: 'ar' | 'en' = 'ar',
+): Promise<{ userId: string; token: string; refreshToken: string; profileId: string }> {
+  const passwordHash = await hashPassword(password);
+  const created = await withTransaction(tx => tx.query<{ user_id: string }>(
+    'SELECT * FROM app.register_email_account($1,$2,$3,$4,$5)',
+    [null, email.toLowerCase(), displayName, passwordHash, locale],
+  ));
+  const userId=created.rows[0]!.user_id;
+  confirmTestEmail(userId);
+  const login = await h.app.inject({ method: 'POST', url: '/v1/auth/login',
+    remoteAddress: nextRemoteAddress(), payload: { identifier: email, password, deviceId } });
+  if (login.statusCode !== 200) throw new Error(`fixture sign-in failed for ${email}: ${login.body}`);
+  const auth=login.json<{accessToken:string;refreshToken:string}>();
+  const profiles=await h.app.inject({url:'/v1/profiles',headers:{authorization:`Bearer ${auth.accessToken}`}});
+  const profileId=profiles.json<{profiles:Array<{id:string}>}>().profiles[0]!.id;
+  return {userId,token:auth.accessToken,refreshToken:auth.refreshToken,profileId};
+}
+
 /**
- * Registers (or signs in) a user and returns everything a test needs.
+ * Creates a fixture through the restricted auth-plane function, then signs in.
  *
  * Password, not OTP. The one-time-code path has no delivery channel left —
  * both SMS and WhatsApp need a Saudi commercial registration — so the request
  * endpoint refuses, and a suite that signed in through it would be testing a
  * route no real user can take. This is the way in that actually exists.
  */
-export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`): Promise<TestUser> {
-  const remoteAddress = nextRemoteAddress();
+export async function signIn(h: Harness, phone: string, deviceId = `device-${phone}`, options: { verifiedPhone?: boolean } = {}): Promise<TestUser> {
+  const canonicalPhone = normalizePhone(phone);
+  if (!canonicalPhone) throw new Error(`Invalid fixture phone: ${phone}`);
+  const fixtureEmail = `fixture-${canonicalPhone.replace(/\D/g, '')}@example.test`;
 
-  const registered = await h.app.inject({
-    method: 'POST', url: '/v1/auth/register', remoteAddress,
-    payload: { phone, displayName: phone, password: TEST_PASSWORD, deviceId },
+  const created=await createEmailAccount(h,fixtureEmail,phone,TEST_PASSWORD,deviceId);
+  const auth = {accessToken:created.token,refreshToken:created.refreshToken};
+
+  const me = await h.app.inject({
+    method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
 
-  // A suite may sign the same number in twice; the second time it is a login.
-  const auth = registered.statusCode === 200
-    ? registered.json<{ accessToken: string; refreshToken: string }>()
-    : await (async () => {
-        const login = await h.app.inject({
-          method: 'POST', url: '/v1/auth/login', remoteAddress,
-          payload: { identifier: phone, password: TEST_PASSWORD, deviceId },
-        });
-        if (login.statusCode !== 200) {
-          throw new Error(`sign-in failed for ${phone}: ${registered.body} / ${login.body}`);
-        }
-        return login.json<{ accessToken: string; refreshToken: string }>();
-      })();
+  const account = me.json<{ user: { id: string; phoneE164: string | null } }>().user;
+  const userId = account.id;
+  confirmTestEmail(userId);
+  // Ordinary clinical scenarios attach their synthetic phone through the
+  // auth-plane function. Production registration never reserves this number:
+  // the real route calls the same function only after Firebase proof succeeds.
+  await withUser(userId, async (tx) => {
+    const credential = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [userId]);
+    const attached = await tx.query<{ linked: boolean }>('SELECT app.attach_account_phone($1,$2,$3) AS linked',
+      [userId, canonicalPhone, credential.rows[0]?.hash]);
+    if (!attached.rows[0]?.linked) throw new Error('Phone fixture setup failed');
+    if (options.verifiedPhone !== false) {
+      const proof = await tx.query<{ verified: boolean }>(
+        'SELECT app.record_verified_phone($1,$2,now()) AS verified', [userId, canonicalPhone],
+      );
+      if (!proof.rows[0]?.verified) throw new Error('Verified phone fixture setup failed');
+    }
+  });
 
   const profiles = await h.app.inject({
     method: 'GET', url: '/v1/profiles', headers: { authorization: `Bearer ${auth.accessToken}` },
   });
   const profile = profiles.json<{ profiles: Array<{ id: string }> }>().profiles[0]!;
 
-  const me = await h.app.inject({
-    method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${auth.accessToken}` },
-  });
-
   return {
-    userId: me.json<{ user: { id: string } }>().user.id,
-    phone,
+    userId,
+    phone: canonicalPhone,
     token: auth.accessToken,
     refreshToken: auth.refreshToken,
     profileId: profile.id,
   };
+}
+
+/** Owner-only fixture for clinical tests; real email confirmation is exercised
+ * separately by account-email SQL/HTTP and onboarding boundary suites. */
+export function confirmTestEmail(userId: string): void {
+  if (!/^[a-f0-9-]{36}$/i.test(userId)) throw new Error('Invalid fixture user id');
+  execFileSync('psql', ['-d', 'dawaee_test', '-v', 'ON_ERROR_STOP=1', '-c',
+    `INSERT INTO user_email_verifications(user_id,email) SELECT id,lower(email) FROM users WHERE id='${userId}' AND email IS NOT NULL ON CONFLICT(user_id) DO UPDATE SET email=excluded.email`], {
+    env: { ...process.env, PGHOST: '127.0.0.1', PGPORT: '5433', PGUSER: 'postgres' }, stdio: 'pipe',
+  });
 }
 
 export function authHeaders(user: TestUser) {

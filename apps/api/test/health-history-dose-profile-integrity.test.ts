@@ -1,3 +1,4 @@
+import { reviewAndAcceptInvitation } from './reviewed-invitation-fixture.js';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -55,6 +56,29 @@ afterAll(async () => {
 });
 
 describe('patient-history dose references stay inside one patient profile', () => {
+  it('filters notes by the exact dose and denies the reverse patient-to-caregiver relationship', async () => {
+    const invite=await h.app.inject({method:'POST',url:'/v1/caregivers/invite',headers:authHeaders(alice),payload:{patientProfileId:alice.profileId,invitedName:'Caregiver',invitedPhone:bob.phone,role:'caregiver',permissions:['view_schedule','view_medications','view_history','confirm_dose'],escalationPriority:1}});
+    expect(invite.statusCode,invite.body).toBe(200);
+    const token=invite.json().invitationLink.split('/invite/')[1];
+    const accepted=await reviewAndAcceptInvitation(options => h.app.inject(options), {method:'POST',url: '/v1/caregivers/invitations/preview',headers:authHeaders(bob),payload:{token}});
+    expect(accepted.statusCode,accepted.body).toBe(200);
+    const note=await h.app.inject({method:'POST',url:'/v1/notes',headers:authHeaders(bob),payload:{profileId:alice.profileId,doseOccurrenceId:aliceDoseId,text:'Caregiver note for this dose'}});
+    expect(note.statusCode,note.body).toBe(200);
+    const list=await h.app.inject({url:`/v1/notes?profileId=${alice.profileId}&doseOccurrenceId=${aliceDoseId}`,headers:authHeaders(alice)});
+    expect(list.statusCode,list.body).toBe(200);
+    expect(list.json().notes).toContainEqual(expect.objectContaining({id:note.json().note.id,doseOccurrenceId:aliceDoseId,text:'Caregiver note for this dose'}));
+    const caregiverRead=await h.app.inject({url:`/v1/notes?profileId=${alice.profileId}&doseOccurrenceId=${aliceDoseId}`,headers:authHeaders(bob)});
+    expect(caregiverRead.statusCode).toBe(200);
+    const patientProfiles=await h.app.inject({url:'/v1/profiles',headers:authHeaders(alice)});
+    expect(patientProfiles.json().profiles.map((p:{id:string})=>p.id)).not.toContain(bob.profileId);
+    const reverse=await h.app.inject({url:`/v1/notes?profileId=${bob.profileId}&doseOccurrenceId=${bobDoseId}`,headers:authHeaders(alice)});
+    expect(reverse.statusCode).toBe(404);
+    const mismatched=await h.app.inject({url:`/v1/notes?profileId=${alice.profileId}&doseOccurrenceId=${bobDoseId}`,headers:authHeaders(bob)});
+    expect(mismatched.statusCode).toBe(404);
+    const revoked=await h.app.inject({method:'DELETE',url:`/v1/caregivers/${accepted.json().relationshipId}`,headers:authHeaders(alice)});
+    expect(revoked.statusCode,revoked.body).toBe(200);
+    expect((await h.app.inject({url:`/v1/notes?profileId=${alice.profileId}`,headers:authHeaders(bob)})).statusCode).toBe(404);
+  });
   it('rejects a symptom note linked to another patient dose at the database boundary', async () => {
     await expect(owner.query(
       `INSERT INTO symptom_notes

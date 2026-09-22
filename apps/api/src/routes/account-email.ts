@@ -1,0 +1,118 @@
+import type { FastifyInstance } from 'fastify';
+import { randomBytes, createHmac } from 'node:crypto';
+import { z } from 'zod';
+import { AppError, ERROR_CODES, t } from '@dawaee/shared';
+import { authenticate, currentUser } from '../middleware/context.js';
+import { loadConfig } from '../config.js';
+import { withTransaction, withUser } from '../lib/db.js';
+import { verifyPassword, deriveRecoveryRequestKey } from '../lib/password.js';
+import { clearRecoveredLoginBudgets, hashNewPassword, passwordLoginEnabled } from '../auth/password-service.js';
+import { enforceAuthBudget } from '../auth/rate-budget.js';
+import { recordAudit } from '../services/audit-service.js';
+import { accountEmailReady, drainAccountEmails, emailTokenHash, sealEmailJob } from '../providers/account-email.js';
+import { auditAccountEmailDeliveryAllowed } from '../providers/audit-account-email.js';
+import { registerAccountEmailPage } from './account-email-page.js';
+import { enqueueAccountEmail } from '../auth/email-capacity.js';
+
+const email = z.string().trim().toLowerCase().email().max(320);
+const requestSchema = z.object({ email }).strict();
+const verifySchema = z.object({ email, currentPassword: z.string().min(1).max(200) }).strict();
+const token = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const completeSchema = z.discriminatedUnion('purpose', [
+  z.object({ token, purpose: z.literal('verify') }).strict(),
+  z.object({ token, purpose: z.literal('reset'), newPassword: z.string().min(1).max(200) }).strict(),
+  z.object({ token, purpose: z.literal('register'), displayName: z.string().trim().min(1).max(120), newPassword: z.string().min(1).max(200) }).strict(),
+]);
+export function registerAccountEmailRoutes(app: FastifyInstance): void {
+  const unavailable = () => { throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Account email is unavailable'); };
+  const requireEmail = () => { if (!accountEmailReady() || !passwordLoginEnabled()) unavailable(); };
+  app.get('/v1/auth/password/recovery-options', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { provider: 'email', available: accountEmailReady() && passwordLoginEnabled() };
+  });
+  app.get('/v1/auth/email', { preHandler: authenticate }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { userId } = currentUser(req);
+    const { rows } = await withUser(userId, tx => tx.query('SELECT email, app.has_verified_email(id) AS verified FROM users WHERE id=$1', [userId]));
+    return { email: rows[0]?.email ?? null, verified: rows[0]?.verified === true, available: accountEmailReady() && passwordLoginEnabled() };
+  });
+  app.post('/v1/auth/email/request', { preHandler: authenticate, config: { rateLimit: { max: 6, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store'); requireEmail();
+    const body = verifySchema.parse(req.body);
+    const { userId, sessionId } = currentUser(req);
+    await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:account', value: userId } });
+    await enforceAuthBudget({ identifier: { scope: 'email:recipient', value: body.email } });
+    await enforceAuthBudget({ identifier: { scope: 'email:hour', value: body.email } });
+    const { rows } = await withTransaction(tx => tx.query<{ password_hash: string | null }>('SELECT app.password_hash_for_user($1) AS password_hash', [userId]));
+    const hash = rows[0]?.password_hash;
+    if (!hash || !await verifyPassword(body.currentPassword, hash)) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Incorrect current password');
+    const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
+    const payload = await sealEmailJob({ email: body.email, token: secret, purpose: 'verify', locale: req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar' });
+    const capacity = await withUser(userId, tx => enqueueAccountEmail(tx, tokenHash, () => tx.query<{ accepted: boolean }>('SELECT app.request_email_verification($1,$2,$3,$4,$5,$6) AS accepted', [userId, sessionId, body.email, tokenHash, hash, payload])));
+    if (capacity.limited) throw new AppError(ERROR_CODES.RATE_LIMITED, 429, 'Too many attempts. Please try again later.', { meta: { retryAfterSeconds: capacity.retryAfterSeconds } });
+    const result = capacity.result;
+    if (!result.rows[0]?.accepted) throw new AppError(ERROR_CODES.CONFLICT, 409, 'Unable to verify this email');
+    return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
+  });
+  app.post('/v1/auth/password/recovery/request', { config: { rateLimit: { max: 6, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store'); requireEmail();
+    const body = requestSchema.parse(req.body);
+    await enforceAuthBudget({ ip: { scope: 'email:ip', value: req.ip }, identifier: { scope: 'email:recipient', value: body.email } });
+    await enforceAuthBudget({ identifier: { scope: 'email:hour', value: body.email } });
+    const secret = randomBytes(32).toString('base64url');
+    const tokenHash = emailTokenHash(secret);
+    const payload = await sealEmailJob({ email: body.email, token: secret, purpose: 'reset', locale: req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar' });
+    await withTransaction(tx => enqueueAccountEmail(tx, tokenHash, () => tx.query('SELECT app.request_email_recovery($1,$2,$3)', [body.email, tokenHash, payload])));
+    // Preserve the same response for unknown recipients and exhausted capacity.
+    return reply.code(202).send({ accepted: true, retryAfterSeconds: 60 });
+  });
+  app.post('/v1/auth/email/complete', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!passwordLoginEnabled()) unavailable();
+    const body = completeSchema.parse(req.body);
+    const locale = req.headers['accept-language']?.startsWith('en') ? 'en' : 'ar';
+    await enforceAuthBudget({ ip: { scope: 'recovery:ip', value: req.ip } });
+    const tokenHash = emailTokenHash(body.token);
+    await enforceAuthBudget({ identifier: { scope: 'email:token', value: tokenHash } });
+    const passwordHash = body.purpose === 'reset' || body.purpose === 'register'
+      ? await hashNewPassword(body.newPassword, locale) : null;
+    const requestHash = body.purpose === 'reset' ? createHmac('sha256', loadConfig().JWT_SECRET)
+      .update(await deriveRecoveryRequestKey(body.newPassword, tokenHash)).digest('hex') : null;
+    const updated = await withTransaction(async tx => {
+      const { rows } = body.purpose === 'register'
+        ? await tx.query<{ user_id: string | null }>(
+          'SELECT app.complete_email_registration($1,$2,$3) AS user_id',
+          [tokenHash, body.displayName, passwordHash],
+        )
+        : await tx.query<{ user_id: string | null }>(
+          'SELECT app.complete_email_action($1,$2,$3,$4) AS user_id',
+          [tokenHash, body.purpose, passwordHash, requestHash],
+        );
+      const userId = rows[0]?.user_id;
+      if (!userId) return false;
+      if (body.purpose === 'reset') await clearRecoveredLoginBudgets(tx, userId);
+      await recordAudit(tx, { actorUserId: userId, patientProfileId: null,
+        action: body.purpose === 'reset' ? 'auth.password_recovered' : body.purpose === 'register' ? 'auth.register' : 'auth.email_verified',
+        entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash });
+      return true;
+    });
+    if (!updated) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 403, t(locale, 'emailAccount.invalidLink'));
+    return { updated: true };
+  });
+  registerAccountEmailPage(app);
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let inflight: Promise<unknown> | null = null;
+  app.addHook('onReady', async () => {
+    const cfg = loadConfig();
+    if (!accountEmailReady(cfg) || (cfg.NODE_ENV === 'test' && !auditAccountEmailDeliveryAllowed(cfg))) return;
+    const tick = () => {
+      if (inflight) return;
+      inflight = drainAccountEmails(undefined, diagnostic => app.log.warn(diagnostic, 'Account email delivery failed'))
+        .catch(() => app.log.warn('Account email delivery temporarily unavailable'))
+        .finally(() => { inflight = null; });
+    };
+    timer = setInterval(tick, 5000); timer.unref(); tick();
+  });
+  app.addHook('onClose', async () => { if (timer) clearInterval(timer); await inflight; });
+}

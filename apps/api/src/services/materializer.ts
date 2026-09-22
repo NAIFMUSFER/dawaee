@@ -107,8 +107,8 @@ export async function materializeSchedule(
    *   newly created future doses before it commits.
    */
   await lockMedicationLifecycle(tx, schedule.medicationId);
-  const { rows: medicationRows } = await tx.query<{ status: string }>(
-    'SELECT status::text AS status FROM medications WHERE id = $1',
+  const { rows: medicationRows } = await tx.query<{ status: string; start_date: string; end_date: string | null }>(
+    'SELECT status::text AS status, start_date, end_date FROM medications WHERE id = $1',
     [schedule.medicationId],
   );
   if (medicationRows[0]?.status !== 'active') {
@@ -121,7 +121,12 @@ export async function materializeSchedule(
   // Start from a little before now so a dose whose window is still open but
   // which was never materialized (e.g. worker downtime) still gets created.
   const from = new Date(now.getTime() - 6 * 3_600_000);
-  const planned = expandSchedule(schedule, { from, to: horizonEnd });
+  const medication = medicationRows[0]!;
+  // Treatment bounds constrain occurrences, not the rule's original anchor.
+  // Moving an interval/cycle anchor here would change its prescribed cadence.
+  const planned = expandSchedule(schedule, { from, to: horizonEnd }).filter((p) =>
+    p.scheduledLocalDate >= medication.start_date &&
+    (medication.end_date === null || p.scheduledLocalDate <= medication.end_date));
   const created = planned.length ? await insertOccurrences(tx, planned) : 0;
 
   await tx.query('UPDATE medication_schedules SET materialized_through = $2 WHERE id = $1', [
@@ -176,9 +181,11 @@ export async function rematerializeSchedule(
     `DELETE FROM dose_occurrences
       WHERE schedule_id = $1
         AND scheduled_at > $2
-        AND status IN ('upcoming','due','pending_confirmation','snoozed')
+        AND status IN ('upcoming','due','pending_confirmation','cancelled')
         AND confirmed_at IS NULL
-        AND notified_at IS NULL`,
+        AND notified_at IS NULL
+        AND snooze_count = 0
+        AND NOT app.dose_has_recorded_history(id)`,
     [schedule.id, now],
   );
   const { created } = await materializeSchedule(tx, schedule, now);
@@ -221,13 +228,33 @@ export async function reviveCancelledDoses(tx: PoolClient, medicationId: string,
     `UPDATE dose_occurrences d
         SET status = 'upcoming', snoozed_until = NULL, notified_at = NULL,
             escalation_stage = 0, escalation_completed_at = NULL
-       FROM medication_schedules s
+       FROM medication_schedules s JOIN medications m ON m.id = s.medication_id
       WHERE d.schedule_id = s.id
         AND s.active
+        AND m.status = 'active'
+        AND d.scheduled_local_date >= m.start_date
+        AND (m.end_date IS NULL OR d.scheduled_local_date <= m.end_date)
+        AND d.scheduled_local_date >= s.start_date
+        AND (s.end_date IS NULL OR d.scheduled_local_date <= s.end_date)
         AND d.medication_id = $1
         AND d.scheduled_at > $2
         AND d.status = 'cancelled'
         AND d.confirmed_at IS NULL`,
+    [medicationId, now],
+  );
+  return rowCount ?? 0;
+}
+
+/** Keep already recorded history while cancelling future doses outside treatment. */
+export async function reconcileTreatmentDates(tx: PoolClient, medicationId: string, now: Date): Promise<number> {
+  await lockMedicationLifecycle(tx, medicationId);
+  const { rowCount } = await tx.query(
+    `UPDATE dose_occurrences d SET status = 'cancelled', snoozed_until = NULL
+       FROM medications m
+      WHERE d.medication_id = m.id AND m.id = $1 AND d.scheduled_at > $2
+        AND d.status IN ('upcoming','due','pending_confirmation','snoozed')
+        AND (d.scheduled_local_date < m.start_date OR
+          (m.end_date IS NOT NULL AND d.scheduled_local_date > m.end_date))`,
     [medicationId, now],
   );
   return rowCount ?? 0;
@@ -265,6 +292,7 @@ export async function loadSchedulesNeedingMaterialization(
       WHERE s.active
         AND s.rule_kind <> 'as_needed'
         AND m.status = 'active'
+        AND (m.end_date IS NULL OR m.end_date >= ($3::timestamptz AT TIME ZONE s.timezone)::date)
         AND (s.end_date IS NULL OR s.end_date >= ($3::timestamptz AT TIME ZONE s.timezone)::date)
         AND (s.materialized_through IS NULL OR s.materialized_through < $1)
       ORDER BY s.materialized_through NULLS FIRST

@@ -35,6 +35,7 @@ function answerCareCircle(batch: any[], label: string) {
 function createAlertOverride() {
   const alerts: any[][] = [];
   const reactNative = new Proxy({
+    AppState: { addEventListener: () => ({ remove() {} }) },
     Alert: { alert: (...args: any[]) => { alerts.push(args); } },
   } as Record<string, unknown>, {
     get(target, key) {

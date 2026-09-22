@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 
 it('preserves medication metadata through the real editor load/edit/save boundary', () => {
   const result = spawnSync(process.execPath, [
-    '--test', path.resolve(process.cwd(), 'apps/mobile/test/medication-edit-metadata-roundtrip.cjs'),
+    '--test', '--test-reporter=tap', path.resolve(process.cwd(), 'apps/mobile/test/medication-edit-metadata-roundtrip.cjs'),
   ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
   if (result.error) throw result.error;
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);

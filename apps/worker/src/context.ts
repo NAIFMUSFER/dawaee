@@ -131,7 +131,7 @@ export async function runJob<T>(
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     const safe = sanitizeOperationalError(err);
-    ctx.log.error({ job: jobName, err: safe }, 'job failed');
+    ctx.log.error({ job: jobName, err }, 'job failed');
     await ctx.pool
       .query(
         `INSERT INTO job_runs (job_name, started_at, finished_at, succeeded, error_message, metadata)

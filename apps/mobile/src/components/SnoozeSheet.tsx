@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { PrivacyModal as Modal } from '@/security/PrivacyModal';
 import { Button, Field, Row, Txt } from './ui.js';
 import { useTheme } from '../hooks/useTheme.js';
 import { useI18n } from '../i18n/index.js';
+import { parseMedicationNumber } from '@dawaee/shared';
 
 /** Snooze durations from the brief, plus a custom value. */
 const PRESETS = [5, 10, 15, 30, 60];
 
 export function SnoozeSheet({
-  defaultMinutes, onSelect, onClose,
-}: { defaultMinutes: number; onSelect: (minutes: number) => void; onClose: () => void }) {
+  defaultMinutes, maxMinutes = 720, onSelect, onClose,
+}: { defaultMinutes: number; maxMinutes?: number; onSelect: (minutes: number) => void; onClose: () => void }) {
   const theme = useTheme();
   const { t, formatNumber } = useI18n();
   const [custom, setCustom] = useState('');
+  const minutes = parseMedicationNumber(custom);
+  const valid = Boolean(custom.trim()) && Number.isInteger(minutes) && minutes >= 1 && minutes <= Math.min(maxMinutes, 720);
 
   return (
     <Modal transparent animationType="slide" onRequestClose={onClose} visible>
@@ -39,6 +43,7 @@ export function SnoozeSheet({
                 <Button
                   label={m === 60 ? t('snooze.hour') : t('snooze.minutes', { minutes: formatNumber(m) })}
                   tone={m === defaultMinutes ? 'primary' : 'secondary'}
+                  disabled={m > maxMinutes}
                   onPress={() => onSelect(m)}
                 />
               </View>
@@ -54,8 +59,8 @@ export function SnoozeSheet({
           />
           <Button
             label={t('common.confirm')}
-            disabled={!custom || Number(custom) < 1 || Number(custom) > 720}
-            onPress={() => onSelect(Number(custom))}
+            disabled={!valid}
+            onPress={() => { if (valid) onSelect(minutes); }}
           />
           <Button label={t('common.cancel')} tone="ghost" onPress={onClose} />
         </Pressable>

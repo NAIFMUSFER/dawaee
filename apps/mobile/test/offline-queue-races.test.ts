@@ -64,6 +64,48 @@ beforeEach(async () => {
 });
 
 describe('offline queue: atomic updates and account-bound acknowledgements', () => {
+  it('captures account generation for delayed fallbacks without tying it to a patient profile', () => {
+    const ownsQueue = queue.captureQueueOwnership();
+    queue.setCacheOwner(ALICE);
+    expect(ownsQueue()).toBe(true);
+    queue.setCacheOwner(BOB);
+    expect(ownsQueue()).toBe(false);
+    queue.setCacheOwner(ALICE);
+    expect(ownsQueue()).toBe(false);
+    const renewed = queue.captureQueueOwnership();
+    queue.setCacheOwner(null);
+    const signedOut = queue.captureQueueOwnership();
+    queue.setCacheOwner(ALICE);
+    expect(renewed()).toBe(false);
+    expect(signedOut()).toBe(false);
+    expect(queue.captureQueueOwnership()()).toBe(true);
+  });
+  it('persists an acknowledged snooze deadline before removing its queued intent', async () => {
+    const intent: QueuedAction = { ...action(1), type: 'snoozed', minutes: 5 };
+    await queue.cacheSchedule({ profileId: 'profile-a', cachedAt: new Date().toISOString(), timezone: 'Asia/Riyadh', doses: [{
+      id: intent.doseOccurrenceId, medicationName: 'Synthetic', scheduledAt: intent.at, scheduledLocalTime: '05:00',
+      scheduledLocalDate: '2026-09-09', status: 'due', doseQuantity: 1, doseUnit: 'tablet', foodInstruction: 'none',
+    }] });
+    await queue.enqueue(intent);
+    const snoozedUntil = '2026-09-09T02:05:00Z';
+    io.post.mockResolvedValue({ results: [{ clientEventId: intent.clientEventId, ok: true, status: 'snoozed', snoozedUntil }], applied: 1, replayed: 0, failed: 0 });
+    await queue.flushQueue('device-a');
+    expect(stored()).toEqual([]);
+    expect((await queue.readCachedSchedule('profile-a'))?.doses[0]).toMatchObject({ status: 'snoozed', snoozedUntil });
+  });
+
+  it('retains the accepted journal entry if persisting its current state fails', async () => {
+    await queue.cacheSchedule({ profileId: 'profile-a', cachedAt: new Date().toISOString(), timezone: 'Asia/Riyadh', doses: [{
+      id: action(1).doseOccurrenceId, medicationName: 'Synthetic', scheduledAt: action(1).at, scheduledLocalTime: '05:00',
+      scheduledLocalDate: '2026-09-09', status: 'due', doseQuantity: 1, doseUnit: 'tablet', foodInstruction: 'none',
+    }] });
+    await queue.enqueue(action(1));
+    io.post.mockResolvedValue(response([action(1)]));
+    io.write.mockResolvedValueOnce({ ok: false, reason: 'storage unavailable' });
+    await expect(queue.flushQueue('device-a')).rejects.toBeInstanceOf(queue.QueuePersistFailed);
+    expect(stored()).toEqual([action(1)]);
+  });
+
   it('preserves simultaneous distinct dose actions', async () => {
     await Promise.all([queue.enqueue(action(1)), queue.enqueue(action(2)), queue.enqueue(action(3))]);
     expect(stored()).toEqual([action(1), action(2), action(3)]);

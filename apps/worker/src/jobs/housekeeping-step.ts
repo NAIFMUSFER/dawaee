@@ -62,6 +62,6 @@ export async function runStep(
     outcome.failures.push({ step, error: message });
     // Named, so an operator reading logs knows WHICH retention class stopped
     // rather than that "housekeeping failed".
-    ctx.log.error({ step, err: message }, 'housekeeping step failed; continuing with the rest');
+    ctx.log.error({ step, err }, 'housekeeping step failed; continuing with the rest');
   }
 }

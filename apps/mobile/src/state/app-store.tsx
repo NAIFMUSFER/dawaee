@@ -1,4 +1,9 @@
+import { AppState as NativeAppState } from 'react-native';
+import { subscribeAccessDenied } from '../api/access-changes.js';
+import { hasProfilePermission } from '../security/profile-permissions.js';
+import { notifyClinicalChange } from '../api/clinical-changes.js';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useSelfReminderRefresh } from '../hooks/useSelfReminderRefresh.js';
 import * as Localization from 'expo-localization';
 import type { Locale } from '@dawaee/shared';
 import { api, clearSession, getDeviceId, isSignedIn, loadStoredSession, NetworkError, setUnauthenticatedHandler, storeSession } from '../api/client.js';
@@ -6,12 +11,13 @@ import { getRestoredSessionUserId } from '../api/restored-session-owner.js';
 import type { ProfileSummary } from '../api/types.js';
 import {
   flushQueue, purgeLocalCaches, queueSize, readOfflineBootstrap,
-  setCacheOwner, writeOfflineBootstrap,
+  setCacheOwner, writeOfflineBootstrap, subscribeQueueChanges, invalidateCachedProfile, restoreCachedProfiles,
 } from '../storage/offline-queue.js';
 import {
   acknowledgePrivacyHide, cancelPrivacyHidePending, markPrivacyHidePending,
   privacyHidePendingCount, purgePrivacyHideIntents, readPrivacyHideIntent,
 } from '../storage/notification-privacy-intent.js';
+import { readLocalePreference, writeLocalePreference } from '../storage/locale-preference.js';
 import { applyNativeDirection } from '../i18n/index.js';
 import { cancelAllLocalNotifications, rebuildRemindersFromCache } from '../notifications/index.js';
 import { destroyCacheKey } from '../storage/cache-key.js';
@@ -67,13 +73,14 @@ const DEFAULT_PREFERENCES: Preferences = {
 export interface AppState {
   ready: boolean;
   signedIn: boolean;
-  user: { id: string; displayName: string; phoneE164: string | null } | null;
+  user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean; deletionScheduledFor?: string | null } | null;
   preferences: Preferences;
   profiles: ProfileSummary[];
   activeProfile: ProfileSummary | null;
   deviceId: string;
   offline: boolean;
   pendingSyncCount: number;
+  syncFailureCount: number;
   restartRequiredForRtl: boolean;
   /**
    * When a password was last presented and accepted, epoch ms; null if none has
@@ -102,6 +109,7 @@ export interface AppActions {
   setActiveProfile: (profileId: string) => void;
   updatePreferences: (patch: Partial<Preferences>) => Promise<void>;
   syncNow: () => Promise<void>;
+  dismissSyncFailure: () => void;
   setOffline: (offline: boolean) => void;
 }
 
@@ -128,6 +136,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     deviceId: '',
     offline: false,
     pendingSyncCount: 0,
+    syncFailureCount: 0,
     restartRequiredForRtl: false,
     credentialVerifiedAt: null,
   });
@@ -164,6 +173,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    * older response must not undo a newer privacy/accessibility choice.
    */
   const preferenceGeneration = useRef(0);
+
+  useSelfReminderRefresh(state, stateRef, sessionGeneration, mounted);
+
   const preferenceWrites = useRef({
     session: -1, pending: 0, tail: Promise.resolve() as Promise<void>,
   });
@@ -249,17 +261,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
    */
   const offlineBootstrapWrites = useRef<Promise<void>>(Promise.resolve());
   const persistOfflineBootstrap = useCallback((
-    user: { id: string; displayName: string; phoneE164: string | null },
+    user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean; deletionScheduledFor?: string | null },
     preferences: Preferences,
     selfProfile: ProfileSummary | null,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const work = offlineBootstrapWrites.current
       .catch(() => undefined)
       .then(async () => {
-        await writeOfflineBootstrap(user.id, { version: 1, user, preferences, selfProfile });
+        return await writeOfflineBootstrap(user.id, { version: 1, user, preferences, selfProfile });
       })
-      .catch(() => undefined);
-    offlineBootstrapWrites.current = work;
+      .catch(() => false);
+    offlineBootstrapWrites.current = work.then(() => undefined);
     return work;
   }, []);
 
@@ -273,10 +285,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const preferencesPendingAtStart = preferenceWrites.current.session === generation
       && preferenceWrites.current.pending > 0;
     const me = await api.get<{
-      user: { id: string; displayName: string; phoneE164: string | null };
+      user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean; deletionScheduledFor?: string | null };
       preferences: Preferences;
     }>('/v1/me');
     if (!isCurrent()) return;
+    if (me.user.deletionScheduledFor) {
+      // A fresh sign-in during deletion grace is a recovery visit, not a
+      // clinical bootstrap. Do not restore profiles or schedule local alerts.
+      setCacheOwner(null);
+      await cancelAllLocalNotifications();
+      if (!isCurrent()) return;
+      const pending = { ...stateRef.current, signedIn: true, user: me.user, profiles: [], activeProfile: null };
+      stateRef.current = pending;
+      setState(pending);
+      return;
+    }
     const profilesRes = await api.get<{ profiles: ProfileSummary[] }>('/v1/profiles');
     if (!isCurrent()) return;
 
@@ -285,6 +308,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // what keeps two people sharing a phone out of each other's medication
     // history — and it must be set before the first `readQueue`, not after.
     setCacheOwner(me.user.id);
+    const readableIds = profilesRes.profiles.filter(profile => hasProfilePermission(profile, 'view_schedule')
+      && hasProfilePermission(profile, 'view_medications')).map(profile => profile.id);
+    restoreCachedProfiles(readableIds);
+    for (const previous of stateRef.current.profiles) {
+      if (!readableIds.includes(previous.id)) void invalidateCachedProfile(previous.id);
+    }
 
     // A privacy-narrowing write that is still pending locally outranks a looser
     // server row. This matters after process restart and also when a transient
@@ -349,6 +378,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // getDeviceId clears its single-flight handle after failure, so later
       // push/sync callers can retry durable identity creation normally.
       const deviceId = await getDeviceId().catch(() => '');
+      const storedLocale = await readLocalePreference();
       const hasSession = await loadStoredSession();
       const bootstrapGeneration = sessionGeneration.current;
 
@@ -375,7 +405,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const previousUserId = stateRef.current.user?.id ?? restoredUserId ?? null;
         const precedingSnapshotWrites = offlineBootstrapWrites.current;
         setCacheOwner(null);
-        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null, credentialVerifiedAt: null }));
+        setState((s) => ({ ...s, signedIn: false, user: null, profiles: [], activeProfile: null, credentialVerifiedAt: null, syncFailureCount: 0 }));
 
         const cleanup = (async () => {
           // A revoked/disabled session is still a sign-out on this physical
@@ -393,7 +423,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!hasSession) {
-        if (!cancelled) setState((s) => ({ ...s, ready: true, deviceId }));
+        if (!cancelled) {
+          const locale = storedLocale ?? stateRef.current.preferences.locale;
+          const { restartRequired } = storedLocale
+            ? applyNativeDirection(locale)
+            : { restartRequired: stateRef.current.restartRequiredForRtl };
+          const ready = {
+            ...stateRef.current,
+            ready: true,
+            deviceId,
+            preferences: { ...stateRef.current.preferences, locale },
+            restartRequiredForRtl: restartRequired,
+          };
+          stateRef.current = ready;
+          setState(ready);
+        }
         return;
       }
 
@@ -465,7 +509,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [enqueuePreferenceServerWork, loadMe, replayPendingPrivacyHide]);
 
-  const syncNow = useCallback(async () => {
+  const performSync = useCallback(async () => {
     const generation = sessionGeneration.current;
     const request = ++syncGeneration.current;
     const isCurrent = () => mounted.current && generation === sessionGeneration.current
@@ -491,9 +535,111 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const privacyPending = await privacyHidePendingCount(userId);
     if (!isCurrent()) return;
     const offline = result.offline || privacyReplay.offline;
-    setState((s) => ({ ...s, offline, pendingSyncCount: dosePending + privacyPending }));
-    if (!offline) await loadMe().catch(() => undefined);
+    setState((s) => ({ ...s, offline, pendingSyncCount: dosePending + privacyPending,
+      syncFailureCount: result.failed > 0 ? result.failed : s.syncFailureCount }));
+    if (!offline) {
+      if (result.attempted > 0) notifyClinicalChange('POST', '/v1/doses/sync');
+      await loadMe().catch(() => undefined);
+    }
   }, [enqueuePreferenceServerWork, loadMe, replayPendingPrivacyHide]);
+
+  const syncFlight = useRef<{ generation: number; promise: Promise<void> } | null>(null);
+  const syncNow = useCallback((): Promise<void> => {
+    const generation = sessionGeneration.current;
+    if (syncFlight.current?.generation === generation) return syncFlight.current.promise;
+    const promise = performSync().finally(() => {
+      if (syncFlight.current?.promise === promise) syncFlight.current = null;
+    });
+    syncFlight.current = { generation, promise };
+    return promise;
+  }, [performSync]);
+
+  useEffect(() => {
+    let current = true;
+    const generation = sessionGeneration.current;
+    const updateCount = async () => {
+      const count = await queueSize();
+      const privacy = await privacyHidePendingCount(stateRef.current.user?.id ?? null);
+      if (!current || generation !== sessionGeneration.current) return;
+      setState(value => ({ ...value, pendingSyncCount: count + privacy }));
+      return count + privacy;
+    };
+    const unsubscribe = subscribeQueueChanges(() => {
+      void updateCount().then(count => {
+        if (!count || !current || generation !== sessionGeneration.current) return;
+        const snapshot = stateRef.current;
+        const self = snapshot.profiles.find(profile => profile.isSelf && profile.role === 'owner');
+        if (self) void rebuildRemindersFromCache(self.id, snapshot.preferences.locale, {
+          voiceEnabled: snapshot.preferences.voiceRemindersEnabled,
+          showMedication: snapshot.preferences.showMedicationInNotifications,
+        }).catch(() => undefined);
+      });
+    });
+    const retry = () => {
+      if (!stateRef.current.signedIn || !stateRef.current.ready) return;
+      void syncNow().catch(() => undefined);
+    };
+    const foreground = NativeAppState.addEventListener('change', next => { if (next === 'active') retry(); });
+    const timer = setInterval(() => {
+      if (NativeAppState.currentState === 'active' && stateRef.current.pendingSyncCount > 0) retry();
+    }, 15_000);
+    if (state.ready && state.signedIn) void updateCount().then(count => { if (count) retry(); });
+    return () => { current = false; unsubscribe(); foreground.remove(); clearInterval(timer); };
+  }, [state.ready, state.signedIn, state.user?.id, syncNow]);
+
+  useEffect(() => {
+    let refreshing = false;
+    const unsubscribe = subscribeAccessDenied(profileId => {
+      const snapshot = stateRef.current;
+      if (!snapshot.signedIn) return;
+      // An individual-resource refusal has no profile header. The selected scope
+      // is hidden while a fresh authenticated profile list resolves permissions.
+      const denied = profileId ?? snapshot.activeProfile?.id;
+      if (denied && snapshot.profiles.some(profile => profile.id === denied)) {
+        profileLoadGeneration.current++;
+        void invalidateCachedProfile(denied);
+        const profiles = snapshot.profiles.filter(profile => profile.id !== denied);
+        const activeProfile = snapshot.activeProfile?.id === denied
+          ? profiles.find(profile => profile.isSelf) ?? profiles[0] ?? null : snapshot.activeProfile;
+        stateRef.current = { ...snapshot, profiles, activeProfile };
+        setState(value => ({ ...value, profiles, activeProfile }));
+      }
+      // A refusal from the verification requests must not recursively start an
+      // unbounded /me → /profiles → 403 loop. Later user retries can revalidate.
+      if (!refreshing) {
+        refreshing = true;
+        void loadMe().catch(() => undefined).finally(() => { refreshing = false; });
+      }
+    });
+    return unsubscribe;
+  }, [loadMe]);
+
+  const hasDelegatedProfiles = state.profiles.some(profile => !profile.isSelf);
+  useEffect(() => {
+    if (!state.ready || !state.signedIn || !hasDelegatedProfiles) return undefined;
+
+    let current = true;
+    let refreshing = false;
+    const refreshAuthorizations = () => {
+      if (!current || refreshing || NativeAppState.currentState !== 'active') return;
+      refreshing = true;
+      void loadMe().catch(() => undefined).finally(() => { refreshing = false; });
+    };
+
+    // A revoked grant can make list endpoints return an empty 200 response, so
+    // the ordinary 403 listener cannot always identify it. Re-read the
+    // authoritative profile list while delegated data is held in memory; the
+    // load path invalidates caches and returns selection to the self profile.
+    const timer = setInterval(refreshAuthorizations, 30_000);
+    const foreground = NativeAppState.addEventListener('change', next => {
+      if (next === 'active') refreshAuthorizations();
+    });
+    return () => {
+      current = false;
+      foreground.remove();
+      clearInterval(timer);
+    };
+  }, [hasDelegatedProfiles, loadMe, state.ready, state.signedIn, state.user?.id]);
 
   const actions = useMemo<AppActions>(() => ({
     signInWithTokens: async (tokens) => {
@@ -523,11 +669,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCacheOwner(null);
       stateRef.current = {
         ...stateRef.current, signedIn: false, user: null, profiles: [],
-        activeProfile: null, credentialVerifiedAt: null,
+        activeProfile: null, credentialVerifiedAt: null, syncFailureCount: 0,
       };
       setState((s) => ({
         ...s, signedIn: false, user: null, profiles: [],
-        activeProfile: null, credentialVerifiedAt: null,
+        activeProfile: null, credentialVerifiedAt: null, syncFailureCount: 0,
       }));
 
       // Invalidate OS-held reminders now, not after a device lookup or network
@@ -574,6 +720,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // enabled them because the text was too small to read.
       const before = stateRef.current.preferences;
       const next = { ...before, ...patch };
+      const lockChanged = patch.appLockEnabled !== undefined || patch.appLockAreas !== undefined;
+      let localPersistence: Promise<boolean> | null = null;
       // Event handlers can run twice before React renders. Publish the latest
       // preference intent to other handlers now, not only on the next render.
       stateRef.current = { ...stateRef.current, preferences: next };
@@ -586,7 +734,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const snapshotUser = stateRef.current.user;
       if (snapshotUser && isSignedIn() && !signOutInFlight.current) {
         const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
-        void persistOfflineBootstrap(snapshotUser, next, ownedSelfProfile);
+        localPersistence = persistOfflineBootstrap(snapshotUser, next, ownedSelfProfile);
       }
 
       /**
@@ -619,7 +767,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           },
         ).catch(() => undefined);
       }
+      let localePersistence: Promise<boolean> | null = null;
       if (patch.locale) {
+        // First-run language selection happens before an account exists, so it
+        // cannot rely on the server preference row or encrypted account cache.
+        // Start the tiny presentation-only write immediately. Signed-out flows
+        // await it before returning; signed-in flows keep the established
+        // server-write ordering and join it before this action completes.
+        localePersistence = writeLocalePreference(patch.locale);
         const { restartRequired } = applyNativeDirection(patch.locale);
         setState((s) => ({ ...s, restartRequiredForRtl: restartRequired }));
       }
@@ -628,10 +783,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // server-side "me" to write to yet, and calling anyway earned a 401 that
       // the old catch-all below read as "offline" — so choosing Arabic raised
       // an offline banner on a perfectly healthy connection. The choice is
-      // kept locally and travels with the sign-up request instead.
-      if (!isSignedIn() || signOutInFlight.current) return;
+      // kept durably on this installation and travels with the sign-up request
+      // instead.
+      if (!isSignedIn() || signOutInFlight.current) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
       const preferenceUserId = stateRef.current.user?.id ?? null;
-      if (!preferenceUserId) return;
+      if (!preferenceUserId) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
 
       // The general bootstrap remembers presentation state, but only this
       // privacy-narrowing field gets a durable server-write marker. Persist it
@@ -648,7 +810,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         || generation !== sessionGeneration.current
         || !isSignedIn()
         || signOutInFlight.current
-      ) return;
+      ) {
+        if (localePersistence) await localePersistence;
+        return;
+      }
 
       const save = async () => {
         try {
@@ -677,7 +842,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const savedUser = stateRef.current.user;
           if (savedUser && !signOutInFlight.current) {
             const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
-            void persistOfflineBootstrap(savedUser, savedPreferences, ownedSelfProfile);
+            localPersistence = persistOfflineBootstrap(savedUser, savedPreferences, ownedSelfProfile);
           }
         } catch (err) {
           // A response/error from an older preference intent or authenticated
@@ -694,11 +859,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // the whole app into its cached-data mode. The encrypted privacy
           // marker, when present, deliberately remains pending on every failure.
           if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
+          else if (lockChanged) throw err;
         }
       };
       await enqueuePreferenceServerWork(generation, save);
+      // Keep current-process protection, but never promise that a lock choice
+      // will survive restart when encrypted local storage rejected the write.
+      if (lockChanged && localPersistence) {
+        const persisted = await localPersistence;
+        if (!persisted && mounted.current && generation === sessionGeneration.current
+          && isSignedIn() && !signOutInFlight.current) {
+          throw new Error('APP_LOCK_PERSISTENCE_FAILED');
+        }
+      }
+      if (localePersistence) await localePersistence;
     },
     syncNow,
+    dismissSyncFailure: () => setState(s => ({ ...s, syncFailureCount: 0 })),
     setOffline: (offline) => setState((s) => ({ ...s, offline })),
   }), [enqueuePreferenceServerWork, loadMe, persistOfflineBootstrap, syncNow]);
 

@@ -7,6 +7,7 @@ import {
 } from '@dawaee/shared';
 import { detectTimezoneChange, isValidTimeZone } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
+import { assertSessionLive } from '../auth/session-service.js';
 
 /**
  * How long an account is kept after erasure is requested.
@@ -32,7 +33,9 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUserReadOnly(userId, async (tx) => {
       const { rows } = await tx.query(
-        `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at,
+        `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at, u.deletion_requested_at,
+                app.has_verified_email(u.id) AS email_verified,
+                app.email_verification_required(u.id) AS email_verification_required,
                 p.locale AS pref_locale, p.numeral_system, p.calendar_system, p.elderly_mode,
                 p.text_scale, p.high_contrast, p.voice_reminders_enabled, p.voice_confirmation_enabled,
                 p.show_medication_in_notifications,
@@ -53,7 +56,9 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       return {
         user: {
           id: u.id, phoneE164: u.phone_e164, email: u.email, displayName: u.display_name,
+          emailVerified: u.email_verified, emailVerificationRequired: u.email_verification_required,
           locale: u.locale, timezone: u.timezone, createdAt: u.created_at,
+          deletionScheduledFor: u.deletion_requested_at ? new Date(new Date(u.deletion_requested_at).getTime() + DELETION_GRACE_DAYS * 86400000).toISOString() : null,
         },
         preferences: {
           locale: u.pref_locale ?? u.locale,
@@ -252,9 +257,13 @@ export function registerProfileRoutes(app: FastifyInstance): void {
     if (!body.confirm) {
       throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'Deletion must be explicitly confirmed');
     }
-    const { userId } = currentUser(req);
+    const { userId, sessionId } = currentUser(req);
 
     return withUser(userId, async (tx) => {
+      // Same serialization order as refresh/login/logout-all. A refresh that
+      // wins first must commit its descendant before this revocation snapshot.
+      await tx.query('SELECT app.lock_current_auth_account()');
+      await assertSessionLive(tx, sessionId);
       const { rows } = await tx.query<{ deletion_requested_at: string }>(
         `UPDATE users
             SET deletion_requested_at = COALESCE(deletion_requested_at, now())
@@ -269,6 +278,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       // reminders to someone who has asked to be erased is the most visible
       // way to ignore the request.
       await tx.query('UPDATE push_tokens SET active = false WHERE user_id = $1', [userId]);
+      await tx.query('UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
 
       await recordAudit(tx, {
         actorUserId: userId,
@@ -283,6 +293,30 @@ export function registerProfileRoutes(app: FastifyInstance): void {
         new Date(requestedAt).getTime() + DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
       return { requested: true, requestedAt, scheduledFor };
+    });
+  });
+
+  // All old sessions were revoked by the request. A fresh password sign-in
+  // can recover the account within the stated grace, without moving its clock.
+  app.post('/v1/me/deletion-cancel', {
+    config: { rateLimit: { max: 5, timeWindow: '10 minutes' } },
+  }, async req => {
+    requestDeletionSchema.parse(req.body);
+    const { userId, sessionId } = currentUser(req);
+    return withUser(userId, async tx => {
+      await tx.query('SELECT app.lock_current_auth_account()');
+      // Authentication may have run before a concurrent deletion revoked all
+      // sessions. Only a session still live after the lock can undo the request.
+      await assertSessionLive(tx, sessionId);
+      const { rows } = await tx.query(
+        `UPDATE users SET deletion_requested_at = NULL WHERE id = $1 AND disabled_at IS NULL
+         AND (deletion_requested_at IS NULL OR deletion_requested_at > now() - make_interval(days => $2)) RETURNING id`,
+        [userId, DELETION_GRACE_DAYS],
+      );
+      if (!rows[0]) throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, 'The deletion recovery period has ended');
+      await recordAudit(tx, { actorUserId: userId, patientProfileId: null, action: 'account.deletion_cancelled',
+        entityType: 'user', entityId: userId, requestId: req.id, ipHash: req.ipHash });
+      return { cancelled: true };
     });
   });
 
@@ -447,7 +481,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       await tx.query('UPDATE patient_profiles SET timezone = $2 WHERE id = $1', [profileId, newTz]);
 
       let regenerated = 0;
-      if (body.decision === 'follow_local_time') {
+      {
         // Re-anchor the wall-clock times to the new zone, then rebuild only
         // the untouched future doses.
         await tx.query(

@@ -22,6 +22,14 @@ function scenarios() {
     }] };
   }
   return [
+    { name: 'preserves column positions for minified bundle findings', run() {
+      const input = structuredClone(report);
+      input.runs[0].results[0].locations[0].physicalLocation.region.startColumn = 12000;
+      input.runs[0].results[0].locations[0].physicalLocation.region.endColumn = 12040;
+      const location = summarizeSarif(input)[0].locations[0];
+      assert.equal(location.column, 12000);
+      assert.equal(location.endColumn, 12040);
+    } },
     { name: 'records rule severity and exact primary/dataflow file locations', run() {
       const rows = summarizeSarif(report);
       assert.equal(rows.length, 1);

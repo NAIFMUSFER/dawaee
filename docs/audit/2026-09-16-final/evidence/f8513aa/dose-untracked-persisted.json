@@ -1,0 +1,22 @@
+{
+  "tracked": false,
+  "checks": [
+    {
+      "status": "taken",
+      "remainingQuantity": null
+    },
+    {
+      "status": "pending_confirmation",
+      "remainingQuantity": null
+    },
+    {
+      "status": "taken",
+      "remainingQuantity": null
+    },
+    {
+      "status": "taken",
+      "remainingQuantity": null
+    }
+  ],
+  "ledgerDeltas": []
+}

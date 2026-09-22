@@ -19,15 +19,36 @@ function dose(id, minutes = 30) {
   return { id, medicationId: `med-${id}`, status: 'upcoming', scheduledAt: new Date(Date.now() + minutes * 60000).toISOString(), scheduledLocalTime: '09:00', doseQuantity: 1, doseUnit: 'tablet', medication: { name: `SYNTHETIC-${id}`, foodInstruction: 'none' } };
 }
 function loadModule(file, platform = 'ios') {
-  const state = { active: [], scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null };
+  const state = {
+    actionCalls: 0, actionIntents: [], action: async () => null, listener: null,
+    active: [], presented: ['synthetic-medication'], lastResponse: 'synthetic-old-account-action',
+    dismissals: 0, responseClears: 0, dismiss: null, clearResponse: null,
+    scheduledCalls: [], cancellations: 0, schedule: null, cancel: null, readCache: async () => null,
+    pushPosts: [], textInputs: [], tokenReads: 0, tokenGate: null, notificationGranted: true, exactAlarmsAllowed: true, exactAlarmChecks: 0, signedIn: true, foregroundHandler: null,
+  };
   const native = {
+    addNotificationResponseReceivedListener: fn => { state.listener = fn; return { remove: () => { state.listener = null; } }; },
+    getLastNotificationResponseAsync: async () => state.lastResponse,
+    setNotificationHandler: handler => { state.foregroundHandler = handler; },
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
-    getPermissionsAsync: async () => ({ granted: true }),
+    getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
+    requestPermissionsAsync: async () => { state.permissionRequests = (state.permissionRequests || 0) + 1; state.notificationGranted = true; return { granted: true }; },
+    getExpoPushTokenAsync: async () => { state.tokenReads++; return state.tokenGate ? state.tokenGate.promise : { data: 'synthetic-token' }; },
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
       if (state.cancel) await state.cancel(state.cancellations);
       state.active = [];
+    },
+    dismissAllNotificationsAsync: async () => {
+      state.dismissals++;
+      if (state.dismiss) await state.dismiss();
+      state.presented = [];
+    },
+    clearLastNotificationResponseAsync: async () => {
+      state.responseClears++;
+      if (state.clearResponse) await state.clearResponse();
+      state.lastResponse = null;
     },
     scheduleNotificationAsync: async (notification) => {
       state.scheduledCalls.push(notification);
@@ -38,21 +59,36 @@ function loadModule(file, platform = 'ios') {
   };
   // Wording is outside this race test. Preserve disclosure choices as visible
   // sentinels; the existing reminder-text/privacy suites test real translations.
-  const text = (p) => ({ title: p.showMedication ? 'NAMED' : 'PRIVATE', body: p.showMedication ? p.medicationName || 'NAMED-GROUP' : 'GENERIC', voice: p.showMedication ? 'NAMED-VOICE' : 'PRIVATE-VOICE' });
+  const text = (p) => { state.textInputs.push(p); return { title: p.showMedication ? 'NAMED' : 'PRIVATE', body: p.showMedication ? p.medicationName || 'NAMED-GROUP' : 'GENERIC', voice: p.showMedication ? 'NAMED-VOICE' : 'PRIVATE-VOICE' }; };
   const imports = {
     'react-native': { Platform: { OS: platform } },
     'expo-constants': { default: {} },
-    '../api/client.js': { api: {} },
+    // Mock native I/O, not inspectCapability or the scheduler under test.
+    // This source of truth is deliberately independent of scheduling failures.
+    '../../modules/exact-alarm-access': {
+      canScheduleExactAlarms: () => { state.exactAlarmChecks++; return state.exactAlarmsAllowed; },
+      withExactAlarmScheduleMutation: (operation) => operation(),
+    },
+    '../api/client.js': { api: { post: async (path, body) => { state.pushPosts.push({ path, body }); } }, isSignedIn: () => state.signedIn },
     '@dawaee/shared': { t: (_locale, key) => key, reminderText: text, groupedReminderText: text },
-    './actions.js': { ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async () => null },
+    './actions.js': { createNotificationActionIntent: () => ({ clientEventId: 'intent-' + state.actionCalls, at: '2026-09-22T00:00:00Z' }), ACTION_SKIP: 'SKIP', ACTION_SNOOZE: 'SNOOZE', ACTION_TAKEN: 'TAKEN', applyNotificationAction: async (...args) => { state.actionCalls++; state.actionIntents.push(args[3]); return state.action(...args); } },
     'expo-notifications': native,
-    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id) },
+    '../storage/offline-queue.js': { readCachedSchedule: (id) => state.readCache(id),
+      readQueue: async () => [], applyQueuedToCache: cache => cache },
   };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     fileName: file, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
   }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, Date, console, require: (id) => {
+    if (id === './permission.js') {
+      const permission = {};
+      const source = ts.transpileModule(fs.readFileSync(require('node:path').join(require('node:path').dirname(file), 'permission.ts'), 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS },
+      }).outputText;
+      vm.runInNewContext(source, { exports: permission });
+      return permission;
+    }
     if (!(id in imports)) throw new Error(`unmocked import ${id}`);
     return imports[id];
   } }, { filename: file });
@@ -63,6 +99,72 @@ function scenarios(file) {
   const add = (name, run, platform) => cases.push({ name, run: async () => {
     const h = loadModule(file, platform); await run(h.api, h.state);
   } });
+  add('background token synchronization never prompts for permission by default', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device'), false);
+    assert.equal(state.permissionRequests || 0, 0);
+    assert.equal(state.tokenReads, 0);
+    assert.equal(state.pushPosts.length, 0);
+  });
+  add('an explicit explained permission action can grant and register', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: true }), true);
+    assert.equal(state.permissionRequests, 1);
+    assert.equal(state.pushPosts.length, 1);
+  });
+  add('a later permission grant signals token registration without a new login', async (api, state) => {
+    state.notificationGranted = false;
+    assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: false }), false);
+    let registration;
+    const stop = api.subscribeNotificationPermissionChanges(() => {
+      registration = api.syncPushRegistration('synthetic-device', { requestPermission: false });
+    });
+    assert.equal(await api.requestPermission(), true);
+    await registration;
+    assert.equal(state.pushPosts.length, 1);
+    assert.equal(state.pushPosts[0].path, '/v1/devices/push-token');
+    assert.equal(state.pushPosts[0].body.deviceId, 'synthetic-device');
+    stop();
+  });
+  add('a token lookup cannot register a previous account device after a session fence changes', async (api, state) => {
+    let current = true;
+    state.tokenGate = deferred();
+    const registration = api.syncPushRegistration('old-device', { requestPermission: false, isCurrent: () => current });
+    await until(() => state.tokenReads === 1);
+    current = false;
+    state.tokenGate.resolve({ data: 'old-account-token' });
+    assert.equal(await registration, false);
+    assert.equal(state.pushPosts.length, 0);
+  });
+  add('snooze schedules at its selected deadline after the original dose time', async (api, state) => {
+    const original = dose('SNOOZED', -3);
+    const snoozedUntil = new Date(Date.now() + 5 * 60000).toISOString();
+    await api.rescheduleLocalNotifications([{ ...original, status: 'snoozed', snoozedUntil, scheduledTimezone: 'Asia/Riyadh' }], 'en');
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].trigger.date.toISOString(), snoozedUntil);
+    assert.equal(state.textInputs[0].time, new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Riyadh' }).format(new Date(snoozedUntil)));
+  });
+  add('a snooze and ordinary dose sharing the reminder deadline produce one grouped alert', async (api, state) => {
+    const upcoming = dose('REGULAR');
+    await api.rescheduleLocalNotifications([
+      upcoming, { ...dose('SNOOZED', -3), status: 'snoozed', snoozedUntil: upcoming.scheduledAt },
+    ], 'en');
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].content.categoryIdentifier, undefined);
+    assert.equal(state.active[0].content.data.doseIds.length, 2);
+  });
+  add('foreground reminders show while signed in and are suppressed immediately after logout', async (api, state) => {
+    await api.inspectCapability();
+    const enabled = await state.foregroundHandler.handleNotification();
+    assert.equal(enabled.shouldShowBanner, true);
+    assert.equal(enabled.shouldShowList, true);
+    assert.equal(enabled.shouldPlaySound, true);
+    state.signedIn = false;
+    const disabled = await state.foregroundHandler.handleNotification();
+    assert.equal(disabled.shouldShowBanner, false);
+    assert.equal(disabled.shouldShowList, false);
+    assert.equal(disabled.shouldPlaySound, false);
+  });
   add('current schedule still creates one future single-dose action', async (api, state) => {
     const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
     assert.equal(result.scheduled, 1); assert.equal(result.failed, 0); assert.equal(state.active.length, 1);
@@ -96,6 +198,31 @@ function scenarios(file) {
     const cancelled = api.cancelAllLocalNotifications(); await flush(); gate.resolve();
     await Promise.all([old, cancelled]); assert.equal(state.active.length, 0, 'old medication reminders survived cancellation');
   });
+  add('logout removes delivered medication text and the previous account action as well as pending alerts', async (api, state) => {
+    await api.rescheduleLocalNotifications([dose('A')], 'en');
+    await api.cancelAllLocalNotifications();
+    assert.equal(state.active.length, 0);
+    assert.equal(state.presented.length, 0);
+    assert.equal(state.lastResponse, null);
+    assert.equal(state.dismissals, 1);
+    assert.equal(state.responseClears, 1);
+  });
+  add('a failed pending-alert cancellation still clears delivered text and stale actions', async (api, state) => {
+    state.cancel = () => { throw new Error('controlled pending cleanup failure'); };
+    await assert.rejects(api.cancelAllLocalNotifications(), /controlled pending cleanup failure/);
+    assert.equal(state.presented.length, 0);
+    assert.equal(state.lastResponse, null);
+  });
+  add('a failed delivered-alert dismissal still clears stale actions and does not poison a new account schedule', async (api, state) => {
+    state.dismiss = () => { throw new Error('controlled delivered cleanup failure'); };
+    const cleanup = api.cancelAllLocalNotifications();
+    const next = api.rescheduleLocalNotifications([dose('B')], 'en');
+    await assert.rejects(cleanup, /controlled delivered cleanup failure/);
+    await next;
+    assert.equal(state.lastResponse, null);
+    assert.equal(state.active.length, 1);
+    assert.equal(state.active[0].content.data.doseId, 'B');
+  });
   add('new private rebuild wins over an older named rebuild', async (api, state) => {
     const gate = deferred(); state.schedule = (n) => n.content.data.doseId === 'A' ? gate.promise : undefined;
     const old = api.rescheduleLocalNotifications([dose('A'), dose('A2', 60)], 'en', { showMedication: true, voiceEnabled: true });
@@ -128,11 +255,119 @@ function scenarios(file) {
     assert.equal(state.active.length, 1); assert.equal(state.active[0].content.data.doseId, 'B');
   });
   add('native scheduling rejection still reports exact-alarm degradation', async (api, state) => {
+    state.exactAlarmsAllowed = false; // The OS denies access independently of the scheduling exception.
     state.schedule = () => { throw new Error('exact alarm permission denied'); };
     const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
     assert.equal(result.failed, 1); assert.equal(result.exactAlarmsUnavailable, true);
     assert.equal((await api.inspectCapability()).canScheduleExact, false);
   }, 'android');
+  add('fresh Android denial is reported before any scheduling attempt', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, true);
+    assert.equal(capability.canScheduleExact, false);
+    assert.equal(state.exactAlarmChecks, 1);
+    assert.equal(state.scheduledCalls.length, 0);
+  }, 'android');
+  add('Android recheck observes grants and revocations in the same process', async (api, state) => {
+    for (const allowed of [false, true, false]) {
+      state.exactAlarmsAllowed = allowed;
+      assert.equal((await api.inspectCapability()).canScheduleExact, allowed);
+    }
+    assert.equal(state.exactAlarmChecks, 3);
+    assert.equal(state.scheduledCalls.length, 0);
+  }, 'android');
+  add('a successful scheduling call cannot substitute for Android special access', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
+    assert.equal(result.scheduled, 1);
+    assert.equal(result.exactAlarmsUnavailable, true);
+    assert.equal((await api.inspectCapability()).canScheduleExact, false);
+    assert.equal(state.exactAlarmChecks, 2);
+  }, 'android');
+  add('a scheduling error cannot permanently override a later Android permission check', async (api, state) => {
+    state.schedule = () => { throw new Error('exact alarm permission denied'); };
+    const result = await api.rescheduleLocalNotifications([dose('A')], 'en');
+    assert.equal(result.failed, 1);
+    assert.equal(result.exactAlarmsUnavailable, true);
+    state.exactAlarmsAllowed = true;
+    assert.equal((await api.inspectCapability()).canScheduleExact, true);
+    assert.equal(state.exactAlarmChecks, 2);
+  }, 'android');
+  add('notification denial cannot be outranked by Android exact-alarm access', async (api, state) => {
+    state.notificationGranted = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, false);
+    assert.equal(capability.canScheduleExact, false);
+    assert.equal(capability.warningKey, 'notifications.disabledTitle');
+    assert.equal(state.exactAlarmChecks, 0);
+  }, 'android');
+  add('iOS capability never calls the Android-only bridge', async (api, state) => {
+    state.exactAlarmsAllowed = false;
+    const capability = await api.inspectCapability();
+    assert.equal(capability.permissionGranted, true);
+    assert.equal(capability.canScheduleExact, true);
+    assert.equal(state.exactAlarmChecks, 0);
+  }, 'ios');
+  add('iOS keeps the nearest 64 groups and exposes the first unscheduled deadline', async (api, state) => {
+    const doses = Array.from({ length: 80 }, (_, i) => dose(`D${i}`, i + 1)).reverse();
+    const result = await api.rescheduleLocalNotifications(doses, 'en');
+    assert.equal(result.scheduled, 64); assert.equal(result.deferred, 16);
+    assert.equal(state.active[0].content.data.doseId, 'D0');
+    assert.equal(state.active[63].content.data.doseId, 'D63');
+    assert.equal(result.nextUnscheduledAt, doses.find(d => d.id === 'D64').scheduledAt);
+    assert.equal(api.getLocalScheduleStatus().deferred, 16);
+  });
+  add('refilling excludes resolved reminders and moves later appointments into the available slots', async (api, state) => {
+    const doses = Array.from({ length: 70 }, (_, i) => dose(`D${i}`, i + 1));
+    await api.rescheduleLocalNotifications(doses, 'en');
+    await api.rescheduleLocalNotifications(doses.map((d, i) => i < 10 ? { ...d, status: 'taken' } : d), 'en');
+    assert.equal(state.active.length, 60); assert.equal(api.getLocalScheduleStatus().deferred, 0);
+    assert.equal(state.active[59].content.data.doseId, 'D69');
+    await api.cancelAllLocalNotifications(); assert.equal(api.getLocalScheduleStatus(), null);
+  });
+  add('grouped doses use one slot and Android is not incorrectly capped by the iOS limit', async (api, state) => {
+    await api.rescheduleLocalNotifications(Array.from({ length: 80 }, (_, i) => dose(`D${i}`, i + 1)), 'en');
+    assert.equal(state.active.length, 80); assert.equal(api.getLocalScheduleStatus().deferred, 0);
+  }, 'android');
+  add('a failed push-token request remains visibly failed until a successful registration retry', async (api, state) => {
+    state.tokenGate = deferred();
+    const request = api.syncPushRegistration('device');
+    await until(() => state.tokenReads === 1); state.tokenGate.reject(new Error('offline'));
+    assert.equal(await request, false); assert.equal(api.getPushRegistrationStatus(), 'failed');
+    state.tokenGate = null;
+    assert.equal(await api.syncPushRegistration('device'), true);
+    assert.equal(api.getPushRegistrationStatus(), 'registered');
+    api.resetPushRegistrationStatus(); assert.equal(api.getPushRegistrationStatus(), 'unknown');
+  });
+  const response = () => ({ actionIdentifier: 'TAKEN', notification: { date: 123,
+    request: { identifier: 'synthetic-action', content: { data: { doseId: 'synthetic-dose' } } } } });
+  add('rejected notification actions remain available and can be retried', async (api, state) => {
+    state.lastResponse = response();
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: false, rejected: true });
+    const stop = await api.startNotificationActionListener(); await flush();
+    assert.equal(state.responseClears, 0);
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: true });
+    state.listener(response()); await flush();
+    assert.equal(state.actionCalls, 2); assert.equal(state.responseClears, 1);
+    assert.equal(state.actionIntents[0], state.actionIntents[1]); stop();
+  });
+  add('unexpected notification action failure releases only its in-flight reservation', async (api, state) => {
+    state.lastResponse = response(); state.action = async () => { throw new Error('synthetic'); };
+    const stop = await api.startNotificationActionListener(); await flush();
+    state.action = async () => ({ action: 'taken', doseId: 'synthetic-dose', synced: true });
+    state.listener(response()); await flush();
+    assert.equal(state.actionCalls, 2); assert.equal(state.responseClears, 1);
+    assert.equal(state.actionIntents[0], state.actionIntents[1]); stop();
+  });
+  add('concurrent notification copies dispatch once and accepted queued actions are consumed', async (api, state) => {
+    state.lastResponse = null; const gate = deferred(); state.action = () => gate.promise;
+    const stop = await api.startNotificationActionListener(); await flush();
+    state.lastResponse = response(); state.listener(response()); state.listener(response());
+    await until(() => state.actionCalls === 1);
+    gate.resolve({ action: 'taken', doseId: 'synthetic-dose', synced: false }); await flush();
+    state.listener(response()); await flush(); assert.equal(state.actionCalls, 1); assert.equal(state.responseClears, 1); stop();
+  });
   return cases;
 }
 module.exports = { scenarios, loadModule, deferred, until, dose, flush };

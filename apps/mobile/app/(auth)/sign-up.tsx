@@ -1,73 +1,59 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Field, Screen, Txt } from '@/components/ui';
+import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
-import { landingAfterAuth } from '@/storage/pending-invite';
+import { api, ApiError, NetworkError } from '@/api/client';
+import { waitForAuthServer } from '@/api/auth-connection';
 
-const MIN_PASSWORD = 10;
-
-interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
-/** Looks like an email rather than a phone number. */
-const looksLikeEmail = (value: string) => value.includes('@');
-
-/**
- * Create an account.
- *
- * A phone OR an email is enough — the server requires at least one and refuses
- * an identifier that already belongs to someone.
- */
+/** The mailbox holder creates the account from the one-time email link. */
 export default function SignUpScreen() {
   const { t } = useI18n();
   const theme = useTheme();
-  const { signInWithTokens, preferences } = useApp();
+  const { preferences } = useApp();
 
-  const [name, setName] = useState('');
   const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
-  const [reveal, setReveal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requested, setRequested] = useState(false);
   const [busy, setBusy] = useState(false);
+  const action = useRef<AbortController | null>(null);
+  useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
 
   const submit = async () => {
+    if (action.current) return;
+    const controller = new AbortController();
+    action.current = controller;
+    const current = () => action.current === controller && !controller.signal.aborted;
+    let submitted = false;
     setBusy(true);
     setError(null);
     const typed = identifier.trim();
     try {
-      const tokens = await api.anonymous.post<AuthTokens>('/v1/auth/register', {
-        ...(looksLikeEmail(typed) ? { email: typed.toLowerCase() } : { phone: typed }),
-        displayName: name.trim(),
-        password,
-        // The language chosen on the first screen, not a hardcoded default:
-        // it is the account's locale from the first notification onward.
+      await waitForAuthServer(controller.signal);
+      if (!current()) return;
+      submitted = true;
+      await api.anonymous.post('/v1/auth/register', {
+        email: typed.toLowerCase(),
         locale: preferences.locale,
-        deviceId: await getDeviceId(),
       });
-      await signInWithTokens(tokens);
-      // Someone who arrived through a caregiver invitation came here to finish
-      // it. The token was already being stashed before this detour and nothing
-      // ever read it back, so they landed on Today and the invitation sat in
-      // storage forever — the care circle could not be formed at all.
-      router.replace(await landingAfterAuth());
+      if (!current()) return;
+      setRequested(true);
     } catch (err) {
-      if (err instanceof NetworkError) setError(t('notifications.offlineBanner'));
+      if (!current()) return;
+      if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) {
+        setError(t(submitted ? 'auth.registrationUnconfirmed' : 'auth.connectionFailed'));
+      }
       else if (err instanceof ApiError) setError(err.message);
       else setError(t('error.internal_error'));
     } finally {
-      setBusy(false);
+      if (current()) { action.current = null; setBusy(false); }
     }
   };
 
-  const ready =
-    name.trim().length > 0 && identifier.trim().length >= 3 && password.length >= MIN_PASSWORD;
+  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim());
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -78,57 +64,37 @@ export default function SignUpScreen() {
         </View>
 
         <Field
-          label={t('auth.displayName')}
-          value={name}
-          onChangeText={setName}
-          maxLength={120}
-          autoFocus
-        />
-
-        <Field
-          label={t('auth.identifier')}
+          label={t('emailAccount.email')}
           value={identifier}
           onChangeText={setIdentifier}
-          placeholder={t('auth.identifierHint')}
+          autoComplete="email"
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
+          hint={t('auth.registrationInviteHint')}
           maxLength={320}
+          editable={!busy && !requested}
+          autoFocus
         />
 
-        <Field
-          label={t('auth.password')}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!reveal}
-          autoCapitalize="none"
-          autoCorrect={false}
-          maxLength={200}
-          hint={t('auth.passwordHint', { min: String(MIN_PASSWORD) })}
-          error={error}
-        />
-
-        <Pressable
-          onPress={() => setReveal((v) => !v)}
-          accessibilityRole="button"
-          accessibilityLabel={reveal ? t('auth.hidePassword') : t('auth.showPassword')}
-          hitSlop={12}
-        >
-          <Txt variant="caption" color={theme.colors.primary600}>
-            {reveal ? t('auth.hidePassword') : t('auth.showPassword')}
-          </Txt>
-        </Pressable>
-
+        {error ? <Banner tone="warning" title={error} /> : null}
+        {requested ? <>
+          <Banner tone="info" title={t('auth.registrationRequested')} />
+          <Button label={t('recovery.title')} tone="secondary"
+            onPress={() => router.replace('/(auth)/forgot-password')} />
+        </> : null}
+        {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
         <Button
           label={t('auth.signUp')}
           onPress={() => void submit()}
           loading={busy}
-          disabled={!ready}
+          disabled={!ready || requested}
           size="large"
         />
 
         <Pressable
           onPress={() => router.replace('/(auth)/sign-in')}
+          disabled={busy}
           accessibilityRole="button"
           hitSlop={12}
           style={{ paddingVertical: theme.spacing.sm }}

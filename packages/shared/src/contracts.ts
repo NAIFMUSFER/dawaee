@@ -1,3 +1,4 @@
+import { MAX_DAILY_TIMES, MAX_DOSE_QUANTITY } from './medication-input.js';
 import { z } from 'zod';
 import {
   CAREGIVER_PERMISSIONS, CAREGIVER_ROLES, CALENDAR_SYSTEMS, CAREGIVER_NOTIFY_MODES, CONSENT_TYPES,
@@ -8,7 +9,14 @@ import {
 // ------------------------------------------------------------- primitives
 
 export const uuid = z.string().uuid();
-export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine((value) => {
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return false;
+    const date = new Date(0);
+    date.setUTCFullYear(year, month - 1, day);
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }, 'expected a real calendar date');
 export const localTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:mm');
 export const instant = z.string().datetime({ offset: true });
 /** Strict E.164 — used for values that are already normalized and stored. */
@@ -25,7 +33,7 @@ export const phoneInput = z
   .trim()
   .min(7)
   .max(24)
-  .regex(/^[+0-9()\-.\s]+$/, 'phone number contains unexpected characters');
+  .regex(/^[+0-9٠-٩۰-۹()\-.\s]+$/, 'phone number contains unexpected characters');
 
 /**
  * One spelling of an email address, decided in one place.
@@ -108,16 +116,15 @@ function isKnownTimeZone(value: string): boolean {
 export const registerSchema = z
   .object({
     phone: phoneInput.optional(),
-    email: emailInput.optional(),
-    displayName: z.string().min(1).max(120),
-    password: z.string().min(10).max(200),
+    email: emailInput,
+    // Retained in the shared type for older callers. The HTTP route explicitly
+    // refuses this one-step shape with upgrade_required before any work.
+    // The mailbox holder chooses these values on the registration page.
+    displayName: z.string().min(1).max(120).optional(),
+    password: z.string().min(10).max(200).optional(),
     locale: z.enum(LOCALES).default('ar'),
-    deviceId: z.string().min(8).max(128),
+    deviceId: z.string().min(8).max(128).optional(),
     deviceName: z.string().max(120).optional(),
-  })
-  .refine((v) => Boolean(v.phone ?? v.email), {
-    message: 'A phone number or an email address is required',
-    path: ['phone'],
   });
 
 /**
@@ -149,7 +156,10 @@ export const setPasswordSchema = z.object({
   newPassword: z.string().min(10).max(200),
 });
 
-export const refreshSchema = z.object({ refreshToken: z.string().min(20).max(512) });
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(20).max(512),
+  retryNonce: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
 
 export const registerPushTokenSchema = z.object({
   token: z.string().min(10).max(512),
@@ -202,7 +212,7 @@ export const updatePreferencesSchema = z.object({
 
 export const fixedTimesRuleSchema = z.object({
   kind: z.literal('fixed_times'),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
 });
 
 export const intervalRuleSchema = z.object({
@@ -216,14 +226,14 @@ export const intervalRuleSchema = z.object({
 export const daysOfWeekRuleSchema = z.object({
   kind: z.literal('days_of_week'),
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
 });
 
 export const cycleRuleSchema = z.object({
   kind: z.literal('cycle'),
   daysOn: z.number().int().min(1).max(365),
   daysOff: z.number().int().min(0).max(365),
-  times: z.array(localTime).min(1).max(12),
+  times: z.array(localTime).min(1).max(MAX_DAILY_TIMES).refine((times) => new Set(times).size === times.length, 'Times must be unique'),
   cycleAnchorDate: localDate,
 });
 
@@ -244,7 +254,7 @@ export const scheduleRuleSchema = z.discriminatedUnion('kind', [
 export const createScheduleSchema = z
   .object({
     rule: scheduleRuleSchema,
-    doseQuantity: z.number().positive().max(1000),
+    doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).multipleOf(0.0001),
     doseUnit: z.enum(DOSE_UNITS),
     timezone: timezone.optional(),
     startDate: localDate,
@@ -263,7 +273,7 @@ export const createScheduleSchema = z
 
 export const updateScheduleSchema = z.object({
   rule: scheduleRuleSchema.optional(),
-  doseQuantity: z.number().positive().max(1000).optional(),
+  doseQuantity: z.number().positive().max(MAX_DOSE_QUANTITY).multipleOf(0.0001).optional(),
   doseUnit: z.enum(DOSE_UNITS).optional(),
   timezone: timezone.optional(),
   startDate: localDate.optional(),
@@ -278,6 +288,7 @@ export const updateScheduleSchema = z.object({
 // ------------------------------------------------------------ medications
 
 export const createMedicationSchema = z.object({
+  clientRequestId: z.string().min(8).max(128).optional(),
   patientProfileId: uuid,
   name: safeText(160),
   brandName: z.string().trim().max(160).nullish(),
@@ -312,7 +323,7 @@ export const createMedicationSchema = z.object({
 });
 
 export const updateMedicationSchema = createMedicationSchema
-  .omit({ patientProfileId: true, schedule: true, stock: true, acknowledgeDuplicate: true })
+  .omit({ patientProfileId: true, schedule: true, stock: true, acknowledgeDuplicate: true, clientRequestId: true })
   .partial()
   .extend({
     status: z.enum(MEDICATION_STATUSES).optional(),
@@ -328,6 +339,10 @@ export const checkDuplicateSchema = z.object({
 });
 
 // ------------------------------------------------------------------ doses
+
+export const undoDoseSchema = z.object({
+  clientEventId: z.string().min(8).max(128).optional(),
+});
 
 export const confirmDoseSchema = z.object({
   /** Client clock at the moment the patient tapped, for offline replay. */
@@ -348,12 +363,14 @@ export const confirmDoseSchema = z.object({
 
 export const snoozeDoseSchema = z.object({
   minutes: z.number().int().min(1).max(720),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });
 
 export const skipDoseSchema = z.object({
   reason: z.string().trim().max(300).nullish(),
+  actionAt: instant.optional(),
   clientEventId: z.string().min(8).max(128),
   deviceId: z.string().max(128).optional(),
 });
@@ -382,6 +399,7 @@ export const adjustStockSchema = z.object({
 });
 
 export const refillSchema = z.object({
+  clientRequestId: z.string().min(8).max(128).optional(),
   quantityAdded: z.number().positive().max(100000),
   unit: z.enum(DOSE_UNITS),
   pharmacy: z.string().trim().max(160).nullish(),
@@ -395,15 +413,28 @@ export const refillSchema = z.object({
 export const inviteCaregiverSchema = z.object({
   patientProfileId: uuid,
   invitedName: safeText(80),
-  invitedPhone: phoneInput,
+  invitedPhone: phoneInput.optional(),
+  invitedEmail: emailInput.optional(),
   role: z.enum(CAREGIVER_ROLES),
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(1).max(CAREGIVER_PERMISSIONS.length),
   escalationPriority: z.number().int().min(1).max(20).default(10),
   channel: z.enum(['link', 'qr']).default('link'),
   expiresInHours: z.number().int().min(1).max(168).default(72),
+}).refine(value => Boolean(value.invitedEmail) !== Boolean(value.invitedPhone), {
+  message: 'Choose one recipient email or phone', path: ['invitedEmail'],
 });
 
 export const acceptInvitationSchema = z.object({ token: z.string().min(20).max(256) });
+
+export const previewInvitationSchema = z.union([
+  acceptInvitationSchema.strict(),
+  z.object({ relationshipId: uuid }).strict(),
+]);
+export const acceptReviewedInvitationSchema = z.object({
+  relationshipId: uuid,
+  role: z.enum(CAREGIVER_ROLES),
+  permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).max(CAREGIVER_PERMISSIONS.length),
+});
 
 export const updateCaregiverPermissionsSchema = z.object({
   permissions: z.array(z.enum(CAREGIVER_PERMISSIONS)).min(0).max(CAREGIVER_PERMISSIONS.length),

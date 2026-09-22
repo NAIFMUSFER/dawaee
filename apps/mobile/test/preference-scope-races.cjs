@@ -108,7 +108,11 @@ function makeHarness(file, options = {}) {
     return work;
   };
 
+  const permissions = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(require('node:path').resolve(__dirname, '../src/security/profile-permissions.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: permissions });
   const context = {
+    hasProfilePermission: permissions.hasProfilePermission,
+    invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined,
     api, stateRef, mounted, sessionGeneration, preferenceGeneration, preferenceWrites,
     profileLoadGeneration: { current: 0 },
     signOutInFlight: { current: null },
@@ -119,6 +123,7 @@ function makeHarness(file, options = {}) {
     cancelPrivacyHidePending: async () => undefined,
     acknowledgePrivacyHide: async () => undefined,
     isSignedIn: () => signedIn,
+    writeLocalePreference: async () => true,
     setCacheOwner: (id) => cacheOwners.push(id),
     applyNativeDirection: (locale) => {
       nativeDirections.push(locale);
@@ -138,6 +143,7 @@ function makeHarness(file, options = {}) {
       const snapshot = { user, preferences, selfProfile };
       bootstrapWrites.push(snapshot);
       await options.onBootstrapWrite?.(snapshot, bootstrapWrites.length);
+      return true;
     },
     console,
   };

@@ -31,12 +31,38 @@ async function queuePush(phone: string, deviceId: string, dedupe: string) {
   });
   expect(registered.statusCode, registered.body).toBe(200);
 
+  // A patient dose push must have an actionable clinical occurrence at send
+  // time. Finish its ladder in the fixture so tick() cannot enqueue extra
+  // reminders while this suite isolates ticket/receipt reconciliation.
+  const scheduledAt = new Date(Math.floor(clock.getTime() / 60_000) * 60_000);
+  const dose = await db.query<{ id: string; medication_id: string }>(
+    `WITH medication AS (
+       INSERT INTO medications(patient_profile_id,name,form,start_date,created_by)
+       VALUES($1,'Receipt test medicine','tablet',($3::timestamptz AT TIME ZONE 'UTC')::date,$2) RETURNING id
+     ), schedule AS (
+       INSERT INTO medication_schedules(medication_id,patient_profile_id,rule_kind,rule,dose_quantity,dose_unit,
+         timezone,start_date,created_by,materialized_through)
+       SELECT id,$1,'fixed_times',jsonb_build_object('kind','fixed_times','times',
+         jsonb_build_array(to_char($3::timestamptz AT TIME ZONE 'UTC','HH24:MI'))),1,'tablet',
+         'UTC',($3::timestamptz AT TIME ZONE 'UTC')::date,$2,$3::timestamptz+interval '14 days'
+       FROM medication RETURNING id,medication_id
+     )
+     INSERT INTO dose_occurrences(schedule_id,medication_id,patient_profile_id,scheduled_at,
+       scheduled_local_date,scheduled_local_time,scheduled_timezone,dose_quantity,dose_unit,status,escalation_stage,notified_at)
+     SELECT id,medication_id,$1,$3,($3::timestamptz AT TIME ZONE 'UTC')::date,
+       ($3::timestamptz AT TIME ZONE 'UTC')::time,'UTC',1,'tablet','pending_confirmation',8,$3
+     FROM schedule RETURNING id,medication_id`, [user.profileId, user.userId, scheduledAt],
+  );
+
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO notification_deliveries
-       (patient_profile_id, recipient_user_id, kind, channel, title, body, payload, dedupe_key, next_attempt_at)
-     VALUES ($1, $2, 'dose_reminder', 'push', 'Receipt test', 'Synthetic body', '{}'::jsonb, $3, '1970-01-01T00:00:00Z')
+       (patient_profile_id, recipient_user_id, kind, channel, title, body, payload, dedupe_key, next_attempt_at,
+        dose_occurrence_id,medication_id)
+     VALUES ($1, $2, 'dose_reminder', 'push', 'Receipt test', 'Synthetic body',
+       jsonb_build_object('doseId',$4::text,'actions',jsonb_build_array('taken','snooze','skip')),
+       $3, '1970-01-01T00:00:00Z',$4::uuid,$5::uuid)
      RETURNING id`,
-    [user.profileId, user.userId, dedupe],
+    [user.profileId, user.userId, dedupe, dose.rows[0]!.id, dose.rows[0]!.medication_id],
   );
   return { user, token, deliveryId: rows[0]!.id };
 }

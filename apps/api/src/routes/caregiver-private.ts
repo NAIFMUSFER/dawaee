@@ -9,7 +9,7 @@ import { requireProfileOwner } from '../services/access-service.js';
 import { recordAudit } from '../services/audit-service.js';
 
 /**
- * Fixed-path caregiver mutations.
+ * Fixed-path caregiver operations.
  *
  * Render records the public request path before Dawaee's logger can redact it.
  * Production evidence showed a real caregiver relationship UUID in that
@@ -29,6 +29,57 @@ function relationshipIdFrom(body: unknown): string {
 }
 
 export function registerCaregiverPrivateRoutes(app: FastifyInstance): void {
+  /** Resolve only the intended caregiver's delivery, under their current RLS
+   * identity. The push is a lookup hint, never an authorization capability.
+   * Return current profile identity only, not the historical clinical payload.
+   * This read neither proves delivery/non-adherence nor marks a dose or alert
+   * read. Mobile account-generation fencing remains necessary at the caller. */
+  app.post('/v1/caregivers/notification/resolve', { preHandler: authenticate }, async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const input = req.body;
+    const deliveryId = requireUuid(
+      input && typeof input === 'object' && !Array.isArray(input)
+        ? (input as { deliveryId?: unknown }).deliveryId
+        : undefined,
+      'deliveryId',
+    );
+    const { userId } = currentUser(req);
+
+    return withUser(userId, async (tx) => {
+      // Resolve the original relationship, not any later relationship to the
+      // same patient. Summary visibility matches the dispatch-time contract.
+      // A single statement evaluates identity and current grants together.
+      const { rows } = await tx.query<{
+        patient_profile_id: string; display_name: string;
+        kind: 'escalation' | 'daily_summary' | 'weekly_summary';
+      }>(
+        `SELECT d.patient_profile_id, pp.display_name, d.kind::text AS kind
+           FROM notification_deliveries d
+           JOIN caregiver_relationships cr
+             ON cr.id = d.relationship_id
+            AND cr.patient_profile_id = d.patient_profile_id
+            AND cr.caregiver_user_id = d.recipient_user_id
+           JOIN patient_profiles pp ON pp.id = d.patient_profile_id
+          WHERE d.id = $1 AND d.recipient_user_id = $2
+            AND cr.caregiver_user_id = $2 AND cr.status = 'active'
+            AND pp.archived_at IS NULL AND d.channel = 'push'
+            AND d.kind IN ('escalation', 'daily_summary', 'weekly_summary')
+            AND 'receive_notifications' = ANY(cr.permissions)
+            AND (d.kind = 'escalation'
+              OR cr.permissions @> ARRAY['view_adherence','view_schedule']::text[])`,
+        [deliveryId, userId],
+      );
+      const row = rows[0];
+      // Missing, another recipient, revoked and narrowed grants are identical.
+      if (!row) throw AppError.notFound('Notification not found');
+      return { notification: {
+        kind: row.kind,
+        patientProfileId: row.patient_profile_id,
+        patientDisplayName: row.display_name,
+      } };
+    });
+  });
+
   app.patch('/v1/caregivers/permissions', { preHandler: authenticate }, async (req) => {
     const relationshipId = relationshipIdFrom(req.body);
     // Zod strips relationshipId and validates the established mutation payload.

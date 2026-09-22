@@ -91,7 +91,11 @@ export function generateOtp(length: number): string {
  * `0512345678`, `512345678`, `00966512345678` and `+966512345678` all converge.
  */
 export function normalizePhone(raw: string, defaultCountry = '966'): string | null {
-  let digits = raw.replace(/[\s()\-.]/g, '');
+  let digits = raw.replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660))
+    .replace(/[۰-۹]/g, c => String(c.charCodeAt(0) - 0x6f0)).replace(/[\s()\-.]/g, '');
+  // Formatting may be removed, but letters/@ must never be discarded: an
+  // email containing digits would otherwise become a different login identity.
+  if (!/^\+?\d+$/.test(digits)) return null;
   if (digits.startsWith('00')) digits = `+${digits.slice(2)}`;
   if (digits.startsWith('+')) {
     return /^\+[1-9]\d{7,14}$/.test(digits) ? digits : null;

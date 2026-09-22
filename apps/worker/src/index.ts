@@ -1,3 +1,4 @@
+import { serializeLoggedError } from '@dawaee/shared';
 import { createWorkerContext, runJob, type WorkerContext } from './context.js';
 import { materializeJob } from './jobs/materialize.js';
 import { reminderJob } from './jobs/reminders.js';
@@ -6,7 +7,8 @@ import { pushReceiptJob } from './jobs/push-receipts.js';
 import { markMissedJob } from './jobs/mark-missed.js';
 import { stockAlertJob } from './jobs/stock-alerts.js';
 import { digestJob } from './jobs/digests.js';
-import { housekeepingJob } from './jobs/housekeeping.js';
+import { createHousekeepingSchedule } from './housekeeping-schedule.js';
+import { startTickLoop } from './tick-loop.js';
 
 /**
  * The background worker.
@@ -55,7 +57,6 @@ async function main(): Promise<void> {
   const ctx = createWorkerContext();
   const tickSeconds = Number(process.env.WORKER_TICK_SECONDS ?? 60);
   let stopping = false;
-  let inFlight: Promise<unknown> = Promise.resolve();
 
   ctx.log.info(
     {
@@ -65,44 +66,31 @@ async function main(): Promise<void> {
     'dawaee worker started',
   );
 
+  const runHousekeeping = createHousekeepingSchedule(ctx);
+  const loop = startTickLoop(async () => {
+    const result = await runTick(ctx);
+    if (Object.values(result).some((v) => v > 0)) ctx.log.info(result, 'tick completed');
+    await runHousekeeping();
+  }, tickSeconds * 1000, err => {
+    ctx.log.error({ err }, 'tick failed');
+  });
+
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
     ctx.log.info({ signal }, 'worker shutting down; waiting for the current tick');
-    await inFlight.catch(() => undefined);
+    await loop.stop().catch(() => undefined);
     await ctx.pool.end().catch(() => undefined);
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  let ticksSinceHousekeeping = 0;
-  const housekeepingEveryTicks = Math.max(1, Math.round(3600 / tickSeconds));
-
-  const loop = async () => {
-    if (stopping) return;
-    inFlight = (async () => {
-      try {
-        const result = await runTick(ctx);
-        if (Object.values(result).some((v) => v > 0)) ctx.log.info(result, 'tick completed');
-        if (++ticksSinceHousekeeping >= housekeepingEveryTicks) {
-          ticksSinceHousekeeping = 0;
-          await runJob(ctx, 'housekeeping', (c) => housekeepingJob(ctx, c));
-        }
-      } catch (err) {
-        ctx.log.error({ err: (err as Error).message }, 'tick failed');
-      }
-    })();
-    await inFlight;
-  };
-
-  await loop();
-  setInterval(() => void loop(), tickSeconds * 1000);
 }
 
 if (process.env.WORKER_ENABLED !== 'false' && import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error('fatal worker error:', err);
+    console.error({ err: serializeLoggedError(err) }, 'fatal worker error');
     process.exit(1);
   });
 }

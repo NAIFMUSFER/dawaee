@@ -42,6 +42,7 @@ COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/api apps/api
 COPY apps/worker apps/worker
+COPY scripts/migration-history.mjs scripts/migration-history.d.mts ./scripts/
 RUN npx tsc -b packages/shared packages/core apps/api apps/worker
 
 # ----------------------------------------------------------- web artefact

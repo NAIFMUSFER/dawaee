@@ -8,6 +8,7 @@ import {
   INITIAL_LOCK_STATE,
   isLockExemptPath,
   lockReducer,
+  privacyPreviewCovered,
   RELOCK_GRACE_MS,
 } from '../src/security/lock-state.js';
 import type { LockState } from '../src/security/lock-state.js';
@@ -103,6 +104,27 @@ describe('leaving the foreground', () => {
     expect(s.verifiedAreas).toContain('reports');
     s = lockReducer(s, { type: 'appStatus', status: 'background', now: 0 });
     expect(s.verifiedAreas).toEqual([]);
+  });
+});
+
+describe('task-switcher privacy does not depend on opting into app lock', () => {
+  it('covers every non-active OS state and reveals only the active app', () => {
+    expect(privacyPreviewCovered('inactive')).toBe(true);
+    expect(privacyPreviewCovered('background')).toBe(true);
+    expect(privacyPreviewCovered('active')).toBe(false);
+  });
+
+  it('wires the independent shield into the rendered presentation phase', () => {
+    const gate = readFileSync(join(ROOT, 'apps/mobile/src/security/AppLockGate.tsx'), 'utf8');
+    expect(gate).toContain('setPreviewCovered(privacyPreviewCovered(status))');
+    expect(gate).toContain("const presentationPhase = previewCovered ? 'covered' : phase");
+    expect(gate).toContain("presentationPhase !== 'unlocked' || areaLocked");
+
+    const listenerStart = gate.indexOf("RNAppState.addEventListener('change'");
+    const listenerEnd = gate.indexOf('return () => sub.remove()', listenerStart);
+    const listener = gate.slice(listenerStart, listenerEnd);
+    expect(listener).not.toContain('appLockEnabled');
+    expect(listener).not.toContain('enabled)');
   });
 });
 
@@ -236,14 +258,14 @@ describe('nobody can be trapped behind it, and nothing weaker than a password ge
     expect(withoutRevocations).not.toContain('credentialVerifiedAt');
   });
 
-  it('is called only from the two screens that post a password', () => {
-    for (const screen of ['sign-in', 'sign-up']) {
-      const src = readFileSync(join(ROOT, `apps/mobile/app/(auth)/${screen}.tsx`), 'utf8');
-      const call = src.indexOf('signInWithTokens(tokens)');
-      expect(call, `${screen} calls it`).toBeGreaterThan(-1);
-      // The tokens it passes came from an auth POST in the same function.
-      expect(src.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/(login|register)'/);
-    }
+  it('is called only after sign-in posts a password, never by a registration request', () => {
+    const signIn = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-in.tsx'), 'utf8');
+    const call = signIn.indexOf('signInWithTokens(tokens)');
+    expect(call, 'sign-in calls it').toBeGreaterThan(-1);
+    expect(signIn.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/login'/);
+    const signUp = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-up.tsx'), 'utf8');
+    expect(signUp).not.toContain('signInWithTokens');
+    expect(signUp).not.toContain('auth.password');
   });
 
   it('drops the lock entirely when the patient turns it off', () => {
@@ -359,9 +381,13 @@ describe('the rule is actually wired to the app', () => {
   it('wraps the router, so no deep link or notification can route around it', () => {
     expect(layout).toContain('<AppLockGate>');
     const gate = layout.indexOf('<AppLockGate>');
-    const stack = layout.indexOf('<Stack');
-    expect(gate, 'the gate is outside the Stack').toBeGreaterThan(-1);
-    expect(stack).toBeGreaterThan(gate);
+    const navigator = layout.indexOf('<AppNavigator');
+    const gateEnd = layout.indexOf('</AppLockGate>');
+    expect(gate, 'the gate is outside the navigator').toBeGreaterThan(-1);
+    expect(navigator).toBeGreaterThan(gate);
+    expect(navigator).toBeLessThan(gateEnd);
+    const navigation = readFileSync(join(ROOT, 'apps/mobile/src/navigation/AppNavigator.tsx'), 'utf8');
+    expect(navigation).toContain('<Stack');
   });
 
   it('loads biometrics through the single shared module, not a private copy', () => {

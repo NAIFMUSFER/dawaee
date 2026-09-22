@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
-  AppError, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, syncDoseActionsSchema,
+  AppError, DOSE_STATUSES, confirmDoseSchema, skipDoseSchema, snoozeDoseSchema, undoDoseSchema, syncDoseActionsSchema,
 } from '@dawaee/shared';
 import { can, consecutiveMissed, dailyBreakdown, localDateInZone, summarizeAdherence, viewOf } from '@dawaee/core';
 import { requireDateRange, requireUuid, optionalUuid, requireLimit } from '../lib/params.js';
@@ -12,16 +12,20 @@ import {
 import { confirmDose, skipDoseAction, snoozeDose, undoDose } from '../services/dose-service.js';
 import { CLIENT_PREFETCH_DAYS } from '../services/materializer.js';
 import { now as serverNow } from '../lib/clock.js';
+import { encodeDoseHistoryCursor, readDoseHistoryCursor } from '../lib/dose-history-cursor.js';
 
 const DOSE_LIST_SELECT = `
   SELECT d.id, d.medication_id, d.schedule_id, d.patient_profile_id, d.scheduled_at,
+         d.scheduled_at::text AS cursor_scheduled_at,
          d.scheduled_local_date, d.scheduled_local_time, d.scheduled_timezone,
          d.dose_quantity, d.dose_unit::text AS dose_unit, d.status, d.notified_at, d.snoozed_until,
-         d.snooze_count, d.confirmed_at, d.confirmation_method::text AS confirmation_method,
+         d.snooze_count, d.confirmed_at, d.confirmed_received_at, d.confirmation_method::text AS confirmation_method,
          d.escalation_stage,
          m.name AS medication_name, m.form::text AS medication_form, m.image_key,
          m.strength_value, m.strength_unit::text AS strength_unit,
-         m.food_instruction::text AS food_instruction, m.instructions,
+         m.food_instruction::text AS food_instruction, m.instructions, m.notes AS medication_notes,
+         CASE WHEN app.has_permission(d.patient_profile_id, 'view_history') THEN (SELECT COALESCE(json_agg(json_build_object('id', n.id, 'text', n.text, 'tags', n.tags, 'recordedAt', n.recorded_at) ORDER BY n.recorded_at), '[]'::json)
+          FROM symptom_notes n WHERE n.dose_occurrence_id = d.id AND n.patient_profile_id = d.patient_profile_id) ELSE '[]'::json END AS notes,
          s.late_after_minutes, s.missed_after_minutes
     FROM dose_occurrences d
     JOIN medications m ON m.id = d.medication_id
@@ -43,6 +47,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
   const view = viewOf(occ, now, thresholds);
   return {
     id: row.id,
+    patientProfileId: row.patient_profile_id,
     medicationId: row.medication_id,
     scheduleId: row.schedule_id,
     scheduledAt: occ.scheduledAt,
@@ -58,8 +63,10 @@ function mapDose(row: Record<string, unknown>, now: Date) {
     snoozedUntil: occ.snoozedUntil,
     snoozeCount: row.snooze_count,
     confirmedAt: occ.confirmedAt,
+    confirmedReceivedAt: row.confirmed_received_at ? (row.confirmed_received_at as Date).toISOString() : null,
     confirmationMethod: row.confirmation_method,
     escalationStage: row.escalation_stage,
+    notes: row.notes ?? [],
     medication: {
       name: row.medication_name,
       form: row.medication_form,
@@ -68,6 +75,7 @@ function mapDose(row: Record<string, unknown>, now: Date) {
       strengthUnit: row.strength_unit,
       foodInstruction: row.food_instruction,
       instructions: row.instructions,
+      notes: row.medication_notes,
     },
     thresholds,
   };
@@ -139,10 +147,16 @@ export function registerDoseRoutes(app: FastifyInstance): void {
 
   /** History and calendar. Bounded to 400 days so a range cannot be abused. */
   app.get('/v1/doses', async (req) => {
-    const q = req.query as { profileId?: string; from?: string; to?: string; medicationId?: string; status?: string; limit?: string };
+    const q = req.query as { profileId?: string; from?: string; to?: string; medicationId?: string; status?: string; limit?: string; recorded?: string };
     const profileId = requireUuid(q.profileId, 'profileId');
     const range = requireDateRange(q.from, q.to);
     const medicationId = optionalUuid(q.medicationId, 'medicationId');
+    if (q.status !== undefined && !(DOSE_STATUSES as readonly string[]).includes(q.status)) {
+      throw AppError.badRequest('validation_failed', 'Invalid dose status');
+    }
+    const limit = requireLimit(q.limit, 500, 2000);
+    const scope = JSON.stringify([profileId, range.from, range.to, medicationId, q.status ?? null, q.recorded === 'true']);
+    const cursor = readDoseHistoryCursor(req.headers['x-dawaee-history-cursor'], scope);
     const { userId } = currentUser(req);
     const now = serverNow();
 
@@ -154,13 +168,26 @@ export function registerDoseRoutes(app: FastifyInstance): void {
             AND d.scheduled_local_date BETWEEN $2 AND $3
             AND ($4::uuid IS NULL OR d.medication_id = $4::uuid)
             AND d.status <> 'cancelled'
-          ORDER BY d.scheduled_at DESC
+            AND (NOT $6::boolean OR d.status IN ('taken','taken_late','skipped','missed'))
+            AND ($8::text IS NULL OR CASE
+              WHEN d.status IN ('taken','taken_late','skipped','missed','cancelled') THEN d.status::text
+              WHEN $7::timestamptz >= d.scheduled_at + s.missed_after_minutes * interval '1 minute' THEN 'missed'
+              WHEN d.snoozed_until > $7::timestamptz THEN 'snoozed'
+              WHEN d.scheduled_at > $7::timestamptz THEN 'upcoming'
+              WHEN d.notified_at IS NOT NULL THEN 'pending_confirmation'
+              ELSE 'due' END = $8::text)
+            AND ($9::timestamptz IS NULL OR (d.scheduled_at, d.id) < ($9::timestamptz, $10::uuid))
+          ORDER BY d.scheduled_at DESC, d.id DESC
           LIMIT $5`,
-        [profileId, range.from, range.to, medicationId, requireLimit(q.limit, 500, 2000)],
+        [profileId, range.from, range.to, medicationId, limit + 1, q.recorded === 'true',
+          now.toISOString(), q.status ?? null, cursor?.at ?? null, cursor?.id ?? null],
       );
-      let doses = rows.map((r) => mapDose(r, now));
-      if (q.status) doses = doses.filter((d) => d.status === q.status);
-      return { doses, count: doses.length, from: range.from, to: range.to };
+      const page = rows.slice(0, limit);
+      const doses = page.map((r) => mapDose(r, now));
+      const last = page.at(-1);
+      const nextCursor = rows.length > limit && last
+        ? encodeDoseHistoryCursor({ at: last.cursor_scheduled_at as string, id: last.id as string, scope }) : null;
+      return { doses, count: doses.length, from: range.from, to: range.to, nextCursor };
     });
   });
 
@@ -213,9 +240,10 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return snoozeDose(tx, {
         doseId, userId, minutes: body.minutes, clientEventId: body.clientEventId,
+        actionAt: body.actionAt, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -227,9 +255,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
       return skipDoseAction(tx, {
         doseId, userId, reason: body.reason, clientEventId: body.clientEventId,
+        actionAt: body.actionAt,
+        actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
         deviceId: body.deviceId, now: serverNow(), requestId: req.id, ipHash: req.ipHash,
       });
     });
@@ -240,8 +270,8 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const { userId } = currentUser(req);
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForDose(tx, doseId);
-      await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
-      return undoDose(tx, { doseId, userId, now: serverNow(), requestId: req.id, ipHash: req.ipHash });
+      const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
+      return undoDose(tx, { doseId, userId, actorRole: access.role === 'owner' ? 'patient' : 'caregiver', ...undoDoseSchema.parse(req.body ?? {}), now: serverNow(), requestId: req.id, ipHash: req.ipHash });
     });
   });
 
@@ -256,11 +286,11 @@ export function registerDoseRoutes(app: FastifyInstance): void {
     const body = syncDoseActionsSchema.parse(req.body);
     const { userId } = currentUser(req);
     const now = serverNow();
-    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean }> = [];
+    const results: Array<{ clientEventId: string; ok: boolean; status?: string; error?: string; replay?: boolean; snoozedUntil?: string | null; snoozeCount?: number }> = [];
 
     for (const action of body.actions) {
       try {
-        const outcome = await withUser(userId, async (tx) => {
+        const outcome: { status: string; idempotentReplay: boolean; snoozedUntil?: string | null; snoozeCount?: number } = await withUser(userId, async (tx) => {
           const profileId = await profileIdForDose(tx, action.doseOccurrenceId);
           const access = await requireProfileAccess(tx, userId, profileId, DOSE_CONFIRM);
           if (action.type === 'taken') {
@@ -268,18 +298,21 @@ export function registerDoseRoutes(app: FastifyInstance): void {
               doseId: action.doseOccurrenceId, userId,
               actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, takenAt: action.at,
-              method: 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
+              method: access.role === 'caregiver' ? 'caregiver' : 'app', deviceId: body.deviceId, now, requestId: req.id, ipHash: req.ipHash,
             });
           }
           if (action.type === 'skipped') {
             return skipDoseAction(tx, {
               doseId: action.doseOccurrenceId, userId, reason: action.reason,
+              actionAt: action.at,
+              actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
               clientEventId: action.clientEventId, deviceId: body.deviceId, now,
               requestId: req.id, ipHash: req.ipHash,
             });
           }
           return snoozeDose(tx, {
             doseId: action.doseOccurrenceId, userId, minutes: action.minutes,
+            actionAt: action.at, actorRole: access.role === 'owner' ? 'patient' : 'caregiver',
             clientEventId: action.clientEventId, deviceId: body.deviceId, now,
             requestId: req.id, ipHash: req.ipHash,
           });
@@ -289,6 +322,7 @@ export function registerDoseRoutes(app: FastifyInstance): void {
           ok: true,
           status: 'status' in outcome ? String(outcome.status) : 'snoozed',
           replay: 'idempotentReplay' in outcome ? outcome.idempotentReplay : false,
+          ...(outcome.snoozedUntil !== undefined ? { snoozedUntil: outcome.snoozedUntil, snoozeCount: outcome.snoozeCount } : {}),
         });
       } catch (err) {
         results.push({

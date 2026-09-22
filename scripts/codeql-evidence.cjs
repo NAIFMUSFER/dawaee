@@ -41,6 +41,8 @@ function summarizeSarif(report) {
         path: typeof uri === 'string' ? uri : null,
         line: physical.region?.startLine ?? null,
         endLine: physical.region?.endLine ?? null,
+        ...(physical.region?.startColumn !== undefined ? { column: physical.region.startColumn } : {}),
+        ...(physical.region?.endColumn !== undefined ? { endColumn: physical.region.endColumn } : {}),
       };
     }
     for (const result of run.results || []) {

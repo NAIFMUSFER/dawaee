@@ -3,6 +3,8 @@ import { sanitizeOperationalError, t, type Locale } from '@dawaee/shared';
 import type { PoolClient } from 'pg';
 import type { PushMessage } from '@dawaee/api/providers';
 import type { WorkerContext } from '../context.js';
+import { quietHoursResumeAt } from '@dawaee/core';
+import { currentPatientReminder, currentStockReminder } from './delivery-state.js';
 
 const LEASE_SECONDS = 120;
 const AMBIGUOUS_IS_RETRYABLE = true;
@@ -18,6 +20,7 @@ export function isAmbiguous(errorCode: string | undefined): boolean {
 interface DeliveryRow {
   id: string;
   patient_profile_id: string | null;
+  dose_occurrence_id: string | null;
   recipient_user_id: string | null;
   recipient_phone_e164: string | null;
   relationship_id: string | null;
@@ -55,7 +58,7 @@ export async function claimDeliveries(
          LIMIT $3
          FOR UPDATE SKIP LOCKED
       )
-      RETURNING d.id, d.patient_profile_id, d.recipient_user_id, d.recipient_phone_e164,
+      RETURNING d.id, d.patient_profile_id, d.dose_occurrence_id, d.recipient_user_id, d.recipient_phone_e164,
                 d.relationship_id, d.kind::text AS kind, d.channel::text AS channel, d.locale,
                 d.title, d.body, d.payload, d.attempts, d.max_attempts, d.lease_token`,
     [ctx.now(), LEASE_SECONDS, limit],
@@ -92,9 +95,33 @@ export async function dispatchJob(ctx: WorkerContext, client: PoolClient): Promi
       continue;
     }
 
+    const deferredUntil = await nonUrgentResumeAt(client, row, ctx.now());
+    if (deferredUntil) {
+      await finalise(ctx, row,
+        `UPDATE notification_deliveries
+            SET status = 'queued', next_attempt_at = $3, attempts = GREATEST(0, attempts - 1),
+                lease_until = NULL, lease_token = NULL
+          WHERE id = $1 AND lease_token = $2 AND status = 'sending'`, [deferredUntil]);
+      continue;
+    }
+
     const result = await sendOne(ctx, client, row);
 
-    if (result.ok) {
+    if (result.leaseExpired) {
+      // A later member of a claimed batch may wait longer than the lease.
+      // Return it to the queue instead of sending without ownership or dropping it.
+      await finalise(ctx, row,
+        `UPDATE notification_deliveries
+            SET status = 'queued', next_attempt_at = $3, attempts = GREATEST(0, attempts - 1),
+                lease_until = NULL, lease_token = NULL
+          WHERE id = $1 AND status = 'sending' AND lease_token = $2`, [ctx.now()]);
+    } else if (result.skipped) {
+      await finalise(ctx, row,
+        `UPDATE notification_deliveries
+            SET status = 'skipped', lease_until = NULL, lease_token = NULL
+          WHERE id = $1 AND status = 'sending' AND lease_token = $2`,
+        []);
+    } else if (result.ok) {
       const applied = await finalise(ctx, row,
         `UPDATE notification_deliveries
             SET status = 'sent', sent_at = $3::timestamptz, provider = $4, provider_message_id = $5,
@@ -143,6 +170,7 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
       WHERE id = $1
         AND patient_profile_id = $2
         AND caregiver_user_id = $3
+        AND app.caregiver_identity_verified(id)
         AND status = 'active'`,
     [row.relationship_id, row.patient_profile_id, row.recipient_user_id],
   );
@@ -150,9 +178,63 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
   if (!permissions?.includes('receive_notifications')) return false;
 
   if (row.kind === 'daily_summary' || row.kind === 'weekly_summary') {
-    return permissions.includes('view_adherence') && permissions.includes('view_schedule');
+    if (!permissions.includes('view_adherence') || !permissions.includes('view_schedule')) return false;
+    const { rows: rules } = await client.query(
+      `SELECT id FROM caregiver_notification_rules
+        WHERE relationship_id = $1 AND enabled AND mode::text = $2 AND channel::text = $3
+          AND ($4::text IS NULL OR id::text = $4)`,
+      [row.relationship_id, row.kind, row.channel, typeof row.payload.ruleId === 'string' ? row.payload.ruleId : null],
+    );
+    return rules.length > 0;
+  }
+  if (row.kind === 'escalation') {
+    const { rows: rules } = await client.query(
+      `SELECT id FROM caregiver_notification_rules WHERE relationship_id=$1
+        AND enabled AND channel::text=$2 AND mode IN ('every_dose','missed_only','consecutive_missed')`,
+      [row.relationship_id, row.channel],
+    );
+    return rules.length > 0;
   }
   return true;
+}
+
+async function nonUrgentResumeAt(client: PoolClient, row: DeliveryRow, now: Date): Promise<Date | null> {
+  if (!['escalation', 'low_stock', 'expiry_warning', 'daily_summary', 'weekly_summary'].includes(row.kind) || !row.recipient_user_id) return null;
+  const { rows } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
+    `SELECT u.timezone, up.quiet_hours_start::text, up.quiet_hours_end::text
+       FROM users u LEFT JOIN user_preferences up ON up.user_id = u.id WHERE u.id = $1`, [row.recipient_user_id],
+  );
+  const prefs = rows[0];
+  const globalResume = prefs ? quietHoursResumeAt(now, prefs.timezone, prefs.quiet_hours_start?.slice(0, 5) ?? null,
+    prefs.quiet_hours_end?.slice(0, 5) ?? null) : null;
+  let resume = globalResume;
+  if (row.kind === 'escalation' && row.dose_occurrence_id) {
+    const { rows: policies } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
+      `SELECT pp.timezone, ep.quiet_hours_start::text, ep.quiet_hours_end::text
+         FROM dose_occurrences d JOIN patient_profiles pp ON pp.id = d.patient_profile_id
+         JOIN escalation_policies ep ON ep.patient_profile_id = d.patient_profile_id
+           AND (ep.medication_id = d.medication_id OR ep.medication_id IS NULL)
+        WHERE d.id = $1 ORDER BY ep.medication_id NULLS LAST LIMIT 1`, [row.dose_occurrence_id],
+    );
+    const policy = policies[0];
+    const policyResume = policy ? quietHoursResumeAt(now, policy.timezone,
+      policy.quiet_hours_start?.slice(0, 5) ?? null, policy.quiet_hours_end?.slice(0, 5) ?? null) : null;
+    if (policyResume && (!resume || policyResume > resume)) resume = policyResume;
+  }
+  if (!row.relationship_id) return resume;
+  const { rows: rules } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
+    `SELECT pp.timezone, r.quiet_hours_start::text, r.quiet_hours_end::text
+       FROM caregiver_notification_rules r
+       JOIN patient_profiles pp ON pp.id = r.patient_profile_id
+      WHERE r.relationship_id = $1 AND r.enabled AND r.channel::text = $2`, [row.relationship_id, row.channel],
+  );
+  const rule = rules[0];
+  const ruleResume = rule ? quietHoursResumeAt(now, rule.timezone, rule.quiet_hours_start?.slice(0, 5) ?? null,
+    rule.quiet_hours_end?.slice(0, 5) ?? null) : null;
+  // Both clocks are explicit: account quiet hours use the recipient's zone;
+  // circle-specific rules use the patient's calendar, like their digest time.
+  if (!resume) return ruleResume;
+  return ruleResume && ruleResume > resume ? ruleResume : resume;
 }
 
 async function finalise(
@@ -176,6 +258,8 @@ async function finalise(
 
 interface SendOutcome {
   ok: boolean;
+  skipped?: boolean;
+  leaseExpired?: boolean;
   provider: string;
   providerMessageId?: string;
   receiptTickets?: ReceiptTicket[];
@@ -227,8 +311,8 @@ function privateBody(row: DeliveryRow, payload: Record<string, unknown>): string
 
 async function applyCurrentNotificationPrivacy(
   client: PoolClient, row: DeliveryRow,
-): Promise<{ body: string | null; payload: Record<string, unknown> }> {
-  if (!row.patient_profile_id) return { body: row.body, payload: row.payload };
+): Promise<{ body: string | null; payload: Record<string, unknown>; showMedication: boolean }> {
+  if (!row.patient_profile_id) return { body: row.body, payload: row.payload, showMedication: false };
 
   const { rows } = await client.query<{ show_medication: boolean }>(
     `SELECT COALESCE(up.show_medication_in_notifications, false) AS show_medication
@@ -243,6 +327,7 @@ async function applyCurrentNotificationPrivacy(
     const { rows: permissionRows } = await client.query<{ can_view_medication: boolean }>(
       `SELECT status = 'active'
               AND caregiver_user_id = $2
+              AND app.caregiver_identity_verified(id)
               AND 'view_medications' = ANY(permissions) AS can_view_medication
          FROM caregiver_relationships
         WHERE id = $1 AND patient_profile_id = $3`,
@@ -251,19 +336,29 @@ async function applyCurrentNotificationPrivacy(
     mayRevealMedication = permissionRows[0]?.can_view_medication === true;
   }
 
-  if (mayRevealMedication) return { body: row.body, payload: row.payload };
+  if (mayRevealMedication) return { body: row.body, payload: row.payload, showMedication: true };
 
   const payload = { ...row.payload };
   delete payload.medicationName;
   delete payload.medications;
 
-  return { body: privateBody(row, payload), payload };
+  return { body: privateBody(row, payload), payload, showMedication: false };
 }
 
 async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow): Promise<SendOutcome> {
   if (!row.recipient_user_id) {
     return { ok: false, provider: ctx.providers.push.name, errorCode: 'no_recipient', retryable: false };
   }
+
+  // Like finalisation, renewal commits on a separate connection. The job's
+  // client holds its advisory-lock transaction until all sends finish; writing
+  // this row there would block our own later finalisation connection.
+  const renewed = await finalise(ctx, row,
+    `UPDATE notification_deliveries SET lease_until = $3::timestamptz + make_interval(secs => $4)
+      WHERE id = $1 AND lease_token = $2 AND status = 'sending' AND lease_until > $3`,
+    [ctx.now(), LEASE_SECONDS],
+  );
+  if (!renewed) return { ok: false, leaseExpired: true, provider: ctx.providers.push.name };
 
   // Receipt reconciliation needs the internal endpoint id as well as the
   // provider token. The SECURITY DEFINER helper returns only live-session
@@ -276,24 +371,81 @@ async function sendPush(ctx: WorkerContext, client: PoolClient, row: DeliveryRow
     return { ok: false, provider: ctx.providers.push.name, errorCode: 'no_active_device', retryable: false };
   }
 
-  const safe = await applyCurrentNotificationPrivacy(client, row);
-  const grouped = safe.payload.grouped === true;
-  const messages: PushMessage[] = tokens.map((token) => ({
+  let safe = await applyCurrentNotificationPrivacy(client, row);
+  if (!row.relationship_id && ['dose_reminder', 'dose_reminder_repeat'].includes(row.kind)) {
+    const current = await currentPatientReminder(client, row, ctx.now(), safe.showMedication);
+    if (!current) return { ok: false, skipped: true, provider: ctx.providers.push.name };
+    safe = { ...current, showMedication: safe.showMedication };
+  }
+  if (!row.relationship_id && row.kind === 'low_stock') {
+    const current = await currentStockReminder(client, row, ctx.now(), safe.showMedication);
+    if (!current) return { ok: false, skipped: true, provider: ctx.providers.push.name };
+    safe = { ...current, showMedication: safe.showMedication };
+  }
+  // A caregiver's lock screen and push provider are not an authenticated
+  // medical-record view. Never forward names, dose identifiers or dose actions,
+  // even when the patient opted into detailed reminders on their own device.
+  // Preserve the detailed outbox record for authorized in-app access.
+  const caregiver = row.relationship_id !== null || row.kind === 'escalation';
+  const english = row.locale === 'en';
+  const grouped = !caregiver && safe.payload.grouped === true;
+  const messages: PushMessage[] = tokens.map((token): PushMessage => ({
     token: token.token,
-    title: row.title ?? '',
-    body: safe.body ?? '',
-    data: {
+    title: caregiver
+      ? (english ? 'Dawaee — Follow-up alert' : 'دوائي — تنبيه متابعة')
+      : row.title ?? '',
+    body: caregiver
+      ? (english
+          ? 'You have a follow-up alert. Open Dawaee to view the details.'
+          : 'لديك تنبيه يحتاج إلى متابعتك. افتح دوائي لعرض التفاصيل.')
+      : safe.body ?? '',
+    data: caregiver ? { deliveryId: row.id, kind: row.kind } : {
       deliveryId: row.id,
       kind: grouped ? 'dose_group_reminder' : row.kind,
       doseId: grouped ? '' : String(safe.payload.doseId ?? ''),
       doseIds: grouped ? JSON.stringify(safe.payload.doseIds ?? []) : '[]',
       actions: JSON.stringify(safe.payload.actions ?? []),
+      ...(safe.payload.reason === 'snooze' ? {
+        intentId: String(safe.payload.intentId ?? ''),
+        expectedSnoozedUntil: String(safe.payload.expectedSnoozedUntil ?? ''),
+      } : {}),
     },
     priority: row.kind === 'dose_reminder' || row.kind === 'dose_reminder_repeat' || row.kind === 'escalation'
       ? 'high' : 'default',
-    categoryId: row.kind.startsWith('dose_reminder') && !grouped ? 'MEDICATION_REMINDER' : undefined,
+    categoryId: !caregiver && row.kind.startsWith('dose_reminder') && !grouped ? 'MEDICATION_REMINDER' : undefined,
     sound: 'default',
   }));
+
+  if (row.kind === 'escalation') {
+    // A confirmation/cancellation/snooze can arrive after the outbox claim while
+    // resolving devices/privacy. Re-read the authoritative occurrence and our
+    // exact live lease immediately before the external send. This prevents
+    // known-stale alerts; it cannot retract a push already accepted by Expo.
+    const { rows: pending } = await client.query<{ still_pending: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM notification_deliveries nd
+         JOIN dose_occurrences d ON d.id = nd.dose_occurrence_id
+         JOIN medications m ON m.id = d.medication_id
+         JOIN medication_schedules s ON s.id = d.schedule_id AND s.medication_id = m.id
+          WHERE nd.id = $1 AND nd.lease_token = $2 AND nd.status = 'sending'
+            AND nd.lease_until > $3::timestamptz
+            AND d.patient_profile_id = nd.patient_profile_id
+            AND m.status = 'active' AND s.active
+            AND COALESCE((SELECT ep.enabled FROM escalation_policies ep
+              WHERE ep.patient_profile_id = d.patient_profile_id
+                AND (ep.medication_id = d.medication_id OR ep.medication_id IS NULL)
+              ORDER BY ep.medication_id NULLS LAST LIMIT 1), true)
+            AND d.status NOT IN ('taken','taken_late','skipped','cancelled')
+            AND (d.snoozed_until IS NULL OR d.snoozed_until <= $3::timestamptz)
+            AND (nd.payload->'intentVersions'->>d.id::text) IS NOT DISTINCT FROM
+              CASE WHEN d.snoozed_until IS NOT NULL THEN d.client_event_id::text END
+       ) AS still_pending`,
+      [row.id, row.lease_token, ctx.now()],
+    );
+    if (pending[0]?.still_pending !== true) {
+      return { ok: false, skipped: true, provider: ctx.providers.push.name };
+    }
+  }
 
   const results = await ctx.providers.push.send(messages);
 

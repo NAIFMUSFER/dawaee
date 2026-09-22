@@ -211,6 +211,8 @@ export interface DoseOccurrence {
   snoozedUntil: Instant | null;
   snoozeCount: number;
   confirmedAt: Instant | null;
+  /** Server acceptance time; independent of the clinical action time. */
+  confirmedReceivedAt?: Instant | null;
   confirmedByUserId: UUID | null;
   confirmationMethod: ConfirmationMethod | null;
   /** Escalation stage index already dispatched (0 = none). */

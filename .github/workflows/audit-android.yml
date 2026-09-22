@@ -1,0 +1,86 @@
+name: Isolated Android test APK
+
+on:
+  pull_request:
+    branches: [main, 'audit/ios10-evidence-20260920']
+    paths:
+      - '.github/workflows/audit-android.yml'
+      - 'apps/mobile/**'
+      - 'packages/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CI: '1'
+      NODE_ENV: production
+      EXPO_NO_TELEMETRY: '1'
+      DAWAEE_AUDIT_BUILD: '1'
+      EXPO_PUBLIC_DEMO: '0'
+      EXPO_PUBLIC_API_URL: https://dawaee-audit-preview.onrender.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      - run: npm ci --legacy-peer-deps
+        working-directory: apps/mobile
+      - name: Generate isolated Android installation
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const base = require('./app.json').expo;
+          const config = require('./app.config.js')({ config: base });
+          if (config.android.package !== 'app.dawaee.audit' || config.extra.apiBaseUrl !== process.env.EXPO_PUBLIC_API_URL || config.android.googleServicesFile) throw Error('Unsafe audit build target');
+          NODE
+          npx --no-install expo prebuild --platform android --no-install --skip-dependency-update react-native,react
+      - name: Package installable audit APK with test signing only
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleRelease --no-daemon --console=plain --max-workers=2 -PreactNativeArchitectures=arm64-v8a,armeabi-v7a '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g'
+      - name: Verify package, signing and source evidence
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          test "$("$ANALYZER" manifest application-id "$APK")" = app.dawaee.audit
+          test "$("$ANALYZER" manifest debuggable "$APK")" = false
+          SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$SIGNER" verify --verbose --print-certs "$APK" > audit-signing.txt
+          mkdir -p audit-download
+          cp "$APK" audit-download/TADAWEE-audit.apk
+          git rev-parse HEAD > audit-download/source-commit.txt
+          cp audit-signing.txt audit-download/signing.txt
+          sha256sum audit-download/TADAWEE-audit.apk > audit-download/sha256.txt
+          cat > audit-download/READ-ME.txt <<'TEXT'
+          TADAWEE isolated Android test installation. NOT FOR STORE.
+          Package: app.dawaee.audit
+          API: https://dawaee-audit-preview.onrender.com
+          Synthetic accounts only. Test-signed; no production signing credentials.
+          Firebase SMS, real OCR and remote Push are not configured for this identity.
+          Do not enter real medication or personal data. Backend availability is verified separately.
+          TEXT
+      - name: Download isolated test APK (never a store bundle)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: TADAWEE-audit-apk-${{ github.event.pull_request.head.sha }}
+          path: apps/mobile/audit-download/
+          if-no-files-found: error
+          retention-days: 14
