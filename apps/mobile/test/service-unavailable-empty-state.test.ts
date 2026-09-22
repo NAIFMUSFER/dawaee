@@ -14,10 +14,21 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '../../..');
 const source = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 
-const { createHarness, ApiError } = createRequire(import.meta.url)('./profile-screen-harness.cjs');
+const { createHarness, ApiError, NetworkError } = createRequire(import.meta.url)('./profile-screen-harness.cjs');
 
 describe('request failures never become clinical empty states', () => {
   for (const screen of ['today', 'medications']) {
+    it(`${screen}: offline without cached data does not claim an empty clinical list`, async () => {
+      const h = createHarness(join(ROOT, `apps/mobile/app/(tabs)/${screen}.tsx`),
+        join(ROOT, 'apps/mobile/src/hooks/useRequestScope.ts'));
+      try {
+        h.fail(h.batch(), new NetworkError('offline'));
+        await h.flush();
+        expect(h.app.offline).toBe(true);
+        expect(h.find('EmptyState')).toBeNull();
+        expect(h.find('Button', (props: any) => props.label === 'common.retry')).not.toBeNull();
+      } finally { h.unmount(); }
+    });
     for (const status of [429, 500, 503]) {
       it(`${screen}: HTTP ${status} shows retry, and a successful retry restores clinical data`, async () => {
         const h = createHarness(join(ROOT, `apps/mobile/app/(tabs)/${screen}.tsx`),

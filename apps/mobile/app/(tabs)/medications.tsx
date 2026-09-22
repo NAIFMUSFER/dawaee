@@ -155,7 +155,7 @@ function MedicationsProfileScreen() {
 
         <Picker label={t('common.filter')} options={filterOptions} value={filter} onChange={(next) => { setLoading(true); setFilter(next); }} />
 
-        {loading ? <Loading label={t('common.loading')} /> : serviceUnavailable ? (
+        {loading ? <Loading label={t('common.loading')} /> : serviceUnavailable || (offline && medications.length === 0) ? (
           <Banner
             tone="warning"
             title={arabic ? 'الخدمة غير متاحة مؤقتاً' : 'Service temporarily unavailable'}

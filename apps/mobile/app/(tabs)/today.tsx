@@ -437,7 +437,7 @@ function TodayProfileScreen() {
 
         {canViewToday ? (
           <>
-            {serviceUnavailable ? (
+            {serviceUnavailable || (offline && data === null) ? (
               <Banner
                 tone="warning"
                 title={arabic ? 'الخدمة غير متاحة مؤقتاً' : 'Service temporarily unavailable'}
