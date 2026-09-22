@@ -30,9 +30,9 @@ beforeAll(async () => {
         (instant AT TIME ZONE 'Asia/Riyadh')::time,'Asia/Riyadh',1,'tablet',
         CASE WHEN n=0 THEN 'skipped'::dose_status ELSE 'upcoming'::dose_status END,
         CASE WHEN n=599 THEN instant ELSE NULL END,
-        CASE WHEN n=601 THEN $4::date + interval '11 hours' ELSE NULL END
-      FROM (SELECT n, $4::date + n * interval '1 minute' AS instant FROM generate_series(0,$5::int) n) seed`,
-    [schedules[0].id, medication, patient.profileId, day, size]);
+        CASE WHEN n=601 THEN $4::timestamptz + interval '11 hours' ELSE NULL END
+      FROM (SELECT n, $4::timestamptz + n * interval '1 minute' AS instant FROM generate_series(0,$5::int) n) seed`,
+    [schedules[0].id, medication, patient.profileId, `${day}T00:00:00Z`, size]);
   }
   h.setServerNow(new Date(`${day}T10:00:00Z`));
 }, 120_000);
@@ -65,6 +65,7 @@ describe('history filters before limiting and exposes all bounded pages', () => 
 
   it('pages beyond 1000 rows with no omissions or duplicate equal-time rows', async () => {
     const expected = (await page('&limit=2000')).json().doses.map((d: { id: string }) => d.id);
+    expect(expected.length).toBeGreaterThan(1000);
     const ids: string[] = []; let cursor: string | undefined;
     do {
       const res = await page('&limit=37', cursor);

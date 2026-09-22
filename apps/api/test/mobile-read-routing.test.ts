@@ -81,7 +81,7 @@ describe('Android read contract on the serving API', () => {
     });
     expect(response.statusCode, response.body).toBe(200);
     const doses = h.query.mock.calls.find(([sql]) => sql.includes('FROM dose_occurrences d'));
-    expect(doses?.[1]).toEqual([h.profile, '2026-09-13', '2026-09-19', h.medication, 500, false]);
+    expect(doses?.[1]).toEqual([h.profile, '2026-09-13', '2026-09-19', h.medication, 501, false, expect.any(String), null, null, null]);
   });
 
   it('applies the recorded-dose filter before limiting medication history', async () => {
@@ -91,7 +91,7 @@ describe('Android read contract on the serving API', () => {
     });
     expect(response.statusCode, response.body).toBe(200);
     const doses = h.query.mock.calls.find(([sql]) => sql.includes('FROM dose_occurrences d'));
-    expect(doses?.[1]).toEqual([h.profile, '2026-09-13', '2026-09-19', h.medication, 20, true]);
+    expect(doses?.[1]).toEqual([h.profile, '2026-09-13', '2026-09-19', h.medication, 21, true, expect.any(String), null, null, null]);
   });
 
   it('opens an existing medication from the fixed mobile detail path', async () => {
