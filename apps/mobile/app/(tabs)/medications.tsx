@@ -11,7 +11,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { useScreenRefresh } from '@/hooks/useScreenRefresh';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
-import { api, ApiError, NetworkError } from '@/api/client';
+import { api, NetworkError } from '@/api/client';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
 import type { DoseView, MedicationView, TodayResponse } from '@/api/types';
 import type { MessageKey } from '@dawaee/shared';
@@ -70,11 +70,10 @@ function MedicationsProfileScreen() {
       if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         setOffline(true);
-      } else if (err instanceof ApiError && err.status === 503) {
-        // Render can answer 503 while a sleeping production instance wakes.
-        // That is a server response, not an empty medication list and not a
-        // transport-offline condition. Keep any previously loaded data and
-        // show an explicit retry state instead of a false clinical empty state.
+      } else {
+        // HTTP failures (including 429/500/503) and invalid responses do not
+        // establish that the patient has no medications. Keep existing data
+        // and offer a retry without marking the device transport offline.
         setOffline(false);
         setServiceUnavailable(true);
       }
