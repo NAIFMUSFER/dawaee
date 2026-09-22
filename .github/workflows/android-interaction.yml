@@ -59,15 +59,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - run: npm ci
-      - run: npm ci --legacy-peer-deps
+      - run: npm ci --include=dev
+      - run: npm ci --include=dev --legacy-peer-deps
         working-directory: apps/mobile
       - name: Prepare disposable database and matching API
         run: |
-          npx tsc -b packages/shared packages/core apps/api apps/worker
+          npx --no-install tsc -b packages/shared packages/core apps/api apps/worker
           bash scripts/db-reset.sh dawaee_test
           echo "AUDIT_API_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          GIT_COMMIT=$(git rev-parse HEAD) npx tsx scripts/android-interaction/fixture.mts server > "$RUNNER_TEMP/native-api.log" 2>&1 &
+          GIT_COMMIT=$(git rev-parse HEAD) npx --no-install tsx scripts/android-interaction/fixture.mts server > "$RUNNER_TEMP/native-api.log" 2>&1 &
       - name: Build the actual isolated app for the emulator
         working-directory: apps/mobile
         run: |
