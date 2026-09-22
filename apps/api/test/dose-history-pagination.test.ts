@@ -82,7 +82,10 @@ describe('history filters before limiting and exposes all bounded pages', () => 
     const cursor = (await page('&limit=1')).json().nextCursor;
     expect(cursor).toBeTruthy();
     expect((await page('&status=missed', cursor)).statusCode).toBe(400);
-    expect((await page('', cursor, stranger)).statusCode).toBe(403);
+    const denied = await page('', cursor, stranger);
+    // RLS hides the profile itself from an unrelated account.
+    expect(denied.statusCode, denied.body).toBe(404);
+    expect(denied.json()).not.toHaveProperty('doses');
     expect((await page('&status=not-a-status')).statusCode).toBe(400);
   });
 });
