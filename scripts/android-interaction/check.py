@@ -96,8 +96,9 @@ def visible(node):
 
 
 def locate(label, prefix=False, field=False, scroll=False, upward=False, attempts=25):
-    for _ in range(attempts):
-        candidates = [n for n in tree() if matches(n, label, prefix) and visible(n)
+    for attempt in range(attempts):
+        nodes = tree()
+        candidates = [n for n in nodes if matches(n, label, prefix) and visible(n)
             and (not field or n.get("class") == "android.widget.EditText")]
         if candidates:
             enabled = [n for n in candidates if n.get("enabled") != "false"]
@@ -105,7 +106,11 @@ def locate(label, prefix=False, field=False, scroll=False, upward=False, attempt
                 # Prefer the accessible action, not its child text.
                 return next((n for n in enabled if n.get("clickable") == "true"), enabled[0])
         if scroll:
-            swipe(upward=upward)
+            # Undo can move a dose from history to the hero card; the button
+            # can then be below the new heading rather than above the viewport.
+            # Search both directions without replaying any state-changing tap.
+            direction = upward if attempt < attempts // 2 else not upward
+            swipe(upward=direction, nodes=nodes)
         else:
             time.sleep(0.5)
     raise AssertionError("UI control unavailable: " + label)
