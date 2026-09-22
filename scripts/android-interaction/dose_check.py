@@ -63,7 +63,7 @@ def scenario(case, tracked):
     medication = ui.api("/v1/medications", payload, token=token)["medication"]
     stock_path = "/v1/medications/" + medication["id"] + "/stock"
     launch()
-    ui.tap("العربية")
+    ui.choose_start_language(case)
     ui.fill("رقم الجوال أو البريد الإلكتروني", email)
     ui.fill("كلمة المرور", password)
     ui.tap("دخول")

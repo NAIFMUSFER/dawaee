@@ -194,6 +194,16 @@ def pick(index, hour, minute):
     locate("الأوقات " + str(index) + ": " + hour + ":" + minute, attempts=5)
 
 
+def choose_start_language(case):
+    # Only called after clearing this disposable app and before entering any
+    # credential. Preserve startup evidence without capturing a failed login.
+    try:
+        tap("العربية")
+    except AssertionError:
+        capture(case + "-startup-failed")
+        raise
+
+
 def scenario(case, width, height, density, font):
     global WIDTH, HEIGHT, AUTHENTICATED
     WIDTH, HEIGHT = width, height
@@ -217,7 +227,7 @@ def scenario(case, width, height, density, font):
     assert activity, "isolated app has no resolved launcher activity"
     started = adb("shell", "am", "start", "-W", "-n", activity)
     assert "Status: ok" in started, "Android did not finish launching the isolated activity"
-    tap("العربية")
+    choose_start_language(case)
     fill("رقم الجوال أو البريد الإلكتروني", email)
     fill("كلمة المرور", password)
     tap("دخول")
