@@ -1,0 +1,15 @@
+# Upload only; never rebuild or distribute to tester groups automatically.
+# Verify the reviewed archive and the Apple automatic-distribution hold first.
+name: Upload reviewed iOS build 12
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios12:
+    name: Upload existing iOS 0.1.0 (12)
+    type: submit
+    params:
+      build_id: adbc47e1-a9fe-4890-96fb-39a8353bea43
+      profile: ios-testflight
+      groups: []
