@@ -210,3 +210,21 @@ test('a mutation failure does not discard a successfully loaded draft or disable
     assert.deepEqual(ctx.navigations, ['/medication/detail']);
   } finally { ctx.h.unmount(); }
 });
+
+
+for (const [label, dates] of [
+  ['invalid start', { startDate: 'bad-date' }],
+  ['missing start', { startDate: '' }],
+  ['invalid end', { endDate: 'bad-date' }],
+  ['reversed range', { startDate: '2026-10-02', endDate: '2026-10-01' }],
+]) {
+  test(`${label} cannot silently replace clinical schedule dates`, async () => {
+    const ctx = setup();
+    try {
+      await ctx.load([fixture(dates)]); await ctx.save();
+      assert.equal(ctx.writes.length, 0);
+      assert.deepEqual(ctx.navigations, []);
+      assert.ok(ctx.h.text().includes('error.validation_failed'));
+    } finally { ctx.h.unmount(); }
+  });
+}

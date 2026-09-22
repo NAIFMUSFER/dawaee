@@ -14,15 +14,17 @@ const stockResponse = (unit = 'ml') => ({
   forecast: null, transactions: [], refills: [],
 });
 
-function setup({ missingIntent = false } = {}) {
+function setup({ missingIntent = false, mutation } = {}) {
+  let requestSequence = 0;
   const reads = [], writes = [], snoozeWrites = [], navigations = [];
   const record = async (method, route, payload) => {
     writes.push({ method, route, payload: JSON.parse(JSON.stringify(payload)) });
-    return {};
+    return mutation ? mutation(writes.length) : {};
   };
   const h = createHarness(screen, hook, {
     permissions: ['view_medications', 'view_schedule', 'update_stock'],
   }, {
+    '@/storage/offline-queue': { newClientEventId: () => `refill-request-${++requestSequence}` },
     'expo-router': { router: { back: () => { navigations.push('back'); } } },
     '@/navigation/private-navigation': {
       getMedicationStockRouteIntent: (userId, patientProfileId) =>
@@ -171,7 +173,7 @@ test('explicit retry recovers from failure without writing until the user saves'
     assert.equal(ctx.writes.length, 1);
     assert.deepEqual(ctx.writes[0], {
       method: 'POST', route: `/v1/medications/${medicationId()}/refill`,
-      payload: { quantityAdded: 4, unit: 'ml', pharmacy: null, cost: null, note: null },
+      payload: { clientRequestId: 'refill-request-1', quantityAdded: 4, unit: 'ml', pharmacy: null, cost: null, note: null },
     });
   } finally { ctx.h.unmount(); }
 });
@@ -221,7 +223,7 @@ for (const [input, expected] of [['', null], ['   ', null], ['0', 0], ['12,50', 
       await ctx.set('refill.note', ' synthetic note ');
       await ctx.press('refill.save');
       assert.deepEqual(ctx.writes, [{ method: 'POST', route: `/v1/medications/${medicationId()}/refill`,
-        payload: { quantityAdded: 2.5, unit: 'ml', pharmacy: 'synthetic pharmacy', cost: expected, note: 'synthetic note' } }]);
+        payload: { clientRequestId: 'refill-request-1', quantityAdded: 2.5, unit: 'ml', pharmacy: 'synthetic pharmacy', cost: expected, note: 'synthetic note' } }]);
       assert.deepEqual(ctx.snoozeWrites, [{ action: 'clear', args: ['synthetic-account', medicationId(), '2026-09-13'] }]);
       assert.equal(ctx.reads.length, 4);
     } finally { ctx.h.unmount(); }
@@ -248,5 +250,41 @@ test('a profile switch does not let an old hydration unlock the new profile stoc
     assert.equal(ctx.writes.length, 1);
     assert.equal(ctx.writes[0].route, `/v1/medications/${medicationId('B')}/refill`);
     assert.equal(ctx.writes[0].payload.unit, 'ml');
+  } finally { ctx.h.unmount(); }
+});
+
+
+test('two same-frame save presses send only one refill', async () => {
+  const gate = deferred();
+  const ctx = setup({ mutation: () => gate.promise });
+  try {
+    await ctx.answer(); await ctx.press('stock.markRefilled');
+    await ctx.set('refill.quantityAdded', '5');
+    const save = ctx.button('refill.save').onPress;
+    save(); save(); await ctx.h.flush();
+    assert.equal(ctx.writes.length, 1);
+  } finally { gate.resolve({}); await ctx.h.flush(); ctx.h.unmount(); }
+});
+
+test('ambiguous network retry preserves the refill request identity', async () => {
+  const ctx = setup({ mutation: attempt => { if (attempt === 1) throw new NetworkError(); return {}; } });
+  try {
+    await ctx.answer(); await ctx.press('stock.markRefilled');
+    await ctx.set('refill.quantityAdded', '5'); await ctx.press('refill.save');
+    const first = ctx.writes[0];
+    assert.ok(first.payload.clientRequestId);
+    await ctx.press('refill.save');
+    assert.deepEqual(ctx.writes[1], first);
+  } finally { ctx.h.unmount(); }
+});
+
+test('a new refill after acknowledged success uses a new request identity', async () => {
+  const ctx = await ready();
+  try {
+    await ctx.press('refill.save'); const first = ctx.writes[0].payload.clientRequestId;
+    assert.ok(first); await ctx.answer(ctx.reads.slice(2));
+    await ctx.press('stock.markRefilled'); await ctx.set('refill.quantityAdded', '2,5');
+    await ctx.press('refill.save');
+    assert.notEqual(ctx.writes[1].payload.clientRequestId, first);
   } finally { ctx.h.unmount(); }
 });

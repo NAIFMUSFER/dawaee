@@ -9,7 +9,7 @@ it('keeps stock writes closed after load failures and preserves valid refill cos
   ], { encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
   if (result.error) throw result.error;
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  expect(result.stdout).toContain('# tests 21');
-  expect(result.stdout).toContain('# pass 21');
+  expect(result.stdout).toContain('# tests 24');
+  expect(result.stdout).toContain('# pass 24');
   expect(result.stdout).toContain('# fail 0');
 }, 35_000);
