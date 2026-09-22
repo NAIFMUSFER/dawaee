@@ -539,7 +539,11 @@ function ScheduleProfileScreen({
             onChangeText={setDoseQuantity}
             keyboardType="decimal-pad"
           />
-          <Picker wrap label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={setDoseUnit} />
+          <Txt variant="caption">{t('medication.unitQuantityReview')}</Txt>
+          <Picker wrap label={t('schedule.doseUnit')} options={unitOptions} value={doseUnit} onChange={(unit) => {
+            if (unit !== doseUnit) setDoseQuantity('');
+            setDoseUnit(unit);
+          }} />
         </Card>
 
         <Card>
