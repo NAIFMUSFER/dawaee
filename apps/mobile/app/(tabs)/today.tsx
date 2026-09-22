@@ -275,7 +275,7 @@ function TodayProfileScreen() {
     setActionError(null);
     setBusyDoseId(dose.id);
     try {
-      await api.post('/v1/dose/action', { doseId: dose.id, action: 'undo', clientEventId: `undo-${dose.id}-${dose.confirmedAt ?? 'unknown'}` });
+      await api.post('/v1/dose/action', { doseId: dose.id, action: 'undo', clientEventId: `undo-${dose.id}-${dose.confirmedReceivedAt ?? dose.confirmedAt ?? 'unknown'}` });
       if (!isCurrent()) return;
       if (isCurrent()) await load();
     } catch (err) {

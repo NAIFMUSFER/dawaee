@@ -199,7 +199,7 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
 }
 
 async function nonUrgentResumeAt(client: PoolClient, row: DeliveryRow, now: Date): Promise<Date | null> {
-  if (!['low_stock', 'expiry_warning', 'daily_summary', 'weekly_summary'].includes(row.kind) || !row.recipient_user_id) return null;
+  if (!['escalation', 'low_stock', 'expiry_warning', 'daily_summary', 'weekly_summary'].includes(row.kind) || !row.recipient_user_id) return null;
   const { rows } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
     `SELECT u.timezone, up.quiet_hours_start::text, up.quiet_hours_end::text
        FROM users u LEFT JOIN user_preferences up ON up.user_id = u.id WHERE u.id = $1`, [row.recipient_user_id],
@@ -207,7 +207,21 @@ async function nonUrgentResumeAt(client: PoolClient, row: DeliveryRow, now: Date
   const prefs = rows[0];
   const globalResume = prefs ? quietHoursResumeAt(now, prefs.timezone, prefs.quiet_hours_start?.slice(0, 5) ?? null,
     prefs.quiet_hours_end?.slice(0, 5) ?? null) : null;
-  if (!row.relationship_id) return globalResume;
+  let resume = globalResume;
+  if (row.kind === 'escalation' && row.dose_occurrence_id) {
+    const { rows: policies } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
+      `SELECT pp.timezone, ep.quiet_hours_start::text, ep.quiet_hours_end::text
+         FROM dose_occurrences d JOIN patient_profiles pp ON pp.id = d.patient_profile_id
+         JOIN escalation_policies ep ON ep.patient_profile_id = d.patient_profile_id
+           AND (ep.medication_id = d.medication_id OR ep.medication_id IS NULL)
+        WHERE d.id = $1 ORDER BY ep.medication_id NULLS LAST LIMIT 1`, [row.dose_occurrence_id],
+    );
+    const policy = policies[0];
+    const policyResume = policy ? quietHoursResumeAt(now, policy.timezone,
+      policy.quiet_hours_start?.slice(0, 5) ?? null, policy.quiet_hours_end?.slice(0, 5) ?? null) : null;
+    if (policyResume && (!resume || policyResume > resume)) resume = policyResume;
+  }
+  if (!row.relationship_id) return resume;
   const { rows: rules } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
     `SELECT pp.timezone, r.quiet_hours_start::text, r.quiet_hours_end::text
        FROM caregiver_notification_rules r
@@ -219,8 +233,8 @@ async function nonUrgentResumeAt(client: PoolClient, row: DeliveryRow, now: Date
     rule.quiet_hours_end?.slice(0, 5) ?? null) : null;
   // Both clocks are explicit: account quiet hours use the recipient's zone;
   // circle-specific rules use the patient's calendar, like their digest time.
-  if (!globalResume) return ruleResume;
-  return ruleResume && ruleResume > globalResume ? ruleResume : globalResume;
+  if (!resume) return ruleResume;
+  return ruleResume && ruleResume > resume ? ruleResume : resume;
 }
 
 async function finalise(

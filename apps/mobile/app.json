@@ -30,7 +30,7 @@
           "en"
         ]
       },
-      "buildNumber": "10"
+      "buildNumber": "11"
     },
     "locales": {
       "ar": "./locales/ar.json",
@@ -55,7 +55,7 @@
         "android.permission.USE_EXACT_ALARM",
         "android.permission.RECORD_AUDIO"
       ],
-      "versionCode": 5,
+      "versionCode": 6,
       "googleServicesFile": "./google-services.json"
     },
     "web": {
