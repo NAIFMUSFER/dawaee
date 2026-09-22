@@ -105,7 +105,11 @@ def locate(label, prefix=False, field=False, scroll=False, upward=False, attempt
             if enabled:
                 # Prefer the accessible action, not its child text.
                 return next((n for n in enabled if n.get("clickable") == "true"), enabled[0])
-        if scroll:
+        # A navigation/loading frame can temporarily have no scrollable
+        # content. Wait within the existing bounded lookup instead of asking
+        # swipe() to invent a gesture target or aborting a successful save.
+        can_scroll = any(n.get("scrollable") == "true" and visible(n) for n in nodes)
+        if scroll and can_scroll:
             # Undo can move a dose from history to the hero card; the button
             # can then be below the new heading rather than above the viewport.
             # Search both directions without replaying any state-changing tap.
