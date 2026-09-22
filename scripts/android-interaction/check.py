@@ -120,10 +120,19 @@ def tap(label, **kwargs):
     touch(locate(label, **kwargs))
 
 
-def swipe(upward=False, x=None, top=None, bottom=None):
-    x = x if x is not None else WIDTH // 2
-    top = top if top is not None else int(HEIGHT * .30)
-    bottom = bottom if bottom is not None else int(HEIGHT * .73)
+def swipe(upward=False, x=None, top=None, bottom=None, nodes=None):
+    if x is None or top is None or bottom is None:
+        # Persistent banners reduce the content viewport, especially at 200%
+        # font size. A screen-relative swipe can start on that fixed banner
+        # and never reach the ScrollView. Use its actual accessibility bounds.
+        candidates = [n for n in (tree() if nodes is None else nodes)
+            if n.get("scrollable") == "true" and visible(n)]
+        assert candidates, "no visible scroll container for gesture"
+        container = max(candidates, key=lambda n: (bounds(n)[2] - bounds(n)[0]) * (bounds(n)[3] - bounds(n)[1]))
+        x1, y1, x2, y2 = bounds(container)
+        x = x if x is not None else (x1 + x2) // 2
+        top = top if top is not None else y1 + int((y2 - y1) * .20)
+        bottom = bottom if bottom is not None else y1 + int((y2 - y1) * .80)
     start, end = (top, bottom) if upward else (bottom, top)
     adb("shell", "input", "swipe", str(x), str(start), str(x), str(end), "400")
 
