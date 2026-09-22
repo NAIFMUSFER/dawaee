@@ -27,11 +27,21 @@ const secure = new Map<string, string>();
 
 let secureFails: 'no' | 'read' | 'write' = 'no';
 let platform = 'ios';
+let secureDeleteFails = false;
+let markerReadFails = false;
+let markerWriteDropped = false;
+let secureWriteDropped = false;
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
-    getItem: async (k: string) => async_.get(k) ?? null,
-    setItem: async (k: string, v: string) => { async_.set(k, v); },
+    getItem: async (k: string) => {
+      if (markerReadFails && k === 'dawaee.session.signedOut.v1') throw new Error('storage unavailable');
+      return async_.get(k) ?? null;
+    },
+    setItem: async (k: string, v: string) => {
+      if (markerWriteDropped && k === 'dawaee.session.signedOut.v1') return;
+      async_.set(k, v);
+    },
     removeItem: async (k: string) => { async_.delete(k); },
     multiRemove: async (keys: string[]) => {
       // Cleanup can fail — storage full, a platform quirk. When it does, the
@@ -66,10 +76,12 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: async (k: string, v: string, options?: unknown) => {
     optionsSeen.push({ op: 'set', options });
     if (secureFails === 'write') throw new Error('keychain unavailable');
+    if (secureWriteDropped) return;
     secure.set(k, v);
   },
   deleteItemAsync: async (k: string, options?: unknown) => {
     optionsSeen.push({ op: 'delete', options });
+    if (secureDeleteFails) throw new Error('keychain unavailable');
     secure.delete(k);
   },
 }));
@@ -87,12 +99,80 @@ beforeEach(() => {
   secureFails = 'no';
   legacyDeleteFails = false;
   platform = 'ios';
+  secureDeleteFails = false;
+  markerReadFails = false;
+  markerWriteDropped = false;
+  secureWriteDropped = false;
 });
 
 const legacy = (a: string, r: string) => {
   async_.set(LEGACY_ACCESS, a);
   async_.set(LEGACY_REFRESH, r);
 };
+
+describe('logout survives failed credential deletion and process restart', () => {
+  it('detects a dropped logout marker while still attempting credential cleanup', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    markerWriteDropped = true;
+    await expect(store.clearStoredSession()).rejects.toThrow('logout marker failed');
+    expect(secure.size).toBe(0);
+  });
+
+  it('does not remove the logout decision when a new secure write silently disappears', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureWriteDropped = true;
+    await expect(store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' })).rejects.toThrow();
+    expect(await store.readSession()).toBeNull();
+  });
+
+  it('retries deletion on reopening once secure storage recovers', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureDeleteFails = false;
+    expect(await store.readSession()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+  it('does not restore an undeleted secure session in a fresh module', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    expect(secure.get(SECURE_KEY)).toContain('OLD_R');
+    vi.resetModules();
+    const restarted = await import('../src/api/token-store.js');
+    expect(await restarted.readSession()).toBeNull();
+  });
+
+  it('does not migrate undeleted legacy credentials after logout', async () => {
+    legacy('OLD_A', 'OLD_R');
+    legacyDeleteFails = true;
+    await store.clearStoredSession();
+    expect(async_.get(LEGACY_REFRESH)).toBe('OLD_R');
+    expect(await store.migrateLegacyTokens()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+
+  it('fails closed if the durable logout decision cannot be read', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    markerReadFails = true;
+    expect(await store.readSession()).toBeNull();
+  });
+
+  it('keeps logout after a failed new sign-in write, then admits a successful new session', async () => {
+    await store.writeSession({ accessToken: 'OLD_A', refreshToken: 'OLD_R' });
+    secureDeleteFails = true;
+    await store.clearStoredSession();
+    secureFails = 'write';
+    await expect(store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' })).rejects.toThrow();
+    expect(await store.readSession()).toBeNull();
+    secureFails = 'no';
+    await store.writeSession({ accessToken: 'NEW_A', refreshToken: 'NEW_R' });
+    expect(await store.readSession()).toEqual({ accessToken: 'NEW_A', refreshToken: 'NEW_R' });
+    expect([...async_.values()].join('')).not.toContain('NEW_R');
+  });
+});
 
 describe('nothing writes a token to AsyncStorage any more', () => {
   it('puts a new session in the keychain and nowhere else', async () => {
@@ -344,7 +424,7 @@ describe('explicit cleanup of a legacy rotation without a durable retry proof', 
 
     // Nothing on disk names either token. The next launch is a sign-in.
     expect(secure.size).toBe(0);
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
     expect(await store.readSession()).toBeNull();
   });
 
@@ -440,7 +520,7 @@ describe('a legacy delete that keeps failing never makes the stale copy win', ()
   });
 });
 
-describe('signing out leaves nothing behind', () => {
+describe('signing out leaves only a non-secret logout decision', () => {
   it('removes the keychain entry and both legacy keys', async () => {
     await store.writeSession({ accessToken: 'A1', refreshToken: 'R1' });
     legacy('OLD_A', 'OLD_R'); // a device that upgraded but never launched since
@@ -448,13 +528,13 @@ describe('signing out leaves nothing behind', () => {
     await store.clearStoredSession();
 
     expect(secure.size).toBe(0);
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
   });
 
   it('still clears the legacy keys when the keychain is empty', async () => {
     legacy('OLD_A', 'OLD_R');
     await store.clearStoredSession();
-    expect([...async_.keys()]).toEqual([]);
+    expect([...async_.entries()]).toEqual([['dawaee.session.signedOut.v1', '1']]);
   });
 });
 
@@ -598,6 +678,9 @@ describe('the browser is handled on purpose, not by accident', () => {
  */
 describe('nothing new writes plaintext to AsyncStorage', () => {
   const ALLOWED: Array<[string, string]> = [
+    // A constant '1' only: no account, token, or health data. Prevents loading
+    // undeleted credentials after logout; new verified secure writes clear it.
+    ['dawaee.session.signedOut.v1', 'apps/mobile/src/api/token-store.ts'],
     // Not a credential and not PHI: a random device identifier, which the API
     // treats as an opaque label. Asserted separately above.
     ['dawaee.deviceId', 'apps/mobile/src/api/client.ts'],
