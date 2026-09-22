@@ -122,6 +122,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
       anonymous: { get: (route) => request('GET', route), post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
+      captureQueueOwnership: () => {
+        const owner = h.app.user?.id;
+        return () => !!owner && h.app.user?.id === owner;
+      },
       cacheSchedule: async (value) => { h.cacheWrites.push(value); if (h.cacheWriter) await h.cacheWriter(value); },
       readCachedSchedule: async (id) => { h.cachedReads.push(id); return h.cacheReader ? h.cacheReader(id) : null; },
       readQueue: async () => [...h.queued],

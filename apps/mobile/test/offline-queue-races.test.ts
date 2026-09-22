@@ -64,6 +64,22 @@ beforeEach(async () => {
 });
 
 describe('offline queue: atomic updates and account-bound acknowledgements', () => {
+  it('captures account generation for delayed fallbacks without tying it to a patient profile', () => {
+    const ownsQueue = queue.captureQueueOwnership();
+    queue.setCacheOwner(ALICE);
+    expect(ownsQueue()).toBe(true);
+    queue.setCacheOwner(BOB);
+    expect(ownsQueue()).toBe(false);
+    queue.setCacheOwner(ALICE);
+    expect(ownsQueue()).toBe(false);
+    const renewed = queue.captureQueueOwnership();
+    queue.setCacheOwner(null);
+    const signedOut = queue.captureQueueOwnership();
+    queue.setCacheOwner(ALICE);
+    expect(renewed()).toBe(false);
+    expect(signedOut()).toBe(false);
+    expect(queue.captureQueueOwnership()()).toBe(true);
+  });
   it('persists an acknowledged snooze deadline before removing its queued intent', async () => {
     const intent: QueuedAction = { ...action(1), type: 'snoozed', minutes: 5 };
     await queue.cacheSchedule({ profileId: 'profile-a', cachedAt: new Date().toISOString(), timezone: 'Asia/Riyadh', doses: [{

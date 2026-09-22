@@ -15,7 +15,7 @@ import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
 import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule, QueuedAction } from '@/storage/offline-queue';
-import { applyQueuedToDoses, cacheDose, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue, subscribeQueueChanges } from '@/storage/offline-queue';
+import { applyQueuedToDoses, cacheDose, cacheSchedule, captureQueueOwnership, enqueue, newClientEventId, readCachedSchedule, readQueue, subscribeQueueChanges } from '@/storage/offline-queue';
 import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 import { DoseNotesSheet } from '@/components/DoseNotesSheet';
@@ -290,6 +290,7 @@ function TodayProfileScreen() {
   const act = useCallback(
     async (dose: DoseView, action: 'taken' | 'skip') => {
       const isCurrent = captureScope();
+      const ownsQueue = captureQueueOwnership();
       if (!canConfirmDose || !isCurrent() || !canActOnTodayDose(dose, Date.now()) || actionInFlight.current.has(dose.id)) return;
       actionInFlight.current.add(dose.id);
       setActionError(null);
@@ -309,7 +310,8 @@ function TodayProfileScreen() {
       } catch (err) {
         // enqueue captures the current storage owner. Never hand an old
         // screen's action to a replacement account after a delayed failure.
-        if (!isCurrent()) return;
+        // A profile switch within the same account can retain its action.
+        if (!ownsQueue()) return;
         if (err instanceof NetworkError) {
           try {
             await enqueue(
@@ -339,6 +341,7 @@ function TodayProfileScreen() {
 
   const snooze = useCallback(async (dose: DoseView, minutes: number) => {
     const isCurrent = captureScope();
+    const ownsQueue = captureQueueOwnership();
     if (!canConfirmDose || !isCurrent() || !canActOnTodayDose(dose, Date.now()) || actionInFlight.current.has(dose.id)) return;
     const deadline = Date.now() + minutes * 60_000;
     if (!Number.isInteger(minutes) || minutes < 1 || deadline >= Date.parse(dose.scheduledAt)
@@ -356,7 +359,7 @@ function TodayProfileScreen() {
       await api.post('/v1/dose/action', { doseId: dose.id, action: 'snooze', minutes, clientEventId, deviceId, actionAt: at });
       if (isCurrent()) await load();
     } catch (err) {
-      if (!isCurrent()) return;
+      if (!ownsQueue()) return;
       if (err instanceof NetworkError) {
         try {
           await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at, clientEventId, minutes });
