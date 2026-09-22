@@ -300,6 +300,11 @@ function ScheduleProfileScreen({
       setValidation(t('error.validation_failed'));
       return;
     }
+    if (!isValidLocalDate(startDate) || (endDate && !isValidLocalDate(endDate))
+      || (endDate && endDate < startDate)) {
+      setValidation(t('error.validation_failed'));
+      return;
+    }
     const isCurrent = captureSave();
     if (!isCurrent()) return;
     setValidation(null);
@@ -310,8 +315,8 @@ function ScheduleProfileScreen({
       rule,
       doseQuantity: quantity,
       doseUnit,
-      startDate: isValidLocalDate(startDate) ? startDate : todayLocalDate(activeProfile?.timezone),
-      endDate: endDate && isValidLocalDate(endDate) ? endDate : null,
+      startDate,
+      endDate: endDate || null,
     };
 
     try {

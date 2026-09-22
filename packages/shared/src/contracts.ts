@@ -399,6 +399,7 @@ export const adjustStockSchema = z.object({
 });
 
 export const refillSchema = z.object({
+  clientRequestId: z.string().min(8).max(128).optional(),
   quantityAdded: z.number().positive().max(100000),
   unit: z.enum(DOSE_UNITS),
   pharmacy: z.string().trim().max(160).nullish(),
