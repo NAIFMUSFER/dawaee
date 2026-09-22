@@ -87,47 +87,45 @@ export const LOG_REDACTED_PATHS: readonly string[] = [
   '*.note',
 ];
 
-const PG_ERROR_FIELDS_KEPT = ['code', 'constraint', 'table', 'schema', 'routine', 'severity'] as const;
+const LOG_ERROR_TYPES = new Set([
+  'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
+  'URIError', 'EvalError', 'AggregateError', 'AbortError', 'TimeoutError',
+  'DatabaseError', 'SchemaContractError', 'LedgerMissingError',
+]);
+const LOG_SYSTEM_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+  'EPIPE', 'ENOENT', 'EACCES', 'EPERM', 'ENOSPC', 'EMFILE', 'ENFILE',
+  'EADDRINUSE', 'EHOSTUNREACH', 'ENETUNREACH', 'ECONNABORTED',
+  'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+]);
 
 /**
- * What is kept from a thrown error, and what is thrown away.
+ * Diagnostics describe an error; they never quote it. PostgreSQL messages,
+ * ordinary Error messages and even their stack headers may contain arbitrary
+ * row values or provider responses. Pattern redaction cannot recognize a
+ * patient's free text. Retain only a fixed error category and a validated
+ * SQLSTATE/system code; the caller supplies the static event/job name.
  *
- * Pino's default serializer copies every own enumerable property of the thrown
- * object. A node-postgres `DatabaseError` has a dozen, and some of them quote
- * the offending VALUE back verbatim. Measured against the real logger, the
- * line written for a duplicate registration was:
- *
- *   "detail":"Key (phone_e164)=(+966500999777) already exists."
- *
- * A patient's phone number, in plaintext, in a log that leaves the process for
- * an aggregator and is kept far longer than the request that produced it. A
- * foreign-key violation writes the same shape with a patient identifier.
- *
- * `redact` cannot reach these — they are properties of a serialized error, not
- * paths the redaction config walks — so the serializer is replaced instead.
- *
- * Kept, because an operator debugging a 500 needs them and none can carry a
- * row value: the SQLSTATE `code`, the `constraint`, `table`, `schema`,
- * `routine` and `severity`, plus the message and stack. A Postgres message
- * names the constraint that failed, never the value that failed it.
- *
- * Dropped: `detail`, `where`, `hint`, `internalQuery`, `query` and `params` —
- * each of which can quote row content. Knowing which constraint broke is
- * enough to fix it, and it is enough without naming whose row broke it.
+ * No message, stack, custom metadata, arbitrary constructor name or toString
+ * is emitted. Causes are bounded so a cyclic provider error cannot break the
+ * logger while it is handling an outage. Stored job/provider error strings
+ * still use the separate sanitizer below; this is the stdout boundary.
  */
 export function serializeLoggedError(err: unknown): Record<string, unknown> {
-  if (!(err instanceof Error)) return { type: typeof err, message: String(err) };
+  return errorDiagnostic(err, 0);
+}
 
+function errorDiagnostic(err: unknown, depth: number): Record<string, unknown> {
+  if (!(err instanceof Error)) return { type: err === null ? 'null' : typeof err };
   const out: Record<string, unknown> = {
-    type: err.constructor?.name ?? 'Error',
-    message: err.message,
-    stack: err.stack,
+    type: LOG_ERROR_TYPES.has(err.name) ? err.name : 'Error',
   };
-  const source = err as unknown as Record<string, unknown>;
-  for (const field of PG_ERROR_FIELDS_KEPT) {
-    if (source[field] !== undefined) out[field] = source[field];
+  const code = (err as Error & { code?: unknown }).code;
+  if (typeof code === 'string' && (/^[0-9A-Z]{5}$/.test(code) || LOG_SYSTEM_CODES.has(code))) {
+    out.code = code;
   }
-  if (err.cause instanceof Error) out.cause = serializeLoggedError(err.cause);
+  if (err.cause !== undefined && depth < 3) out.cause = errorDiagnostic(err.cause, depth + 1);
   return out;
 }
 
