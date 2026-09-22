@@ -45,6 +45,14 @@ afterEach(() => {
 });
 
 describe('profile routing metadata stays out of platform request URLs', () => {
+  it('keeps a history cursor containing clinical row identifiers out of platform URLs', async () => {
+    const cursor = 'opaque-history-position';
+    await client.api.get('/v1/doses', { profileId: PROFILE_ID, cursor });
+    const [url, init] = h.fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain(cursor);
+    expect(url).not.toContain('cursor');
+    expect(init.headers).toMatchObject({ 'x-dawaee-history-cursor': cursor });
+  });
   const activeLegacySurfaces = [
     { path: '/v1/today', query: { profileId: PROFILE_ID } },
     { path: '/v1/medications', query: { profileId: PROFILE_ID, status: 'active' } },

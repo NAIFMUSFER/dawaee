@@ -174,15 +174,26 @@ function HistoryProfileScreen() {
       // exactly the doses being listed. The status filter deliberately does not:
       // a month grid showing only missed days would misrepresent the month.
       const [doseRes, medRes] = await Promise.all([
-        api.get<{ doses: DoseView[] }>('/v1/doses', {
-          profileId: activeProfile.id,
-          from: range.from,
-          to: range.to,
-          medicationId: medicationId ?? undefined,
-        }),
+        (async () => {
+          const all: DoseView[] = [];
+          const seen = new Set<string>();
+          let cursor: string | undefined;
+          do {
+            const page = await api.get<{ doses: DoseView[]; nextCursor?: string | null }>('/v1/doses', {
+              profileId: activeProfile.id, from: range.from, to: range.to,
+              medicationId: medicationId ?? undefined, cursor,
+            });
+            if (!isCurrent()) return null;
+            all.push(...page.doses);
+            cursor = page.nextCursor ?? undefined;
+            if (cursor && seen.has(cursor)) throw new Error(t('error.internal_error'));
+            if (cursor) seen.add(cursor);
+          } while (cursor);
+          return { doses: [...new Map(all.map(dose => [dose.id, dose])).values()] };
+        })(),
         api.get<{ medications: MedicationView[] }>('/v1/medications', { profileId: activeProfile.id }),
       ]);
-      if (!isCurrent()) return;
+      if (!isCurrent() || !doseRes) return;
       setDoseResult({ scope: queryScope, doses: doseRes.doses });
       setMedications(medRes.medications);
       setOffline(false);

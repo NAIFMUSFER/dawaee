@@ -450,6 +450,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const profileIdValue = query?.profileId;
   const medicationIdValue = query?.medicationId;
   const objectKeyValue = query?.objectKey;
+  const historyCursor = !DEMO_MODE && privatePath.path === '/v1/doses' && typeof query?.cursor === 'string'
+    ? query.cursor : null;
   const routedProfileId = privatePath.profileId ?? (
     profileIdValue !== undefined && profileIdValue !== null && profileIdValue !== ''
       ? String(profileIdValue)
@@ -484,6 +486,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     // its established in-memory query contract.
     if (!DEMO_MODE && (k === 'profileId' || k === 'medicationId')) continue;
     if (routedObjectKey && k === 'objectKey') continue;
+    if (historyCursor && k === 'cursor') continue;
     if (!DEMO_MODE && noteDoseId && k === 'doseOccurrenceId') continue;
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
@@ -524,6 +527,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
           ...(routedDoseId ? { [DOSE_ID_HEADER]: routedDoseId } : {}),
           ...(routedDeviceId ? { [DEVICE_ID_HEADER]: routedDeviceId } : {}),
           ...(routedObjectKey ? { [OBJECT_KEY_HEADER]: routedObjectKey } : {}),
+          ...(historyCursor ? { 'x-dawaee-history-cursor': historyCursor } : {}),
           ...(anonymous || !sentAccessToken ? {} : { authorization: `Bearer ${sentAccessToken}` }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
