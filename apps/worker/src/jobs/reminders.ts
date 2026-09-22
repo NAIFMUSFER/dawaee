@@ -156,6 +156,7 @@ async function processDoses(client: PoolClient, rows: OpenDoseRow[], now: Date):
       dose,
       snoozeEnqueued,
       decision: evaluateEscalation({
+        deferQuietHours: true,
         occurrence: {
           id: dose.id,
           status: dose.status as never,

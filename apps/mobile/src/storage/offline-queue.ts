@@ -290,7 +290,7 @@ export interface CachedSchedule {
     strengthUnit?: DoseView['medication']['strengthUnit'];
     instructions?: string | null; medicationNotes?: string | null;
     notes?: DoseView['notes'];
-    snoozedUntil?: string | null; confirmedAt?: string | null;
+    snoozedUntil?: string | null; confirmedAt?: string | null; confirmedReceivedAt?: string | null;
     thresholds?: DoseView['thresholds'];
   }>;
 }

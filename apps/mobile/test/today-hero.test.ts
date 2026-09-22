@@ -50,8 +50,8 @@ describe('the hero card on Today', () => {
 });
 
 describe('when undo is offered', () => {
-  const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
-  const now = new Date();
+  const now = new Date('2026-09-05T12:00:00Z');
+  const at = (minutesAgo: number) => new Date(now.getTime() - minutesAgo * 60_000).toISOString();
 
   it('is offered right after a confirmation', () => {
     expect(canUndo({ status: 'taken', confirmedAt: at(0) }, now)).toBe(true);

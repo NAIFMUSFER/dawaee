@@ -21,6 +21,7 @@ export interface DoseRow {
   snoozed_until: Date | null;
   notified_at: Date | null;
   confirmed_at: Date | null;
+  confirmed_received_at: Date | null;
   snooze_count: number;
   dose_quantity: string;
   dose_unit: string;
@@ -31,7 +32,7 @@ export interface DoseRow {
 
 const DOSE_SELECT = `
   SELECT d.id, d.medication_id, d.patient_profile_id, d.scheduled_at, d.status, d.snoozed_until,
-         d.notified_at, d.confirmed_at, d.snooze_count, d.dose_quantity, d.dose_unit::text AS dose_unit,
+         d.notified_at, d.confirmed_at, d.confirmed_received_at, d.snooze_count, d.dose_quantity, d.dose_unit::text AS dose_unit,
          d.client_event_id, s.late_after_minutes, s.missed_after_minutes
     FROM dose_occurrences d
     JOIN medication_schedules s ON s.id = d.schedule_id
@@ -170,10 +171,10 @@ export async function confirmDose(tx: PoolClient, input: ConfirmDoseInput): Prom
     `UPDATE dose_occurrences
         SET status = $2::dose_status, confirmed_at = $3, confirmed_by_user_id = $4,
             confirmation_method = $5::confirmation_method, confirmation_device_id = $6,
-            client_event_id = $7, snoozed_until = NULL,
+            client_event_id = $7, confirmed_received_at = $8, snoozed_until = NULL,
             escalation_completed_at = COALESCE(escalation_completed_at, now())
       WHERE id = $1`,
-    [dose.id, result.status, result.confirmedAt, input.userId, input.method, input.deviceId ?? null, input.clientEventId],
+    [dose.id, result.status, result.confirmedAt, input.userId, input.method, input.deviceId ?? null, input.clientEventId, input.now],
   );
 
   await tx.query(
@@ -329,10 +330,10 @@ export async function skipDoseAction(
   await tx.query(
     `UPDATE dose_occurrences
         SET status = 'skipped', confirmed_at = $2, confirmed_by_user_id = $3,
-            client_event_id = $4, snoozed_until = NULL,
+            client_event_id = $4, confirmed_received_at = $5, snoozed_until = NULL,
             escalation_completed_at = COALESCE(escalation_completed_at, now())
       WHERE id = $1`,
-    [dose.id, actionAt, input.userId, input.clientEventId],
+    [dose.id, actionAt, input.userId, input.clientEventId, input.now],
   );
   await tx.query(
     `INSERT INTO dose_events
@@ -367,7 +368,9 @@ export async function undoDose(
   if (!['taken', 'taken_late', 'skipped'].includes(dose.status)) {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'Only a recorded dose can be undone');
   }
-  if (!dose.confirmed_at || input.now.getTime() - dose.confirmed_at.getTime() > 10 * 60_000) {
+  const acceptedAt = dose.confirmed_received_at ?? dose.confirmed_at;
+  const elapsed = acceptedAt ? input.now.getTime() - acceptedAt.getTime() : NaN;
+  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 10 * 60_000) {
     throw new AppError(ERROR_CODES.DOSE_NOT_ACTIONABLE, 422, 'The undo window for this dose has passed');
   }
 
@@ -387,7 +390,7 @@ export async function undoDose(
 
   await tx.query(
     `UPDATE dose_occurrences
-        SET status = 'upcoming', confirmed_at = NULL, confirmed_by_user_id = NULL,
+        SET status = 'upcoming', confirmed_at = NULL, confirmed_received_at = NULL, confirmed_by_user_id = NULL,
             confirmation_method = NULL, client_event_id = NULL, snoozed_until = NULL
       WHERE id = $1`,
     [dose.id],
