@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { AppError, ERROR_CODES, adjustStockSchema, refillSchema } from '@dawaee/shared';
 import { applyRefill, daysOfSupply, forecastStock } from '@dawaee/core';
@@ -5,6 +6,7 @@ import { requireUuid } from '../lib/params.js';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { authenticate, currentUser } from '../middleware/context.js';
 import { profileIdForMedication, requireProfileAccess } from '../services/access-service.js';
+import { lockMedicationLifecycle } from '../services/materializer.js';
 import { recordAudit } from '../services/audit-service.js';
 import { now as serverNow } from '../lib/clock.js';
 
@@ -166,6 +168,24 @@ export function registerStockRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
       const access = await requireProfileAccess(tx, userId, profileId, 'update_stock');
+      // Also serializes two refills when no medication_stock row exists yet.
+      await lockMedicationLifecycle(tx, medicationId);
+      const requestHash = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+      if (body.clientRequestId) {
+        const { rows: prior } = await tx.query(
+          `SELECT id, request_hash, balance_after, unit::text AS unit, days_of_supply
+             FROM refill_events
+            WHERE medication_id = $1 AND created_by = $2 AND client_request_id = $3`,
+          [medicationId, userId, body.clientRequestId],
+        );
+        if (prior[0]) {
+          if (prior[0].request_hash !== requestHash) {
+            throw AppError.conflict(ERROR_CODES.VALIDATION_FAILED, 'Request identity was already used for different input');
+          }
+          return { refillId: prior[0].id, remainingQuantity: Number(prior[0].balance_after),
+            unit: prior[0].unit, daysOfSupply: prior[0].days_of_supply === null ? null : Number(prior[0].days_of_supply) };
+        }
+      }
 
       const { rows: current } = await tx.query<{ remaining_quantity: string | null; unit: string }>(
         `SELECT remaining_quantity, unit::text AS unit FROM medication_stock WHERE medication_id = $1 FOR UPDATE`,
@@ -193,14 +213,18 @@ export function registerStockRoutes(app: FastifyInstance): void {
         );
       }
 
+      const sources = await consumptionSources(tx, medicationId);
+      const supply = daysOfSupply(after, sources);
       const { rows: refill } = await tx.query(
         `INSERT INTO refill_events
-           (medication_id, patient_profile_id, quantity_added, unit, pharmacy, cost, note, refilled_at, created_by)
-         VALUES ($1,$2,$3,$4::dose_unit,$5,$6,$7,$8,$9)
+           (medication_id, patient_profile_id, quantity_added, unit, pharmacy, cost, note, refilled_at, created_by,
+            client_request_id, request_hash, balance_after, days_of_supply)
+         VALUES ($1,$2,$3,$4::dose_unit,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING id, refilled_at`,
         [
           medicationId, profileId, body.quantityAdded, body.unit, body.pharmacy ?? null,
           body.cost ?? null, body.note ?? null, body.refilledAt ?? serverNow(), userId,
+          body.clientRequestId ?? null, body.clientRequestId ? requestHash : null, after, supply,
         ],
       );
       await tx.query(
@@ -216,12 +240,11 @@ export function registerStockRoutes(app: FastifyInstance): void {
         previousValue: { remainingQuantity: before }, newValue: { remainingQuantity: after, quantityAdded: body.quantityAdded },
       });
 
-      const sources = await consumptionSources(tx, medicationId);
       return {
         refillId: refill[0]!.id,
         remainingQuantity: after,
         unit: body.unit,
-        daysOfSupply: daysOfSupply(after, sources),
+        daysOfSupply: supply,
       };
     });
   });
