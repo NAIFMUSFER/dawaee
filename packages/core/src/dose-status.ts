@@ -208,12 +208,14 @@ export function skip(
 export const UNDO_WINDOW_MINUTES = 10;
 
 export function canUndo(
-  occ: Pick<DoseOccurrence, 'status' | 'confirmedAt'>,
+  occ: Pick<DoseOccurrence, 'status' | 'confirmedAt' | 'confirmedReceivedAt'>,
   now: Date,
 ): boolean {
   if (!occ.confirmedAt) return false;
   if (!['taken', 'taken_late', 'skipped'].includes(occ.status)) return false;
-  return now.getTime() - new Date(occ.confirmedAt).getTime() <= minutesToMs(UNDO_WINDOW_MINUTES);
+  const acceptedAt = occ.confirmedReceivedAt ?? occ.confirmedAt;
+  const elapsed = now.getTime() - new Date(acceptedAt).getTime();
+  return elapsed >= 0 && elapsed <= minutesToMs(UNDO_WINDOW_MINUTES);
 }
 
 /** Doses that a reminder job should act on right now. */

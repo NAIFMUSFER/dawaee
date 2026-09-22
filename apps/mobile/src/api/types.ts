@@ -35,6 +35,8 @@ export interface DoseView {
   snoozeCount: number;
   thresholds?: { lateAfterMinutes: number; missedAfterMinutes: number };
   confirmedAt: string | null;
+  /** Server acceptance time; independent of the clinical action time. */
+  confirmedReceivedAt?: string | null;
   escalationStage: number;
   notes?: Array<{ id: string; text: string | null; tags: string[]; recordedAt: string }>;
   medication: {

@@ -48,6 +48,7 @@ function cachedDoseToView(d: CachedSchedule['doses'][number], timezone: string):
     snoozedUntil: d.snoozedUntil ?? null,
     snoozeCount: 0,
     confirmedAt: d.confirmedAt ?? null,
+    confirmedReceivedAt: d.confirmedReceivedAt ?? null,
     notes: d.notes ?? [],
     thresholds: d.thresholds,
     escalationStage: 0,

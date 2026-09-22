@@ -209,3 +209,13 @@ describe('defaults', () => {
     expect(isRecorded('skipped')).toBe(true);
   });
 });
+
+
+describe('undo acceptance clock', () => {
+  it('gives a synchronized old take ten minutes from server acceptance', () => {
+    const dose = { status: 'taken' as const, confirmedAt: '2026-09-02T17:00:00Z', confirmedReceivedAt: '2026-09-02T19:00:00Z' };
+    expect(canUndo(dose, new Date('2026-09-02T19:10:00Z'))).toBe(true);
+    expect(canUndo(dose, new Date('2026-09-02T19:10:00.001Z'))).toBe(false);
+    expect(canUndo(dose, new Date('2026-09-02T18:59:59Z'))).toBe(false);
+  });
+});
