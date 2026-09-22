@@ -264,14 +264,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     user: { id: string; displayName: string; phoneE164: string | null; emailVerified?: boolean; emailVerificationRequired?: boolean; deletionScheduledFor?: string | null },
     preferences: Preferences,
     selfProfile: ProfileSummary | null,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const work = offlineBootstrapWrites.current
       .catch(() => undefined)
       .then(async () => {
-        await writeOfflineBootstrap(user.id, { version: 1, user, preferences, selfProfile });
+        return await writeOfflineBootstrap(user.id, { version: 1, user, preferences, selfProfile });
       })
-      .catch(() => undefined);
-    offlineBootstrapWrites.current = work;
+      .catch(() => false);
+    offlineBootstrapWrites.current = work.then(() => undefined);
     return work;
   }, []);
 
@@ -720,6 +720,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // enabled them because the text was too small to read.
       const before = stateRef.current.preferences;
       const next = { ...before, ...patch };
+      const lockChanged = patch.appLockEnabled !== undefined || patch.appLockAreas !== undefined;
+      let localPersistence: Promise<boolean> | null = null;
       // Event handlers can run twice before React renders. Publish the latest
       // preference intent to other handlers now, not only on the next render.
       stateRef.current = { ...stateRef.current, preferences: next };
@@ -732,7 +734,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const snapshotUser = stateRef.current.user;
       if (snapshotUser && isSignedIn() && !signOutInFlight.current) {
         const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
-        void persistOfflineBootstrap(snapshotUser, next, ownedSelfProfile);
+        localPersistence = persistOfflineBootstrap(snapshotUser, next, ownedSelfProfile);
       }
 
       /**
@@ -840,7 +842,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const savedUser = stateRef.current.user;
           if (savedUser && !signOutInFlight.current) {
             const ownedSelfProfile = stateRef.current.profiles.find((p) => p.isSelf && p.role === 'owner') ?? null;
-            void persistOfflineBootstrap(savedUser, savedPreferences, ownedSelfProfile);
+            localPersistence = persistOfflineBootstrap(savedUser, savedPreferences, ownedSelfProfile);
           }
         } catch (err) {
           // A response/error from an older preference intent or authenticated
@@ -857,9 +859,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // the whole app into its cached-data mode. The encrypted privacy
           // marker, when present, deliberately remains pending on every failure.
           if (err instanceof NetworkError) setState((s) => ({ ...s, offline: true }));
+          else if (lockChanged) throw err;
         }
       };
       await enqueuePreferenceServerWork(generation, save);
+      // Keep current-process protection, but never promise that a lock choice
+      // will survive restart when encrypted local storage rejected the write.
+      if (lockChanged && localPersistence) {
+        const persisted = await localPersistence;
+        if (!persisted && mounted.current && generation === sessionGeneration.current
+          && isSignedIn() && !signOutInFlight.current) {
+          throw new Error('APP_LOCK_PERSISTENCE_FAILED');
+        }
+      }
       if (localePersistence) await localePersistence;
     },
     syncNow,

@@ -72,7 +72,7 @@ function makeProvider(file, notificationsFile, options = {}) {
     // authenticated account and keep these lifecycle scenarios focused.
     '../hooks/useSelfReminderRefresh.js': { useSelfReminderRefresh: () => undefined },
     '../api/restored-session-owner.js': { getRestoredSessionUserId: async () => seed.user?.id ?? null },
-    '../storage/offline-queue.js': { subscribeQueueChanges: () => () => undefined,
+    '../storage/offline-queue.js': { writeOfflineBootstrap: options.writeOfflineBootstrap || (async () => true), subscribeQueueChanges: () => () => undefined,
       invalidateCachedProfile: async () => undefined, restoreCachedProfiles: () => undefined, setCacheOwner: (id) => owners.push(id), purgeLocalCaches: async () => {},
       queueSize: async () => 0, flushQueue: async () => ({ offline: false }) },
     '../storage/notification-privacy-intent.js': {

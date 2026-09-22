@@ -80,10 +80,22 @@ export default function AppLockScreen() {
 
   useEffect(() => { void check(); }, [check]);
 
+  const saveLockPreferences = async (patch: Parameters<typeof updatePreferences>[0]) => {
+    setVerifyError(null);
+    setVerifying(true);
+    try {
+      await updatePreferences(patch);
+    } catch {
+      setVerifyError(t('applock.saveFailed'));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   const toggleLock = async (next: boolean) => {
     setVerifyError(null);
     if (!next) {
-      await updatePreferences({ appLockEnabled: false });
+      await saveLockPreferences({ appLockEnabled: false });
       return;
     }
     const auth = loadLocalAuthentication();
@@ -101,7 +113,7 @@ export default function AppLockScreen() {
         setVerifyError(t('applock.testFailed'));
         return;
       }
-      await updatePreferences({ appLockEnabled: true });
+      await saveLockPreferences({ appLockEnabled: true });
     } catch {
       setVerifyError(t('applock.testFailed'));
     } finally {
@@ -113,7 +125,7 @@ export default function AppLockScreen() {
     const current = preferences.appLockAreas.filter((a): a is LockArea =>
       (LOCK_AREAS as readonly string[]).includes(a));
     const next = enabled ? [...new Set([...current, area])] : current.filter((a) => a !== area);
-    void updatePreferences({ appLockAreas: next });
+    void saveLockPreferences({ appLockAreas: next });
   };
 
   const areaSelected = (area: LockArea) => preferences.appLockAreas.includes(area);
@@ -172,7 +184,7 @@ export default function AppLockScreen() {
                 <Txt variant="bodyLarge" style={{ flex: 1 }}>{t(AREA_LABEL_KEYS[area])}</Txt>
                 <Switch
                   value={areaSelected(area)}
-                  disabled={!preferences.appLockEnabled}
+                  disabled={!preferences.appLockEnabled || verifying}
                   onValueChange={(next) => toggleArea(area, next)}
                   accessibilityRole="switch"
                   accessibilityLabel={t(AREA_LABEL_KEYS[area])}
