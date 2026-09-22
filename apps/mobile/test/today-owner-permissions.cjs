@@ -33,6 +33,32 @@ function scenarios(file, hook) {
     const { h, routes } = await load(file, hook, profile, empty);
     try { await body(h, routes); } finally { h.unmount(); }
   } });
+  for (const action of ['taken', 'skip', 'snooze']) {
+    for (const changed of [false, true]) {
+      add(`${action} offline fallback ${changed ? 'rejects a request from a previous account' : 'retains the current account action'}`, owner, false, async h => {
+        const card = h.find('DoseCard', p => p.prominent);
+        if (action === 'snooze') {
+          card.onSnooze(); await h.flush();
+          h.find('SnoozeSheet').onSelect(5);
+        } else card[action === 'taken' ? 'onTaken' : 'onSkip']();
+        await h.flush();
+        const posts = h.batch().filter(r => r.method === 'POST');
+        assert.equal(posts.length, 1);
+        if (changed) {
+          h.app.user = { id: 'new-account', displayName: 'New account' };
+          h.switchProfile('NEW');
+          h.answer(h.batch().filter(r => r.method === 'GET'), 'NEW');
+          await h.flush();
+        }
+        const offlineBefore = h.offlineWrites.length;
+        h.fail(posts, new NetworkError('delayed connection failure'));
+        await h.flush();
+        assert.equal(h.queued.length, changed ? 0 : 1, 'an old account action must never enter the new account queue');
+        if (changed) assert.equal(h.offlineWrites.length, offlineBefore);
+        else assert.equal(h.queued[0].doseOccurrenceId, 'dose-DEPENDENT');
+      });
+    }
+  }
   for (const action of actions) add(`an owned dependent exposes ${action} despite isSelf=false and permissions=null`, owner, false, async h => {
     const card = h.find('DoseCard', p => p.prominent);
     assert.ok(card, 'the due dose positive control must be rendered');

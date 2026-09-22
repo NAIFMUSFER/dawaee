@@ -307,6 +307,9 @@ function TodayProfileScreen() {
         }
         if (isCurrent()) await load();
       } catch (err) {
+        // enqueue captures the current storage owner. Never hand an old
+        // screen's action to a replacement account after a delayed failure.
+        if (!isCurrent()) return;
         if (err instanceof NetworkError) {
           try {
             await enqueue(
@@ -315,8 +318,10 @@ function TodayProfileScreen() {
                 : { type: 'skipped', doseOccurrenceId: dose.id, at, clientEventId },
             );
             if (isCurrent()) {
+              const queue = await readQueue();
+              if (!isCurrent()) return;
               setOffline(true);
-              setQueuedActions(await readQueue());
+              setQueuedActions(queue);
             }
           } catch {
             if (isCurrent()) setActionError(t('today.actionSaveFailed'));
@@ -351,10 +356,16 @@ function TodayProfileScreen() {
       await api.post('/v1/dose/action', { doseId: dose.id, action: 'snooze', minutes, clientEventId, deviceId, actionAt: at });
       if (isCurrent()) await load();
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof NetworkError) {
         try {
           await enqueue({ type: 'snoozed', doseOccurrenceId: dose.id, at, clientEventId, minutes });
-          if (isCurrent()) { setOffline(true); setQueuedActions(await readQueue()); }
+          if (isCurrent()) {
+            const queue = await readQueue();
+            if (!isCurrent()) return;
+            setOffline(true);
+            setQueuedActions(queue);
+          }
         } catch {
           if (isCurrent()) setActionError(t('today.actionSaveFailed'));
         }
