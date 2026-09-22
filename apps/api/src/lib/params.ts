@@ -68,6 +68,18 @@ export function requireDate(value: unknown, field: string): string {
       { path: field, message: 'expected YYYY-MM-DD' },
     ]);
   }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maximumDay = daysInMonth[month - 1];
+  if (year === 0 || maximumDay === undefined || day < 1 || day > maximumDay) {
+    throw AppError.badRequest(ERROR_CODES.VALIDATION_FAILED, `${field} must be a real date in YYYY-MM-DD form`, [
+      { path: field, message: 'expected an existing Gregorian calendar date' },
+    ]);
+  }
   return value;
 }
 
