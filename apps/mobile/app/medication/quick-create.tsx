@@ -70,6 +70,7 @@ function QuickCreateMedicationProfileScreen() {
   const [form, setForm] = useState<MedicationForm>(prefill.form ?? 'tablet');
   const [doseUnit, setDoseUnit] = useState<DoseUnit>(FORM_DOSE_UNITS[prefill.form ?? 'tablet'][0]!);
   const [unitNeedsReview, setUnitNeedsReview] = useState(false);
+  const [stockNeedsReview, setStockNeedsReview] = useState(false);
   const saveInFlight = useRef(false);
   const createIntent = useRef<{ input: string; id: string } | null>(null);
   const [times, setTimes] = useState<string[]>(['08:00']);
@@ -114,7 +115,7 @@ function QuickCreateMedicationProfileScreen() {
       return;
     }
     const quantity = parseMedicationNumber(doseQuantity);
-    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > MAX_DOSE_QUANTITY || unitNeedsReview || weekdays.length === 0 || times.length === 0 || times.length > MAX_DAILY_TIMES || times.some((time) => !isValidTime(time))) {
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > MAX_DOSE_QUANTITY || unitNeedsReview || stockNeedsReview || weekdays.length === 0 || times.length === 0 || times.length > MAX_DAILY_TIMES || times.some((time) => !isValidTime(time))) {
       setError(t('error.validation_failed'));
       return;
     }
@@ -276,7 +277,16 @@ function QuickCreateMedicationProfileScreen() {
                 keyboardType="decimal-pad"
               />
               <Txt variant="caption">{t('medication.amountShortcuts')}</Txt>
-              <DoseUnitPicker form={form} value={doseUnit} onChange={(unit) => { setDoseUnit(unit); setUnitNeedsReview(false); }} />
+              <Txt variant="caption">{t('medication.unitQuantityReview')}</Txt>
+              <DoseUnitPicker form={form} value={doseUnit} onChange={(unit) => {
+                if (unit !== doseUnit) {
+                  setDoseQuantity('');
+                  if (remainingQuantity.trim() !== '') setStockNeedsReview(true);
+                  setRemainingQuantity('');
+                }
+                setDoseUnit(unit);
+                setUnitNeedsReview(false);
+              }} />
               {unitNeedsReview ? <Banner tone="warning" title={t('medication.reviewUnit')}
                 action={<Button tone="secondary" label={t('medication.keepUnit')} onPress={() => setUnitNeedsReview(false)} />} /> : null}
               <Txt variant="caption" color={theme.colors.ink500}>
@@ -328,7 +338,8 @@ function QuickCreateMedicationProfileScreen() {
               <Field
                 label={`${t('stock.currentQuantity')} (${t(`unit.${doseUnit}` as MessageKey)})`}
                 value={remainingQuantity}
-                onChangeText={setRemainingQuantity}
+                onChangeText={(value) => { setRemainingQuantity(value); setStockNeedsReview(false); }}
+                error={stockNeedsReview ? t('medication.stockQuantityReview') : null}
                 keyboardType="decimal-pad"
                 placeholder={t('stock.enterNewQuantity')}
                 hint={t('common.optional')}

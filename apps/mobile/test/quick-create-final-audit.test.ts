@@ -70,8 +70,35 @@ describe('reported medication entry defects', () => {
       h.find('Picker', (p: any) => p.label === 'medication.form').onChange('syrup'); await h.flush();
       expect(h.find('DoseUnitPicker').value).toBe('tablet');
       save(h); await h.flush(); expect(h.requests).toHaveLength(0);
-      h.find('DoseUnitPicker').onChange('ml'); await h.flush(); save(h); await h.flush();
+      h.find('DoseUnitPicker').onChange('ml'); await h.flush();
+      expect(field(h, quantityLabel).value).toBe('');
+      save(h); await h.flush(); expect(h.requests).toHaveLength(0);
+      field(h, quantityLabel).onChangeText('6'); await h.flush(); save(h); await h.flush();
       expect(h.requests[0].payload).toMatchObject({ form: 'syrup', schedule: { doseQuantity: 6, doseUnit: 'ml' } });
     } finally { h.unmount(); }
   });
+  it('clears dose and stock only when the unit changes, and never restores old quantities on switching back', async () => {
+    const h = setup();
+    try {
+      field(h, 'medication.name').onChangeText('Synthetic quantity review');
+      field(h, quantityLabel).onChangeText('6');
+      field(h, 'stock.currentQuantity (unit.tablet)').onChangeText('60');
+      await h.flush();
+      h.find('DoseUnitPicker').onChange('tablet'); await h.flush();
+      expect(field(h, quantityLabel).value).toBe('6');
+      expect(field(h, 'stock.currentQuantity (unit.tablet)').value).toBe('60');
+      h.find('DoseUnitPicker').onChange('ml'); await h.flush();
+      expect(field(h, quantityLabel).value).toBe('');
+      expect(field(h, 'stock.currentQuantity (unit.ml)').value).toBe('');
+      save(h); await h.flush(); expect(h.requests).toHaveLength(0);
+      h.find('DoseUnitPicker').onChange('tablet'); await h.flush();
+      expect(field(h, quantityLabel).value).toBe('');
+      field(h, quantityLabel).onChangeText('2'); await h.flush();
+      save(h); await h.flush(); expect(h.requests).toHaveLength(0);
+      field(h, 'stock.currentQuantity (unit.tablet)').onChangeText('20');
+      await h.flush(); save(h); await h.flush();
+      expect(h.requests[0].payload).toMatchObject({ schedule: { doseQuantity: 2, doseUnit: 'tablet' }, stock: { initialQuantity: 20, unit: 'tablet' } });
+    } finally { h.unmount(); }
+  });
+
 });
