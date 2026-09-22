@@ -35,6 +35,16 @@ export { SLOT as LOW_STOCK_SLOT, LEGACY_PREFIX as LOW_STOCK_LEGACY_PREFIX };
 
 type SnoozeMap = Record<string, string>;
 
+// Serialize the whole read/modify/write transaction, including migrations and
+// purge. Locking only the final write loses concurrent edits. One lane also
+// protects the old unscoped legacy keys shared by account migrations.
+let pending: Promise<void> = Promise.resolve();
+function serialized<T>(operation: () => Promise<T>): Promise<T> {
+  const result = pending.then(operation);
+  pending = result.then(() => undefined, () => undefined);
+  return result;
+}
+
 function parse(raw: string | null): SnoozeMap {
   if (!raw) return {};
   try {
@@ -134,7 +144,11 @@ async function migrateLegacy(userId: string, current: SnoozeMap): Promise<Snooze
  * the low-stock warning SHOWS — which is the safe direction to fail for a
  * patient about to run out of a medication.
  */
-export async function readSnoozes(userId: string | null, today: string): Promise<SnoozeMap> {
+export function readSnoozes(userId: string | null, today: string): Promise<SnoozeMap> {
+  return serialized(() => readSnoozesUnlocked(userId, today));
+}
+
+async function readSnoozesUnlocked(userId: string | null, today: string): Promise<SnoozeMap> {
   if (!userId) return {};
   let stored: SnoozeMap;
   try {
@@ -164,9 +178,11 @@ export async function setSnooze(
   userId: string | null, medicationId: string, until: string, today: string,
 ): Promise<void> {
   if (!userId) return;
-  const map = await readSnoozes(userId, today);
-  map[medicationId] = until;
-  await writeSlot(SLOT, userId, JSON.stringify(map));
+  await serialized(async () => {
+    const map = await readSnoozesUnlocked(userId, today);
+    map[medicationId] = until;
+    await writeSlot(SLOT, userId, JSON.stringify(map));
+  });
 }
 
 /** Forget one medication's snooze — what a refill does. */
@@ -174,10 +190,12 @@ export async function clearSnooze(
   userId: string | null, medicationId: string, today: string,
 ): Promise<void> {
   if (!userId) return;
-  const map = await readSnoozes(userId, today);
-  if (map[medicationId] === undefined) return;
-  delete map[medicationId];
-  await writeSlot(SLOT, userId, JSON.stringify(map));
+  await serialized(async () => {
+    const map = await readSnoozesUnlocked(userId, today);
+    if (map[medicationId] === undefined) return;
+    delete map[medicationId];
+    await writeSlot(SLOT, userId, JSON.stringify(map));
+  });
 }
 
 /**
@@ -187,7 +205,11 @@ export async function clearSnooze(
  * because they were never account-scoped in the first place — that was part of
  * the defect — so the only safe thing to do with one at sign-out is delete it.
  */
-export async function purgeSnoozes(userId: string | null): Promise<void> {
+export function purgeSnoozes(userId: string | null): Promise<void> {
+  return serialized(() => purgeSnoozesUnlocked(userId));
+}
+
+async function purgeSnoozesUnlocked(userId: string | null): Promise<void> {
   if (userId) await clearSlot(SLOT, userId);
   try {
     const all = await AsyncStorage.getAllKeys();

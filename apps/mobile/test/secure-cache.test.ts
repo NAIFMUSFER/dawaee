@@ -739,6 +739,45 @@ describe('the low-stock snooze no longer names medications in the clear', () => 
     });
   });
 
+  it('retains both concurrent snoozes in the encrypted map', async () => {
+    await Promise.all([
+      snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY),
+      snooze.setSnooze(ALICE, MED_B, '2026-09-08', TODAY),
+    ]);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({
+      [MED_A]: '2026-09-06', [MED_B]: '2026-09-08',
+    });
+  });
+
+  it('does not resurrect a refilled medication while another snooze is saved', async () => {
+    await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
+    await Promise.all([
+      snooze.clearSnooze(ALICE, MED_A, TODAY),
+      snooze.setSnooze(ALICE, MED_B, '2026-09-08', TODAY),
+    ]);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({ [MED_B]: '2026-09-08' });
+  });
+
+  it('purges a snooze that was already being saved when logout began', async () => {
+    await Promise.all([
+      snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY),
+      snooze.purgeSnoozes(ALICE),
+    ]);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({});
+  });
+
+  it('retains a concurrent edit while a read migrates legacy snoozes', async () => {
+    async_.set(`${LEGACY}${MED_A}`, '2026-09-06');
+    await Promise.all([
+      snooze.readSnoozes(ALICE, TODAY),
+      snooze.setSnooze(ALICE, MED_B, '2026-09-08', TODAY),
+    ]);
+    expect(await snooze.readSnoozes(ALICE, TODAY)).toEqual({
+      [MED_A]: '2026-09-06', [MED_B]: '2026-09-08',
+    });
+    expect(async_.has(`${LEGACY}${MED_A}`)).toBe(false);
+  });
+
   it('expires a snooze once its date has passed', async () => {
     await snooze.setSnooze(ALICE, MED_A, '2026-09-06', TODAY);
     expect(await snooze.readSnooze(ALICE, MED_A, '2026-09-06')).toBeNull();
