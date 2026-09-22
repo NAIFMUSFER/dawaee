@@ -262,3 +262,15 @@ describe('defaults', () => {
     expect(describePolicy({ enabled: false, stages: DEFAULT_ESCALATION_STAGES })).toHaveLength(0);
   });
 });
+
+
+it('keeps opted-in quiet recipients for durable worker deferral', () => {
+  const c = caregiver('quiet', 1);
+  c.rules[0]!.quietHoursStart = '20:00';
+  c.rules[0]!.quietHoursEnd = '07:00';
+  const d = evaluateEscalation(input({ now: at('20:30'), caregivers: [c], deferQuietHours: true,
+    policy: { enabled: true, stages: STAGES, quietHoursStart: '20:00', quietHoursEnd: '07:00' } }));
+  expect(d.recipients.map(r => r.relationshipId)).toEqual(['quiet']);
+  c.rules[0]!.enabled = false;
+  expect(evaluateEscalation(input({ now: at('20:30'), caregivers: [c], deferQuietHours: true })).recipients).toEqual([]);
+});

@@ -80,6 +80,8 @@ export interface EvaluateEscalationInput {
   /** Streak used by the `consecutive_missed` caregiver rule. */
   consecutiveMissedCount: number;
   now: Date;
+  /** Worker outbox defers delivery durably instead of dropping quiet recipients. */
+  deferQuietHours?: boolean;
 }
 
 export function evaluateEscalation(input: EvaluateEscalationInput): EscalationDecision {
@@ -123,7 +125,7 @@ export function evaluateEscalation(input: EvaluateEscalationInput): EscalationDe
   // Quiet hours never silence the patient's own reminder — only outward
   // escalation to other people.
   if (
-    stage.target !== 'patient' &&
+    !input.deferQuietHours && stage.target !== 'patient' &&
     isWithinQuietHours(patientLocalTime, policy.quietHoursStart, policy.quietHoursEnd)
   ) {
     return none('quiet_hours');
@@ -179,7 +181,7 @@ function resolveRecipients(
   const out: EscalationRecipient[] = [];
   for (const c of selected) {
     const channels = stage.channels.filter((channel) =>
-      channelAllowed(channel, c, input.consecutiveMissedCount, patientLocalTime),
+      channelAllowed(channel, c, input.consecutiveMissedCount, patientLocalTime, input.deferQuietHours),
     );
     if (channels.length === 0) continue;
     out.push({
@@ -200,6 +202,7 @@ function channelAllowed(
   caregiver: CaregiverContext,
   consecutiveMissedCount: number,
   patientLocalTime: LocalTime,
+  deferQuietHours = false,
 ): boolean {
   // `local` and `in_app` are device-side channels. The server dispatcher has no
   // way to cause either one on a caregiver's phone; treating them as successful
@@ -212,7 +215,7 @@ function channelAllowed(
   if (!rule || !rule.enabled) return false;
   if (rule.mode === 'never' || rule.mode === 'daily_summary' || rule.mode === 'weekly_summary') return false;
   if (rule.mode === 'consecutive_missed' && consecutiveMissedCount + 1 < rule.consecutiveMissedThreshold) return false;
-  if (isWithinQuietHours(patientLocalTime, rule.quietHoursStart, rule.quietHoursEnd)) return false;
+  if (!deferQuietHours && isWithinQuietHours(patientLocalTime, rule.quietHoursStart, rule.quietHoursEnd)) return false;
   return true;
 }
 
