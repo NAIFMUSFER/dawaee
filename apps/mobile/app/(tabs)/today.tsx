@@ -12,7 +12,7 @@ import { useI18n } from '@/i18n';
 import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { profileScopeKey, useRequestScope } from '@/hooks/useRequestScope';
-import { api, ApiError, NetworkError } from '@/api/client';
+import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule, QueuedAction } from '@/storage/offline-queue';
 import { applyQueuedToDoses, cacheDose, cacheSchedule, enqueue, newClientEventId, readCachedSchedule, readQueue, subscribeQueueChanges } from '@/storage/offline-queue';
@@ -196,10 +196,9 @@ function TodayProfileScreen() {
             prefetchDays: 7,
           });
         }
-      } else if (err instanceof ApiError && err.status === 503) {
-        // Render can return an HTTP 503 while a sleeping instance wakes. Since
-        // that response reached the server edge, it is not a transport-offline
-        // event and must never be rendered as "no medications".
+      } else {
+        // HTTP failures (including 429/500/503) and invalid responses are not
+        // evidence of an empty schedule. Preserve data and expose retry.
         setOffline(false);
         setServiceUnavailable(true);
       }
@@ -438,7 +437,7 @@ function TodayProfileScreen() {
 
         {canViewToday ? (
           <>
-            {serviceUnavailable ? (
+            {serviceUnavailable || (offline && data === null) ? (
               <Banner
                 tone="warning"
                 title={arabic ? 'الخدمة غير متاحة مؤقتاً' : 'Service temporarily unavailable'}

@@ -143,6 +143,7 @@ function makeHarness(file, options = {}) {
       const snapshot = { user, preferences, selfProfile };
       bootstrapWrites.push(snapshot);
       await options.onBootstrapWrite?.(snapshot, bootstrapWrites.length);
+      return true;
     },
     console,
   };
