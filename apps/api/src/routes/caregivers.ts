@@ -134,7 +134,9 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
         newValue: { role: body.role, permissions: body.permissions, channel: body.channel },
       });
 
-      return { relationshipId: relationship.id, token, expiresAt: relationship.invitation_expires_at, patientName: access.profileDisplayName };
+      const { rows: inviter } = await tx.query<{ locale: string | null }>('SELECT locale FROM users WHERE id = $1', [userId]);
+      return { relationshipId: relationship.id, token, expiresAt: relationship.invitation_expires_at,
+        patientName: access.profileDisplayName, locale: inviter[0]?.locale === 'en' ? 'en' as const : 'ar' as const };
     });
 
     // The invitation token is a bearer capability. Keep it in the fragment so
@@ -142,7 +144,7 @@ export function registerCaregiverRoutes(app: FastifyInstance): void {
     // The fragment uses a hash-route shape so legacy QA helpers can extract the
     // token without reintroducing it into HTTP path/query transport.
     const link = `${cfg.PUBLIC_APP_URL}/invite#/invite/${result.token}`;
-    const locale = 'ar' as const;
+    const locale = result.locale;
     const message = t(locale, 'family.inviteBody', {
       patient: result.patientName, hours: body.expiresInHours, link,
     });

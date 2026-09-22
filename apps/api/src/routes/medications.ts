@@ -514,6 +514,7 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForMedication(tx, medicationId);
       const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      await lockMedicationLifecycle(tx, medicationId);
       const { rows } = await tx.query(
         `INSERT INTO medication_schedules
            (medication_id, patient_profile_id, rule_kind, rule, dose_quantity, dose_unit, timezone,
@@ -548,6 +549,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
       const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      // Lifecycle serialization precedes row locks, as in medication edits.
+      const { rows: identity } = await tx.query<{ medication_id: string }>(
+        'SELECT medication_id FROM medication_schedules WHERE id = $1', [scheduleId],
+      );
+      if (!identity[0]) throw AppError.notFound('Schedule not found');
+      await lockMedicationLifecycle(tx, identity[0].medication_id);
 
       const { rows: beforeRows } = await tx.query(
         `SELECT id, medication_id, patient_profile_id, rule, rule_kind::text AS rule_kind, dose_quantity,
@@ -632,6 +639,12 @@ export function registerMedicationRoutes(app: FastifyInstance): void {
     return withUser(userId, async (tx) => {
       const profileId = await profileIdForSchedule(tx, scheduleId);
       const access = await requireProfileAccess(tx, userId, profileId, 'edit_schedule');
+      // Lifecycle serialization precedes row locks, as in medication edits.
+      const { rows: identity } = await tx.query<{ medication_id: string }>(
+        'SELECT medication_id FROM medication_schedules WHERE id = $1', [scheduleId],
+      );
+      if (!identity[0]) throw AppError.notFound('Schedule not found');
+      await lockMedicationLifecycle(tx, identity[0].medication_id);
       await tx.query('UPDATE medication_schedules SET active = false WHERE id = $1', [scheduleId]);
       const { rowCount } = await tx.query(
         `UPDATE dose_occurrences SET status = 'cancelled'
