@@ -79,7 +79,8 @@
     "ios-testflight": {
       "ios": {
         "ascAppId": "6813157983",
-        "appleTeamId": "A92SD96D4Q"
+        "appleTeamId": "A92SD96D4Q",
+        "metadataPath": "./store.config.json"
       }
     }
   }
