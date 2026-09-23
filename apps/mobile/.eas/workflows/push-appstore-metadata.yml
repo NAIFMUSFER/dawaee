@@ -10,6 +10,9 @@ jobs:
     name: Push reviewed metadata to App Store Connect
     steps:
       - uses: eas/checkout
+      - name: Install mobile dependencies
+        working_directory: /apps/mobile
+        run: npm ci --include=dev --legacy-peer-deps
       - name: Validate and push App Store metadata
         working_directory: /apps/mobile
         run: npx eas-cli@24.7.0 metadata:push --profile ios-testflight --non-interactive
