@@ -1,0 +1,13 @@
+name: Distribute uploaded iOS 13 internally
+
+jobs:
+  distribute_ios13:
+    name: Add iOS 13 to owner-only TestFlight group
+    type: testflight
+    params:
+      asc_build_id: 39d89084-d10d-48ac-92d9-813c7a8e9d62
+      internal_groups:
+        - TADAWEE Internal Manual
+      changelog: |
+        جرّب التسجيل بالبريد والجوال، توثيق الجوال، ظهور دعوة المرافق ومراجعتها ثم قبولها صراحةً.
+      submit_beta_review: false
