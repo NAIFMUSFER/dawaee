@@ -1,0 +1,15 @@
+# Upload the reviewed existing iOS archive for owner-only internal TestFlight.
+# This manual workflow does not rebuild, create groups, or distribute externally.
+name: Upload reviewed iOS build 13
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios13:
+    name: Upload existing iOS 0.1.0 (13)
+    type: submit
+    params:
+      build_id: f96d8be4-28cb-454e-b414-efd82246d155
+      profile: ios-testflight
+      groups: []
