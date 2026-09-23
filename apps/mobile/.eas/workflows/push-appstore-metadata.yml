@@ -1,0 +1,15 @@
+# Manually sync the reviewed App Store listing for iOS 1.0.0.
+# This workflow does not build, upload a binary, or submit for App Review.
+name: Sync App Store metadata for iOS 1.0.0
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  push_metadata:
+    name: Push reviewed metadata to App Store Connect
+    steps:
+      - uses: eas/checkout
+      - name: Validate and push App Store metadata
+        working_directory: /apps/mobile
+        run: npx eas-cli@24.7.0 metadata:push --profile ios-testflight --non-interactive
