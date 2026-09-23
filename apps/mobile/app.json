@@ -2,7 +2,7 @@
   "expo": {
     "name": "تداوي | TADAWEE",
     "slug": "dawaee",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "dawaee",
     "userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "requireFullScreen": true,
       "bundleIdentifier": "app.dawaee.mobile",
       "entitlements": {
@@ -30,7 +30,7 @@
           "en"
         ]
       },
-      "buildNumber": "13"
+      "buildNumber": "14"
     },
     "locales": {
       "ar": "./locales/ar.json",
