@@ -1,0 +1,50 @@
+{
+  "configVersion": 0,
+  "apple": {
+    "version": "1.0.0",
+    "info": {
+      "ar-SA": {
+        "title": "تداوي | TADAWEE",
+        "subtitle": "تذكير الدواء ورعاية العائلة",
+        "description": "تداوي تطبيق يساعدك على تنظيم أدويتك ومواعيد جرعاتك وتسجيل الجرعات التي أخذتها ومتابعة مخزون الدواء.\n\nيمكنك إضافة الدواء يدويًا أو باستخدام صورة العبوة، وتفعيل التنبيهات، ومراجعة سجل الجرعات. كما يمكنك دعوة مرافق أو ممرض ومشاركة معلومات محددة معه وفق الصلاحيات التي تختارها، مع إمكانية تعديل الصلاحيات أو إلغاء الوصول.\n\nتشمل وظائف تداوي:\n• تنظيم الأدوية والجرعات والمواعيد.\n• تذكيرات الجرعات والتنبيه إلى انخفاض المخزون.\n• تسجيل الجرعات والملاحظات ومراجعة السجل.\n• إضافة الدواء من صورة العبوة مع مراجعة البيانات قبل الحفظ.\n• دائرة عائلية بصلاحيات يحددها صاحب الملف.\n• إدارة الخصوصية وتصدير البيانات وطلب حذف الحساب.\n\nتداوي أداة مساعدة للتنظيم والتذكير، ولا يقدم تشخيصًا طبيًا ولا يستبدل استشارة الطبيب أو الصيدلي.",
+        "keywords": [
+          "تداوي",
+          "دواء",
+          "تذكير",
+          "جرعات",
+          "أدوية",
+          "مرافق",
+          "عائلة",
+          "مخزون الدواء"
+        ],
+        "promoText": "نظّم أدويتك ومواعيد جرعاتك وشارك المتابعة مع من تثق به.",
+        "marketingUrl": "https://tadawee.net/",
+        "supportUrl": "https://tadawee.net/%D8%A7%D9%84%D8%AF%D8%B9%D9%85",
+        "privacyPolicyUrl": "https://tadawee.net/%D8%B3%D9%8A%D8%A7%D8%B3%D8%A9-%D8%A7%D9%84%D8%AE%D8%B5%D9%88%D8%B5%D9%8A%D8%A9",
+        "privacyChoicesUrl": "https://tadawee.net/%D8%B3%D9%8A%D8%A7%D8%B3%D8%A9-%D8%A7%D9%84%D8%AE%D8%B5%D9%88%D8%B5%D9%8A%D8%A9"
+      },
+      "en-US": {
+        "title": "TADAWEE",
+        "subtitle": "Medication and family care",
+        "description": "TADAWEE helps you organize medicines and dose schedules, record taken doses, and monitor medicine stock.\n\nAdd medicines manually or from a package photo, enable reminders, and review dose history. You can invite a caregiver or nurse and share specific information according to permissions you control, with the ability to update permissions or revoke access.\n\nTADAWEE includes:\n• Medicine, dose, and schedule organization.\n• Dose and low-stock reminders.\n• Dose notes and adherence history.\n• Medicine entry from a package photo, with review before saving.\n• A family care circle with owner-controlled permissions.\n• Privacy controls, data export, and account deletion requests.\n\nTADAWEE is an organization and reminder aid. It does not provide a medical diagnosis and does not replace advice from a doctor or pharmacist.",
+        "keywords": [
+          "medication",
+          "medicine reminder",
+          "dose tracker",
+          "caregiver",
+          "family care",
+          "adherence"
+        ],
+        "promoText": "Organize medicines, remember doses, and share care with people you trust.",
+        "marketingUrl": "https://tadawee.net/",
+        "supportUrl": "https://tadawee.net/%D8%A7%D9%84%D8%AF%D8%B9%D9%85",
+        "privacyPolicyUrl": "https://tadawee.net/%D8%B3%D9%8A%D8%A7%D8%B3%D8%A9-%D8%A7%D9%84%D8%AE%D8%B5%D9%88%D8%B5%D9%8A%D8%A9",
+        "privacyChoicesUrl": "https://tadawee.net/%D8%B3%D9%8A%D8%A7%D8%B3%D8%A9-%D8%A7%D9%84%D8%AE%D8%B5%D9%88%D8%B5%D9%8A%D8%A9"
+      }
+    },
+    "release": {
+      "automaticRelease": true,
+      "phasedRelease": false
+    }
+  }
+}
