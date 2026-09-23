@@ -8,6 +8,9 @@ import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError } from '@/api/client';
 import { waitForAuthServer } from '@/api/auth-connection';
+import { phoneVerificationSupported } from '@/security/phone-proof';
+import { phoneForProof } from '@/security/phone-number';
+import { saveRegistrationPhone } from '@/storage/registration-phone';
 
 /** The mailbox holder creates the account from the one-time email link. */
 export default function SignUpScreen() {
@@ -16,6 +19,7 @@ export default function SignUpScreen() {
   const { preferences } = useApp();
 
   const [identifier, setIdentifier] = useState('');
+  const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [requested, setRequested] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -32,6 +36,14 @@ export default function SignUpScreen() {
     setError(null);
     const typed = identifier.trim();
     try {
+      if (phoneVerificationSupported) {
+        const normalized = phoneForProof(phone);
+        if (!normalized) { setError(t('invite.recipientRequired')); return; }
+        // Keep the user's input through the mailbox link. This does not reserve
+        // a phone on the server or mark it verified before receiving an SMS.
+        await saveRegistrationPhone(typed, normalized);
+        if (!current()) return;
+      }
       await waitForAuthServer(controller.signal);
       if (!current()) return;
       submitted = true;
@@ -53,7 +65,8 @@ export default function SignUpScreen() {
     }
   };
 
-  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim());
+  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim())
+    && (!phoneVerificationSupported || Boolean(phoneForProof(phone)));
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -77,9 +90,16 @@ export default function SignUpScreen() {
           autoFocus
         />
 
+        {phoneVerificationSupported ? <Field
+          label={t('invite.phone')} value={phone} onChangeText={setPhone}
+          keyboardType="phone-pad" autoComplete="tel" maxLength={20}
+          hint={t('auth.registrationPhoneHint')} editable={!busy && !requested}
+        /> : null}
+
         {error ? <Banner tone="warning" title={error} /> : null}
         {requested ? <>
           <Banner tone="info" title={t('auth.registrationRequested')} />
+          <Button label={t('auth.registrationSignIn')} onPress={() => router.replace('/(auth)/sign-in')} />
           <Button label={t('recovery.title')} tone="secondary"
             onPress={() => router.replace('/(auth)/forgot-password')} />
         </> : null}

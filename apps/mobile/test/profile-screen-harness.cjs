@@ -211,6 +211,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   };
   Object.assign(modules['@/storage/offline-queue'], evaluate(path.resolve(__dirname, '../src/storage/dose-cache.ts')));
   modules['@/components/DoseUnitPicker'] ??= hosts;
+  modules['@/security/phone-number'] ??= evaluate(path.resolve(__dirname, '../src/security/phone-number.ts'));
+  modules['@/security/phone-proof'] ??= { phoneVerificationSupported: false };
+  modules['@/storage/registration-phone'] ??= { saveRegistrationPhone: async () => undefined, readRegistrationPhone: async () => null, clearRegistrationPhone: async () => undefined };
+  modules['@/components/PhoneVerification'] ??= { PhoneVerification: 'PhoneVerification' };
   modules['@/security/phone-proof-errors'] ??= evaluate(path.resolve(__dirname, '../src/security/phone-proof-errors.ts'));
   modules['@/notifications/today-groups'] ??= evaluate(path.resolve(__dirname, '../src/notifications/today-groups.ts'));
   modules['@/privacy/patient-report'] ??= { buildPatientReport: (value) => ({ html: '', text: JSON.stringify(value) }) };

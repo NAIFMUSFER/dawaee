@@ -21,6 +21,7 @@ import { registerErrorHandler } from '../src/middleware/error-handler.js';
 let db: PGlite;
 const app = Fastify();
 let patient: string, recipient: string, stranger: string, profile: string;
+let phoneSequence = 0;
 const owner = (sql: string, values: unknown[] = []) => auditTransaction(db, 'dawaee_migrator', tx => tx.query(sql, values));
 const send = (url: string, payload: object, uid: string | null = recipient) => app.inject({ method: 'POST', url, payload, headers: uid ? { 'x-test-user': uid } : {} });
 beforeAll(async () => {
@@ -41,6 +42,54 @@ async function invite() {
   return { id: response.json().relationshipId as string, token: response.json().invitationLink.split('/invite/')[1] as string };
 }
 describe('F19: every HTTP acceptance requires the reviewed permission set', () => {
+  it('recovers a phone invitation after email registration and phone proof without its QR token', async () => {
+    const phone = '+966500001234';
+    const response = await send('/v1/caregivers/invite', {
+      patientProfileId: profile, invitedName: 'Phone recipient', invitedPhone: phone,
+      role: 'caregiver', permissions: ['view_schedule'], escalationPriority: 1,
+    }, patient);
+    expect(response.statusCode, response.body).toBe(200);
+    const id = response.json().relationshipId;
+    const token = response.json().invitationLink.split('/invite/')[1];
+    const incoming = (uid = recipient) => app.inject({ method: 'GET', url: '/v1/caregivers/incoming', headers: { 'x-test-user': uid } });
+    expect((await incoming()).json().invitations).toEqual([]);
+    const unlinked = await send('/v1/caregivers/invitations/preview', { token });
+    expect(unlinked.statusCode).toBe(403);
+    expect(unlinked.json().error.code).toBe('phone_verification_required');
+    expect(unlinked.body).not.toContain('Patient fixture');
+    await owner('UPDATE users SET phone_e164=$1 WHERE id=$2', [phone, recipient]);
+    expect((await incoming()).json().invitations).toEqual([]);
+    await owner('INSERT INTO user_phone_verifications(user_id,phone_e164,authenticated_at) VALUES($1,$2,now())', [recipient, phone]);
+    const list = (await incoming()).json().invitations;
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id, patientName: 'Patient fixture', role: 'caregiver', permissions: ['view_schedule'] });
+    expect((await incoming(stranger)).json().invitations).toEqual([]);
+    // Discovery is not consent and cannot enable clinical access.
+    expect((await owner('SELECT status,caregiver_user_id FROM caregiver_relationships WHERE id=$1', [id])).rows[0]).toEqual({ status: 'pending', caregiver_user_id: null });
+    const accepted = await send('/v1/caregivers/invitations/accept', { relationshipId: id, role: list[0].role, permissions: list[0].permissions });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    expect(accepted.json().profileId).toBe(profile);
+    expect((await incoming()).json().invitations).toEqual([]);
+  });
+
+  it.each(['expired', 'archived', 'disabled', 'wrong-phone', 'stale-proof', 'self', 'revoked'])('hides phone invitations for %s', async failure => {
+    const phone = `+9665${String(++phoneSequence).padStart(8, '0')}`;
+    await owner('UPDATE users SET phone_e164=$1 WHERE id=$2', [phone, recipient]);
+    await owner('INSERT INTO user_phone_verifications(user_id,phone_e164,authenticated_at) VALUES($1,$2,now())', [recipient, phone]);
+    const response = await send('/v1/caregivers/invite', { patientProfileId: profile, invitedName: 'Recipient', invitedPhone: phone, role: 'caregiver', permissions: ['view_schedule'], escalationPriority: 1 }, patient);
+    expect(response.statusCode, response.body).toBe(200);
+    const id = response.json().relationshipId;
+    if (failure === 'expired') await owner("UPDATE caregiver_relationships SET invitation_expires_at=now()-interval '1 second' WHERE id=$1", [id]);
+    if (failure === 'archived') await owner('UPDATE patient_profiles SET archived_at=now() WHERE id=$1', [profile]);
+    if (failure === 'disabled') await owner('UPDATE users SET disabled_at=now() WHERE id=$1', [recipient]);
+    if (failure === 'wrong-phone') await owner("UPDATE caregiver_relationships SET invited_phone_e164='+966500001239' WHERE id=$1", [id]);
+    if (failure === 'stale-proof') await owner("UPDATE user_phone_verifications SET phone_e164='+966500001239' WHERE user_id=$1", [recipient]);
+    if (failure === 'self') await owner('UPDATE patient_profiles SET owner_user_id=$1 WHERE id=$2', [recipient, profile]);
+    if (failure === 'revoked') await owner("UPDATE caregiver_relationships SET status='revoked' WHERE id=$1", [id]);
+    const responseList = await app.inject({ method: 'GET', url: '/v1/caregivers/incoming', headers: { 'x-test-user': recipient } });
+    expect(responseList.json().invitations).toEqual([]);
+  });
+
   it.each(['/v1/caregivers/accept', '/v1/caregivers/incoming/accept'])('refuses legacy %s without consuming or disclosing the invitation', async url => {
     const invitation = await invite();
     const payload = url.endsWith('/incoming/accept') ? { relationshipId: invitation.id } : { token: invitation.token };
