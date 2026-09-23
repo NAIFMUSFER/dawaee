@@ -1,0 +1,15 @@
+# Upload the already built iPhone-only App Store archive to App Store Connect.
+# Manual dispatch, no rebuild and no TestFlight group distribution.
+name: Upload iOS 1.0.0 build 14
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios14:
+    name: Upload existing iOS 1.0.0 (14)
+    type: submit
+    params:
+      build_id: 78fcc54e-b659-47e2-a8f4-e40e95d1c1ae
+      profile: ios-testflight
+      groups: []
