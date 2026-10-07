@@ -192,7 +192,6 @@ export default function OnboardingScreen() {
               onChangeText={(v) => { setName(v); if (nameError) setNameError(null); }}
               hint={t('onboarding.nameHint')}
               error={nameError}
-              autoFocus
               maxLength={80}
             />
             <Button

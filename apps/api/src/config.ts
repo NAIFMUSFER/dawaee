@@ -82,6 +82,7 @@ const schema = z.object({
    * second factor is actually available.
    */
   PASSWORD_LOGIN_ENABLED: envBoolean(true),
+  GOOGLE_AUTH_CLIENT_IDS: z.string().default(''),
 
   CORS_ORIGINS: z.string().default(''),
   /**

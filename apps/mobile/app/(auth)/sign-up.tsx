@@ -1,127 +1,103 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Keyboard } from 'react-native';
 import { router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Banner, Button, Field, Screen, Txt } from '@/components/ui';
+import { Banner, Button, Field, Txt } from '@/components/ui';
+import { AuthScreen } from '@/components/AuthScreen';
+import { GoogleAuthButton } from '@/components/GoogleAuthButton';
 import { useI18n } from '@/i18n';
-import { useTheme } from '@/hooks/useTheme';
 import { useApp } from '@/state/app-store';
-import { api, ApiError, NetworkError } from '@/api/client';
+import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
 import { waitForAuthServer } from '@/api/auth-connection';
+import { landingAfterAuth } from '@/storage/pending-invite';
 import { phoneVerificationSupported } from '@/security/phone-proof';
 import { phoneForProof } from '@/security/phone-number';
-import { saveRegistrationPhone } from '@/storage/registration-phone';
+import { PhoneVerification } from '@/components/PhoneVerification';
+import { clearRegistrationPhone, saveRegistrationPhone } from '@/storage/registration-phone';
 
-/** The mailbox holder creates the account from the one-time email link. */
 export default function SignUpScreen() {
   const { t } = useI18n();
-  const theme = useTheme();
-  const { preferences } = useApp();
-
-  const [identifier, setIdentifier] = useState('');
+  const { preferences, signInWithTokens, user, signedIn } = useApp();
+  const account = useRef(user?.id);
+  account.current = user?.id;
+  const mounted = useRef(true);
+  const [phoneStep, setPhoneStep] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [retryAt, setRetryAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
-  const [requested, setRequested] = useState(false);
   const [busy, setBusy] = useState(false);
   const action = useRef<AbortController | null>(null);
-  useEffect(() => () => { action.current?.abort(); action.current = null; }, []);
-
-  const submit = async () => {
-    if (action.current) return;
-    const controller = new AbortController();
-    action.current = controller;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; action.current?.abort(); action.current = null; }; }, []);
+  useEffect(() => { if (phoneStep && (!signedIn || user?.id !== phoneStep)) { setPhoneStep(null); setPassword(''); } }, [phoneStep, signedIn, user?.id]);
+  useEffect(() => { if (!challenge) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [challenge]);
+  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && displayName.trim().length > 0
+    && password.length >= 10 && (!phoneVerificationSupported || Boolean(phoneForProof(phone)));
+  const run = async (complete: boolean) => {
+    if (action.current || busy) return;
+    const controller = new AbortController(); action.current = controller;
     const current = () => action.current === controller && !controller.signal.aborted;
-    let submitted = false;
-    setBusy(true);
-    setError(null);
-    const typed = identifier.trim();
+    setBusy(true); setError(null); Keyboard.dismiss();
     try {
-      if (phoneVerificationSupported) {
-        const normalized = phoneForProof(phone);
-        if (!normalized) { setError(t('invite.recipientRequired')); return; }
-        // Keep the user's input through the mailbox link. This does not reserve
-        // a phone on the server or mark it verified before receiving an SMS.
-        await saveRegistrationPhone(typed, normalized);
-        if (!current()) return;
-      }
       await waitForAuthServer(controller.signal);
       if (!current()) return;
-      submitted = true;
-      await api.anonymous.post('/v1/auth/register', {
-        email: typed.toLowerCase(),
-        locale: preferences.locale,
-      });
-      if (!current()) return;
-      setRequested(true);
+      const typed = email.trim().toLowerCase();
+      if (complete) {
+        const deviceId = await getDeviceId();
+        if (!current()) return;
+        const tokens = await api.anonymous.post<{ accessToken: string; refreshToken: string; userId: string }>('/v1/auth/registration-code/complete',
+          { email: typed, locale: preferences.locale, challenge, code, displayName: displayName.trim(), password, deviceId });
+        if (!current()) return;
+        if (phoneVerificationSupported) await saveRegistrationPhone(typed, phoneForProof(phone)!);
+        if (!current()) return;
+        await signInWithTokens(tokens);
+        if (!current()) return;
+        if (phoneVerificationSupported) { setPhoneStep(tokens.userId); setCode(''); return; }
+        const landing = await landingAfterAuth();
+        if (current()) { setPassword(''); setCode(''); router.replace(landing); }
+      } else {
+        const result = await api.anonymous.post<{ challenge: string; retryAfterSeconds: number }>('/v1/auth/registration-code/request', { email: typed, locale: preferences.locale });
+        if (!current()) return;
+        setChallenge(result.challenge); setCode(''); setRetryAt(Date.now() + result.retryAfterSeconds * 1000); setNow(Date.now());
+      }
     } catch (err) {
       if (!current()) return;
-      if (err instanceof NetworkError || (err instanceof ApiError && err.status >= 500)) {
-        setError(t(submitted ? 'auth.registrationUnconfirmed' : 'auth.connectionFailed'));
-      }
-      else if (err instanceof ApiError) setError(err.message);
-      else setError(t('error.internal_error'));
-    } finally {
-      if (current()) { action.current = null; setBusy(false); }
-    }
+      setError(err instanceof NetworkError ? t('auth.connectionFailed') : err instanceof ApiError ? err.message : t('error.internal_error'));
+    } finally { if (current()) { action.current = null; setBusy(false); } }
   };
-
-  const ready = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier.trim())
-    && (!phoneVerificationSupported || Boolean(phoneForProof(phone)));
-
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <Screen>
-        <View style={{ gap: theme.spacing.sm, paddingTop: theme.spacing.xl }}>
-          <Txt variant="h1" weight="bold" accessibilityRole="header">{t('auth.signUpTitle')}</Txt>
-          <Txt variant="body" color={theme.colors.ink500}>{t('safety.notMedicalAdvice')}</Txt>
-        </View>
-
-        <Field
-          label={t('emailAccount.email')}
-          value={identifier}
-          onChangeText={setIdentifier}
-          autoComplete="email"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          hint={t('auth.registrationInviteHint')}
-          maxLength={320}
-          editable={!busy && !requested}
-          autoFocus
-        />
-
-        {phoneVerificationSupported ? <Field
-          label={t('invite.phone')} value={phone} onChangeText={setPhone}
-          keyboardType="phone-pad" autoComplete="tel" maxLength={20}
-          hint={t('auth.registrationPhoneHint')} editable={!busy && !requested}
-        /> : null}
-
-        {error ? <Banner tone="warning" title={error} /> : null}
-        {requested ? <>
-          <Banner tone="info" title={t('auth.registrationRequested')} />
-          <Button label={t('auth.registrationSignIn')} onPress={() => router.replace('/(auth)/sign-in')} />
-          <Button label={t('recovery.title')} tone="secondary"
-            onPress={() => router.replace('/(auth)/forgot-password')} />
-        </> : null}
-        {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
-        <Button
-          label={t('auth.signUp')}
-          onPress={() => void submit()}
-          loading={busy}
-          disabled={!ready || requested}
-          size="large"
-        />
-
-        <Pressable
-          onPress={() => router.replace('/(auth)/sign-in')}
-          disabled={busy}
-          accessibilityRole="button"
-          hitSlop={12}
-          style={{ paddingVertical: theme.spacing.sm }}
-        >
-          <Txt variant="body" color={theme.colors.primary600}>{t('auth.haveAccount')}</Txt>
-        </Pressable>
-      </Screen>
-    </SafeAreaView>
-  );
+  const finishPhone = async () => {
+    if (!phoneStep || account.current !== phoneStep) return;
+    const owner = phoneStep;
+    await clearRegistrationPhone(email.trim().toLowerCase()).catch(() => undefined);
+    const landing = await landingAfterAuth();
+    if (mounted.current && account.current === owner) { setPassword(''); setPhoneStep(null); router.replace(landing); }
+  };
+  if (phoneStep && signedIn && user?.id === phoneStep) return <AuthScreen>
+    <Txt variant="h1" weight="bold">{t('auth.completeRegistrationPhone')}</Txt>
+    <PhoneVerification key={phoneStep} initialPhone={phoneForProof(phone)!} initialPassword={password} onVerified={() => void finishPhone()} />
+  </AuthScreen>;
+  return <AuthScreen>
+    <Txt variant="h1" weight="bold">{t('auth.signUpTitle')}</Txt>
+    {challenge ? <>
+      <Banner tone="info" title={t('auth.codeSent')} body={email.trim()} />
+      <Field label={t('auth.emailCode')} value={code} onChangeText={v => setCode(v.replace(/[٠-٩]/g, c => String(c.charCodeAt(0)-1632)).replace(/[^0-9]/g, '').slice(0,6))}
+        keyboardType="number-pad" autoComplete="one-time-code" maxLength={6} editable={!busy} />
+      <Button label={t('auth.completeInApp')} onPress={() => void run(true)} loading={busy} disabled={code.length !== 6} size="large" />
+      <Button label={t('auth.resendCode')} tone="secondary" disabled={busy || now < retryAt} onPress={() => void run(false)} />
+      <Button label={t('auth.editRegistration')} tone="ghost" disabled={busy} onPress={() => { setChallenge(null); setCode(''); setError(null); }} />
+    </> : <>
+      <Field label={t('auth.displayName')} value={displayName} onChangeText={setDisplayName} maxLength={120} editable={!busy} />
+      <Field label={t('emailAccount.email')} value={email} onChangeText={setEmail} keyboardType="email-address" autoComplete="email" autoCapitalize="none" autoCorrect={false} maxLength={320} editable={!busy} />
+      <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" autoCapitalize="none" autoCorrect={false} maxLength={200} hint={t('auth.passwordHint', { min: '10' })} editable={!busy} />
+      {phoneVerificationSupported ? <Field label={t('invite.phone')} value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" maxLength={20} editable={!busy} hint={t('auth.registrationPhoneHint')} /> : null}
+      <Button label={t('auth.sendEmailCode')} onPress={() => void run(false)} loading={busy} disabled={!ready} size="large" />
+      <GoogleAuthButton disabled={busy} onBusyChange={setBusy} />
+    </>}
+    {error ? <Banner tone="warning" title={error} /> : null}
+    <Button label={t('auth.haveAccount')} tone="ghost" disabled={busy} onPress={() => router.replace('/(auth)/sign-in')} />
+  </AuthScreen>;
 }
