@@ -1018,7 +1018,7 @@ describe('P12-8 every route works for the person entitled to use it', () => {
 
     await ok('GET /v1/doses/:id', { method: 'GET', url: `/v1/doses/${own.doseId}` });
     const evt = (n: string) => `p12-${n}-${Date.now()}`;
-    const restoreNow = new Date();
+    const restoreNow = new Date('2026-09-15T06:00:00Z');
     try {
       h.setServerNow(new Date(doses[0]!.scheduledAt));
       await ok('POST taken', {
