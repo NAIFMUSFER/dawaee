@@ -97,6 +97,7 @@ export default function SignUpScreen() {
       <Button label={t('auth.sendEmailCode')} onPress={() => void run(false)} loading={busy} disabled={!ready} size="large" />
       <GoogleAuthButton disabled={busy} onBusyChange={setBusy} />
     </>}
+    {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
     {error ? <Banner tone="warning" title={error} /> : null}
     <Button label={t('auth.haveAccount')} tone="ghost" disabled={busy} onPress={() => router.replace('/(auth)/sign-in')} />
   </AuthScreen>;
