@@ -1,0 +1,13 @@
+name: Upload iOS auth preview build 15
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios15:
+    name: Upload existing iOS 1.0.0 (15) for testing
+    type: submit
+    params:
+      build_id: 551fc0bc-8359-4db8-a8b8-1cc3c8830455
+      profile: ios-testflight
+      groups: []
