@@ -8,6 +8,7 @@ import {
 import { detectTimezoneChange, isValidTimeZone } from '@dawaee/core';
 import { withUser, withUserReadOnly } from '../lib/db.js';
 import { assertSessionLive } from '../auth/session-service.js';
+import { AppleProviderUnavailable, revokeAppleAuthorization } from '../auth/apple-token.js';
 
 /**
  * How long an account is kept after erasure is requested.
@@ -35,6 +36,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       const { rows } = await tx.query(
         `SELECT u.id, u.phone_e164, u.email, u.display_name, u.locale, u.timezone, u.created_at, u.deletion_requested_at,
                 app.has_verified_email(u.id) AS email_verified,
+                app.apple_subject_for_user(u.id) IS NOT NULL AS apple_account,
                 app.email_verification_required(u.id) AS email_verification_required,
                 p.locale AS pref_locale, p.numeral_system, p.calendar_system, p.elderly_mode,
                 p.text_scale, p.high_contrast, p.voice_reminders_enabled, p.voice_confirmation_enabled,
@@ -57,6 +59,7 @@ export function registerProfileRoutes(app: FastifyInstance): void {
         user: {
           id: u.id, phoneE164: u.phone_e164, email: u.email, displayName: u.display_name,
           emailVerified: u.email_verified, emailVerificationRequired: u.email_verification_required,
+          appleAccount: u.apple_account,
           locale: u.locale, timezone: u.timezone, createdAt: u.created_at,
           deletionScheduledFor: u.deletion_requested_at ? new Date(new Date(u.deletion_requested_at).getTime() + DELETION_GRACE_DAYS * 86400000).toISOString() : null,
         },
@@ -264,6 +267,16 @@ export function registerProfileRoutes(app: FastifyInstance): void {
       // wins first must commit its descendant before this revocation snapshot.
       await tx.query('SELECT app.lock_current_auth_account()');
       await assertSessionLive(tx, sessionId);
+      const { rows: apple } = await tx.query<{ subject: string | null }>(
+        'SELECT app.apple_subject_for_user($1) AS subject', [userId]);
+      if (apple[0]?.subject) {
+        if (!body.appleProof) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Confirm with Apple before deleting this account');
+        try { await revokeAppleAuthorization(body.appleProof, apple[0].subject); }
+        catch (error) {
+          if (error instanceof AppleProviderUnavailable) throw new AppError(ERROR_CODES.PROVIDER_UNAVAILABLE, 503, 'Apple authorization could not be revoked. Try again.');
+          throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Confirm the same Apple account before deleting it');
+        }
+      }
       const { rows } = await tx.query<{ deletion_requested_at: string }>(
         `UPDATE users
             SET deletion_requested_at = COALESCE(deletion_requested_at, now())

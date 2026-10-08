@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { Banner, Button, Field, Txt } from '@/components/ui';
 import { AuthScreen } from '@/components/AuthScreen';
 import { GoogleAuthButton } from '@/components/GoogleAuthButton';
+import { AppleAuthButton } from '@/components/AppleAuthButton';
 import { useI18n } from '@/i18n';
 import { useApp } from '@/state/app-store';
 import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
@@ -96,6 +97,7 @@ export default function SignUpScreen() {
       {phoneVerificationSupported ? <Field label={t('invite.phone')} value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" maxLength={20} editable={!busy} hint={t('auth.registrationPhoneHint')} /> : null}
       <Button label={t('auth.sendEmailCode')} onPress={() => void run(false)} loading={busy} disabled={!ready} size="large" />
       <GoogleAuthButton disabled={busy} onBusyChange={setBusy} />
+      <AppleAuthButton disabled={busy} onBusyChange={setBusy} />
     </>}
     {busy ? <Txt variant="caption" accessibilityRole="alert">{t('auth.connectingServer')}</Txt> : null}
     {error ? <Banner tone="warning" title={error} /> : null}

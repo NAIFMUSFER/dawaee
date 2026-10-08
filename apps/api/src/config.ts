@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DatabaseTlsMisconfigured } from './lib/db-tls.js';
+import { createPrivateKey } from 'node:crypto';
 
 /**
  * Environment configuration. Parsed once at boot and validated hard: a missing
@@ -83,6 +84,10 @@ const schema = z.object({
    */
   PASSWORD_LOGIN_ENABLED: envBoolean(true),
   GOOGLE_AUTH_CLIENT_IDS: z.string().default(''),
+  APPLE_AUTH_CLIENT_ID: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9.-]+$/).optional(),
+  APPLE_AUTH_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/).optional(),
+  APPLE_AUTH_KEY_ID: z.string().regex(/^[A-Z0-9]{10}$/).optional(),
+  APPLE_AUTH_PRIVATE_KEY: z.string().min(1).optional(),
 
   CORS_ORIGINS: z.string().default(''),
   /**
@@ -168,6 +173,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const cfg = parsed.data;
   const isProduction = cfg.NODE_ENV === 'production';
+  const appleValues = [cfg.APPLE_AUTH_CLIENT_ID, cfg.APPLE_AUTH_TEAM_ID, cfg.APPLE_AUTH_KEY_ID, cfg.APPLE_AUTH_PRIVATE_KEY];
+  if (appleValues.some(Boolean)) {
+    if (!appleValues.every(Boolean)) throw new Error('Apple sign-in requires all four APPLE_AUTH settings');
+    try {
+      const key = createPrivateKey(cfg.APPLE_AUTH_PRIVATE_KEY!.replace(/\\n/g, '\n'));
+      if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') throw new Error();
+    } catch { throw new Error('APPLE_AUTH_PRIVATE_KEY must be an ES256 private key'); }
+    if (isProduction && cfg.APPLE_AUTH_CLIENT_ID !== 'app.dawaee.mobile') throw new Error('APPLE_AUTH_CLIENT_ID must match the production iOS bundle');
+  }
 
   // Guardrails that only matter in production, checked at boot rather than
   // discovered by a user.

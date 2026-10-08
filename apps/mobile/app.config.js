@@ -19,7 +19,8 @@ module.exports = ({ config }) => {
     // Keep Android/web builds independent of the separately registered iOS app.
     return {
       ...config,
-      ios: { ...config.ios, googleServicesFile },
+      ios: { ...config.ios, googleServicesFile, usesAppleSignIn: true },
+      plugins: [...config.plugins, 'expo-apple-authentication'],
       // Runtime support must not depend on a build-machine file path being
       // present in Expo's manifest. Only this non-secret capability is needed.
       extra: { ...config.extra, iosPhoneVerificationEnabled: !!googleServicesFile },
@@ -36,7 +37,7 @@ module.exports = ({ config }) => {
     name: 'تداوي | TADAWEE تجريبي',
     scheme: 'dawaee-audit',
     android: { ...config.android, package: 'app.dawaee.audit', googleServicesFile: undefined },
-    ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit', googleServicesFile: undefined,
+    ios: { ...config.ios, bundleIdentifier: 'app.dawaee.audit', googleServicesFile: undefined, usesAppleSignIn: false,
       infoPlist: { ...config.ios?.infoPlist, CFBundleDisplayName: 'تداوي تجريبي' } },
     // Localized metadata overrides the ordinary display name on iOS. Keep the
     // isolated installation visibly distinct in both supported languages.

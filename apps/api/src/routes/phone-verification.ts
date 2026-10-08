@@ -46,6 +46,10 @@ export function registerPhoneVerificationRoutes(app: FastifyInstance): void {
       } else {
         const result = await tx.query<{ linked: boolean }>('SELECT app.attach_google_account_phone($1,$2) AS linked', [userId, proof.phoneE164]);
         linked = result.rows[0]?.linked ?? false;
+        if (!linked) {
+          const apple = await tx.query<{ linked: boolean }>('SELECT app.attach_apple_account_phone($1,$2) AS linked', [userId, proof.phoneE164]);
+          linked = apple.rows[0]?.linked ?? false;
+        }
       }
       if (!linked) throw new AppError(ERROR_CODES.CONFLICT, 409, 'Unable to link this phone to this account');
       const verification = await tx.query<{ verified: boolean }>(

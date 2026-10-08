@@ -15,6 +15,7 @@ import { sharePatientReport } from '@/privacy/share-patient-report';
 import { shareFullExport } from '@/privacy/share-full-export';
 import { usePrivateOutputGuard } from '@/privacy/usePrivateOutputGuard';
 import { setDeletionReceipt } from '@/privacy/deletion-receipt';
+import { appleAuthorization } from '@/security/apple-sign-in';
 import { MESSAGES, type ConsentType, type MessageKey } from '@dawaee/shared';
 
 /**
@@ -237,7 +238,13 @@ export default function PrivacyScreen() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      const result = await api.post<{ scheduledFor: string }>('/v1/me/deletion-request', { confirm: true });
+      const account = await api.get<{ user: { appleAccount?: boolean } }>('/v1/me');
+      if (!current()) return;
+      const appleProof = account.user.appleAccount ? await appleAuthorization() : undefined;
+      if (!current() || appleProof === null) return;
+      const result = await api.post<{ scheduledFor: string }>('/v1/me/deletion-request', {
+        confirm: true, ...(appleProof ? { appleProof: { authorizationCode: appleProof.authorizationCode, rawNonce: appleProof.rawNonce } } : {}),
+      });
       if (!current()) return;
       setDeletionReceipt(result.scheduledFor);
       // signOut invalidates local reminders immediately and purges sessions,

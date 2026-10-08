@@ -12,6 +12,7 @@ import { landingAfterAuth } from '@/storage/pending-invite';
 import { readRegistrationPhone, clearRegistrationPhone } from '@/storage/registration-phone';
 import { AuthScreen } from '@/components/AuthScreen';
 import { GoogleAuthButton } from '@/components/GoogleAuthButton';
+import { AppleAuthButton } from '@/components/AppleAuthButton';
 import { PhoneVerification } from '@/components/PhoneVerification';
 import { phoneVerificationSupported } from '@/security/phone-proof';
 
@@ -185,6 +186,7 @@ export default function SignInScreen() {
         />
 
         <GoogleAuthButton disabled={busy} onBusyChange={setBusy} />
+        <AppleAuthButton disabled={busy} onBusyChange={setBusy} />
 
         <Button label={t('recovery.title')} tone="ghost" disabled={busy}
           onPress={() => router.push('/(auth)/forgot-password')} />

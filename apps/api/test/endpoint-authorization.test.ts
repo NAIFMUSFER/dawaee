@@ -175,6 +175,8 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/registration-code/complete': 'auth-plane',
   'GET /v1/auth/google/options': 'auth-plane',
   'POST /v1/auth/google': 'auth-plane',
+  'GET /v1/auth/apple/options': 'auth-plane',
+  'POST /v1/auth/apple': 'auth-plane',
   'POST /v1/auth/refresh': 'auth-plane',
   'POST /v1/auth/login': 'auth-plane',
   // Anonymous account recovery requires fresh signed phone proof. Its account
