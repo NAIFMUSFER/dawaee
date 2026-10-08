@@ -28,7 +28,7 @@ async function verifiedPhoneProof(idToken: string) {
 
 export function registerPhoneVerificationRoutes(app: FastifyInstance): void {
   app.post('/v1/auth/phone', { preHandler: authenticate, config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req) => {
-    const body = proofSchema.extend({ currentPassword: z.string().min(1).max(200) }).strict().parse(req.body);
+    const body = proofSchema.extend({ currentPassword: z.string().min(1).max(200).optional() }).strict().parse(req.body);
     const { userId } = currentUser(req);
     await enforceAuthBudget({ ip: { scope: 'phone-link:ip', value: req.ip }, identifier: { scope: 'phone-link:account', value: userId } });
     // Check ownership before any number is written or checked for uniqueness.
@@ -36,11 +36,18 @@ export function registerPhoneVerificationRoutes(app: FastifyInstance): void {
     // knowing the password of their own Dawaee account.
     const proof = await verifiedPhoneProof(body.idToken);
     return withUser(userId, async tx => {
-      const { rows } = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [userId]);
-      const hash = rows[0]?.hash;
-      if (!hash || !await verifyPassword(body.currentPassword, hash)) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Incorrect current password');
-      const result = await tx.query<{ linked: boolean }>('SELECT app.attach_account_phone($1,$2,$3) AS linked', [userId, proof.phoneE164, hash]);
-      if (!result.rows[0]?.linked) throw new AppError(ERROR_CODES.CONFLICT, 409, 'Unable to link this phone to this account');
+      let linked = false;
+      if (body.currentPassword) {
+        const { rows } = await tx.query<{ hash: string | null }>('SELECT app.password_hash_for_user($1) AS hash', [userId]);
+        const hash = rows[0]?.hash;
+        if (!hash || !await verifyPassword(body.currentPassword, hash)) throw new AppError(ERROR_CODES.INVALID_CREDENTIALS, 401, 'Incorrect current password');
+        const result = await tx.query<{ linked: boolean }>('SELECT app.attach_account_phone($1,$2,$3) AS linked', [userId, proof.phoneE164, hash]);
+        linked = result.rows[0]?.linked ?? false;
+      } else {
+        const result = await tx.query<{ linked: boolean }>('SELECT app.attach_google_account_phone($1,$2) AS linked', [userId, proof.phoneE164]);
+        linked = result.rows[0]?.linked ?? false;
+      }
+      if (!linked) throw new AppError(ERROR_CODES.CONFLICT, 409, 'Unable to link this phone to this account');
       const verification = await tx.query<{ verified: boolean }>(
         'SELECT app.record_verified_phone($1,$2,$3) AS verified',
         [userId, proof.phoneE164, new Date(proof.authenticatedAt * 1000)],

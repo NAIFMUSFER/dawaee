@@ -9,8 +9,8 @@ import { normalizeDigits } from '@dawaee/shared';
 import { phoneForProof } from '@/security/phone-number';
 import { phoneProofErrorKey } from '@/security/phone-proof-errors';
 
-export function PhoneVerification({ onVerified, initialPhone = '', initialPassword = '' }: {
-  onVerified?: () => void; initialPhone?: string; initialPassword?: string;
+export function PhoneVerification({ onVerified, initialPhone = '', initialPassword = '', googleAccount = false }: {
+  onVerified?: () => void; initialPhone?: string; initialPassword?: string; googleAccount?: boolean;
 }) {
   const { t } = useI18n();
   const { user, refreshProfiles } = useApp();
@@ -44,7 +44,7 @@ export function PhoneVerification({ onVerified, initialPhone = '', initialPasswo
 
   const send = async () => {
     const targetPhone = phone ?? phoneForProof(newPhone);
-    if (busyRef.current || !targetPhone || !phoneVerificationSupported || (!phone && !password)) return;
+    if (busyRef.current || !targetPhone || !phoneVerificationSupported || (!phone && !password && !googleAccount)) return;
     busyRef.current = true; setBusy(true); setError(null); setCode('');
     const current = capture();
     challenge.current?.cancel();
@@ -54,7 +54,7 @@ export function PhoneVerification({ onVerified, initialPhone = '', initialPasswo
         if (!current()) return;
         try {
           if (phone) await api.post('/v1/auth/phone-verification', { idToken });
-          else await api.post('/v1/auth/phone', { idToken, currentPassword: password });
+          else await api.post('/v1/auth/phone', googleAccount ? { idToken } : { idToken, currentPassword: password });
           if (!current()) return;
           if (!phone) {
             setPhone(targetPhone); setPassword(''); setNewPhone('');
@@ -107,7 +107,7 @@ export function PhoneVerification({ onVerified, initialPhone = '', initialPasswo
       <Txt>{t('phoneVerification.androidRequired')}</Txt> : !phone ? <>
       <Txt>{t('phoneVerification.noPhone')}</Txt>
       <Field label={t('invite.phone')} value={newPhone} onChangeText={setNewPhone} keyboardType="phone-pad" maxLength={20} editable={!busy && !sent} />
-      {!reusePassword ? <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy && !sent} /> : null}
+      {!googleAccount && !reusePassword ? <Field label={t('auth.password')} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!busy && !sent} /> : null}
       {sent ? <>
         <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}
           keyboardType="number-pad" textContentType="oneTimeCode" maxLength={6} autoComplete="sms-otp" />
@@ -118,7 +118,7 @@ export function PhoneVerification({ onVerified, initialPhone = '', initialPasswo
       </> : <>
         <Txt variant="caption">{t('phoneVerification.consent')}</Txt>
         <Button label={t('phoneVerification.send')} loading={busy}
-          disabled={!phoneForProof(newPhone) || !password} onPress={() => void send()} />
+          disabled={!phoneForProof(newPhone) || (!googleAccount && !password)} onPress={() => void send()} />
       </>}
     </> : !phoneVerificationSupported ? <Txt>{t('phoneVerification.androidRequired')}</Txt> : sent ? <>
       <Field label={t('phoneVerification.code')} value={code} onChangeText={setCode}

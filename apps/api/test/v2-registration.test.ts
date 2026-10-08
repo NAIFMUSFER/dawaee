@@ -66,6 +66,18 @@ describe('Google identity boundary',()=>{
   const denied=await auditTransaction(db,'dawaee_app',async tx=>{try{await tx.query('SELECT * FROM google_auth_identities');return false;}catch{return true;}});
   expect(denied).toBe(true);
  });
+ it('lets only a session with a Google identity attach its SMS-proved phone',async()=>{
+  const hash=await hashPassword('Google phone fixture password 319!');
+  const made=(await auditTransaction(db,'dawaee_app',tx=>tx.query('SELECT * FROM app.resolve_google_account($1,$2,$3,$4,$5)',
+    ['google-phone-sub','v2googlephone@gmail.com','Google phone fixture',hash,'en']))).rows[0];
+  const linked=await auditTransaction(db,'dawaee_app',tx=>tx.query('SELECT app.attach_google_account_phone($1,$2) AS linked',
+    [made.user_id,'+966500092296']),made.user_id);
+  expect(linked.rows[0].linked).toBe(true);
+  const plain=(await owner("SELECT id FROM users WHERE email='v2-code@example.test'")).rows[0];
+  const refused=await auditTransaction(db,'dawaee_app',tx=>tx.query('SELECT app.attach_google_account_phone($1,$2) AS linked',
+    [plain.id,'+966500092295']),plain.id);
+  expect(refused.rows[0].linked).toBe(false);
+ });
 });
 
 describe('Google signed-token verification', () => {

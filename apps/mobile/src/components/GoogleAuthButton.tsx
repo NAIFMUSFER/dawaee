@@ -27,11 +27,15 @@ export function GoogleAuthButton({ disabled = false, onBusyChange }: { disabled?
       if (!idToken || !mounted.current) return;
       const deviceId = await getDeviceId();
       if (!mounted.current) return;
-      const tokens = await api.anonymous.post<{accessToken:string;refreshToken:string}>('/v1/auth/google', { idToken, deviceId, locale: preferences.locale });
+      const tokens = await api.anonymous.post<{accessToken:string;refreshToken:string;isNewUser:boolean}>('/v1/auth/google', { idToken, deviceId, locale: preferences.locale });
       if (!mounted.current) return;
       await signInWithTokens(tokens);
-      const landing = await landingAfterAuth();
-      if (mounted.current) router.replace(landing);
+      if (tokens.isNewUser) {
+        router.replace('/settings/phone-verification?source=google');
+      } else {
+        const landing = await landingAfterAuth();
+        if (mounted.current) router.replace(landing);
+      }
     } catch(err) { if(mounted.current) setError(err instanceof ApiError ? err.message : t('auth.connectionFailed')); }
     finally { running.current = false; if(mounted.current) { setBusy(false); onBusyChange?.(false); } }
   };
