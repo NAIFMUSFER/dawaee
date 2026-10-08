@@ -2,7 +2,7 @@
   "expo": {
     "name": "تداوي | TADAWEE",
     "slug": "dawaee",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "scheme": "dawaee",
     "userInterfaceStyle": "light",
@@ -30,7 +30,7 @@
           "en"
         ]
       },
-      "buildNumber": "15"
+      "buildNumber": "16"
     },
     "locales": {
       "ar": "./locales/ar.json",
