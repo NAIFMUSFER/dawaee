@@ -1,0 +1,13 @@
+# Upload only the inspected production archive; never rebuild or submit App Review.
+# Hold automatic TestFlight distribution until backend and device acceptance are ready.
+name: Upload production iOS 1.0.1 build 19
+on:
+  workflow_dispatch: {}
+jobs:
+  upload_ios19:
+    name: Upload existing iOS 1.0.1 (19)
+    type: submit
+    params:
+      build_id: e9f3fe01-8260-42f0-80ab-125c52a6c035
+      profile: ios-testflight
+      groups: []
