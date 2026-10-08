@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildPatientReport } from '../src/privacy/patient-report.js';
-import { notificationPermissionGranted } from '../src/notifications/permission.js';
+import { notificationPermissionGranted, notificationPermissionUndetermined } from '../src/notifications/permission.js';
 import { phoneProofErrorKey } from '../src/security/phone-proof-errors.js';
 
 const require = createRequire(import.meta.url);
@@ -10,6 +10,34 @@ const { createHarness, deferred } = require('./profile-screen-harness.cjs');
 const hook = resolve('apps/mobile/src/hooks/useRequestScope.ts');
 
 describe('iOS notification permission feedback', () => {
+  it('prompts automatically only before the first OS decision', () => {
+    expect(notificationPermissionUndetermined({ ios: { status: 0 }, status: 'denied' })).toBe(true);
+    expect(notificationPermissionUndetermined({ status: 'undetermined' })).toBe(true);
+    expect(notificationPermissionUndetermined({ status: 'undetermined', canAskAgain: false })).toBe(false);
+    for (const status of [1, 2, 3, 4]) expect(notificationPermissionUndetermined({ ios: { status } })).toBe(false);
+    expect(notificationPermissionUndetermined({ status: 'denied', canAskAgain: true })).toBe(false);
+  });
+  it('shows no disabled warning before the first decision and refreshes when the prompt completes', async () => {
+    let permissionChanged = () => {};
+    let granted = false;
+    let undetermined = true;
+    const h = createHarness(resolve('apps/mobile/app/(tabs)/today.tsx'), hook, {}, {
+      '@/notifications': {
+        inspectCapability: async () => ({ supported: true, permissionGranted: granted, permissionUndetermined: undetermined }),
+        subscribeNotificationPermissionChanges: (listener: () => void) => { permissionChanged = listener; return () => {}; },
+        captureLocalReminderContext: () => () => true,
+        rescheduleLocalNotifications: async () => ({ scheduled: 0, failed: 0 }),
+      },
+    });
+    try {
+      h.answer(h.batch(), 'A'); await h.flush();
+      expect(h.text()).not.toContain('notifications.disabledTitle');
+      undetermined = false; permissionChanged(); await h.flush();
+      expect(h.text()).toContain('notifications.disabledTitle');
+      granted = true; permissionChanged(); await h.flush();
+      expect(h.text()).not.toContain('notifications.disabledTitle');
+    } finally { h.unmount(); }
+  });
   it('uses iOS authorization including provisional and ephemeral grants', () => {
     for (const status of [2, 3, 4]) expect(notificationPermissionGranted({ granted: false, ios: { status } })).toBe(true);
     for (const status of [0, 1]) expect(notificationPermissionGranted({ granted: true, ios: { status } })).toBe(false);

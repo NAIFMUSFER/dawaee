@@ -45,6 +45,8 @@ const PROBE = {
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  // Keep the September clinical fixture independent of the real calendar.
+  h.setServerNow(new Date('2026-09-15T06:00:00Z'));
   const registration = await send({
     method: 'POST', url: '/v1/auth/register',
     payload: { email: 'audit-registration@example.test', deviceId: PROBE.registrationDevice },

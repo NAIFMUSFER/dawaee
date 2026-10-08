@@ -171,6 +171,12 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/otp/request': 'auth-plane',
   'POST /v1/auth/otp/verify': 'auth-plane',
   'POST /v1/auth/register': 'auth-plane',
+  'POST /v1/auth/registration-code/request': 'auth-plane',
+  'POST /v1/auth/registration-code/complete': 'auth-plane',
+  'GET /v1/auth/google/options': 'auth-plane',
+  'POST /v1/auth/google': 'auth-plane',
+  'GET /v1/auth/apple/options': 'auth-plane',
+  'POST /v1/auth/apple': 'auth-plane',
   'POST /v1/auth/refresh': 'auth-plane',
   'POST /v1/auth/login': 'auth-plane',
   // Anonymous account recovery requires fresh signed phone proof. Its account
@@ -292,6 +298,8 @@ function isStaticAsset(path: string): boolean {
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  // Keep the September clinical fixture independent of the real calendar.
+  h.setServerNow(new Date('2026-09-15T06:00:00Z'));
 
   alice = await signIn(h, '+966500090001');
   bob = await signIn(h, '+966500090002');
@@ -1012,7 +1020,7 @@ describe('P12-8 every route works for the person entitled to use it', () => {
 
     await ok('GET /v1/doses/:id', { method: 'GET', url: `/v1/doses/${own.doseId}` });
     const evt = (n: string) => `p12-${n}-${Date.now()}`;
-    const restoreNow = new Date();
+    const restoreNow = new Date('2026-09-15T06:00:00Z');
     try {
       h.setServerNow(new Date(doses[0]!.scheduledAt));
       await ok('POST taken', {

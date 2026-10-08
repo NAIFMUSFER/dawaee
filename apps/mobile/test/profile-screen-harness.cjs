@@ -85,7 +85,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
   };
   const foregroundListeners = new Set();
   h.changeAppState = state => { for (const listener of foregroundListeners) listener(state); };
-  const hosts = new Proxy({ AppState: { addEventListener: (_event, listener) => {
+  const hosts = new Proxy({ Keyboard: { dismiss: () => undefined }, AppState: { addEventListener: (_event, listener) => {
     foregroundListeners.add(listener);
     return { remove: () => foregroundListeners.delete(listener) };
   } } }, { get: (target, key) => key === '__esModule' ? true : target[key] ?? String(key) });
@@ -103,6 +103,10 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       return () => { if (focusCleanups.delete(cleanup)) cleanup?.(); };
     }, [fn]) },
     '@/components/ui': hosts,
+    '@/components/AuthScreen': { AuthScreen: 'AuthScreen' },
+    '@/components/GoogleAuthButton': { GoogleAuthButton: 'GoogleAuthButton' },
+    '@/components/AppleAuthButton': { AppleAuthButton: 'AppleAuthButton' },
+    '@/security/apple-sign-in': { appleAuthorization: async () => null },
     '@/security/PrivacyModal': { PrivacyModal: 'Modal' },
     '@/security/AppLockContext': { useAppLock: () => ({ contentBlocked: false }) },
     '@/components/DoseCard': hosts,
@@ -119,7 +123,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/i18n': { useI18n: () => i18n },
     '@/hooks/useTheme': { useTheme: () => theme },
     '@/state/app-store': { useApp: () => h.app },
-    '@/api/client': { NetworkError, ApiError, api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
+    '@/api/client': { NetworkError, ApiError, getDeviceId: async () => 'synthetic-device', api: { get: (route, query) => request('GET', route, query), post: (route, body) => request('POST', route, body),
       anonymous: { get: (route) => request('GET', route), post: (route, body) => request('POST', route, body) } } },
     '@/storage/offline-queue': {
       captureQueueOwnership: () => {
@@ -134,6 +138,7 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
       subscribeQueueChanges: () => () => undefined,
       newClientEventId: () => `event-${h.requests.length}`,
     },
+    '@/storage/pending-invite': { landingAfterAuth: async () => '/(tabs)/today' },
     '@/storage/emergency-qr': { readEmergencyQr: async () => null, saveEmergencyQr: async () => false },
     '@/privacy/share-patient-report': { sharePatientReport: async () => false },
     '@/privacy/share-full-export': { shareFullExport: async () => false },

@@ -10,6 +10,9 @@ import { api, ApiError, NetworkError, getDeviceId } from '@/api/client';
 import { waitForAuthServer } from '@/api/auth-connection';
 import { landingAfterAuth } from '@/storage/pending-invite';
 import { readRegistrationPhone, clearRegistrationPhone } from '@/storage/registration-phone';
+import { AuthScreen } from '@/components/AuthScreen';
+import { GoogleAuthButton } from '@/components/GoogleAuthButton';
+import { AppleAuthButton } from '@/components/AppleAuthButton';
 import { PhoneVerification } from '@/components/PhoneVerification';
 import { phoneVerificationSupported } from '@/security/phone-proof';
 
@@ -51,7 +54,7 @@ export default function SignInScreen() {
   }, [phoneStep, signedIn, user?.id]);
 
   const submit = async () => {
-    if (action.current) return;
+    if (action.current || busy) return;
     const controller = new AbortController();
     action.current = controller;
     const current = () => action.current === controller && !controller.signal.aborted;
@@ -121,8 +124,7 @@ export default function SignInScreen() {
   </Screen></SafeAreaView>;
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <Screen>
+    <AuthScreen>
         <View style={{ gap: theme.spacing.sm, paddingTop: theme.spacing.xl }}>
           <Txt variant="h1" weight="bold" accessibilityRole="header">{t('auth.signInTitle')}</Txt>
           <Txt variant="body" color={theme.colors.ink500}>{t('safety.notMedicalAdvice')}</Txt>
@@ -145,7 +147,6 @@ export default function SignInScreen() {
           maxLength={320}
           editable={!busy}
           autoComplete="username"
-          autoFocus
         />
 
         <Field
@@ -184,6 +185,9 @@ export default function SignInScreen() {
           size="large"
         />
 
+        <GoogleAuthButton disabled={busy} onBusyChange={setBusy} />
+        <AppleAuthButton disabled={busy} onBusyChange={setBusy} />
+
         <Button label={t('recovery.title')} tone="ghost" disabled={busy}
           onPress={() => router.push('/(auth)/forgot-password')} />
 
@@ -196,7 +200,6 @@ export default function SignInScreen() {
         >
           <Txt variant="body" color={theme.colors.primary600}>{t('auth.noAccount')}</Txt>
         </Pressable>
-      </Screen>
-    </SafeAreaView>
+    </AuthScreen>
   );
 }

@@ -52,3 +52,30 @@ process.stdout.write(JSON.stringify(report));
     expect(result.stdout).toContain('synthetic-build-critical');
   });
 });
+
+it.each([
+  { effects: ['@expo/metro'], severity: 'high', expected: 'build', blocks: false },
+  { effects: ['@expo/metro', 'mobile-runtime'], severity: 'high', expected: 'RUNTIME', blocks: true },
+  { effects: ['@expo/metro'], severity: 'critical', expected: 'build', blocks: true },
+])('keeps mobile build attribution bounded: $expected $severity', fixture => {
+  const dir = mkdtempSync(join(tmpdir(), 'dawaee-audit-mobile-'));
+  tempDirs.push(dir);
+  const fakeNpm = join(dir, 'npm');
+  writeFileSync(fakeNpm, '#!/bin/sh\nexec node "$(dirname "$0")/fake-npm.cjs" "$@"\n');
+  chmodSync(fakeNpm, 0o755);
+  const report = { vulnerabilities: {
+    'synthetic-mobile-finding': {
+      severity: fixture.severity, effects: fixture.effects, fixAvailable: false,
+      via: [{ url: 'https://github.com/advisories/GHSA-synthetic-mobile' }],
+    },
+    '@expo/metro': { effects: ['expo'] },
+    expo: { effects: [] },
+    'mobile-runtime': { effects: [] },
+  } };
+  writeFileSync(join(dir, 'fake-npm.cjs'), `process.stdout.write(${JSON.stringify(JSON.stringify(report))});`);
+  const result = spawnSync(process.execPath, ['scripts/audit-gate.mjs', '--workspace', 'mobile'], {
+    cwd: ROOT, encoding: 'utf8', env: { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ''}` },
+  });
+  expect(result.stdout).toMatch(new RegExp(`${fixture.expected}\\s+${fixture.severity}\\s+open\\s+synthetic-mobile-finding`));
+  expect(result.stdout.includes('UNACCEPTED ' + fixture.severity.toUpperCase())).toBe(fixture.blocks);
+});

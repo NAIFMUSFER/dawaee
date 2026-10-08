@@ -1,0 +1,12 @@
+# Build only. Submission remains separate until the production API/worker,
+# Apple provider and actual iPhone acceptance gates are verified.
+name: Build App Store update from approved iOS 18 baseline
+on:
+  workflow_dispatch: {}
+jobs:
+  build_ios20:
+    name: Build iOS 1.0.1 (20) for production
+    type: build
+    params:
+      platform: ios
+      profile: ios-testflight

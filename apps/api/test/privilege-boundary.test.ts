@@ -74,7 +74,7 @@ const WORKER_DEFINER_ALLOWED = [
 const WORKER_DEFINER_FORBIDDEN = [
   'dose_action_order',
   'apply_dose_stock_event',
-  'attach_account_phone', 'pending_email_invitations', 'accept_email_invitation',
+  'attach_account_phone', 'attach_google_account_phone', 'pending_email_invitations', 'accept_email_invitation',
   'accept_caregiver_invitation', 'clear_login_failures', 'create_session',
   'find_or_create_user_by_phone', 'find_user_for_password_login', 'issue_otp',
   'record_login_failure', 'register_with_password', 'resolve_emergency_qr',

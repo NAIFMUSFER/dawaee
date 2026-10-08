@@ -29,7 +29,7 @@ async function signIn(h: any) {
 }
 
 describe('phone is entered once during native registration', () => {
-  it('collects separate email and phone, retaining only a normalized contact draft before requesting mailbox proof', async () => {
+  it('collects email, name, password and phone, withholding contact persistence until mailbox proof', async () => {
     const save = vi.fn(async () => undefined);
     const h = createHarness(resolve('apps/mobile/app/(auth)/sign-up.tsx'), undefined, {}, {
       '@/api/auth-connection': { waitForAuthServer: async () => undefined },
@@ -37,14 +37,46 @@ describe('phone is entered once during native registration', () => {
       '@/storage/registration-phone': { saveRegistrationPhone: save },
     }); screens.push(h);
     h.find('Field', (p: any) => p.label === 'emailAccount.email').onChangeText(draft.email);
-    await h.flush(); expect(h.find('Button', (p: any) => p.label === 'auth.signUp').disabled).toBe(true);
+    await h.flush(); expect(h.find('Button', (p: any) => p.label === 'auth.sendEmailCode').disabled).toBe(true);
     h.find('Field', (p: any) => p.label === 'invite.phone').onChangeText('٠٥٠٠٠٠١٢٣٤');
-    await h.flush(); h.find('Button', (p: any) => p.label === 'auth.signUp').onPress(); await h.flush();
-    expect(save).toHaveBeenCalledWith(draft.email, draft.phone);
+    h.find('Field', (p: any) => p.label === 'auth.displayName').onChangeText('Synthetic');
+    h.find('Field', (p: any) => p.label === 'auth.password').onChangeText('synthetic-login-password');
+    await h.flush(); h.find('Button', (p: any) => p.label === 'auth.sendEmailCode').onPress(); await h.flush();
+    expect(save).not.toHaveBeenCalled();
     expect(h.requests[0].payload).toEqual({ email: draft.email, locale: 'en' });
     expect(h.requests[0].payload).not.toHaveProperty('phone');
-    h.requests[0].resolve({ accepted: true }); await h.flush();
-    expect(h.find('Button', (p: any) => p.label === 'auth.registrationSignIn')).toBeTruthy();
+    h.requests[0].resolve({ accepted: true, challenge: 'synthetic-challenge', retryAfterSeconds: 60 }); await h.flush();
+    expect(h.find('Field', (p: any) => p.label === 'auth.emailCode')).toBeTruthy();
+  });
+  it('confirms email inside the app before retaining the contact and entering phone proof', async () => {
+    const save = vi.fn(async () => undefined), clear = vi.fn(async () => undefined);
+    const h = createHarness(resolve('apps/mobile/app/(auth)/sign-up.tsx'), undefined, {}, {
+      '@/api/auth-connection': { waitForAuthServer: async () => undefined },
+      '@/security/phone-proof': { phoneVerificationSupported: true },
+      '@/storage/registration-phone': { saveRegistrationPhone: save, clearRegistrationPhone: clear },
+      '@/storage/pending-invite': { landingAfterAuth: async () => '/caregiver/accept' },
+    }); screens.push(h);
+    h.app.signInWithTokens = async () => { h.app.signedIn = true; h.render(); };
+    for (const [label, value] of Object.entries({ 'emailAccount.email':draft.email, 'auth.displayName':'Synthetic', 'auth.password':'synthetic-login-password', 'invite.phone':'0500001234' })) {
+      h.find('Field', (p:any) => p.label === label).onChangeText(value);
+    }
+    await h.flush();
+    expect(h.find('Field', (p:any) => p.label === 'emailAccount.email').autoFocus).toBeUndefined();
+    h.find('Button', (p:any) => p.label === 'auth.sendEmailCode').onPress(); await h.flush();
+    expect(save).not.toHaveBeenCalled();
+    h.requests[0].resolve({accepted:true,challenge:'synthetic-challenge',retryAfterSeconds:60}); await h.flush();
+    h.find('Field', (p:any) => p.label === 'auth.emailCode').onChangeText('١٢٣٤٥٦'); await h.flush();
+    h.find('Button', (p:any) => p.label === 'auth.completeInApp').onPress(); await h.flush();
+    expect(h.requests[1].route).toBe('/v1/auth/registration-code/complete');
+    expect(h.requests[1].payload.code).toBe('123456');
+    expect(save).not.toHaveBeenCalled();
+    h.requests[1].resolve({userId:'synthetic-account',accessToken:'synthetic-access',refreshToken:'synthetic-refresh'}); await h.flush();
+    expect(save).toHaveBeenCalledWith(draft.email,draft.phone);
+    expect(h.find('PhoneVerification').initialPhone).toBe(draft.phone);
+    expect(h.routes).toEqual([]);
+    h.find('PhoneVerification').onVerified(); await h.flush();
+    expect(clear).toHaveBeenCalledWith(draft.email);
+    expect(h.routes).toEqual(['/caregiver/accept']);
   });
   it('opens SMS verification with the saved phone and current password, then restores the pending invitation', async () => {
     const { h, clear } = login(); await signIn(h);

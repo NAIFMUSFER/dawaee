@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, isSignedIn } from '../api/client.js';
 import type { DoseView } from '../api/types.js';
 import type { Locale } from '@dawaee/shared';
@@ -9,7 +10,7 @@ import {
   withExactAlarmScheduleMutation,
 } from '../../modules/exact-alarm-access';
 import { ACTION_SKIP, ACTION_SNOOZE, ACTION_TAKEN, applyNotificationAction, createNotificationActionIntent, type NotificationActionIntent, type ActionOutcome } from './actions.js';
-import { notificationPermissionGranted } from './permission.js';
+import { notificationPermissionGranted, notificationPermissionUndetermined } from './permission.js';
 
 /**
  * Local notifications.
@@ -35,6 +36,15 @@ import { notificationPermissionGranted } from './permission.js';
 export const MEDICATION_CHANNEL_ID = 'medication-critical';
 export const MEDICATION_CATEGORY_ID = 'MEDICATION_REMINDER';
 export const IOS_PENDING_NOTIFICATION_LIMIT = 64;
+const NOTIFICATION_PERMISSION_ASKED_KEY = 'dawaee.notification-permission-asked.v1';
+async function permissionAlreadyAsked(granted = false): Promise<boolean> {
+  if (Platform.OS !== 'android') return false;
+  try {
+    if (granted) { await AsyncStorage.setItem(NOTIFICATION_PERMISSION_ASKED_KEY, '1'); return true; }
+    return (await AsyncStorage.getItem(NOTIFICATION_PERMISSION_ASKED_KEY)) === '1';
+  }
+  catch { return true; } // Do not automatically repeat a prompt if storage fails.
+}
 
 export type PushRegistrationStatus = 'unknown' | 'registering' | 'registered' | 'denied' | 'failed' | 'unsupported';
 let pushRegistrationStatus: PushRegistrationStatus = 'unknown';
@@ -84,6 +94,7 @@ async function load(): Promise<NotificationsModule | null> {
 export interface NotificationCapability {
   supported: boolean;
   permissionGranted: boolean;
+  permissionUndetermined?: boolean;
   canScheduleExact: boolean;
   /** A user-facing key explaining what is degraded, if anything. */
   warningKey?: 'notifications.disabledTitle' | 'notifications.tokenInvalid';
@@ -95,12 +106,14 @@ export async function inspectCapability(): Promise<NotificationCapability> {
 
   const settings = await N.getPermissionsAsync();
   const granted = notificationPermissionGranted(settings);
+  const undetermined = notificationPermissionUndetermined(settings, await permissionAlreadyAsked(granted));
   const canScheduleExact = Platform.OS !== 'android' ? true : granted && canScheduleExactAlarmsOnDevice();
   return {
     supported: true,
     permissionGranted: granted,
+    permissionUndetermined: undetermined,
     canScheduleExact,
-    ...(granted ? {} : { warningKey: 'notifications.disabledTitle' as const }),
+    ...(granted || undetermined ? {} : { warningKey: 'notifications.disabledTitle' as const }),
   };
 }
 
@@ -110,15 +123,23 @@ export function subscribeNotificationPermissionChanges(listener: () => void): ()
   return () => { permissionListeners.delete(listener); };
 }
 
-export async function requestPermission(): Promise<boolean> {
-  const N = await load();
-  if (!N) return false;
-  const res = await N.requestPermissionsAsync({
-    ios: { allowAlert: true, allowSound: true, allowBadge: true, allowProvisional: false },
-  });
-  const granted = notificationPermissionGranted(res);
-  if (granted) for (const listener of permissionListeners) listener();
-  return granted;
+let permissionRequest: Promise<boolean> | null = null;
+export function requestPermission(): Promise<boolean> {
+  if (permissionRequest) return permissionRequest;
+  permissionRequest = (async () => {
+    const N = await load();
+    if (!N) return false;
+    // Android needs its reminder channel before the first permission prompt.
+    await configureChannels();
+    if (Platform.OS === 'android') await AsyncStorage.setItem(NOTIFICATION_PERMISSION_ASKED_KEY, '1');
+    const res = await N.requestPermissionsAsync({
+      ios: { allowAlert: true, allowSound: true, allowBadge: true, allowProvisional: false },
+    });
+    const granted = notificationPermissionGranted(res);
+    for (const listener of permissionListeners) listener();
+    return granted;
+  })().finally(() => { permissionRequest = null; });
+  return permissionRequest;
 }
 
 export async function configureChannels(): Promise<void> {
@@ -407,7 +428,7 @@ export async function registerPushToken(): Promise<string | null> {
 }
 
 export async function syncPushRegistration(deviceId: string,
-  options: { requestPermission?: boolean; isCurrent?: () => boolean } = {}): Promise<boolean> {
+  options: { requestPermission?: boolean; requestPermissionIfUndetermined?: boolean; isCurrent?: () => boolean } = {}): Promise<boolean> {
   const current = options.isCurrent ?? (() => isSignedIn());
   if (!current()) return false;
   setPushStatus('registering');
@@ -417,8 +438,12 @@ export async function syncPushRegistration(deviceId: string,
     if (!N) { setPushStatus('unsupported'); return false; }
     const settings = await N.getPermissionsAsync();
     if (!current()) return false;
+    const alreadyAsked = await permissionAlreadyAsked(notificationPermissionGranted(settings));
+    if (!current()) return false;
     const granted = notificationPermissionGranted(settings)
-      || (options.requestPermission === true && await requestPermission());
+      || ((options.requestPermission === true
+        || (options.requestPermissionIfUndetermined === true && notificationPermissionUndetermined(settings, alreadyAsked)))
+        && await requestPermission());
     if (!current()) return false;
     if (!granted) { setPushStatus('denied'); return false; }
     const token = await registerPushToken();

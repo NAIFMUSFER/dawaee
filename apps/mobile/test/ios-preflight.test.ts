@@ -40,13 +40,21 @@ describe('EAS iOS release preflight hook', () => {
     const result = hook('production', { EAS_BUILD_PLATFORM: 'android' });
     expect(result.status, result.stderr).toBe(0);
   });
-  it.each(['production', 'ios-testflight'])('requires a valid plist for the %s store profile', profile => {
+  it.each(['production', 'ios-testflight', 'ios-auth-preview'])('requires a valid plist for the %s store profile', profile => {
     const missing = hook(profile);
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain('IOS_FIREBASE_CONFIG_REQUIRED');
     const configured = hook(profile, { GOOGLE_SERVICES_PLIST: file() });
     expect(configured.status, configured.stderr).toBe(0);
     expect(configured.stdout).toContain('preflight passed');
+  });
+  it.each([
+    ['ios-testflight', 'https://dawaee-audit-preview.onrender.com'],
+    ['ios-auth-preview', 'https://dawaee-api.onrender.com'],
+  ])('keeps the %s backend isolated', (profile, apiUrl) => {
+    const result = hook(profile, { EXPO_PUBLIC_API_URL: apiUrl, GOOGLE_SERVICES_PLIST: file() });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('IOS_BACKEND_MISMATCH');
   });
   it('rejects an audit identity accidentally set on a store profile', () => {
     const result = hook('ios-testflight', { DAWAEE_AUDIT_BUILD: '1' });

@@ -19,11 +19,11 @@ function setup(kind: 'sign-in' | 'sign-up') {
     '@/storage/pending-invite': { landingAfterAuth: async () => '/caregiver/accept' },
   });
   h.app.signInWithTokens = signedIn; h.render(); screens.push(h);
-  const label = kind === 'sign-up' ? 'auth.signUp' : 'auth.signIn';
+  const label = kind === 'sign-up' ? 'auth.sendEmailCode' : 'auth.signIn';
   const press = () => h.find('Button', (p: any) => p.label === label).onPress();
   const fill = async () => {
     const values = kind === 'sign-up'
-      ? { 'emailAccount.email': 'Example@example.test' }
+      ? { 'emailAccount.email': 'Example@example.test', 'auth.displayName': 'Synthetic', 'auth.password': 'synthetic-only-secret' }
       : { 'auth.identifier': 'Example@example.test', 'auth.password': 'synthetic-only-secret' };
     for (const [field, value] of Object.entries(values)) h.find('Field', (p: any) => p.label === field).onChangeText(value);
     await h.flush();
@@ -55,16 +55,15 @@ describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind =
     expect(s.h.text()).toContain('auth.connectingServer'); expect(s.h.find('Field').editable).toBe(false);
     s.gate.resolve(); await s.h.flush();
     expect(s.post).toHaveBeenCalledTimes(1);
-    expect(s.post.mock.calls[0]?.[0]).toBe(kind === 'sign-up' ? '/v1/auth/register' : '/v1/auth/login');
-    const response = kind === 'sign-up' ? { accepted: true, retryAfterSeconds: 60 }
+    expect(s.post.mock.calls[0]?.[0]).toBe(kind === 'sign-up' ? '/v1/auth/registration-code/request' : '/v1/auth/login');
+    const response = kind === 'sign-up' ? { accepted: true, retryAfterSeconds: 60, challenge: 'synthetic-challenge' }
       : { accessToken: 'synthetic-access', refreshToken: 'synthetic-refresh' };
     s.response.resolve(response); await s.h.flush();
     if (kind === 'sign-up') {
       expect(s.signedIn).not.toHaveBeenCalled();
-      expect(s.h.text()).toContain('auth.registrationRequested');
+      expect(s.h.text()).toContain('auth.codeSent');
       expect(s.h.routes).toEqual([]);
-      s.h.find('Button', (p: any) => p.label === 'recovery.title').onPress();
-      expect(s.h.routes).toEqual(['/(auth)/forgot-password']);
+      expect(s.h.find('Field', (p: any) => p.label === 'auth.emailCode')).toBeTruthy();
       // Recovery is an explicit next screen, never an automatic email request
       // or a credential/contact-bearing route after generic registration.
       expect(s.post).toHaveBeenCalledTimes(1);
@@ -85,7 +84,7 @@ describe.each(['sign-in', 'sign-up'] as const)('%s connection lifecycle', kind =
     const s = setup(kind); await s.fill(); s.press(); s.gate.resolve(); await s.h.flush();
     s.response.reject(new NetworkError('response lost')); await s.h.flush();
     expect(s.post).toHaveBeenCalledTimes(1); expect(s.signedIn).not.toHaveBeenCalled();
-    expect(s.h.find('Banner').title).toBe(kind === 'sign-up' ? 'auth.registrationUnconfirmed' : 'auth.connectionFailed');
+    expect(s.h.find('Banner').title).toBe('auth.connectionFailed');
   });
   it('does not send credentials after leaving while the server is starting', async () => {
     const s = setup(kind); await s.fill(); s.press(); s.h.unmount();

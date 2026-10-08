@@ -134,7 +134,14 @@ export const registerSchema = z
  * should not be expressible by an empty body — an accidental POST must not be
  * a valid one.
  */
-export const requestDeletionSchema = z.object({ confirm: z.literal(true) });
+export const appleAuthorizationProofSchema = z.object({
+  authorizationCode: z.string().min(10).max(4096),
+  rawNonce: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
+export const requestDeletionSchema = z.object({
+  confirm: z.literal(true),
+  appleProof: appleAuthorizationProofSchema.optional(),
+});
 
 /**
  * The signed-in user's own record.

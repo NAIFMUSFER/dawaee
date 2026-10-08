@@ -16,7 +16,7 @@ import { api, NetworkError } from '@/api/client';
 import type { DoseView, TodayResponse } from '@/api/types';
 import type { CachedSchedule, QueuedAction } from '@/storage/offline-queue';
 import { applyQueuedToDoses, cacheDose, cacheSchedule, captureQueueOwnership, enqueue, newClientEventId, readCachedSchedule, readQueue, subscribeQueueChanges } from '@/storage/offline-queue';
-import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications } from '@/notifications';
+import { captureLocalReminderContext, inspectCapability, rescheduleLocalNotifications, subscribeNotificationPermissionChanges } from '@/notifications';
 import { SnoozeSheet } from '@/components/SnoozeSheet';
 import { DoseNotesSheet } from '@/components/DoseNotesSheet';
 import { setMedicationDetailRouteIntent } from '@/navigation/private-navigation';
@@ -257,15 +257,16 @@ function TodayProfileScreen() {
       try {
         const cap = await inspectCapability();
         if (!active || attempt !== latest) return;
-        setNotificationWarning(cap.supported && !cap.permissionGranted
+        setNotificationWarning(cap.supported && !cap.permissionGranted && !cap.permissionUndetermined
           ? t('notifications.disabledTitle') : null);
       } catch { /* An unreadable permission is not a denied permission. */ }
     };
     void inspect();
+    const unsubscribe = subscribeNotificationPermissionChanges?.(() => { void inspect(); });
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') void inspect();
     });
-    return () => { active = false; subscription.remove(); };
+    return () => { active = false; unsubscribe?.(); subscription.remove(); };
   }, [t]));
 
   const undo = useCallback(async (dose: DoseView) => {

@@ -215,7 +215,6 @@ def scenario(case, width, height, density, font):
     SEEN.clear()
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "pm", "clear", PACKAGE)  # only the disposable CI installation
-    adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
     adb("shell", "wm", "size", str(width) + "x" + str(height))
     adb("shell", "wm", "density", str(density))
     adb("shell", "settings", "put", "system", "font_scale", str(font))
@@ -235,8 +234,30 @@ def scenario(case, width, height, density, font):
     fill("رقم الجوال أو البريد الإلكتروني", email)
     fill("كلمة المرور", password)
     tap("دخول")
-    tap("إضافة دواء", scroll=True)
+    # Exercise the real Android first-use dialog, rather than pre-granting it.
+    allow = "com.android.permissioncontroller:id/permission_allow_button"
+    deny = "com.android.permissioncontroller:id/permission_deny_button"
+    tap(allow if case == "small-ar" else deny)
+    locate("إضافة دواء", scroll=True)
     AUTHENTICATED = True
+    if case != "small-ar":
+        locate("تنبيهات الدواء معطّلة على هذا الجهاز")
+        capture(case + "-notification-denied")
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", activity)
+        locate("إضافة دواء", scroll=True)
+        assert not any(matches(n, allow) or matches(n, deny) for n in tree()), "denied permission was requested again"
+        locate("تنبيهات الدواء معطّلة على هذا الجهاز")
+        pass_result(case, "first-use denial remains visible without a second OS prompt after restart")
+        # Simulate the user's later grant in system settings, then relaunch.
+        adb("shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
+        adb("shell", "am", "force-stop", PACKAGE)
+        adb("shell", "am", "start", "-W", "-n", activity)
+        locate("إضافة دواء", scroll=True)
+    assert not any(matches(n, "تنبيهات الدواء معطّلة على هذا الجهاز") for n in tree()), "disabled warning remained after permission grant"
+    capture(case + "-notifications-enabled")
+    pass_result(case, "first-use permission prompt and enabled-state feedback verified")
+    tap("إضافة دواء", scroll=True)
     tap("إدخال يدوي.", prefix=True, scroll=True)
     locate("اسم الدواء", field=True)
     fill("اسم الدواء", "SyntheticTablet")
