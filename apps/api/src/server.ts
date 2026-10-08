@@ -14,6 +14,8 @@ import { promoteMedicationIdHeader, rewritePrivateResourceUrl } from './middlewa
 import { buildProviders, type Providers } from './providers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebAppRoutes } from './routes/web-app.js';
+import { registerRegistrationCodeRoutes } from './routes/registration-code.js';
+import { registerGoogleAuthRoutes } from './routes/google-auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerPhoneVerificationRoutes } from './routes/phone-verification.js';
 import { registerAccountEmailRoutes } from './routes/account-email.js';
@@ -155,6 +157,8 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
   registerHealthRoutes(app, providers);
   await app.register(async (scope) => {
     registerAuthRoutes(scope);
+    registerRegistrationCodeRoutes(scope);
+    registerGoogleAuthRoutes(scope);
     registerPhoneVerificationRoutes(scope);
     registerPasswordRecoveryRoutes(scope);
     registerAccountEmailRoutes(scope);

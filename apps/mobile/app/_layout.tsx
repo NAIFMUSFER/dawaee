@@ -88,16 +88,15 @@ function Shell() {
     let disposed = false;
     let registering = false;
     const current = () => !disposed && caregiverSession.current.generation === generation;
-    const register = async (requestPermission: boolean) => {
+    const register = async (firstUse: boolean) => {
       if (registering || !current()) return;
       registering = true;
-      try { await syncPushRegistration(deviceId, { requestPermission, isCurrent: current }); }
+      try { await syncPushRegistration(deviceId, { requestPermissionIfUndetermined: firstUse, isCurrent: current }); }
       catch { /* Foreground/grant events retry transient token/provider errors. */ }
       finally { registering = false; }
     };
-    // Registration may reuse an existing grant. The OS prompt belongs to the
-    // explained onboarding/settings action, not the sign-in transition.
-    void register(false);
+    // Ask once when the OS has no decision yet; respect later user denials.
+    void register(true);
     const unsubscribe = subscribeNotificationPermissionChanges(() => { void register(false); });
     const subscription = AppState.addEventListener('change', next => { if (next === 'active') void register(false); });
     return () => { disposed = true; unsubscribe(); subscription.remove(); };

@@ -84,25 +84,6 @@ const WORKSPACES = {
  */
 const BASELINE = [
   {
-    workspace: 'root',
-    module: 'vitest',
-    severity: 'critical',
-    advisories: ['GHSA-5xrq-8626-4rwp', 'GHSA-82fw-gwwq-j7x9'],
-    accepted: '2026-09-12',
-    reviewBy: '2026-10-12',
-    reason:
-      'Build/test-only on this repository. CI invokes `vitest run`, vitest.config.ts uses the Node '
-      + 'environment, and no UI, Browser Mode, or API server is enabled. GHSA-5xrq-8626-4rwp is '
-      + 'critical when the Vitest UI/API server is exposed to the network or when UI/Browser Mode '
-      + 'runs on Windows; this CI runs Ubuntu and starts neither surface. GHSA-82fw-gwwq-j7x9 also '
-      + 'targets dev-server/mocker transport. The complete fix for both is Vitest >=4.1.11, a '
-      + 'two-major test-toolchain migration from 2.1.8 that must be validated against the full suite. '
-      + 'This is a short-lived visible exception, not an omitted dependency class.',
-    endsWhen:
-      'Upgrade Vitest and @vitest/mocker to >=4.1.11 with the full suite green, or immediately if '
-      + 'this repository enables/exposes Vitest UI, Browser Mode, or its API server.',
-  },
-  {
     workspace: 'mobile',
     module: 'uuid',
     severity: 'moderate',
@@ -203,9 +184,13 @@ const BUILD_TOOLCHAIN = new Set([
   '@expo/cli', '@expo/metro-config', '@expo/image-utils', '@expo/prebuild-config',
   '@expo/config-plugins', '@expo/package-manager', '@expo/dev-server', '@expo/plist',
   '@expo/bunyan', '@expo/rudder-sdk-node', 'xcode',
-  'metro', 'metro-config', 'metro-transform-worker', 'babel-preset-expo',
+  '@expo/metro', 'metro', 'metro-config', 'metro-transform-worker', 'babel-preset-expo',
   '@react-native/community-cli-plugin', '@react-native/metro-config',
   'expo-modules-autolinking',
+  // Certificate generation and Jest transformers are build/test tools even
+  // when Expo/React Native list them beneath production dependencies.
+  '@expo/code-signing-certificates', 'babel-jest', 'jest-haste-map',
+  'jest-environment-node', '@jest/fake-timers', 'jest-message-util',
 ]);
 
 /**

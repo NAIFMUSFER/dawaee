@@ -4,6 +4,15 @@ const path = require('node:path');
 // notifications out of the production app's sandbox. Ordinary builds retain
 // the static app.json identity and EAS project.
 module.exports = ({ config }) => {
+  const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+  const googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+  if (googleWebClientId && googleIosClientId && process.env.DAWAEE_AUDIT_BUILD !== '1') {
+    if (!googleIosClientId.endsWith('.apps.googleusercontent.com')) throw new Error('INVALID_GOOGLE_IOS_CLIENT_ID');
+    const iosUrlScheme = 'com.googleusercontent.apps.' + googleIosClientId.replace('.apps.googleusercontent.com', '');
+    config = { ...config, plugins: [...config.plugins, ['@react-native-google-signin/google-signin', { iosUrlScheme }]],
+      extra: { ...config.extra, googleWebClientId, googleIosClientId } };
+  }
+
   if (process.env.DAWAEE_AUDIT_BUILD !== '1') {
     const localPlist = path.join(__dirname, 'GoogleService-Info.plist');
     const googleServicesFile = process.env.GOOGLE_SERVICES_PLIST || (fs.existsSync(localPlist) ? localPlist : undefined);

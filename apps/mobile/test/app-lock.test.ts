@@ -258,14 +258,18 @@ describe('nobody can be trapped behind it, and nothing weaker than a password ge
     expect(withoutRevocations).not.toContain('credentialVerifiedAt');
   });
 
-  it('is called only after sign-in posts a password, never by a registration request', () => {
+  it('requires authentication proof before granting a credential-verified session', () => {
     const signIn = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-in.tsx'), 'utf8');
     const call = signIn.indexOf('signInWithTokens(tokens)');
     expect(call, 'sign-in calls it').toBeGreaterThan(-1);
     expect(signIn.slice(0, call)).toMatch(/api\.anonymous\.post<AuthTokens>\('\/v1\/auth\/login'/);
     const signUp = readFileSync(join(ROOT, 'apps/mobile/app/(auth)/sign-up.tsx'), 'utf8');
-    expect(signUp).not.toContain('signInWithTokens');
-    expect(signUp).not.toContain('auth.password');
+    const completion = signUp.indexOf("'/v1/auth/registration-code/complete'");
+    expect(completion).toBeGreaterThan(-1);
+    expect(signUp.indexOf('signInWithTokens(tokens)')).toBeGreaterThan(completion);
+    const server = readFileSync(join(ROOT, 'apps/api/src/routes/registration-code.ts'), 'utf8');
+    expect(server.indexOf('attemptPasswordLogin(tx, body.email, body.password)')).toBeLessThan(server.indexOf('createSession(tx, userId'));
+    expect(server).toContain("login.outcome !== 'ok' || login.userId !== userId");
   });
 
   it('drops the lock entirely when the patient turns it off', () => {

@@ -90,6 +90,22 @@ describe('phone verification screen', () => {
     expect(h.app.refreshProfiles).toHaveBeenCalledTimes(1);
   });
 
+  it('links a new Google account phone after SMS proof without asking for an unknown password', async () => {
+    const { h, start, reply } = screen(true, { googleAccount: true });
+    await reply({ phone: null, verified: false });
+    expect(h.find('Field', (p: any) => p.label === 'auth.password')).toBeNull();
+    h.find('Field', (p: any) => p.label === 'invite.phone').onChangeText('٠٥٠٠٠٩٢٢٩٦');
+    await h.flush();
+    h.find('Button', (p: any) => p.label === 'phoneVerification.send').onPress();
+    await h.flush();
+    expect(start.mock.calls[0]?.[0]).toBe('+966500092296');
+    h.find('Field', (p: any) => p.label === 'phoneVerification.code').onChangeText('123456');
+    await h.flush();
+    h.find('Button', (p: any) => p.label === 'phoneVerification.confirm').onPress();
+    await h.flush();
+    expect(h.batch()[0].payload).toEqual({ idToken: 'synthetic-id-token' });
+  });
+
   it('discards proof completed after leaving the verification screen', async () => {
     const { h, reply, deliver, cancel } = screen();
     await reply({ phone: '+966500092202', verified: false });

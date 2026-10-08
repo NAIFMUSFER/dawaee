@@ -33,6 +33,7 @@ export type RateScope =
   | 'phone-proof:ip' | 'phone-proof:account'
   | 'recovery:ip' | 'recovery:phone'
   | 'email:ip' | 'email:account' | 'email:recipient' | 'email:hour' | 'email:global' | 'email:token'
+  | 'registration-code:challenge'
   | 'refresh:ip'
   | 'api:account';
 
@@ -50,6 +51,7 @@ export interface Budget {
  * minutes.
  */
 export const BUDGETS: Record<RateScope, Budget> = {
+  'registration-code:challenge': { windowSeconds: 1800, max: 5 },
   'email:ip': { windowSeconds: 3600, max: 10 },
   'email:account': { windowSeconds: 3600, max: 5 },
   'email:recipient': { windowSeconds: 60, max: 1 },

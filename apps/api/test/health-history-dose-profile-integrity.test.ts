@@ -43,6 +43,8 @@ async function seedDose(user: TestUser): Promise<string> {
 beforeAll(async () => {
   resetDatabase();
   h = await startHarness();
+  // Keep the September clinical fixture independent of the real calendar.
+  h.setServerNow(new Date('2026-09-15T06:00:00Z'));
   owner = new pg.Pool({ connectionString: 'postgres://postgres:postgres@127.0.0.1:5433/dawaee_test' });
   alice = await signIn(h, '+966500096871');
   bob = await signIn(h, '+966500096872');

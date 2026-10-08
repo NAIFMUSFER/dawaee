@@ -12,7 +12,8 @@ export class AccountEmailDeliveryError extends Error {
 }
 export type EmailDeliveryDiagnostic = { queue: 'account' | 'registration'; code: DeliveryFailure };
 const payloadSchema = z.object({ email: z.string().email(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  purpose: z.enum(['verify', 'reset', 'register']), locale: z.enum(['ar', 'en']) });
+  purpose: z.enum(['verify', 'reset', 'register']), locale: z.enum(['ar', 'en']),
+  code: z.string().regex(/^[0-9]{6}$/).optional() });
 type Mail = z.infer<typeof payloadSchema>;
 const key = () => new Uint8Array(hkdfSync('sha256', loadConfig().JWT_SECRET, '', 'tadawee:account-email:v1', 32));
 export const emailTokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -35,6 +36,14 @@ export function accountEmailReady(cfg: Config = loadConfig()): boolean {
 }
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 export function accountEmailContent(mail: Mail, cfg: Config) {
+  if (mail.purpose === 'register' && mail.code) {
+    const ar = mail.locale === 'ar';
+    const title = ar ? 'رمز تأكيد حساب تداوي' : 'Your TADAWEE verification code';
+    const message = ar ? 'أدخل الرمز داخل تطبيق تداوي لإكمال حسابك. صالح لمدة 30 دقيقة. لا تشارك الرمز مع أحد.'
+      : 'Enter this code in TADAWEE to complete your account. Valid for 30 minutes. Do not share it.';
+    return { subject: `TADAWEE | ${title}`, text: `${title}\n${mail.code}\n${message}`,
+      html: `<html lang="${mail.locale}" dir="${ar ? 'rtl' : 'ltr'}"><body style="font-family:Arial,sans-serif"><h1>${title}</h1><p dir="ltr" style="font-size:32px;letter-spacing:8px">${mail.code}</p><p>${message}</p></body></html>` };
+  }
   const url = new URL('/account-email', cfg.ACCOUNT_EMAIL_BASE_URL);
   // Fragment is never sent to the server or written to request logs.
   url.hash = new URLSearchParams({ token: mail.token, purpose: mail.purpose, lang: mail.locale }).toString();
