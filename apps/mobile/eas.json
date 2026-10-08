@@ -67,6 +67,17 @@
         "DAWAEE_AUDIT_BUILD": "0"
       }
     },
+    "ios-auth-preview": {
+      "extends": "ios-testflight",
+      "ios": {
+        "autoIncrement": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dawaee-audit-preview.onrender.com",
+        "EXPO_PUBLIC_DEMO": "0",
+        "DAWAEE_AUDIT_BUILD": "0"
+      }
+    },
     "audit-ios-simulator": {
       "extends": "audit-preview",
       "ios": {

@@ -32,8 +32,21 @@ function loadModule(file, platform = 'ios') {
     setNotificationHandler: handler => { state.foregroundHandler = handler; },
     SchedulableTriggerInputTypes: { DATE: 'date' },
     IosAuthorizationStatus: { PROVISIONAL: 3 },
-    getPermissionsAsync: async () => ({ granted: state.notificationGranted }),
-    requestPermissionsAsync: async () => { state.permissionRequests = (state.permissionRequests || 0) + 1; state.notificationGranted = true; return { granted: true }; },
+    AndroidImportance: { MAX: 5 },
+    AndroidNotificationVisibility: { PRIVATE: 0 },
+    setNotificationChannelAsync: async () => { state.channelReady = true; },
+    getPermissionsAsync: async () => ({ granted: state.notificationGranted,
+      status: state.permissionStatus, canAskAgain: state.canAskAgain,
+      ...(state.iosStatus !== undefined ? { ios: { status: state.iosStatus } } : {}) }),
+    requestPermissionsAsync: async () => {
+      if (platform === 'android') assert.equal(state.channelReady, true);
+      state.permissionRequests = (state.permissionRequests || 0) + 1;
+      if (state.permissionGate) await state.permissionGate.promise;
+      state.notificationGranted = state.permissionResult !== false;
+      state.permissionStatus = state.notificationGranted ? 'granted' : 'denied';
+      state.iosStatus = undefined;
+      return { granted: state.notificationGranted, status: state.permissionStatus };
+    },
     getExpoPushTokenAsync: async () => { state.tokenReads++; return state.tokenGate ? state.tokenGate.promise : { data: 'synthetic-token' }; },
     cancelAllScheduledNotificationsAsync: async () => {
       state.cancellations++;
@@ -109,6 +122,51 @@ function scenarios(file) {
   add('an explicit explained permission action can grant and register', async (api, state) => {
     state.notificationGranted = false;
     assert.equal(await api.syncPushRegistration('synthetic-device', { requestPermission: true }), true);
+    assert.equal(state.permissionRequests, 1);
+    assert.equal(state.pushPosts.length, 1);
+  });
+  for (const platform of ['ios', 'android']) {
+    add(`first-use ${platform} authorization prompts and registers, then reuses the grant`, async (api, state) => {
+      state.notificationGranted = false;
+      state.permissionStatus = 'undetermined';
+      if (platform === 'ios') state.iosStatus = 0;
+      const cap = await api.inspectCapability();
+      assert.equal(cap.permissionUndetermined, true);
+      assert.equal(cap.warningKey, undefined);
+      assert.equal(await api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true }), true);
+      assert.equal(state.permissionRequests, 1);
+      assert.equal(state.pushPosts.length, 1);
+      assert.equal(await api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true }), true);
+      assert.equal(state.permissionRequests, 1);
+      state.notificationGranted = false;
+      state.permissionStatus = 'denied';
+      assert.equal(await api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true }), false);
+      assert.equal(state.permissionRequests, 1);
+    }, platform);
+    add(`first-use ${platform} authorization respects a denial without reprompting`, async (api, state) => {
+      state.notificationGranted = false;
+      state.permissionStatus = 'undetermined';
+      state.permissionResult = false;
+      assert.equal(await api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true }), false);
+      assert.equal(state.permissionRequests, 1);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        assert.equal(await api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true }), false);
+      }
+      assert.equal(state.permissionRequests, 1);
+      assert.equal(state.pushPosts.length, 0);
+      assert.equal((await api.inspectCapability()).warningKey, 'notifications.disabledTitle');
+    }, platform);
+  }
+  add('concurrent onboarding and first-use requests share one OS prompt', async (api, state) => {
+    state.notificationGranted = false;
+    state.permissionStatus = 'undetermined';
+    state.permissionGate = deferred();
+    const registration = api.syncPushRegistration('new-device', { requestPermissionIfUndetermined: true });
+    await until(() => state.permissionRequests === 1);
+    const onboarding = api.requestPermission();
+    state.permissionGate.resolve();
+    assert.equal(await onboarding, true);
+    assert.equal(await registration, true);
     assert.equal(state.permissionRequests, 1);
     assert.equal(state.pushPosts.length, 1);
   });
