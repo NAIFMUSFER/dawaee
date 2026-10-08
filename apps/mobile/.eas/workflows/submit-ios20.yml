@@ -1,0 +1,14 @@
+# Upload the inspected build 20 archive from the approved build 18 baseline.
+# Do not rebuild, submit public review, or distribute to external groups.
+# Archive SHA-256: 52c726b1517e5f0661302ac947ad2f90ea20727afd4663de3adce5e7bf100daa
+name: Upload inspected iOS 1.0.1 build 20
+on:
+  workflow_dispatch: {}
+jobs:
+  upload_ios20:
+    name: Upload existing iOS 1.0.1 (20)
+    type: submit
+    params:
+      build_id: 5156eadd-4209-45d0-9b26-4852d62d2b32
+      profile: ios-testflight
+      groups: []
