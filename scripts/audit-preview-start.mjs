@@ -113,6 +113,10 @@ export function runtimeEnvironment(env, ownerUrl, password, role = 'dawaee_app')
       child[key] = env[key];
     }
   }
+  // Google token audiences are public configuration needed only by the API.
+  if (role === 'dawaee_app' && env.GOOGLE_AUTH_CLIENT_IDS !== undefined) {
+    child.GOOGLE_AUTH_CLIENT_IDS = env.GOOGLE_AUTH_CLIENT_IDS;
+  }
   const url = new URL(ownerUrl);
   url.username = role;
   url.password = password;
@@ -274,6 +278,12 @@ export function selfTest() {
   }
   assert.equal(child.OTP_DEBUG_ECHO, 'false'); count++;
   assert.equal(child.PUSH_PROVIDER, 'mock'); count++;
+  const googleEnv = { ...env, GOOGLE_AUTH_CLIENT_IDS: 'preview-client.apps.googleusercontent.com' };
+  assert.equal(runtimeEnvironment(googleEnv, validateTarget(env), 'app-password').GOOGLE_AUTH_CLIENT_IDS,
+    googleEnv.GOOGLE_AUTH_CLIENT_IDS); count++;
+  assert.equal(runtimeEnvironment(googleEnv, validateTarget(env), 'worker-password', 'dawaee_worker').GOOGLE_AUTH_CLIENT_IDS,
+    undefined); count++;
+  assert.equal(child.GOOGLE_AUTH_CLIENT_IDS, undefined); count++;
   console.log(`AUDIT_PREVIEW_GUARDS: ${count} assertions passed (no database connection)`);
 }
 
