@@ -3,15 +3,43 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 const { createHarness, NetworkError } = createRequire(import.meta.url)('./profile-screen-harness.cjs');
 const hook = resolve('apps/mobile/src/hooks/useRequestScope.ts');
-function privacy() {
+function privacy(overrides: Record<string, unknown> = {}) {
   const signOut = vi.fn().mockResolvedValue(undefined);
   const h = createHarness(resolve('apps/mobile/app/settings/privacy.tsx'), hook, { role: 'owner', isSelf: true }, {
     '@dawaee/shared': { MESSAGES: { en: {} } },
+    ...overrides,
   });
   h.app.signOut = signOut; h.render();
   return { h, signOut };
 }
 describe('account deletion receipt and recovery controls', () => {
+  it('requests fresh Apple proof only after confirmation and discards it after an account change or cancellation', async () => {
+    for (const outcome of ['success', 'switched', 'cancelled']) {
+      let finish!: (proof: object | null) => void;
+      const appleAuthorization = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+      const { h, signOut } = privacy({ '@/security/apple-sign-in': { appleAuthorization } });
+      try {
+        h.app.user = { ...h.app.user, appleAccount: true }; h.render();
+        h.requests[0].resolve({ consents: [] }); await h.flush();
+        h.find('Button', (p:any) => p.label === 'privacy.deleteStep1').onPress(); await h.flush();
+        expect(appleAuthorization).not.toHaveBeenCalled();
+        h.find('Button', (p:any) => p.label === 'privacy.deleteStep2').onPress(); await h.flush();
+        expect(appleAuthorization).toHaveBeenCalledOnce();
+        expect(h.requests).toHaveLength(1);
+        if (outcome === 'switched') { h.app.user = { id: 'new-account' }; h.render(); }
+        const proof = { authorizationCode: 'synthetic-fresh-apple-code', rawNonce: 'a1'.repeat(32) };
+        finish(outcome === 'cancelled' ? null : proof); await h.flush();
+        if (outcome === 'success') {
+          expect(h.requests[1]).toMatchObject({ route: '/v1/me/deletion-request', payload: { confirm: true, appleProof: proof } });
+          h.requests[1].resolve({ scheduledFor: '2099-01-15T12:00:00Z' }); await h.flush();
+          expect(signOut).toHaveBeenCalledOnce();
+        } else {
+          expect(h.requests.filter((r:any) => r.method === 'POST')).toHaveLength(0);
+          expect(signOut).not.toHaveBeenCalled();
+        }
+      } finally { h.unmount(); }
+    }
+  });
   it('requires two deliberate steps, ignores duplicate taps and carries the server deadline across immediate sign-out', async () => {
     const {h,signOut} = privacy();
     try {

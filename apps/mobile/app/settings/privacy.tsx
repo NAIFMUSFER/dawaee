@@ -238,9 +238,7 @@ export default function PrivacyScreen() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      const account = await api.get<{ user: { appleAccount?: boolean } }>('/v1/me');
-      if (!current()) return;
-      const appleProof = account.user.appleAccount ? await appleAuthorization() : undefined;
+      const appleProof = user?.appleAccount ? await appleAuthorization() : undefined;
       if (!current() || appleProof === null) return;
       const result = await api.post<{ scheduledFor: string }>('/v1/me/deletion-request', {
         confirm: true, ...(appleProof ? { appleProof: { authorizationCode: appleProof.authorizationCode, rawNonce: appleProof.rawNonce } } : {}),

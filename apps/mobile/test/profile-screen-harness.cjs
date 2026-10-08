@@ -105,6 +105,8 @@ function createHarness(file, hookFile, profile = {}, overrides = {}) {
     '@/components/ui': hosts,
     '@/components/AuthScreen': { AuthScreen: 'AuthScreen' },
     '@/components/GoogleAuthButton': { GoogleAuthButton: 'GoogleAuthButton' },
+    '@/components/AppleAuthButton': { AppleAuthButton: 'AppleAuthButton' },
+    '@/security/apple-sign-in': { appleAuthorization: async () => null },
     '@/security/PrivacyModal': { PrivacyModal: 'Modal' },
     '@/security/AppLockContext': { useAppLock: () => ({ contentBlocked: false }) },
     '@/components/DoseCard': hosts,
