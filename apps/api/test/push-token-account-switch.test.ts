@@ -34,6 +34,38 @@ afterAll(async () => {
 });
 
 describe('push token ownership follows the account currently using one installation', () => {
+  it('re-registers a retained provider token after the same account reinstalls the app', async () => {
+    const oldDevice = 'audit-reinstall-old-0003';
+    const newDevice = 'audit-reinstall-new-0003';
+    const account = '+966500006105';
+    const beforeReinstall = await signIn(h, account, oldDevice);
+    const afterReinstall = await signIn(h, account, newDevice);
+    const token = 'ExponentPushToken[audit-reinstall-retained-token-0003]';
+
+    for (const [session, deviceId] of [[beforeReinstall, oldDevice], [afterReinstall, newDevice]] as const) {
+      const registered = await h.app.inject({
+        method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(session),
+        payload: { token, platform: 'ios', deviceId, appVersion: '1.0.1' },
+      });
+      expect(registered.statusCode, registered.body).toBe(200);
+    }
+    const { rows } = await owner.query<{ device_id: string; active: boolean; session_id: string }>(
+      'SELECT device_id, active, session_id FROM push_tokens WHERE user_id=$1 AND token=$2 ORDER BY created_at',
+      [afterReinstall.userId, token],
+    );
+    expect(rows.filter(row => row.active)).toEqual([{
+      device_id: newDevice, active: true,
+      session_id: JSON.parse(Buffer.from(afterReinstall.token.split('.')[1]!, 'base64url').toString()).sid,
+    }]);
+    expect(rows.find(row => row.device_id === oldDevice)?.active).toBe(false);
+
+    const retry = await h.app.inject({
+      method: 'POST', url: '/v1/devices/push-token', headers: authHeaders(afterReinstall),
+      payload: { token, platform: 'ios', deviceId: newDevice, appVersion: '1.0.1' },
+    });
+    expect(retry.statusCode, retry.body).toBe(200);
+  });
+
   it('reassigns an active token after the previous account signed out offline', async () => {
     const deviceId = 'audit-shared-installation-0001';
     const a = await signIn(h, '+966500006101', deviceId);
