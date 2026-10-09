@@ -1,7 +1,7 @@
 -- Service/update notices only. Reuse the durable push outbox, never email or SMS.
 CREATE TABLE service_notices (
   id uuid PRIMARY KEY,
-  actor_user_id uuid NOT NULL REFERENCES users(id),
+  actor_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title text NOT NULL CHECK (length(btrim(title)) BETWEEN 1 AND 80),
   body text NOT NULL CHECK (length(btrim(body)) BETWEEN 1 AND 500),
   locale text NOT NULL CHECK (locale IN ('ar','en')),
