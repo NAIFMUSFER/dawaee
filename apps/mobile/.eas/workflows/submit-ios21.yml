@@ -1,0 +1,17 @@
+# Upload the already built, approved-18-source production archive only.
+# No build, app-source, backend deployment, or App Review submission is performed.
+# Owner testing must complete before public App Review; internal auto-distribution
+# remains controlled separately by the existing App Store Connect group settings.
+name: Upload preserved iOS 18 source as build 21
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  upload_ios21:
+    name: Upload existing iOS 1.0.1 (21)
+    type: submit
+    params:
+      build_id: de61ea5f-bd0b-4663-a019-ebbb9877406d
+      profile: ios-testflight
+      groups: []
