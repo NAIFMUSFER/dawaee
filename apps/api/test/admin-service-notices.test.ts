@@ -64,6 +64,7 @@ describe('admin service notices reuse push without changing the mobile app', () 
     expect(results.map(r => r.json().notice.queued_count)).toEqual([1,1]);
     const rows = await owner.query('SELECT kind,channel,title,body FROM notification_deliveries WHERE dedupe_key LIKE $1', [`service-notice:${body.id}:%`]);
     expect(rows.rows).toEqual([{ kind: 'system', channel: 'push', title: body.title, body: body.body }]);
+    h.setWorkerNow(new Date(Date.now()+1000));
     await h.tick();
     const delivered = h.push.sent.filter(m => m.title===body.title);
     expect(delivered).toHaveLength(1);
@@ -72,7 +73,7 @@ describe('admin service notices reuse push without changing the mobile app', () 
     expect(delivered[0]!.data.kind).toBe('system');
     expect(delivered[0]!.data.actions).toBe('[]');
   });
-  it('requires explicit confirmation, freezes content, and never adds later registrations to a draft', async () => {
+  it('requires explicit confirmation, freezes content, and excludes logged-out recipients', async () => {
     const body = draft('all'); await preview(body);
     const changed = await h.app.inject({ method: 'POST', url: '/v1/admin/service-notices/preview', headers: headers(), payload: { ...body, title: 'changed' } });
     expect(changed.statusCode).toBeGreaterThanOrEqual(400);
