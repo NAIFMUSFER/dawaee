@@ -41,7 +41,7 @@ export function accountEmailContent(mail: Mail, cfg: Config) {
     const title = ar ? 'رمز تأكيد حساب تداوي' : 'Your TADAWEE verification code';
     const message = ar ? 'أدخل الرمز داخل تطبيق تداوي لإكمال حسابك. صالح لمدة 30 دقيقة. لا تشارك الرمز مع أحد.'
       : 'Enter this code in TADAWEE to complete your account. Valid for 30 minutes. Do not share it.';
-    return { subject: `TADAWEE | ${title}`, text: `${title}\n${mail.code}\n${message}`,
+    return { subject: title, text: `${title}\n${mail.code}\n${message}`,
       html: `<html lang="${mail.locale}" dir="${ar ? 'rtl' : 'ltr'}"><body style="font-family:Arial,sans-serif"><h1>${title}</h1><p dir="ltr" style="font-size:32px;letter-spacing:8px">${mail.code}</p><p>${message}</p></body></html>` };
   }
   const url = new URL('/account-email', cfg.ACCOUNT_EMAIL_BASE_URL);
@@ -53,7 +53,7 @@ export function accountEmailContent(mail: Mail, cfg: Config) {
       : (ar ? 'تأكيد البريد الإلكتروني' : 'Verify your email');
   const minutes = mail.purpose === 'reset' ? 15 : 30;
   const expiry = ar ? `تنتهي صلاحية الرابط خلال ${minutes} دقيقة. إذا لم تطلب هذه الرسالة، تجاهلها.` : `This link expires in ${minutes} minutes. If you did not request this email, ignore it.`;
-  return { subject: `TADAWEE | ${action}`, text: `${action}\n${url.href}\n\n${expiry}`,
+  return { subject: `${ar ? 'تداوي' : 'TADAWEE'} | ${action}`, text: `${action}\n${url.href}\n\n${expiry}`,
     html: `<!doctype html><html lang="${mail.locale}" dir="${ar ? 'rtl' : 'ltr'}"><head><title>${action}</title></head><body style="font-family:Arial,sans-serif;background:#f2f8f5;padding:24px;color:#163d30"><main style="max-width:560px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>تداوي | TADAWEE</h1><h2>${action}</h2><p style="font-size:16px;line-height:1.8">${expiry}</p><p><a href="${escapeHtml(url.href)}" style="display:inline-block;background:#16734f;color:white;padding:16px 24px;border-radius:8px;font-size:18px">${action}</a></p></main></body></html>` };
 }
 export async function sendAccountEmail(mail: Mail, idempotencyKey: string, request: typeof fetch = fetch): Promise<void> {
@@ -63,7 +63,7 @@ export async function sendAccountEmail(mail: Mail, idempotencyKey: string, reque
     const response = await request('https://api.resend.com/emails', { method: 'POST', redirect: 'error',
       signal: AbortSignal.timeout(10_000), headers: { Authorization: `Bearer ${cfg.RESEND_API_KEY}`,
         'Content-Type': 'application/json', 'Idempotency-Key': `account-email/${idempotencyKey}` },
-      body: JSON.stringify({ from: `TADAWEE <${cfg.ACCOUNT_EMAIL_FROM}>`, to: [mail.email], ...accountEmailContent(mail, cfg) }),
+      body: JSON.stringify({ from: `تداوي | TADAWEE <${cfg.ACCOUNT_EMAIL_FROM}>`, to: [mail.email], ...accountEmailContent(mail, cfg) }),
     });
     if (!response.ok) throw new AccountEmailDeliveryError(response.status === 429 ? 'rate_limited'
       : response.status >= 500 ? 'provider_unavailable' : 'provider_rejected');

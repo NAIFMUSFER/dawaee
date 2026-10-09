@@ -199,7 +199,7 @@ async function caregiverDeliveryStillAuthorized(client: PoolClient, row: Deliver
 }
 
 async function nonUrgentResumeAt(client: PoolClient, row: DeliveryRow, now: Date): Promise<Date | null> {
-  if (!['escalation', 'low_stock', 'expiry_warning', 'daily_summary', 'weekly_summary'].includes(row.kind) || !row.recipient_user_id) return null;
+  if (!['escalation', 'low_stock', 'expiry_warning', 'daily_summary', 'weekly_summary', 'system'].includes(row.kind) || !row.recipient_user_id) return null;
   const { rows } = await client.query<{ timezone: string; quiet_hours_start: string | null; quiet_hours_end: string | null }>(
     `SELECT u.timezone, up.quiet_hours_start::text, up.quiet_hours_end::text
        FROM users u LEFT JOIN user_preferences up ON up.user_id = u.id WHERE u.id = $1`, [row.recipient_user_id],
