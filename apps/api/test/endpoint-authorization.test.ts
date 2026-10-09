@@ -191,6 +191,10 @@ const EXPOSURE: Record<string, Exposure> = {
   'POST /v1/auth/phone-verification': 'authenticated',
 
   'GET /v1/adherence': 'authenticated',
+  'GET /admin/notifications': 'public',
+  'GET /v1/admin/service-notices': 'admin',
+  'POST /v1/admin/service-notices/preview': 'admin',
+  'POST /v1/admin/service-notices/:id/send': 'admin',
   'GET /v1/admin/overview': 'admin',
   'GET /v1/admin/deliveries/failed': 'admin',
   'GET /v1/admin/deliveries/stats': 'admin',

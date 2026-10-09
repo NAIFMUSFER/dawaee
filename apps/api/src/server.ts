@@ -32,6 +32,7 @@ import { registerEmergencyRoutes } from './routes/emergency.js';
 import { registerNoteRoutes } from './routes/notes.js';
 import { registerUploadRoutes } from './routes/uploads.js';
 import { registerReportRoutes } from './routes/reports.js';
+import { registerAdminNoticePage } from './routes/admin-notice-page.js';
 import { registerAdminRoutes } from './routes/admin.js';
 
 export interface BuiltServer {
@@ -156,6 +157,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
   registerErrorHandler(app);
 
   registerHealthRoutes(app, providers);
+  registerAdminNoticePage(app);
   await app.register(async (scope) => {
     registerAuthRoutes(scope);
     registerRegistrationCodeRoutes(scope);

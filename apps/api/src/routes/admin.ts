@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { withTransaction } from '../lib/db.js';
-import { authenticate, requireAdmin } from '../middleware/context.js';
+import { z } from 'zod';
+import { withUser, withTransaction } from '../lib/db.js';
+import { authenticate, requireAdmin, currentUser } from '../middleware/context.js';
 import { requireEnum, requireLimit } from '../lib/params.js';
 
 /** Mirrors `notification_channel` (migration 0001). */
@@ -29,6 +30,31 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       await authenticate(req, null as never);
       await requireAdmin(req);
     }
+  });
+
+  // Service notices use existing durable delivery, retries and receipt tracking.
+  // A preview freezes recipients; sending requires a separate explicit request.
+  app.get('/v1/admin/service-notices', async (req) => withUser(currentUser(req).userId, async tx => {
+    const { rows } = await tx.query("SELECT app.admin_service_notice('list') AS notices");
+    return { notices: rows[0].notices };
+  }));
+  app.post('/v1/admin/service-notices/preview', async req => {
+    const body = z.object({ id: z.string().uuid(), title: z.string().trim().min(1).max(80),
+      body: z.string().trim().min(1).max(500), locale: z.enum(['ar','en']),
+      audience: z.enum(['self','all']) }).strict().parse(req.body);
+    return withUser(currentUser(req).userId, async tx => {
+      const { rows } = await tx.query("SELECT app.admin_service_notice('preview',$1,$2,$3,$4,$5) AS notice",
+        [body.id,body.title,body.body,body.locale,body.audience]);
+      return { notice: rows[0].notice };
+    });
+  });
+  app.post('/v1/admin/service-notices/:id/send', async req => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    z.object({ confirm: z.literal(true) }).strict().parse(req.body);
+    return withUser(currentUser(req).userId, async tx => {
+      const { rows } = await tx.query("SELECT app.admin_service_notice('send',$1) AS notice",[id]);
+      return { notice: rows[0].notice };
+    });
   });
 
   app.get('/v1/admin/overview', async () =>
