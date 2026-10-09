@@ -465,10 +465,17 @@ describe('P12-3 admin routes are not reachable by an ordinary account', () => {
   });
 
   it('positive control: the admin account does reach them', async () => {
+    const notice = { id: 'aa000000-0000-4000-8000-000000000080', title: 'Service test',
+      body: 'Authorization control only.', locale: 'en', audience: 'self' };
+    const seeded = await send({ method: 'POST', url: '/v1/admin/service-notices/preview',
+      headers: authHeaders(admin), payload: notice });
+    expect(seeded.statusCode, seeded.body).toBe(200);
     for (const [key, exposure] of Object.entries(EXPOSURE)) {
       if (exposure !== 'admin') continue;
       const [method, path] = key.split(' ') as [string, string];
-      const res = await send({ method: method as 'GET', url: path, headers: authHeaders(admin) });
+      const payload = path.endsWith('/preview') ? notice : path.endsWith('/send') ? { confirm: true } : undefined;
+      const res = await send({ method: method as 'GET', url: path.replace(':id', notice.id),
+        headers: authHeaders(admin), payload });
       expect(res.statusCode, `${key}: ${res.body}`).toBe(200);
     }
   });
