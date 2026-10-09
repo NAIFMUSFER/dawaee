@@ -445,6 +445,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const body = registerPushTokenSchema.parse(req.body);
     const { userId, sessionId } = currentUser(req);
     await withUser(userId, async (tx) => {
+      // Use the existing account lock before locking the session, matching
+      // refresh/revocation order. Reinstall can retain an iOS provider token
+      // while app storage creates a new device ID; serialize those claims.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 20260912))', [userId]);
       // Bind the provider endpoint to the device that actually owns this
       // authenticated session. The row lock makes this atomic with session
       // revocation: if registration wins, a following revoke waits and then
@@ -460,6 +464,15 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       if (rows[0]?.device_id !== body.deviceId) {
         throw AppError.forbidden('Push token device does not match the authenticated session');
       }
+
+      // Retire only this account's older binding for the exact endpoint. RLS
+      // still applies, different tokens on sibling devices stay active, and
+      // cross-account/different-device claims still fail the unique index.
+      // A failed INSERT rolls this UPDATE back with the same transaction.
+      await tx.query(
+        'UPDATE push_tokens SET active = false WHERE user_id = $1 AND token = $2 AND device_id <> $3 AND active',
+        [userId, body.token, body.deviceId],
+      );
 
       await tx.query(
         `INSERT INTO push_tokens
