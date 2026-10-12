@@ -5,3 +5,19 @@
 2c9747497a258dceeecb4fd8647bcdeae2baafd7:apps/api/test/endpoint-authorization.test.ts:jwt:350
 # A local AsyncStorage slot name, not an API credential. Exact commit/line only.
 8ade87d17a74e27a3e736b1eded90b45b244bbe9:apps/mobile/src/notifications/index.ts:generic-api-key:39
+
+# Reviewed 2026-10-12 after scheduled full-history Security scan #1282.
+# Public Render deployment identifier in a hosted-verification report.
+e91615179f223afeca0c12753fe548a95aecff2f:docs/audit/2026-09-21-independent-hosted-verification.md:generic-api-key:14
+# Public commit SHAs used to identify audited API versions, not credentials.
+2f7b3c9e6aa9352be6df2db5aefd6292d29626b4:.github/workflows/android-interaction.yml:generic-api-key:31
+04d37dfeef0529bb423bd8e9eb876a1d2f3facee:docs/audit/2026-09-16-final/follow-up-evidence.json:generic-api-key:6
+267d723f5f3c53ab2113307866df2785162547b5:scripts/release-runtime-harness.mjs:generic-api-key:14
+8cfdee58f9a3a34f3cedea49e52821a4507edafe:scripts/release-runtime-harness.mjs:generic-api-key:12
+# Synthetic JWT signing values for local CI and managed-Postgres smoke tests.
+ed1759f84ca039e9688bb1668da74ce961a64b9e:.github/workflows/ci.yml:generic-api-key:59
+c77667b6bab2fa7538a8362b13a804388e6a0f18:scripts/managed-postgres-smoke.sh:generic-api-key:66
+ecd93dfd7911a542cb108f69f06488ec3bd776b6:.github/workflows/ci.yml:generic-api-key:37
+# Do NOT suppress the two historical google-services.json gcp-api-key findings
+# until the Firebase key's Google Cloud API restrictions have been verified.
+# Scope remains exact commit + path + rule + line; new occurrences still fail.
