@@ -153,6 +153,9 @@ type Exposure =
  * stays true after this audit is over.
  */
 const EXPOSURE: Record<string, Exposure> = {
+  // No session: authenticated by a timestamped Svix signature over raw bytes.
+  // Missing/forged signatures and parser isolation have a dedicated suite.
+  'POST /v1/webhooks/account-email': 'capability',
   'GET /': 'public',
   'GET /account-email': 'public',
   'GET /v1/auth/password/recovery-options': 'auth-plane',

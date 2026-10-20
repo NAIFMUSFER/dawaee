@@ -56,7 +56,7 @@ export function accountEmailContent(mail: Mail, cfg: Config) {
   return { subject: `${ar ? 'تداوي' : 'TADAWEE'} | ${action}`, text: `${action}\n${url.href}\n\n${expiry}`,
     html: `<!doctype html><html lang="${mail.locale}" dir="${ar ? 'rtl' : 'ltr'}"><head><title>${action}</title></head><body style="font-family:Arial,sans-serif;background:#f2f8f5;padding:24px;color:#163d30"><main style="max-width:560px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>تداوي | TADAWEE</h1><h2>${action}</h2><p style="font-size:16px;line-height:1.8">${expiry}</p><p><a href="${escapeHtml(url.href)}" style="display:inline-block;background:#16734f;color:white;padding:16px 24px;border-radius:8px;font-size:18px">${action}</a></p></main></body></html>` };
 }
-export async function sendAccountEmail(mail: Mail, idempotencyKey: string, request: typeof fetch = fetch): Promise<void> {
+export async function sendAccountEmail(mail: Mail, idempotencyKey: string, request: typeof fetch = fetch): Promise<string> {
   const cfg = loadConfig();
   if (!accountEmailReady(cfg)) throw new AccountEmailDeliveryError('configuration');
   try {
@@ -71,6 +71,7 @@ export async function sendAccountEmail(mail: Mail, idempotencyKey: string, reque
     try { result = await response.json() as { id?: unknown } | null; }
     catch { throw new AccountEmailDeliveryError('invalid_response'); }
     if (typeof result?.id !== 'string' || !result.id) throw new AccountEmailDeliveryError('invalid_response');
+    return result.id;
   } catch (error) {
     if (error instanceof AccountEmailDeliveryError) throw error;
     throw new AccountEmailDeliveryError(error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network');
@@ -78,8 +79,9 @@ export async function sendAccountEmail(mail: Mail, idempotencyKey: string, reque
 }
 // Runs inside the API with durable leases; no provider latency in anonymous
 // request responses. Stored payloads are encrypted and purged on send/expiry.
-export async function drainAccountEmails(send = sendAccountEmail,
-  diagnose: (event: EmailDeliveryDiagnostic) => void = () => {}): Promise<number> {
+export async function drainAccountEmails(send: (mail: Mail, key: string) => Promise<string | void> = sendAccountEmail,
+  diagnose: (event: EmailDeliveryDiagnostic) => void = () => {},
+  onAccepted: (event: { queue: 'account' | 'registration'; emailId: string }) => void = () => {}): Promise<number> {
   let sent = 0;
   for (const queue of [
     { name: 'account', claim: 'app.claim_account_emails', finish: 'app.finish_account_email' },
@@ -92,7 +94,12 @@ export async function drainAccountEmails(send = sendAccountEmail,
       let stage: 'payload' | 'send' = 'payload';
       try {
         const mail = await openEmailJob(row.payload); stage = 'send';
-        await send(mail, row.token_hash); accepted = true; sent++;
+        const emailId = await send(mail, row.token_hash); accepted = true; sent++;
+        // Provider acceptance is not delivery. Record only the opaque provider
+        // ID, never an address, code, ciphertext or authentication capability.
+        if (typeof emailId === 'string' && /^[0-9a-f-]{36}$/i.test(emailId)) {
+          try { onAccepted({ queue: queue.name, emailId }); } catch { /* observer only */ }
+        }
       } catch (error) {
         // Never give the observer the error, recipient, token, job key or provider body.
         // Diagnostics must not interrupt the durable retry/lease completion path.

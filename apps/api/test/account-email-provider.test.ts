@@ -39,7 +39,7 @@ describe('account email provider', () => {
   });
   it('uses a stable idempotency key and never follows a provider redirect', async () => {
     const request = vi.fn(async () => new Response(JSON.stringify({ id: 'synthetic-message' }), { status: 200 }));
-    const key = emailTokenHash(mail.token); await sendAccountEmail(mail, key, request as typeof fetch);
+    const key = emailTokenHash(mail.token); expect(await sendAccountEmail(mail, key, request as typeof fetch)).toBe('synthetic-message');
     expect(request).toHaveBeenCalledTimes(1);
     const [url, init] = request.mock.calls[0] as any;
     expect(url).toBe('https://api.resend.com/emails'); expect(init.redirect).toBe('error');
