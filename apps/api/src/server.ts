@@ -20,6 +20,7 @@ import { registerAppleAuthRoutes } from './routes/apple-auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerPhoneVerificationRoutes } from './routes/phone-verification.js';
 import { registerAccountEmailRoutes } from './routes/account-email.js';
+import { registerEmailDeliveryWebhook } from './routes/email-delivery-webhook.js';
 import { registerPasswordRecoveryRoutes } from './routes/password-recovery.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerMedicationRoutes } from './routes/medications.js';
@@ -155,6 +156,7 @@ export async function buildServer(overrides?: { providers?: Providers }): Promis
   });
 
   registerErrorHandler(app);
+  await app.register(registerEmailDeliveryWebhook);
 
   registerHealthRoutes(app, providers);
   registerAdminNoticePage(app);

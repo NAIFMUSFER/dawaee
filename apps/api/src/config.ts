@@ -135,6 +135,7 @@ const schema = z.object({
 
   ACCOUNT_EMAIL_PROVIDER: z.enum(['disabled', 'resend']).default('disabled'),
   RESEND_API_KEY: z.string().optional(),
+  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
   ACCOUNT_EMAIL_FROM: z.string().optional(),
   ACCOUNT_EMAIL_SENDER_VERIFIED: envBoolean(false),
   // Public HTTPS origin of this API, which serves /account-email.
