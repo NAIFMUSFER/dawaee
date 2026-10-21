@@ -1,0 +1,55 @@
+name: Android installable preview
+
+on:
+  push:
+    branches: ['build/android-preview-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DEMO: '0'
+      EXPO_PUBLIC_API_URL: https://dawaee-audit-preview.onrender.com
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+      - name: Use the runner's Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$JAVA_HOME_17_X64/bin/javac"
+          test -d "$ANDROID_HOME/platforms"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          "$JAVA_HOME_17_X64/bin/javac" -version
+      - name: Install locked dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix apps/mobile --legacy-peer-deps --no-audit --no-fund
+      - name: Build and validate the installable APK
+        run: bash scripts/build-android-preview.sh
+      - name: Retain APK and build identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dawaee-android-preview-${{ github.sha }}
+          path: artifacts/android-preview/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
