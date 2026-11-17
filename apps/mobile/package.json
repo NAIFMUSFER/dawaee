@@ -51,7 +51,8 @@
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
     "react-native-web": "^0.21.0",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7",
+    "decode-uri-component": "file:vendor/decode-uri-component-cjs"
   },
   "devDependencies": {
     "@expo/plist": "^0.5.4",
@@ -59,6 +60,7 @@
     "typescript": "~5.9.2"
   },
   "overrides": {
-    "@grpc/grpc-js": "^1.13.6"
+    "@grpc/grpc-js": "^1.13.6",
+    "decode-uri-component": "$decode-uri-component"
   }
 }

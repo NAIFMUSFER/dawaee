@@ -1,0 +1,10 @@
+{
+  "name": "@tadawee/decode-uri-component-cjs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CommonJS adapter for the patched upstream URI decoder used by query-string 7",
+  "main": "index.cjs",
+  "dependencies": {
+    "decode-uri-component-upstream": "npm:decode-uri-component@0.5.1"
+  }
+}
