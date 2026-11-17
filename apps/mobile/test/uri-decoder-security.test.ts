@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const requireMobile = createRequire(new URL('../package.json', import.meta.url));
