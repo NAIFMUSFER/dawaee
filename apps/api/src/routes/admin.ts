@@ -39,7 +39,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return { notices: rows[0].notices };
   }));
   app.post('/v1/admin/service-notices/preview', async req => {
-    const body = z.object({ id: z.string().uuid(), title: z.string().trim().min(1).max(80),
+    const body = z.object({ id: z.guid(), title: z.string().trim().min(1).max(80),
       body: z.string().trim().min(1).max(500), locale: z.enum(['ar','en']),
       audience: z.enum(['self','all']) }).strict().parse(req.body);
     return withUser(currentUser(req).userId, async tx => {
@@ -49,7 +49,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     });
   });
   app.post('/v1/admin/service-notices/:id/send', async req => {
-    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const { id } = z.object({ id: z.guid() }).parse(req.params);
     z.object({ confirm: z.literal(true) }).strict().parse(req.body);
     return withUser(currentUser(req).userId, async tx => {
       const { rows } = await tx.query("SELECT app.admin_service_notice('send',$1) AS notice",[id]);

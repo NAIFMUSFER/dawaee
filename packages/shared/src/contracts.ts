@@ -8,7 +8,9 @@ import {
 
 // ------------------------------------------------------------- primitives
 
-export const uuid = z.string().uuid();
+// Preserve the UUID-shaped identifiers accepted by Zod 3 and PostgreSQL.
+// Zod 4's uuid() additionally enforces RFC version/variant bits.
+export const uuid = z.guid();
 export const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
   .refine((value) => {
     const [year, month, day] = value.split('-').map(Number);
@@ -186,6 +188,11 @@ export const createProfileSchema = z.object({
 });
 
 export const updateProfileSchema = createProfileSchema.partial().extend({
+  // Zod 4 applies defaults inside optional fields. PATCH must never reset an
+  // omitted preference to its creation default.
+  timezone: createProfileSchema.shape.timezone.removeDefault().optional(),
+  isSelf: createProfileSchema.shape.isSelf.removeDefault().optional(),
+  travelPolicy: createProfileSchema.shape.travelPolicy.removeDefault().optional(),
   homeTimezone: timezone.optional(),
 });
 
@@ -333,6 +340,8 @@ export const updateMedicationSchema = createMedicationSchema
   .omit({ patientProfileId: true, schedule: true, stock: true, acknowledgeDuplicate: true, clientRequestId: true })
   .partial()
   .extend({
+    foodInstruction: createMedicationSchema.shape.foodInstruction.removeDefault().optional(),
+    identitySource: createMedicationSchema.shape.identitySource.removeDefault().optional(),
     status: z.enum(MEDICATION_STATUSES).optional(),
     confirmHighRiskChange: z.boolean().optional(),
   });
