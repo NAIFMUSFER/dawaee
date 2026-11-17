@@ -66,7 +66,8 @@ const REPOSITORY_URL = 'https://apt.postgresql.org/pub/repos/apt';
 function assertSignedSources(commands: string): void {
   const records = commands.trim().split('\n').map((line) => line.trim().split(/\s+/));
   assert.deepEqual(records.filter(([command]) => command === 'curl'), [
-    ['curl', '-fsSL', '-o', KEY_PATH, KEY_URL],
+    ['curl', '-fsSL', '--retry', '3', '--retry-all-errors',
+      '--connect-timeout', '20', '--max-time', '60', '-o', KEY_PATH, KEY_URL],
   ], 'the installer must download exactly the expected signing key');
   assert.deepEqual(records.filter(([command]) => command?.startsWith('source:')), [
     ['source:deb', `[signed-by=${KEY_PATH}]`, REPOSITORY_URL, 'noble-pgdg', 'main'],
@@ -122,6 +123,8 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
 // controls, so a permissive hostname/substring check cannot silently return.
 describe('CI source assertions reject lookalikes and embedded URLs', () => {
   const mutations: Array<[string, (commands: string) => string]> = [
+    ['disabled TLS verification', (text) => text.replace('curl -fsSL', 'curl -k -fsSL')],
+    ['unbounded connection timeout', (text) => text.replace('--connect-timeout 20', '--connect-timeout 0')],
     ['repository hostname with substituted dots', (text) => text.replace(REPOSITORY_URL, 'https://aptXpostgresqlYorg/pub/repos/apt')],
     ['key hostname with substituted dots', (text) => text.replace(KEY_URL, 'https://wwwXpostgresqlYorg/media/keys/ACCC4CF8.asc')],
     ['key filename with substituted dot', (text) => text.replace(KEY_URL, KEY_URL.replace('.asc', 'Xasc'))],
