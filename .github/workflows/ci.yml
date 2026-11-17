@@ -79,8 +79,9 @@ jobs:
           echo "postgres client: $(psql --version 2>/dev/null || echo 'not yet installed')"
 
       - name: Install PostgreSQL client matching the server
-        # The client must be at least the server's major version, or
-        # `pg_dump`/`psql` meta-commands can behave differently against 17.
+        # Use the matching client tools, including pg_dump and pg_restore.
+        # Ubuntu's unversioned wrapper may otherwise choose a newer installed
+        # client whose restore preamble is unsupported by PostgreSQL 16.
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -96,7 +97,12 @@ jobs:
           sudo apt-get -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list \
             -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 update
           sudo apt-get install -y "postgresql-client-${{ matrix.postgres }}"
+          pg_client_bin="/usr/lib/postgresql/${{ matrix.postgres }}/bin"
+          echo "$pg_client_bin" >> "$GITHUB_PATH"
+          export PATH="$pg_client_bin:$PATH"
           psql --version
+          pg_dump --version
+          pg_restore --version
 
       - run: npm ci
 

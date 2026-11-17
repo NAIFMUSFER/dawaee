@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, it } from 'vitest';
@@ -18,6 +18,7 @@ const script = block.replace(/^ {10}/gm, '');
 function runInstaller(major: '16' | '17', fault: 'none' | 'key' | 'index' | 'install' = 'none') {
   const directory = mkdtempSync(join(tmpdir(), 'dawaee-ci-source-'));
   const log = join(directory, 'commands.txt');
+  const githubPath = join(directory, 'github-path.txt');
   const preamble = String.raw`
     sudo() {
       printf '%s\n' "$*" >> "$COMMAND_LOG"
@@ -42,13 +43,18 @@ function runInstaller(major: '16' | '17', fault: 'none' | 'key' | 'index' | 'ins
     }
     lsb_release() { printf 'noble\n'; }
     psql() { printf 'verified-client-version\n' >> "$COMMAND_LOG"; }
+    pg_dump() { printf 'verified-dump-version\n' >> "$COMMAND_LOG"; }
+    pg_restore() { printf 'verified-restore-version\n' >> "$COMMAND_LOG"; }
   `;
   try {
     const result = spawnSync('bash', ['-c', preamble + script.replaceAll('${{ matrix.postgres }}', major)], {
-      env: { ...process.env, COMMAND_LOG: log, FAULT: fault }, encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, COMMAND_LOG: log, FAULT: fault, GITHUB_PATH: githubPath }, encoding: 'utf8', timeout: 5000,
     });
     assert.equal(result.error, undefined);
-    return { status: result.status, commands: readFileSync(log, 'utf8'), stderr: result.stderr };
+    return {
+      status: result.status, commands: readFileSync(log, 'utf8'), stderr: result.stderr,
+      futurePath: existsSync(githubPath) ? readFileSync(githubPath, 'utf8') : '',
+    };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -81,6 +87,10 @@ describe('CI PostgreSQL installer scopes repository refresh without weakening tr
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.commands, new RegExp(`apt-get install -y postgresql-client-${major}`));
       assert.match(result.commands, /verified-client-version/);
+      assert.match(result.commands, /verified-dump-version/);
+      assert.match(result.commands, /verified-restore-version/);
+      assert.equal(result.futurePath, `/usr/lib/postgresql/${major}/bin\n`,
+        'all later backup/restore steps must use the client matching the server');
       assertSignedSources(result.commands);
     });
   }
